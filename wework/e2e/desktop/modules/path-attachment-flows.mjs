@@ -1,4 +1,5 @@
 import { waitForElementWidth, waitForSnapshot } from './conversation-layout.mjs'
+import { waitForTerminalOutput } from './terminal-compatibility-flows.mjs'
 
 import {
   ACTIVE_WORKBENCH_SELECTOR,
@@ -571,8 +572,13 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control }) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('terminalInput', '[data-testid="embedded-local-terminal"]', {
-    value: `printf '${TERMINAL_DRAG_TEXT}\\n'\r`,
+    value: `echo ${TERMINAL_DRAG_TEXT}\r`,
   })
+  await waitForTerminalOutput(
+    () => control.command('getTerminalText', '[data-testid="embedded-local-terminal"]'),
+    TERMINAL_DRAG_TEXT,
+    'The local shell did not print the terminal selection fixture'
+  )
   await control.command('waitFor', '.xterm-accessibility-tree [role="listitem"]', {
     text: TERMINAL_DRAG_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

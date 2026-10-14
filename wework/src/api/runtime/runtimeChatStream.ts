@@ -168,10 +168,13 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
       })
       .catch(error => {
         nativeSubscribePromise = null
-        console.error('[Wework] Runtime chat stream native listener failed', {
-          error: error instanceof Error ? error.message : String(error),
-          activeSubscriptions: activeRuntimeChatStreamSubscriptions,
-        })
+        console.error(
+          '[Wework] Runtime chat stream native listener failed',
+          JSON.stringify({
+            error: error instanceof Error ? error.message : String(error),
+            activeSubscriptions: activeRuntimeChatStreamSubscriptions,
+          })
+        )
         logRuntimeChatStreamNativeSubscription('native-listener-failed', {
           error: error instanceof Error ? error.message : String(error),
         })

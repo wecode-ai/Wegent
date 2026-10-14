@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
+import { waitForTerminalOutput } from './terminal-compatibility-flows.mjs'
 
 const BOTTOM_PANEL_SELECTOR = '[data-testid="bottom-workspace-panel"]'
 const BOTTOM_PANEL_TOGGLE_SELECTOR = '[data-testid="toggle-bottom-workspace-panel-button"]'
@@ -67,8 +68,13 @@ export async function verifyLocalBoardUnread(control, taskTabTestId) {
   })
   assert.ok(terminalSessionId, 'The local task terminal did not expose its session ID')
   await control.command('terminalInput', LOCAL_TERMINAL_SELECTOR, {
-    value: `printf '${TERMINAL_PRESERVATION_MARKER}\\n'\r`,
+    value: `echo ${TERMINAL_PRESERVATION_MARKER}\r`,
   })
+  await waitForTerminalOutput(
+    () => control.command('getTerminalText', LOCAL_TERMINAL_SELECTOR),
+    TERMINAL_PRESERVATION_MARKER,
+    'The local shell did not print the terminal preservation fixture'
+  )
   await control.command(
     'waitFor',
     `${LOCAL_TERMINAL_SELECTOR} .xterm-accessibility-tree [role="listitem"]`,

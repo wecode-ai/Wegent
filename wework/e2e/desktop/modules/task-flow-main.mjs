@@ -1149,6 +1149,8 @@ async function main() {
     await createPluginMarketplaceFixture(marketplacePluginPath)
   }
   await runChecked('git', ['init'], { cwd: workspacePath })
+  // Fixture assertions compare exact bytes after Git snapshot restoration.
+  await runChecked('git', ['config', 'core.autocrlf', 'false'], { cwd: workspacePath })
   await runChecked('git', ['config', 'user.name', 'Wework Desktop E2E'], { cwd: workspacePath })
   await runChecked('git', ['config', 'user.email', 'desktop-e2e@wework.local'], {
     cwd: workspacePath,
@@ -1307,6 +1309,7 @@ async function main() {
       CODEX_BIN: resolvedAppCodexBinary,
       CODEX_SQLITE_HOME: codexSqliteHome,
       HOME: homePath,
+      WORKSPACE_ROOT: join(homePath, '.wegent', 'workspace'),
       WEGENT_STANDALONE_WORKSPACE_ROOT: join(homePath, 'Documents', 'Codex'),
       WEGENT_CODEX_HOME: codexHome,
       WEGENT_EXECUTOR_HOME: executorHome,
@@ -1368,6 +1371,9 @@ async function main() {
       'WEGENT_RUNTIME_AUTH_TOKEN',
       'WEGENT_TASK_ID',
       'WEGENT_TASK_WORKSPACE',
+      'WEGENT_WORKSPACE_ROOT',
+      'LOCAL_WORKSPACE_ROOT',
+      'WEGENT_EXECUTOR_PROJECTS_DIR',
       'WEGENT_WORKBENCH_HOME',
       'WEGENT_CAPABILITIES_HOME',
       'WEGENT_CLAUDE_HOME',

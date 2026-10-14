@@ -381,7 +381,9 @@ jobs:
 
       - name: Install Electron for native startup and schema verification
         if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')
-        run: pnpm --dir wework/electron install --frozen-lockfile
+        run: |
+          pnpm --dir wework/electron install --frozen-lockfile
+          pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
 
       - name: Run Wework desktop Core shard E2E
         env:
@@ -697,7 +699,9 @@ jobs:
 
       - name: Install Electron for native startup and schema verification
         if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')
-        run: pnpm --dir wework/electron install --frozen-lockfile
+        run: |
+          pnpm --dir wework/electron install --frozen-lockfile
+          pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
 
       - name: Run Windows Wework desktop Core shard E2E
         id: windows-core-e2e

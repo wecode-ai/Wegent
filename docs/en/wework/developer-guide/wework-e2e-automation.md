@@ -334,6 +334,19 @@ The destination parent is canonicalized to retain the long-path prefix for the d
 Win32 call, including initial index creation.
 Native CI covers repeated replacements with open readers and replacements beyond `MAX_PATH`.
 
+Plugin cache mutations restart the Codex app-server, so synchronization waits for both
+AI tasks and background terminals to finish. Regression coverage verifies deferred updates
+while a process runs and publication after its native exit notification. Desktop coverage
+retains output-reading and process-stopping assertions after a window reload.
+Windows fixtures use cross-shell terminal commands and verify a completed output line;
+settings controls are scrolled into view. Git fixtures disable automatic line-ending
+conversion, and queue/sidebar fixtures explicitly select the test model without weakening
+behavioral assertions. CI verifies the development Electron binary during setup so its
+first import does not download it inside a scenario.
+Desktop fixtures bind the workspace root to their temporary Home and remove other inherited
+workspace path overrides, avoiding stale test or personal worktrees. Turn preparation failures
+record their error code and reason instead of leaving only a UI timeout.
+
 Executor configures loopback `NO_PROXY` before creating the Tokio runtime, avoiding
 process environment mutation on asynchronous connection threads. The startup scenario
 verifies that Executor becomes ready before Core DSH starts and that DSH binds a valid port.
