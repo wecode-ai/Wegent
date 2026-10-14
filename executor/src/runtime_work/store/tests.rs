@@ -46,6 +46,34 @@ fn atomic_write_preserves_open_readers_and_publishes_each_index() {
 }
 
 #[test]
+fn atomic_write_preserves_open_readers_beyond_windows_max_path() {
+    use std::io::Read;
+
+    let directory = tempfile::tempdir().expect("temporary directory should be created");
+    let mut parent = directory.path().to_path_buf();
+    for _ in 0..5 {
+        parent.push("long-index-directory-".repeat(3));
+    }
+    let index_path = parent.join("index.json");
+    assert!(index_path.as_os_str().len() > 260);
+    atomic_write_file(&index_path, b"old index").expect("long-path index should be created");
+    let mut reader = fs::File::open(&index_path).expect("old index should be opened");
+
+    atomic_write_file(&index_path, b"new index").expect("long-path index should be replaced");
+
+    let mut old_payload = Vec::new();
+    reader
+        .read_to_end(&mut old_payload)
+        .expect("old index should remain readable");
+    assert_eq!(old_payload, b"old index");
+    assert_eq!(
+        fs::read(&index_path).expect("new index should be readable"),
+        b"new index"
+    );
+    assert!(temporary_files(&parent).is_empty());
+}
+
+#[test]
 fn atomic_write_cleans_up_temp_file_after_replace_failure() {
     let directory = tempfile::tempdir().expect("temporary directory should be created");
     let index_path = directory.path().join("index.json");

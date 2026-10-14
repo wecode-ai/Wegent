@@ -274,6 +274,8 @@ Windows 插件安装诊断还会记录 pnpm 操作前后的应用资源目录状
 文件数量；静态资源读取失败时会记录父目录链接状态，用于定位资源缺失发生的阶段。
 Windows worktree 命令通过现有 `.git` 和 `commondir` 解析结果显式传入
 `GIT_COMMON_DIR`，让 checkout 子进程在加载仓库配置前找到共享对象目录。
+Windows 会话索引使用 `FileRenameInfoEx` 的 POSIX 替换语义发布新文件，保证旧读者仍能
+读取完整旧索引、新读者立即看到新索引。原生 CI 覆盖持有旧文件句柄时连续替换及长路径替换。
 
 Executor 在创建 Tokio 运行时之前配置回环地址的 `NO_PROXY`，避免连接期间在异步线程中
 修改进程环境。启动场景验证 Executor 先就绪、Core DSH 后启动，并确认实际监听端口有效。

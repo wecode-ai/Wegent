@@ -318,6 +318,9 @@ state, link targets, and file counts before and after pnpm operations. Static as
 read failures record the parent directory's link state to locate missing resources.
 Windows worktree commands set `GIT_COMMON_DIR` from the existing `.git` and
 `commondir` parser so checkout children find shared objects before loading repository config.
+Windows conversation indexes use POSIX replacement semantics with `FileRenameInfoEx`:
+existing readers retain the complete old index, and new readers see the newly published index.
+Native CI covers repeated replacements with open readers and replacements beyond `MAX_PATH`.
 
 Executor configures loopback `NO_PROXY` before creating the Tokio runtime, avoiding
 process environment mutation on asynchronous connection threads. The startup scenario
