@@ -220,7 +220,7 @@ jobs:
           name: executor-manager-coverage
 
   test-executor-local-auth-platforms:
-    name: Test Executor Local Auth (${{ matrix.os }})
+    name: Test Executor Platform Regressions (${{ matrix.os }})
     needs: changes
     if: needs.changes.outputs.executor == 'true'
     runs-on: ${{ matrix.os }}
@@ -259,6 +259,16 @@ jobs:
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
         run: cargo test --all-features --lib runtime_work::local_connector_auth::tests
+
+      - name: Run native filesystem platform regressions
+        shell: bash
+        working-directory: ./executor
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
+        run: |
+          cargo test --all-features --lib runtime_work::store::tests::atomic_write
+          cargo test --all-features --lib worktree_metadata_can_exceed_the_windows_max_path_limit
+          cargo test --all-features --lib clones_and_reuses_repositories_beyond_windows_max_path
 
   test-shared:
     name: Test Shared
