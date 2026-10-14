@@ -343,6 +343,93 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         readInbox.items.find(item => item.id === saved.id)?.read_at,
         'Opening a mention notification must persist its read state'
       )
+
+      // Extend the scenario after its original navigation and notification checks.
+      await control.command('click', `${activeSurface} [data-testid="cloud-todo-detail-close"]`)
+      await control.command(
+        'waitFor',
+        `${activeSurface} [data-testid="collaboration-issue-detail"]`,
+        {
+          visible: false,
+        }
+      )
+      const boardMessage = await postMentionComment(`${CLIENT_MESSAGE_PREFIX}-board-${Date.now()}`)
+      const boardNotification = await waitForApiValue(
+        async () => {
+          const inbox = await ownerRequest('/api/v1/wework-notifications')
+          return inbox.items.find(item => item.payload?.commentId === boardMessage.messageId)
+        },
+        Boolean,
+        'The board regression did not receive its real mention notification',
+        uiTimeoutMs
+      )
+      // Viewing the collaboration board must not display or consume Issue unread state.
+      const unreadIssue = await ownerRequest(`/api/v1/loop-items/${issue.id}`)
+      assert.equal(unreadIssue.is_unread, true, 'The peer comment must make the Issue unread')
+      assert.equal(
+        boardNotification.read_at,
+        null,
+        'The mention notification must initially be unread'
+      )
+      await control.command('openWeworkScheme', 'body', {
+        value: `wework://boards/${project.id}`,
+      })
+      await control.command('waitFor', `${activeSurface} [data-testid="collaboration-tab-board"]`)
+      await control.command('click', `${activeSurface} [data-testid="collaboration-tab-board"]`)
+      const boardCard = `${activeSurface} [data-testid="cloud-todo-card-drop-${issue.id}"]`
+      await control.command('waitFor', boardCard, { text: ISSUE_TITLE, visible: true })
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            `${boardCard} [data-testid="cloud-todo-card-unread-${issue.id}"]`
+          )
+        ),
+        0,
+        'A collaboration Issue card must not show an unread dot'
+      )
+      const boardCardClasses = await control.command('getAttribute', boardCard, { value: 'class' })
+      for (const className of ['border-focus/30', 'bg-focus/10']) {
+        assert.ok(
+          !boardCardClasses.split(' ').includes(className),
+          `A collaboration Issue card must not have unread styling: ${className}`
+        )
+      }
+      assert.equal(
+        (await ownerRequest(`/api/v1/loop-items/${issue.id}`)).is_unread,
+        true,
+        'Viewing the board must preserve the Issue read cursor'
+      )
+      const boardInbox = await ownerRequest('/api/v1/wework-notifications')
+      assert.equal(
+        boardInbox.items.find(item => item.id === boardNotification.id)?.read_at,
+        null,
+        'Viewing the board must preserve the unread mention notification'
+      )
+
+      await control.command('click', '[data-testid="wework-notifications-button"]')
+      await control.command('click', '[data-testid="wework-notifications-refresh"]')
+      await control.command('click', '[data-testid="wework-notifications-category-collaboration"]')
+      const notificationRow = `[data-testid="wework-notification-${boardNotification.id}"]`
+      await control.command('waitFor', `${notificationRow}[data-unread="true"]`)
+      await control.command('click', notificationRow)
+      await control.command('waitFor', commentSelectorFor(activeSurface, boardMessage.messageId), {
+        text: '@',
+        visible: true,
+      })
+      await waitForApiValue(
+        () => ownerRequest(`/api/v1/loop-items/${issue.id}`),
+        item =>
+          item.is_unread === false &&
+          item.activity_read_sequence > unreadIssue.activity_read_sequence,
+        'Reading the mentioned comment must advance the Issue activity read cursor',
+        uiTimeoutMs
+      )
+      const finalInbox = await ownerRequest('/api/v1/wework-notifications')
+      assert.ok(
+        finalInbox.items.find(item => item.id === boardNotification.id)?.read_at,
+        'Opening the notification from the board must persist its read state'
+      )
     },
   }
 }

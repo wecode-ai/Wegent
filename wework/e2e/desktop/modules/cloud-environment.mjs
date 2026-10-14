@@ -794,6 +794,8 @@ class RealCloudEnvironment {
       DEVICE_SESSION_GATEWAY_PORT: '0',
     }
     for (const key of [
+      'WORKSPACE_ROOT',
+      'WEGENT_WORKSPACE_ROOT',
       'WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED',
       'WEGENT_WORKBENCH_HOME',
       'WEGENT_CAPABILITIES_HOME',
@@ -875,7 +877,9 @@ class RealCloudEnvironment {
       })
       const stored = await this.queryDatabase(
         `SELECT id, name, JSON_EXTRACT(json, '$.spec.cloudConfig') AS cloud_config,
-                JSON_EXTRACT(json, '$.spec.deviceType') AS device_type
+                JSON_EXTRACT(json, '$.spec.deviceType') AS device_type,
+                JSON_EXTRACT(json, '$.spec.isDefault') AS is_default,
+                JSON_TYPE(JSON_EXTRACT(json, '$.spec.isDefault')) AS is_default_type
          FROM kinds WHERE kind = 'Device' AND namespace = 'default'
          AND user_id = %s AND name = %s`,
         [user.id, CLOUD_DEVICE_ID]
@@ -888,6 +892,7 @@ class RealCloudEnvironment {
             id: configured.id,
             device_type: configured.device_type,
             cloud_config: configured.cloud_config,
+            is_default: configured.is_default,
           },
         })
       )

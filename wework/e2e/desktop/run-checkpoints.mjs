@@ -7,7 +7,6 @@ import { fileURLToPath } from 'node:url'
 import { DESKTOP_CHECKPOINTS } from './checkpoints.mjs'
 import { runWithCheckpointResources } from './checkpoint-scheduler.mjs'
 import { resolveDesktopCodexBinary } from './modules/desktop-build-flows.mjs'
-import { reservePort } from './port-reservation.mjs'
 import { preparePackagedHarnessRuntimes } from './modules/runtime-assets.mjs'
 import {
   compactInactiveDesktopE2EResults,
@@ -256,41 +255,6 @@ function formatDuration(durationMs) {
   const minutes = Math.floor(totalSeconds / 60)
   const seconds = totalSeconds % 60
   return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`
-}
-
-function configuredPort(value, name) {
-  if (value === undefined) return null
-  const port = Number(value)
-  if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
-    throw new Error(`${name} must be a TCP port`)
-  }
-  return port
-}
-
-async function resolveServerPorts(env) {
-  const configuredModelPort = configuredPort(
-    env.WEWORK_E2E_MODEL_SERVER_PORT,
-    'WEWORK_E2E_MODEL_SERVER_PORT'
-  )
-  const configuredControlPort = configuredPort(
-    env.WEWORK_E2E_CONTROL_SERVER_PORT,
-    'WEWORK_E2E_CONTROL_SERVER_PORT'
-  )
-  const registryDir = env.WEWORK_E2E_PORT_REGISTRY_DIR
-  let modelServerPort = configuredModelPort ?? (await reservePort(registryDir))
-  let controlServerPort = configuredControlPort ?? (await reservePort(registryDir))
-
-  while (controlServerPort === modelServerPort) {
-    if (configuredControlPort !== null && configuredModelPort !== null) {
-      throw new Error('Desktop E2E control and model server ports must differ')
-    }
-    if (configuredControlPort !== null) {
-      modelServerPort = await reservePort(registryDir)
-    } else {
-      controlServerPort = await reservePort(registryDir)
-    }
-  }
-  return { controlServerPort, modelServerPort }
 }
 
 function runTaskFlow(args, env, label) {
@@ -597,9 +561,6 @@ async function runParallelCheckpoints(checkpoints) {
         const env = checkpointScenarioEnv({ ...sharedEnv }, checkpoint)
         delete env.WEWORK_E2E_CONTROL_SERVER_PORT
         delete env.WEWORK_E2E_MODEL_SERVER_PORT
-        const { controlServerPort, modelServerPort } = await resolveServerPorts(env)
-        env.WEWORK_E2E_CONTROL_SERVER_PORT = String(controlServerPort)
-        env.WEWORK_E2E_MODEL_SERVER_PORT = String(modelServerPort)
         console.log(`\n[desktop-e2e] START ${checkpoint}`)
         const result = await runTaskFlow(parallelCheckpointArgs(checkpoint), env, checkpoint)
         if (result.code === 0) {
@@ -634,18 +595,10 @@ async function runParallelCheckpoints(checkpoints) {
 
 async function runCheckpoints(checkpoints) {
   const sharedEnv = await sharedBuildEnvironment()
-  const { controlServerPort, modelServerPort } = await resolveServerPorts(sharedEnv)
   const failures = []
 
   for (const checkpoint of checkpoints) {
-    const env = checkpointScenarioEnv(
-      {
-        ...sharedEnv,
-        WEWORK_E2E_CONTROL_SERVER_PORT: String(controlServerPort),
-        WEWORK_E2E_MODEL_SERVER_PORT: String(modelServerPort),
-      },
-      checkpoint
-    )
+    const env = checkpointScenarioEnv({ ...sharedEnv }, checkpoint)
     console.log(`\n[desktop-e2e] START ${checkpoint}`)
     const args = CLOUD_ONLY_CHECKPOINTS.has(checkpoint)
       ? ['--cloud-only', '--segment', checkpoint]

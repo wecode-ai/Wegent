@@ -1092,6 +1092,7 @@ export function WeworkSharedProject({
                     } as unknown as CloudLoopItem
                   }
                   taskBindings={boardTaskBindings}
+                  unread={false}
                   onClick={onOpen}
                   onArchive={onDelete ?? (() => undefined)}
                   archiveLabel={t('todo.archive_issue', '归档任务')}

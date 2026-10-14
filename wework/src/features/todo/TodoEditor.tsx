@@ -207,7 +207,7 @@ export function TodoEditor(props: TodoEditorProps) {
     renderActivity: context =>
       props.projectChatClient ? (
         <TaskActivityView
-          key={`${context.item.id}:${context.item.assignee_team_id ?? context.item.assignee_agent_id ?? 'unassigned'}`}
+          key={context.item.id}
           client={props.projectChatClient}
           project={context.project as CloudProject}
           task={context.item as CloudLoopItem}

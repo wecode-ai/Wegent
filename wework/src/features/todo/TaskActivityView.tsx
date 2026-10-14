@@ -431,10 +431,27 @@ export function TaskActivityView({
     () => messages.filter(message => message.taskId === task.id),
     [messages, task]
   )
+  const markActivityRead = useCallback(
+    async (sequence: number) => {
+      if (!projectDeliveryApi) return
+      try {
+        const updated = await projectDeliveryApi.markLoopItemRead(task.id, sequence)
+        onTaskUpdated?.(updated)
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : t('workbench.save_failed'))
+        throw cause
+      }
+    },
+    [projectDeliveryApi, task.id, onTaskUpdated, t]
+  )
   const { listRef, followCard, scrollTaskCommentsToBottom, revealCardBottom } =
     useIssueActivityScroll({
       messages: threadMessages,
       loading,
+      issueId: issueTimeline ? task.id : undefined,
+      readSequence: task.activity_read_sequence ?? 0,
+      unread: Boolean(task.is_unread),
+      onReadSequence: issueTimeline && projectDeliveryApi ? markActivityRead : undefined,
       linear,
       compact,
       cardTestIdPrefix: 'cloud-task-activity-card-',

@@ -460,12 +460,11 @@ class DesktopE2EServer {
   ) {
     this.workspacePath = workspacePath
     this.cloudWorkspacePath = cloudWorkspacePath
-    this.desktopScenario = desktopScenario
     this.enableMarketplaceConnectorAppsStub = enableMarketplaceConnectorAppsStub
     this.server = createServer((request, response) => {
       void this.handle(request, response).catch(error => this.fail(error, response))
     })
-    this.desktopScenario?.attachServer?.(this.server)
+    this.setDesktopScenario(desktopScenario)
     this.controlServer = createServer((request, response) => {
       void this.handleControl(request, response).catch(error => this.fail(error, response))
     })
@@ -693,6 +692,11 @@ class DesktopE2EServer {
     )
     this.visionSidecarRequests = []
     this.multimodalVisionRequests = []
+  }
+
+  setDesktopScenario(desktopScenario) {
+    this.desktopScenario = desktopScenario
+    desktopScenario?.attachServer?.(this.server)
   }
 
   async start() {

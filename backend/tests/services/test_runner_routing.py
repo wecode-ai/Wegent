@@ -840,3 +840,32 @@ def test_stale_content_writer_preserves_committed_binding(tmp_path):
             "runner_binding": {"environment_id": "42"},
         }
     engine.dispose()
+
+
+def test_catalog_report_preserves_device_config_updated_after_loading(
+    test_db, routing_setup
+):
+    from app.services.runner_routing import save_catalog
+
+    user, devices, _ = routing_setup
+    device = devices[0]
+    cloud_config = {"sandboxId": "managed-sandbox", "deviceId": device.name}
+    latest = {
+        **device.json,
+        "spec": {**device.json["spec"], "cloudConfig": cloud_config},
+    }
+    test_db.query(Kind).filter(
+        Kind.id == device.id,
+        Kind.user_id == user.id,
+        Kind.namespace == "default",
+    ).update({Kind.json: latest}, synchronize_session=False)
+    assert "cloudConfig" not in device.json["spec"]
+
+    report = RunnerCatalog(
+        models=[{**MODEL, "label": "Updated model", "local_model_id": "updated-native"}]
+    )
+    save_catalog(test_db, device, report)
+    test_db.expire(device, ["json"])
+
+    assert device.json["spec"]["cloudConfig"] == cloud_config
+    assert device.json["spec"]["runnerCatalog"] == report.model_dump()
