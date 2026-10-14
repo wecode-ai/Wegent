@@ -161,6 +161,7 @@ export function RentSubscriptionDialog({
     displayName,
     triggerType,
     cronExpression,
+    cronTimezone,
     intervalValue,
     intervalUnit,
     executeAt,
