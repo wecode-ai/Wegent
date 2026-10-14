@@ -1392,6 +1392,8 @@
     "model_category_type_rerank": "重排序 (Rerank)",
     "model_category_type_video": "视频生成",
     "model_category_type_image": "图片生成",
+    "model_category_type_decision": "决策模型",
+    "decision_manual_model_id": "请填写决策服务提供的模型 ID",
     "image_config_title": "图片生成配置",
     "image_size": "图像尺寸",
     "image_size_hint": "生成图像的分辨率",

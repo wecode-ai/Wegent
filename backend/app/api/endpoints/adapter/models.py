@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.api.endpoints.adapter.decisions import router as decisions_router
 from app.core import security
 from app.core.constants import SUPPORTED_CLIENT_ORIGINS
 from app.models.kind import Kind
@@ -25,6 +26,7 @@ from app.services.adapters import public_model_service
 from app.services.model_aggregation_service import ModelType, model_aggregation_service
 
 router = APIRouter()
+router.include_router(decisions_router)
 logger = logging.getLogger(__name__)
 
 
@@ -316,6 +318,8 @@ def get_compatible_models(
             if not model_kind.json:
                 continue
             model_crd = ModelCRD.model_validate(model_kind.json)
+            if model_crd.spec.modelType != "llm":
+                continue
             model_config = model_crd.spec.modelConfig
             if isinstance(model_config, dict):
                 env = model_config.get("env", {})
@@ -577,7 +581,13 @@ def _test_llm_connection(
         model_category_type: Type of model (llm, embedding, tts, stt, rerank)
     """
     # Handle non-LLM model types
-    if model_category_type == "embedding":
+    if model_category_type == "decision":
+        from app.services.decision_model_service import test_decision_connection
+
+        return test_decision_connection(
+            provider_type, model_id, api_key, base_url or "", custom_headers
+        )
+    elif model_category_type == "embedding":
         return _test_embedding_connection(
             provider_type, model_id, api_key, base_url, custom_headers
         )

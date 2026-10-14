@@ -230,6 +230,12 @@ spec:
 
 ### Wework model-picker configuration
 
+Decision models set `spec.modelType: decision` and explicitly declare
+`spec.protocol: systemone` or `openai`, without a chat `apiFormat`.
+Provider URL, model ID and credentials remain in `spec.modelConfig.env`.
+Enable `isWeworkAvailable` to select them in the decision workbench.
+See [Decision Models](../../wework/developer-guide/wework-decision-models.md).
+
 Cloud models can provide model-picker metadata through `modelConfig.ui`. Mark
 the default model with `defaultModel: true`, and declare its supported reasoning
 efforts with `reasoningEfforts` and `defaultReasoningEffort`. The default model
