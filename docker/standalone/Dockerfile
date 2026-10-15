@@ -35,6 +35,7 @@ RUN corepack enable \
 # Copy source code
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages ./packages
+COPY shared/assets/codex-models ./shared/assets/codex-models
 COPY frontend ./frontend
 
 # App version injected at build time (e.g. "0.1.5")
@@ -78,7 +79,9 @@ COPY shared/assets ./shared/assets
 COPY wework ./wework
 
 ARG WEWORK_APP_BASE_PATH="/wework"
+ARG WEWORK_SOURCE_SHA
 ENV VITE_APP_BASE_PATH=${WEWORK_APP_BASE_PATH}
+ENV WEWORK_SOURCE_SHA=${WEWORK_SOURCE_SHA}
 ENV HUSKY=0
 
 WORKDIR /app/wework
