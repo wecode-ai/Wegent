@@ -1200,7 +1200,8 @@ export function useWorkbenchRuntimeMessaging({
         ...(options?.wegentTeamId ? { wegentTeamId: options.wegentTeamId } : {}),
         message: runtimeCreateMessage(intent),
         ...(clientUserMessageId ? { clientUserMessageId } : {}),
-        title: buildRuntimeTaskTitle(displayMessage, intent.title),
+        title:
+          options?.taskCreateRequest?.title ?? buildRuntimeTaskTitle(displayMessage, intent.title),
         modelId: executionModel.modelId,
         modelType: executionModel.modelType ?? null,
         modelOptions: {

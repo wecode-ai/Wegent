@@ -700,7 +700,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
         <RuntimeTaskSystemSleepBridge store={lifecycleStore} />
         <NotificationEventsBridge
           chatStream={services.chatStream}
-          currentUserId={user.id}
+          currentUserId={workbenchIdentity?.id}
           localUserId={LOCAL_USER.id}
         />
         <WorkbenchProvider
@@ -729,7 +729,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
       <RuntimeTaskSystemSleepBridge store={lifecycleStore} />
       <NotificationEventsBridge
         chatStream={services.chatStream}
-        currentUserId={user.id}
+        currentUserId={workbenchIdentity?.id}
         localUserId={LOCAL_USER.id}
       />
       {mountedWorkspaceTabs.map(tab => (

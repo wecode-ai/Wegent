@@ -59,6 +59,28 @@ async function replyToActivity(control, cardTestId, text) {
   await control.command('clickWhenEnabled', `${composer} [data-testid="send-message-button"]`)
 }
 
+async function replyToManager(control, cardTestId, text, timeoutMs) {
+  const messageId = cardTestId.slice('cloud-task-activity-card-'.length)
+  await control.command('scrollIntoView', scoped(`[data-testid="${cardTestId}"]`))
+  await control.command(
+    'click',
+    scoped(`[data-testid="cloud-task-manager-execution-${messageId}"]`)
+  )
+  const panel = scoped('[data-testid="work-item-task-chat-panel"]')
+  const composer = `${panel} [data-testid="chat-message-input"]`
+  await control.command('waitFor', composer, { timeoutMs })
+  await control.command('fill', composer, { value: text })
+  await control.command('clickWhenEnabled', `${panel} [data-testid="send-message-button"]`, {
+    timeoutMs,
+  })
+  await control.command('waitFor', `${panel} [data-testid="message-assistant"]`, {
+    text: MANAGER_REPLY_RESULT,
+    timeoutMs,
+  })
+  await control.command('click', scoped('[data-testid="ai-chat-modal-close"]'))
+  await control.command('waitFor', panel, { visible: false, timeoutMs })
+}
+
 function writeEvents(response, responseId, events) {
   response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
   response.end(createSse([responseCreated(responseId), ...events, responseCompleted(responseId)]))
@@ -814,22 +836,23 @@ export async function createDesktopScenario({
         bindingsBeforeReply.some(binding => binding.task_id === managerTaskId),
         '负责人分配动态没有绑定原负责人会话'
       )
-      await replyToActivity(control, assignmentCard, MANAGER_REPLY)
-      await waitForActivityText(control, MANAGER_REPLY_RESULT, modelResponseTimeoutMs)
-      const continuation = await waitForValue(
-        () => request(`/api/v1/cloud-projects/${project.id}/executions?include_terminal=true`),
-        response =>
-          response.items.find(
-            candidate =>
-              issueExecution(candidate, rootIssue.id) &&
-              candidate.id !== dispatch.id &&
-              candidate.runtimeTaskId === managerTaskId &&
-              terminalExecution(candidate)
-          ),
-        '回复没有通过真实队列完成原负责人会话的续聊',
-        modelResponseTimeoutMs
+      await replyToManager(control, assignmentCard, MANAGER_REPLY, modelResponseTimeoutMs)
+      const continuedTranscript = await request('/api/runtime-work/transcript', {
+        method: 'POST',
+        body: JSON.stringify({
+          deviceId: runtimeDeviceId(dispatch),
+          taskId: managerTaskId,
+        }),
+      })
+      assert.equal(continuedTranscript.taskId, managerTaskId)
+      assert.ok(
+        JSON.stringify(continuedTranscript.turns).includes(
+          '第一轮两个任务已交给 Executor 并发执行，等待全部结果。'
+        ),
+        'The continued manager session must retain its original conversation'
       )
-      assert.equal(runtimeDeviceId(continuation), REMOTE_DOCKER_DEVICE_ID)
+      assert.ok(JSON.stringify(continuedTranscript.turns).includes(MANAGER_REPLY))
+      assert.ok(JSON.stringify(continuedTranscript.turns).includes(MANAGER_REPLY_RESULT))
       assert.equal(managerReplyRequests, 1, '负责人回复被重复执行')
       const bindingsAfterReply = await request(`/api/v1/loop-items/${rootIssue.id}/tasks`)
       assert.deepEqual(

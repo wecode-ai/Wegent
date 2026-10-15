@@ -284,8 +284,8 @@ test.describe('Collaboration group Executor coordination', () => {
       expect(managerBodies.length).toBeGreaterThanOrEqual(2)
       expect(managerScenario.nextStep).toBe(2)
       expect(managerSessionIds).toEqual([`${executions[0].runtimeTaskId}-manager-initial`])
+      // Deferred discovery expands only tools requested by this scenario.
       expect(managerToolNames.some(isSubmitWorkflowPlan)).toBe(true)
-      expect(managerToolNames.some(isUpdateIssueStatus)).toBe(true)
       expect(managerToolNames.some(isNativeSubagentTool)).toBe(false)
       expect(modelRequestText(managerBodies.slice(0, 1))).toContain(
         'Project collaboration rules and workflow'

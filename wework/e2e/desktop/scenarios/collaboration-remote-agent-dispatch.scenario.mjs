@@ -160,12 +160,20 @@ async function createWorkspaceAndProject(control, request, timeoutMs) {
     scoped('[data-testid="collaboration-project-create-confirm"]'),
     { timeoutMs }
   )
-  return waitForValue(
+  const project = await waitForValue(
     async () => (await request(`/api/v1/workspaces/${workspace.id}/projects`)).items,
     items => items?.find(item => item.name === PROJECT),
     'Wework UI did not persist the project',
     timeoutMs
   )
+  await control.command('waitFor', scoped('[data-testid="collaboration-project-create-confirm"]'), {
+    visible: false,
+    timeoutMs,
+  })
+  await control.command('waitFor', scoped('[data-testid="collaboration-tab-board"]'), {
+    timeoutMs,
+  })
+  return project
 }
 
 async function createAgent(control, request, projectId, timeoutMs, environmentId) {

@@ -830,12 +830,23 @@ export function createDesktopScenario({
         uiTimeoutMs
       )
       assert.equal(runtimeTask.task.title, HUMAN_TASK)
-      assert.equal(runtimeTask.task.runtimeHandle.origin.type, 'issue_dispatch')
+      // Task lookup returns continuation identity; the work list exposes board ownership.
+      const runtimeWork = await requestExecutor(
+        control,
+        'runtime.tasks.list',
+        { preferCached: true },
+        uiTimeoutMs
+      )
+      const assignedTask = runtimeWork.workspaces
+        .flatMap(workspace => workspace.tasks)
+        .find(task => task.taskId === binding.task_id)
+      assert.ok(assignedTask, 'The assigned task must appear in the Runtime work list')
+      assert.equal(assignedTask.runtimeHandle.origin.type, 'issue_dispatch')
       assert.equal(
-        runtimeTask.task.runtimeHandle.origin.humanAssignmentId,
+        assignedTask.runtimeHandle.origin.humanAssignmentId,
         humanAssignment.payload.humanAssignmentId
       )
-      assert.equal(runtimeTask.task.runtimeHandle.origin.assignmentId, HUMAN_ASSIGNMENT_ID)
+      assert.equal(assignedTask.runtimeHandle.origin.assignmentId, HUMAN_ASSIGNMENT_ID)
       await waitForPromise(
         humanCompleted,
         modelResponseTimeoutMs,

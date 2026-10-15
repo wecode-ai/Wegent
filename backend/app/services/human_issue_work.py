@@ -66,7 +66,12 @@ class HumanIssueWorkService:
         return assignment
 
     def is_direct_human_assignment(self, db: Session, item: LoopItem) -> bool:
-        return self._assignment(db, item) is not None
+        """Collaboration rounds leave Issue status decisions with the manager."""
+        assignment = self._assignment(db, item)
+        return (
+            assignment is not None
+            and assignment.metadata.get("trigger") != "collaboration_round"
+        )
 
     def _reviewer_id(
         self, db: Session, item: LoopItem, assignment: AssignmentEvent
