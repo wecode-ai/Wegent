@@ -955,6 +955,7 @@ impl RuntimeWorkRpcHandler {
             ..Self::new(device_id, codex_binary)
         };
         if let Some(sender) = handler.event_tx.clone() {
+            crate::task_runtime::mcp_http::register_runtime_event_sender(sender.clone());
             handler.hook_service.set_event_sender(sender);
         }
         handler

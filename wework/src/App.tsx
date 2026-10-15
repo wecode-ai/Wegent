@@ -1,4 +1,5 @@
 import { NotificationEventsBridge } from '@/features/notifications/NotificationEventsBridge'
+import { LOCAL_USER } from '@/api/local/localSession'
 import {
   NotificationTaskSourceBridge,
   NotificationTaskSourceProvider,
@@ -697,7 +698,11 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
       <>
         <RuntimeTaskLifecycleStreamCoordinator services={services} store={lifecycleStore} />
         <RuntimeTaskSystemSleepBridge store={lifecycleStore} />
-        <NotificationEventsBridge chatStream={services.chatStream} />
+        <NotificationEventsBridge
+          chatStream={services.chatStream}
+          currentUserId={user.id}
+          localUserId={LOCAL_USER.id}
+        />
         <WorkbenchProvider
           lifecycleStore={lifecycleStore}
           services={services}
@@ -722,7 +727,11 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     <>
       <RuntimeTaskLifecycleStreamCoordinator services={services} store={lifecycleStore} />
       <RuntimeTaskSystemSleepBridge store={lifecycleStore} />
-      <NotificationEventsBridge chatStream={services.chatStream} />
+      <NotificationEventsBridge
+        chatStream={services.chatStream}
+        currentUserId={user.id}
+        localUserId={LOCAL_USER.id}
+      />
       {mountedWorkspaceTabs.map(tab => (
         <WorkspaceTabSurface
           key={tab.id}

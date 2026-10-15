@@ -30,6 +30,8 @@ export interface SharedIssueDetailTaskBinding {
     worktreeId?: string | null;
   } | null;
   binding_type?: "system" | "user";
+  human_assignment_id?: string | null;
+  dispatch_id?: string | null;
   linked_at: string;
 }
 
@@ -205,6 +207,8 @@ export function toSharedIssueDetailTaskBinding(
     modelSelection: binding.modelSelection,
     executionContext: binding.executionContext,
     binding_type: binding.bindingType,
+    human_assignment_id: binding.humanAssignmentId,
+    dispatch_id: binding.dispatchId,
     linked_at: binding.linkedAt,
   };
 }

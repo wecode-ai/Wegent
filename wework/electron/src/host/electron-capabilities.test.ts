@@ -253,6 +253,7 @@ describe('showElectronNotification', () => {
   test.each([
     'wework://tasks/device-1/task-1',
     'wework://boards/12/issues/gitlab%3A12%2Fissue%233',
+    'wework://boards/local/local-project-1/issues/OFF-1',
   ])('queues the same destination as an in-app notification on click: %s', url => {
     const navigation = { openRuntimeTask: vi.fn(), openScheme: vi.fn() }
     const listeners = new Map<string, () => void>()

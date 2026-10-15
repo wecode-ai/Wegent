@@ -50,6 +50,16 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('Wework scheme bridge', () => {
+  it('opens a local assignment even when cloud authentication is unavailable', () => {
+    render(<WeworkSchemeBridge />)
+    act(() => {
+      openWeworkScheme('wework://boards/local/local-project-1/issues/OFF-1')
+    })
+    expect(openTab).toHaveBeenCalledExactlyOnceWith('board', {
+      contentRoute: '/todo?projectStore=local&projectId=local-project-1&itemId=OFF-1',
+    })
+  })
+
   it.each(['popout-window', 'workspace-window'])(
     'leaves global native requests to the main window from %s',
     async windowLabel => {

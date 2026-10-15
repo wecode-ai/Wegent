@@ -207,8 +207,10 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
 
     expect(commands.createCollaborationGroup).toHaveBeenCalledWith(
       expect.objectContaining({
-        leader: { kind: "human", id: "7", responsibility: "" },
-        members: [{ kind: "human", id: "7", responsibility: "" }],
+        leader: { kind: "human", id: "7", name: "Alice", responsibility: "" },
+        members: [
+          { kind: "human", id: "7", name: "Alice", responsibility: "" },
+        ],
       }),
     );
   });
@@ -281,8 +283,10 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     await click(byTestId("collaboration-group-create"));
     expect(commands.createCollaborationGroup).toHaveBeenCalledWith(
       expect.objectContaining({
-        leader: { kind: "agent", id: "1", responsibility: "" },
-        members: [{ kind: "agent", id: "1", responsibility: "" }],
+        leader: { kind: "agent", id: "1", name: "Codex", responsibility: "" },
+        members: [
+          { kind: "agent", id: "1", name: "Codex", responsibility: "" },
+        ],
       }),
     );
   });
@@ -439,10 +443,10 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     expect(commands.createCollaborationGroup).toHaveBeenCalledWith({
       name: "交付小组",
       description: "负责产品交付",
-      leader: { kind: "agent", id: "1", responsibility: "" },
+      leader: { kind: "agent", id: "1", name: "Codex", responsibility: "" },
       members: [
-        { kind: "agent", id: "1", responsibility: "" },
-        { kind: "human", id: "7", responsibility: "代码审查" },
+        { kind: "agent", id: "1", name: "Codex", responsibility: "" },
+        { kind: "human", id: "7", name: "Alice", responsibility: "代码审查" },
       ],
       coordinationMode: "manager",
       instructions: "",
@@ -514,8 +518,10 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     expect(commands.updateCollaborationGroup).toHaveBeenCalledWith(
       group.id,
       expect.objectContaining({
-        leader: { kind: "agent", id: "1", responsibility: "" },
-        members: [{ kind: "agent", id: "1", responsibility: "" }],
+        leader: { kind: "agent", id: "1", name: "Codex", responsibility: "" },
+        members: [
+          { kind: "agent", id: "1", name: "Codex", responsibility: "" },
+        ],
         instructions: expect.stringContaining("@Claude Code"),
         stages: [
           expect.objectContaining({

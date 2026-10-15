@@ -294,6 +294,8 @@ export interface CollaborationPlatformResources {
 export interface CollaborationGroupMember {
   kind: "human" | "agent";
   id: string;
+  /** Display name persisted with the roster so managers can resolve @names. */
+  name?: string;
   responsibility: string;
 }
 

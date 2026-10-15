@@ -56,7 +56,11 @@ export function WeworkSchemeBridge() {
     const destination = parseWeworkScheme(url)
     if (!destination) return true
     const cloud = connectionRef.current
-    if (destination.kind === 'board' && (!cloud?.isConnected || !cloud.token)) {
+    if (
+      destination.kind === 'board' &&
+      destination.projectStore !== 'local' &&
+      (!cloud?.isConnected || !cloud.token)
+    ) {
       if (deferInRenderer) pendingUrls.current.add(url)
       if (cloud?.status !== 'restoring' && cloud?.status !== 'connecting') {
         navigateWorkspaceTab(tabsRef.current, 'task', '/settings/connections')

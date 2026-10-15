@@ -1,5 +1,5 @@
 import type { DndContextProps, DragCancelEvent, DragEndEvent, DragStartEvent } from '@dnd-kit/core'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
@@ -11,10 +11,16 @@ vi.mock('@/api/dsh/desktopHost', () => ({
     return {}
   }),
 }))
-import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
-import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
+import { WorkbenchContext, WorkbenchPaneContext } from '@/features/workbench/workbenchContexts'
+import type {
+  WorkbenchContextValue,
+  WorkbenchPaneContextValue,
+} from '@/features/workbench/workbenchContextTypes'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
+import {
+  RuntimeTaskLifecycleProvider,
+  RuntimeTaskLifecycleStore,
+} from '@/features/workbench/runtimeTaskLifecycle'
 import {
   applyRuntimeConversationAction,
   clearRuntimeConversationCacheForTests,
@@ -762,6 +768,7 @@ async function openIssueFromBoard(itemId = 'WEG-1') {
 
 describe('CloudTodoWorkspace', () => {
   beforeEach(() => {
+    HTMLElement.prototype.scrollTo = vi.fn()
     clearRuntimeConversationCacheForTests()
     telemetryMocks.track.mockClear()
     notificationActionMocks.action = null
@@ -2675,6 +2682,123 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('cloud-todo-detail')).not.toBeInTheDocument()
   }, 10_000)
 
+  it('opens a new personal task from its human assignment reply instead of the existing task', async () => {
+    const workbenchServices = services()
+    const onOpenRuntimeTask = vi.fn()
+    const assignment = {
+      assignee_type: 'human',
+      human_assignment_id: 'human-assignment-1',
+      human_user_id: 1,
+      assignment_id: 'collect-cpu',
+      task_title: 'Collect CPU evidence',
+      instructions: 'Collect read-only CPU evidence and deliver it.',
+    }
+    const managerMessage = {
+      messageId: 'human-dispatch',
+      clientMessageId: 'human-dispatch',
+      projectId: String(project.id),
+      taskId: item.id,
+      sequenceNumber: 1,
+      rootMessageId: null,
+      replyToMessageId: null,
+      threadRootMessageId: null,
+      sender: { type: 'agent', id: 'manager', name: 'Manager' },
+      type: 'text',
+      content: '',
+      metadata: {
+        dispatch_role: 'manager',
+        activity_type: 'manager_assignment',
+        dispatch_id: 'dispatch-1',
+        coordination_round_id: 'round-1',
+        dispatch_assignments: [assignment],
+      },
+      status: 'completed',
+      runtimeAddress: { deviceId: 'local-device', taskId: 'manager-task' },
+      createdAt: '2026-10-14T09:00:00Z',
+      updatedAt: '2026-10-14T09:00:00Z',
+    }
+    workbenchServices.projectChatClient = {
+      subscribe: vi.fn(async () => ({
+        snapshot: {
+          messages: [managerMessage],
+          currentUserId: '1',
+          latestSequence: 1,
+        },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async (input: { clientMessageId: string; text: string }) => ({
+        ...managerMessage,
+        messageId: input.clientMessageId,
+        sequenceNumber: 2,
+        content: input.text,
+        sender: { type: 'user', id: '1', name: 'local' },
+        rootMessageId: managerMessage.messageId,
+        replyToMessageId: managerMessage.messageId,
+        metadata: {},
+        runtimeAddress: null,
+      })),
+      dispose: vi.fn(),
+    } as never
+    const workbench = {
+      services: workbenchServices,
+      state: { devices: [], runtimeWork: null },
+      projectChat: { requestCatalogs: vi.fn() },
+      createProjectRuntimeTask: vi.fn(),
+      cancelRuntimeTask: vi.fn(),
+      sendRuntimePaneMessage: vi.fn(),
+    } as unknown as WorkbenchContextValue
+    render(
+      <RuntimeTaskLifecycleProvider store={new RuntimeTaskLifecycleStore(1)}>
+        <WorkbenchPaneContext.Provider value={workbench as unknown as WorkbenchPaneContextValue}>
+          <WorkbenchContext.Provider value={workbench}>
+            <CloudTodoWorkspace
+              user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+              localProjects={[]}
+              services={workbenchServices}
+              onOpenRuntimeTask={onOpenRuntimeTask}
+            />
+          </WorkbenchContext.Provider>
+        </WorkbenchPaneContext.Provider>
+      </RuntimeTaskLifecycleProvider>
+    )
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await screen.findByTestId('cloud-todo-card-WEG-1')
+    await openIssueFromBoard()
+    await userEvent.click(
+      await screen.findByTestId('cloud-task-activity-reply-toggle-human-dispatch')
+    )
+    await userEvent.type(screen.getByTestId('cloud-task-activity-composer'), 'Received')
+    await userEvent.click(
+      within(screen.getByTestId('cloud-task-activity-composer').closest('form')!).getByRole(
+        'button',
+        { name: '发送消息' }
+      )
+    )
+    const composer = await screen.findByTestId('ai-chat-modal')
+    expect(composer).not.toHaveAttribute('data-runtime-task-id')
+    expect(composer).toHaveAttribute(
+      'data-initial-task-input',
+      expect.stringContaining(assignment.instructions)
+    )
+    expect(composer.getAttribute('data-initial-task-input')).not.toContain('Received')
+    expect(onOpenRuntimeTask).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByTestId('mock-create-runtime-task'))
+    await waitFor(() =>
+      expect(workbenchServices.deliveryApi!.bindTask).toHaveBeenCalledWith(
+        item.id,
+        { deviceId: 'local-device', taskId: 'runtime-created' },
+        assignment.task_title,
+        null,
+        {
+          humanAssignmentId: assignment.human_assignment_id,
+          dispatchId: 'dispatch-1',
+          dispatchRoundId: 'round-1',
+          assignmentId: assignment.assignment_id,
+        }
+      )
+    )
+  })
+
   it('opens the existing personal task from an Issue dispatch notification', async () => {
     const workbenchServices = services()
     const onOpenRuntimeTask = vi.fn()
@@ -2768,6 +2892,47 @@ describe('CloudTodoWorkspace', () => {
       )
     )
     expect(onOpenRuntimeTask).not.toHaveBeenCalled()
+  })
+
+  it('shows a failed assignment lookup and opens the composer only after retry succeeds', async () => {
+    const workbenchServices = services()
+    const subscribe = vi.fn(async () => ({
+      snapshot: { messages: [], latestSequence: 0, currentUserId: '1' },
+      unsubscribe: vi.fn(),
+    }))
+    workbenchServices.projectChatClient = { subscribe, send: vi.fn(), dispose: vi.fn() } as never
+    const workbench = {
+      services: workbenchServices,
+      state: { devices: [], runtimeWork: null },
+      projectChat: { requestCatalogs: vi.fn() },
+      createProjectRuntimeTask: vi.fn(),
+      cancelRuntimeTask: vi.fn(),
+      sendRuntimePaneMessage: vi.fn(),
+    } as unknown as WorkbenchContextValue
+    render(
+      <RuntimeTaskLifecycleProvider store={new RuntimeTaskLifecycleStore(1)}>
+        <WorkbenchPaneContext.Provider value={workbench as unknown as WorkbenchPaneContextValue}>
+          <WorkbenchContext.Provider value={workbench}>
+            <CloudTodoWorkspace
+              user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+              localProjects={[]}
+              services={workbenchServices}
+              embedded
+              activeProjectRef={{ projectStore: 'backend', projectId: String(project.id) }}
+            />
+          </WorkbenchContext.Provider>
+        </WorkbenchPaneContext.Provider>
+      </RuntimeTaskLifecycleProvider>
+    )
+    await screen.findByTestId('cloud-todo-card-WEG-1')
+    await openIssueFromBoard()
+    subscribe.mockRejectedValueOnce(new Error('offline'))
+    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
+    expect(await screen.findByTestId('transient-notice')).toHaveTextContent('offline')
+    expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
+    expect(await screen.findByTestId('ai-chat-modal')).toBeInTheDocument()
+    expect(screen.queryByTestId('transient-notice')).not.toBeInTheDocument()
   })
 
   it('ignores a task address that resolves after reopening the task panel', async () => {
@@ -2988,10 +3153,12 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
-    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
+    await userEvent.click(await screen.findByTestId('cloud-todo-personal-task-start'))
 
-    expect(screen.getByTestId('ai-chat-modal')).not.toHaveAttribute('data-task-device-id')
-    expect(screen.getByTestId('ai-chat-modal')).not.toHaveAttribute('data-task-workspace-path')
+    expect(await screen.findByTestId('ai-chat-modal')).not.toHaveAttribute('data-task-device-id')
+    expect(await screen.findByTestId('ai-chat-modal')).not.toHaveAttribute(
+      'data-task-workspace-path'
+    )
     expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
       'data-initial-task-input',
       '[$WEG-1 · Implement cloud MCP](wework-issue://11/WEG-1)'

@@ -54,8 +54,9 @@ import { ensureDefaultLocalAgent } from '@/features/collaboration/defaultLocalAg
 import { useIssueDispatchNotificationActionRegistration } from '@/features/notifications/useIssueDispatchNotificationActionRegistration'
 import {
   issueDispatchPersonalTaskInput,
-  type IssueDispatchPersonalTaskAction,
+  type IssueTaskDispatchInput,
 } from '@/features/notifications/NotificationTaskSourceContext'
+import { humanTaskDispatchInput, resolveHumanTaskDispatch } from './humanTaskDispatch'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import type {
   ArchiveRuntimeConversationsResult,
@@ -380,7 +381,7 @@ export function WeworkSharedProject({
     issue: CollaborationIssue
     conversationKey: string
     taskRequest?: RuntimeTaskCreateRequest | null
-    dispatch?: IssueDispatchPersonalTaskAction
+    dispatch?: IssueTaskDispatchInput
     humanWorkBinding?: NonNullable<CollaborationIssue['human_work']>['ai_task_binding']
   } | null>(null)
   const latestProjectRef = useRef(project)
@@ -696,8 +697,25 @@ export function WeworkSharedProject({
   }, [detailServices?.projectChatClient, project.id])
 
   const openNewTaskConversation = useCallback(
-    async (issue: CollaborationIssue, dispatch?: IssueDispatchPersonalTaskAction) => {
+    async (issue: CollaborationIssue, dispatch?: IssueTaskDispatchInput) => {
       if (!runtimePort) throw new Error('当前工作台无法打开个人任务')
+      try {
+        dispatch ??= await resolveHumanTaskDispatch(
+          detailServices?.projectChatClient,
+          project.id,
+          issue.id,
+          userId
+        )
+      } catch (cause) {
+        notify(
+          t('workbench.issue_task_dispatch_lookup_failed', {
+            reason: cause instanceof Error ? cause.message : String(cause),
+          }),
+          'error'
+        )
+        return
+      }
+      clearNotice()
       const humanWorkBinding = issue.human_work?.can_submit
         ? issue.human_work.ai_task_binding
         : null
@@ -746,7 +764,16 @@ export function WeworkSharedProject({
         projectHost.navigate({ ...projectHost.location, issueId: issue.id })
       }
     },
-    [projectHost, runtimePort]
+    [
+      clearNotice,
+      detailServices?.projectChatClient,
+      notify,
+      project.id,
+      projectHost,
+      runtimePort,
+      t,
+      userId,
+    ]
   )
   const openBoundTaskConversation = useCallback(
     async (issue: CollaborationIssue, address: RuntimeTaskAddress) => {
@@ -1020,6 +1047,11 @@ export function WeworkSharedProject({
                   onCreateTask={onCreateTask}
                   onDelete={onDelete}
                   deleteLabel={createCollaborationTranslator(locale)('todo.archive_issue')}
+                  onStartHumanTaskFromReply={({ issueId, dispatch }) =>
+                    String(issueId) === String(issue.id)
+                      ? openNewTaskConversation(issue, humanTaskDispatchInput(dispatch))
+                      : undefined
+                  }
                   onOpenTaskConversation={
                     runtimePort
                       ? task =>

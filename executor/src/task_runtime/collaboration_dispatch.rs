@@ -3,10 +3,14 @@
 //! A manager submits one batch through the project-space MCP. Every agent
 //! assignment becomes an independent Runtime execution so each member keeps
 //! its configured shell, model, device policy, and capabilities. Once the
-//! batch reaches a terminal state, the Executor queues a fresh manager
-//! execution to evaluate the results and decide the next batch.
+//! agent-only batch finishes, ownership stays with the executing agent. Human
+//! deliveries resume the manager to evaluate the submitted results.
 
 use super::*;
+
+#[path = "collaboration_round_assignment.rs"]
+mod round_assignment;
+use round_assignment::{apply_round_assignee, update_manager_assignment_activity};
 
 const TERMINAL_EXECUTION_STATUSES: &[&str] = &["completed", "failed", "cancelled"];
 
@@ -113,8 +117,6 @@ impl LocalTaskStore {
                         "task_title": title,
                         "agent_id": assignee_id,
                         "agent_name": agent_display_name(&agent),
-                        "assignee_id": assignee_id,
-                        "assignee_name": agent_display_name(&agent),
                         "workflow_stage_id": assignment.get("workflow_stage_id"),
                         "model_id": selected_model_id,
                     }));
@@ -136,8 +138,9 @@ impl LocalTaskStore {
                         "assignment_id": assignment_id,
                         "assignee_type": "human",
                         "task_title": title,
-                        "assignee_id": assignee_id,
-                        "assignee_name": human_name,
+                        "instructions": instructions,
+                        "human_user_id": assignee_id,
+                        "human_user_name": human_name,
                         "workflow_stage_id": assignment.get("workflow_stage_id"),
                     }));
                 }
@@ -166,10 +169,18 @@ impl LocalTaskStore {
              WHERE id = ?3",
             params![updated_payload.to_string(), now(), manager_execution_id],
         )?;
+        apply_round_assignee(&transaction, &manager.loop_item_id, &dispatched)?;
+        let dispatch_id = manager
+            .execution_payload
+            .as_ref()
+            .and_then(|payload| payload.get("dispatch_id"))
+            .and_then(Value::as_str)
+            .unwrap_or(&manager.loop_item_id);
         update_manager_assignment_activity(
             &transaction,
             manager_execution_id,
             round_id,
+            dispatch_id,
             &dispatched,
         )?;
         transaction.commit()?;
@@ -227,6 +238,31 @@ impl LocalTaskStore {
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         if !collaboration_round_is_ready(&transaction, item_id, round_id)? {
             transaction.rollback()?;
+            return Ok(());
+        }
+        let has_human_assignment: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM loop_items
+             WHERE parent_id = ?1 AND resource_type = 'task' AND deleted_at IS NULL
+               AND json_extract(metadata, '$.collaboration_assignment.assignee_type') = 'human'
+               AND json_extract(metadata, '$.collaboration_assignment.round_id') = ?2)",
+            params![item_id, round_id],
+            |row| row.get(0),
+        )?;
+        if !has_human_assignment {
+            transaction.execute(
+                "UPDATE loop_items SET status = 'in_review', version = version + 1, updated_at = ?1
+                 WHERE id = ?2 AND status = 'in_progress'
+                   AND assignee_agent_id IN (SELECT agent_id FROM loop_item_executions
+                     WHERE loop_item_id = ?2
+                       AND json_extract(execution_payload, '$.coordination_round_id') = ?3)
+                   AND NOT EXISTS(SELECT 1 FROM loop_item_executions
+                     WHERE loop_item_id = ?2 AND status != 'completed'
+                       AND json_extract(execution_payload, '$.coordination_round_id') = ?3)
+                   AND NOT EXISTS(SELECT 1 FROM loop_item_executions
+                     WHERE loop_item_id = ?2 AND status IN ('queued','pending_approval','claimed','running','cancel_requested'))",
+                params![now(), item_id, round_id],
+            )?;
+            transaction.commit()?;
             return Ok(());
         }
         if manager_resume_exists(&transaction, item_id, round_id)? {
@@ -617,6 +653,13 @@ fn create_human_assignment_task(
         .ok_or_else(|| TaskRuntimeError::Invalid("project key is missing".to_owned()))?;
     let task_id = format!("{project_key}-{sequence}");
     let timestamp = now();
+    let dispatch_id = manager
+        .execution_payload
+        .as_ref()
+        .and_then(|payload| payload.get("dispatch_id"))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| manager.loop_item_id.clone());
     let metadata = json!({
         "tags": [],
         "is_unread": true,
@@ -624,6 +667,7 @@ fn create_human_assignment_task(
             "assignment_id": assignment_id,
             "assignee_type": "human",
             "round_id": round_id,
+            "dispatch_id": dispatch_id,
             "manager_execution_id": manager.id,
             "root_item_id": manager.loop_item_id,
             "workflow_stage_id": workflow_stage_id,
@@ -713,50 +757,6 @@ fn collaboration_round_exists(
         params![item_id, round_id],
         |row| row.get(0),
     )?)
-}
-
-fn update_manager_assignment_activity(
-    connection: &Connection,
-    manager_execution_id: i64,
-    round_id: &str,
-    assignments: &[Value],
-) -> Result<(), TaskRuntimeError> {
-    connection.execute(
-        "UPDATE loop_item_comments
-         SET content = ?1,
-             metadata = json_set(
-                 metadata,
-                 '$.dispatch_assignments',
-                 json(?2),
-                 '$.coordination_round_id',
-                 ?3
-             ),
-             updated_at = ?4
-         WHERE deleted_at IS NULL
-           AND json_extract(metadata, '$.execution_id') = ?5",
-        params![
-            assignment_summary(assignments),
-            Value::Array(assignments.to_vec()).to_string(),
-            round_id,
-            now(),
-            manager_execution_id,
-        ],
-    )?;
-    Ok(())
-}
-
-fn assignment_summary(assignments: &[Value]) -> String {
-    assignments
-        .iter()
-        .filter_map(|assignment| {
-            Some(format!(
-                "{} → {}",
-                assignment.get("task_title")?.as_str()?,
-                assignment.get("assignee_name")?.as_str()?
-            ))
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 fn coordination_round_id(execution: &LocalExecution) -> Option<String> {

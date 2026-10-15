@@ -365,18 +365,22 @@ def bind_collaboration_activity_task(
     dispatch: LoopItemExecution,
     activity: ProjectChatMessage,
     item: LoopItem,
-) -> None:
+    assignment: dict[str, Any] | None = None,
+) -> LoopItemTaskBinding:
     """Share transcript authorization for manager and member native sessions."""
     from app.schemas.delivery import LoopItemTaskBind
     from app.services.loop_items.service import loop_item_service
 
-    loop_item_service.bind_execution_task(
+    return loop_item_service.bind_execution_task(
         db,
         item_id=item.id,
         values=LoopItemTaskBind(
             deviceId=activity.runtime_device_id,
             taskId=activity.runtime_task_id,
-            taskTitle=item.title or "",
+            taskTitle=(assignment or {}).get("task_title") or item.title or "",
+            dispatchId=(activity.metadata_json or {}).get("dispatch_id"),
+            dispatchRoundId=(activity.metadata_json or {}).get("coordination_round_id"),
+            assignmentId=(activity.metadata_json or {}).get("assignment_id"),
         ),
         user_id=dispatch.executor_owner_user_id,
         commit=False,

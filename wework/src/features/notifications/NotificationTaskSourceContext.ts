@@ -6,12 +6,11 @@ export type TaskSource = Pick<
   'items' | 'unreadTaskKeys' | 'markRuntimeTaskRead'
 >
 
-export interface IssueDispatchPersonalTaskAction {
-  projectId: string
-  itemId: string
-  issueId: string
-  dispatchTaskId: string
-  idempotencyKey: string
+/**
+ * The assignment binding every task started from an Issue dispatch shares,
+ * whether the user opened a notification or replied in the Issue timeline.
+ */
+export interface IssueTaskDispatchInput {
   humanAssignmentId: string
   dispatchId: string
   roundId: string
@@ -21,8 +20,16 @@ export interface IssueDispatchPersonalTaskAction {
   workflowStageId?: string
 }
 
+export interface IssueDispatchPersonalTaskAction extends IssueTaskDispatchInput {
+  projectId: string
+  itemId: string
+  issueId: string
+  dispatchTaskId: string
+  idempotencyKey: string
+}
+
 export function issueDispatchPersonalTaskInput(
-  action: Pick<IssueDispatchPersonalTaskAction, 'taskTitle' | 'instructions'>
+  action: Pick<IssueTaskDispatchInput, 'taskTitle' | 'instructions'>
 ): string {
   return `${action.taskTitle}\n\n${action.instructions}`
 }

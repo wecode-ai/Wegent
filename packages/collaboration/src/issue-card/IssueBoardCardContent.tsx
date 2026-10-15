@@ -4,6 +4,7 @@ import {
   type CollaborationIssueCardProps,
 } from "./CollaborationIssueCard";
 import { IssueCardGoalSummary } from "./IssueCardTaskSummary";
+import { issueNeedsExecutionConfiguration } from "./model";
 import type { CollaborationTranslate } from "../i18n";
 import { Tooltip } from "../issue-detail/Tooltip";
 
@@ -33,16 +34,15 @@ export function IssueBoardCardContent({
   agentNames,
   unread,
   goal,
-  needsExecutionConfiguration,
   translate: t,
 }: Pick<
   CollaborationIssueCardProps,
   "item" | "reference" | "display" | "labels" | "agentNames" | "unread"
 > & {
   goal?: { bindingId: string | number; objective: string } | null;
-  needsExecutionConfiguration?: boolean;
   translate: CollaborationTranslate;
 }) {
+  const needsExecutionConfiguration = issueNeedsExecutionConfiguration(item);
   return (
     <>
       <CollaborationIssueCardContent

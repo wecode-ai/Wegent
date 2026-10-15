@@ -164,16 +164,13 @@ def collaboration_human_assignment_status(
         .order_by(LoopItemTaskBinding.linked_at.desc())
         .all()
     )
-    binding = next(
-        (
-            row
-            for row in bindings
-            if isinstance(row.metadata_json, dict)
-            and row.metadata_json.get("human_assignment_id") == human_assignment_id
-        ),
-        None,
-    )
-    if binding is None:
+    assignment_bindings = [
+        row
+        for row in bindings
+        if isinstance(row.metadata_json, dict)
+        and row.metadata_json.get("human_assignment_id") == human_assignment_id
+    ]
+    if not assignment_bindings:
         return {
             "assignee_type": "human",
             "work_id": f"human_assignment:{human_assignment_id}",
@@ -187,11 +184,22 @@ def collaboration_human_assignment_status(
         db.query(Delivery)
         .filter(
             Delivery.loop_item_id == issue_id,
-            Delivery.source_task_binding_id == str(binding.id),
+            Delivery.source_task_binding_id.in_(
+                [str(binding.id) for binding in assignment_bindings]
+            ),
             Delivery.status == "delivered",
         )
         .order_by(Delivery.delivered_at.desc(), Delivery.created_at.desc())
         .first()
+    )
+    binding = (
+        next(
+            binding
+            for binding in assignment_bindings
+            if str(binding.id) == delivery.source_task_binding_id
+        )
+        if delivery is not None
+        else assignment_bindings[0]
     )
     result = delivery_service.read_markdown(delivery) if delivery is not None else ""
     return {

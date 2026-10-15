@@ -74,6 +74,8 @@ def _legacy_engine() -> Engine:
         sa.Column("namespace", sa.String(100), nullable=False, default="default"),
         sa.Column("json", sa.JSON, nullable=False),
         sa.Column("is_active", sa.Boolean, nullable=False),
+        sa.Column("created_at", sa.DateTime),
+        sa.Column("updated_at", sa.DateTime),
     )
     metadata.create_all(engine)
     return engine
@@ -265,6 +267,15 @@ def _workspace_ids(connection: Connection) -> dict[int, int]:
 
 def _assert_workspace_kinds(connection: Connection) -> None:
     assert set(_workspace_ids(connection)) == {10, 20}
+    kinds = sa.Table("kinds", sa.MetaData(), autoload_with=connection)
+    workspaces = connection.execute(
+        sa.select(kinds.c.created_at, kinds.c.updated_at).where(
+            kinds.c.kind == "CollaborationWorkspace"
+        )
+    ).all()
+    assert all(
+        row.created_at is not None and row.updated_at is not None for row in workspaces
+    )
 
 
 def _assert_resource_grants(connection: Connection) -> None:

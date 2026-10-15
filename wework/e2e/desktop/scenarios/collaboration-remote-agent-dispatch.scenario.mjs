@@ -37,6 +37,7 @@ const WORKSPACE = `远程单智能体空间-${process.pid}`
 const PROJECT = `远程单智能体项目-${process.pid}`
 const AGENT = `远程执行智能体-${process.pid}`
 const ISSUE = `远程执行闭环-${process.pid}`
+const UNCONFIGURED_ISSUE = `等待执行配置-${process.pid}`
 const MARKER = `REMOTE_AGENT_DISPATCH_${process.pid}`
 const COMPLETION = `${MARKER}_COMPLETED_BY_REMOTE_EXECUTOR`
 const CONTINUATION = `${MARKER}_CONTINUE_MANUAL_SESSION`
@@ -189,10 +190,10 @@ async function createAgent(control, request, projectId, timeoutMs, environmentId
   )
 }
 
-async function createAndAssignIssue(control, request, projectId, agent, timeoutMs) {
+async function createAndAssignIssue(control, request, projectId, agent, timeoutMs, title = ISSUE) {
   await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
   await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
-  await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), { value: ISSUE })
+  await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), { value: title })
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
     value: `${MARKER}。由单个智能体在远程 Executor 上完成并提交待确认。`,
   })
@@ -201,7 +202,7 @@ async function createAndAssignIssue(control, request, projectId, agent, timeoutM
   })
   const issue = await waitForValue(
     async () => (await request(`/api/v1/cloud-projects/${projectId}/loop-items`)).items,
-    items => items.find(item => item.title === ISSUE),
+    items => items.find(item => item.title === title),
     'Wework UI did not persist the Issue',
     timeoutMs
   )
@@ -214,6 +215,55 @@ async function createAndAssignIssue(control, request, projectId, agent, timeoutM
     timeoutMs,
   })
   return issue
+}
+
+async function verifyUnconfiguredAssignment(
+  control,
+  request,
+  projectId,
+  timeoutMs,
+  captureScreenshot
+) {
+  const agent = await request(`/api/v1/cloud-projects/${projectId}/chat-agents`, {
+    method: 'POST',
+    body: JSON.stringify({
+      name: `缺少配置的执行者-${process.pid}`,
+      capability_mode: 'manual',
+      visibility: 'public',
+    }),
+  })
+  const issue = await createAndAssignIssue(
+    control,
+    request,
+    projectId,
+    agent,
+    timeoutMs,
+    UNCONFIGURED_ISSUE
+  )
+  await waitForValue(
+    () => request(`/api/v1/loop-items/${issue.id}`),
+    item => item.status === 'in_progress' && item.execution_state === 'waiting_runtime',
+    'An assigned robot without configuration did not expose its blocked Run',
+    timeoutMs
+  )
+  await control.command('waitFor', scoped('[data-testid="cloud-todo-detail-status"]'), {
+    value: 'in_progress',
+    timeoutMs,
+  })
+  await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
+  await control.command(
+    'waitFor',
+    scoped(
+      `[data-testid="cloud-todo-column-in_progress"] [data-testid="collaboration-issue-${issue.id}"]`
+    ),
+    { visible: true, timeoutMs }
+  )
+  await control.command(
+    'waitFor',
+    scoped(`[data-testid="cloud-todo-card-needs-execution-config-${issue.id}"]`),
+    { text: '待配置', visible: true, timeoutMs }
+  )
+  await captureScreenshot(control, 'remote-agent-dispatch-00-waiting-configuration.png', CONTENT)
 }
 
 async function createAutoTaggedIssue(control, request, projectId, agent, timeoutMs) {
@@ -630,6 +680,11 @@ export function createDesktopScenario({
         return true
       }
       const serialized = JSON.stringify(body)
+      assert.equal(
+        serialized.includes(UNCONFIGURED_ISSUE),
+        false,
+        'A robot blocked on missing configuration invoked the model'
+      )
       if (!serialized.includes(MARKER)) {
         writeEvents(response, responseId, [])
         return true
@@ -746,6 +801,13 @@ export function createDesktopScenario({
       })
       await selectCollaborationDomain(control, CONTENT, 'cloud')
       project = await createWorkspaceAndProject(control, request, uiTimeoutMs)
+      await verifyUnconfiguredAssignment(
+        control,
+        request,
+        project.id,
+        modelResponseTimeoutMs,
+        captureScreenshot
+      )
       await configureFirstProjectExecutionEnvironment(
         control,
         CONTENT,
