@@ -143,7 +143,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       })
       assert.equal(
         await control.command('getText', '[data-testid="workspace-file-path"]'),
-        join(workspacePath, 'auth.ts'),
+        join(workspacePath, 'auth.ts').replaceAll('\\', '/'),
         'The second local file did not replace the retained preview after loading'
       )
       await showFileTree(control)
@@ -160,7 +160,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       )
       assert.equal(
         await control.command('getText', '[data-testid="workspace-file-path"]'),
-        join(workspacePath, 'auth.ts'),
+        join(workspacePath, 'auth.ts').replaceAll('\\', '/'),
         'Browsing another directory must retain the opened file preview'
       )
       await captureScreenshot(control, 'local-file-preview-01-dark-editor.png', 'body')

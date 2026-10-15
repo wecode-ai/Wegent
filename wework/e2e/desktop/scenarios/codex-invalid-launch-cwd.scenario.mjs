@@ -5,6 +5,7 @@ import { join } from 'node:path'
 
 import {
   createSingleRootLocalProject,
+  fetchJson,
   selectE2EModel,
   waitForLogPattern,
 } from '../modules/shared.mjs'
@@ -245,8 +246,27 @@ export function createDesktopScenario({
     'The built-in OpenAI provider scenario requires the reserved model server port'
   )
   const modelServerUrl = `http://127.0.0.1:${modelServerPort}`
+  let configPath
+  const configStates = []
+  let loadedConfigState
+  const captureConfigState = async phase => {
+    const content = await readFile(configPath, 'utf8')
+    const state = {
+      phase,
+      bytes: Buffer.byteLength(content),
+      sha256: createHash('sha256').update(content).digest('hex'),
+      expectedModelPresent: content.includes(`model = "${BUILTIN_MODEL_ID}"`),
+      expectedBaseUrlPresent: content.includes(`openai_base_url = "${modelServerUrl}/v1"`),
+    }
+    configStates.push(state)
+    console.log(`[desktop-e2e] invalid-cwd config state: ${JSON.stringify(state)}`)
+  }
 
   return {
+    async prepareApp({ codexHome }) {
+      configPath = join(codexHome, 'config.toml')
+      await captureConfigState('before-launch')
+    },
     attachServer(server) {
       server.on('upgrade', (request, socket, head) => {
         sockets.add(socket)
@@ -290,6 +310,7 @@ export function createDesktopScenario({
     },
 
     async verify(control) {
+      await captureConfigState('before-executor-restart')
       if (process.platform !== 'win32') {
         await restartExecutorAfterRemovingCwd(
           control,
@@ -298,6 +319,7 @@ export function createDesktopScenario({
           uiTimeoutMs
         )
       }
+      await captureConfigState('after-executor-restart')
       await createSingleRootLocalProject(control, workspacePath, 'codex-invalid-launch-cwd')
       // The restarted runtime must refresh the real catalog before interacting with its menu.
       const modelCatalogLogOffset = (await readFile(executorLogPath, 'utf8')).length
@@ -308,6 +330,29 @@ export function createDesktopScenario({
         { fromOffset: modelCatalogLogOffset, timeoutMs: uiTimeoutMs }
       )
       await selectE2EModel(control, BUILTIN_MODEL_ID, BUILTIN_MODEL_LABEL, '', 'openai')
+      await captureConfigState('before-send')
+      const origin = await control.command('getLocationOrigin', 'body')
+      const response = await fetchJson(`${origin}/wework/executor/v1/rpc`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: 'invalid-cwd-config-diagnostics',
+          method: 'runtime.codex.app_server.request',
+          params: { method: 'config/read', params: { includeLayers: true, cwd: null } },
+        }),
+      })
+      assert.equal(response.ok, true, 'The restarted Codex could not read its configuration')
+      loadedConfigState = {
+        expectedModelPresent: response.result.config.model === BUILTIN_MODEL_ID,
+        layers: response.result.layers?.map(layer => ({
+          type: layer.name.type,
+          file: layer.name.file,
+          disabled: Boolean(layer.disabledReason),
+          modelPresent: typeof layer.config?.model === 'string',
+          openaiBaseUrlPresent: typeof layer.config?.openai_base_url === 'string',
+        })),
+      }
+      console.log(`[desktop-e2e] invalid-cwd loaded config: ${JSON.stringify(loadedConfigState)}`)
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('fill', COMPOSER_SELECTOR, { value: PROMPT })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
@@ -336,7 +381,7 @@ export function createDesktopScenario({
     },
 
     diagnostics() {
-      return { requestCount }
+      return { requestCount, configStates, loadedConfigState }
     },
   }
 }

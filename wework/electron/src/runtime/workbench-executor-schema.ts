@@ -28,6 +28,28 @@ export function assertWorkbenchSchema(response: unknown): void {
   }
 }
 
+function executorSchemaQueryFailure(error: unknown, elapsedMs: number): Error {
+  const failure = error as { code?: unknown; signal?: unknown; killed?: unknown }
+  const metadata = {
+    elapsedMs,
+    code:
+      typeof failure?.code === 'number' ||
+      (typeof failure?.code === 'string' && /^[A-Z0-9_]+$/.test(failure.code))
+        ? failure.code
+        : null,
+    signal:
+      typeof failure?.signal === 'string' && /^SIG[A-Z0-9]+$/.test(failure.signal)
+        ? failure.signal
+        : null,
+    killed: failure?.killed === true,
+  }
+  console.error('[executor-schema] query failed', metadata)
+  // Preserve safe exit details as the cause without child output or credentials.
+  return new Error('Executor Workbench schema query failed; no Home migration is permitted', {
+    cause: metadata,
+  })
+}
+
 export async function assertExecutorWorkbenchCompatibility(
   environment: NodeJS.ProcessEnv
 ): Promise<void> {
@@ -45,6 +67,7 @@ export async function assertExecutorWorkbenchCompatibility(
     )
   }
   let response: unknown
+  const startedAt = Date.now()
   try {
     // Old executors ignore unknown flags. --version makes them exit without loading Homes.
     // Never pass runtime flags or credentials into this read-only capability query.
@@ -61,9 +84,8 @@ export async function assertExecutorWorkbenchCompatibility(
       encoding: 'utf8',
     })
     response = JSON.parse(stdout)
-  } catch {
-    // Child output may contain local diagnostics; don't include it in error logs.
-    throw new Error('Executor Workbench schema query failed; no Home migration is permitted')
+  } catch (error) {
+    throw executorSchemaQueryFailure(error, Date.now() - startedAt)
   }
   assertWorkbenchSchema(response)
 }

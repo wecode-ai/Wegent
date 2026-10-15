@@ -1,19 +1,8 @@
-import {
-  chmod,
-  lstat,
-  mkdir,
-  readFile,
-  realpath,
-  rm,
-  stat,
-  symlink,
-  writeFile,
-} from 'node:fs/promises'
+import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, test, vi } from 'vitest'
 import {
   CORE_DSH_VERSION,
-  copyManagedPlugin,
   createCoreDshLaunch,
   prepareCoreDshRuntime,
   resetCoreDshRuntime,
@@ -35,42 +24,6 @@ async function prepareCoreDshLaunch(
 }
 
 describe('core DSH runtime', () => {
-  test('preserves linked plugin directories as Windows junctions', async () => {
-    const root = await temporaryDirectory('core-dsh-windows-links-')
-    try {
-      const source = join(root.path, 'source')
-      const assets = join(root.path, 'assets')
-      const destination = join(root.path, 'destination')
-      await mkdir(join(source, 'web'), { recursive: true })
-      await mkdir(assets)
-      await writeFile(join(assets, 'index.js'), 'window.wework = true\n')
-      await symlink(
-        assets,
-        join(source, 'web', 'assets'),
-        process.platform === 'win32' ? 'junction' : 'dir'
-      )
-      const directoryLinkTypes: Array<string | null | undefined> = []
-
-      await copyManagedPlugin(source, destination, {
-        platform: 'win32',
-        linkDirectory: async (target, path, type) => {
-          directoryLinkTypes.push(type)
-          await symlink(target, path, type)
-        },
-      })
-
-      const copiedAssets = join(destination, 'web', 'assets')
-      expect(directoryLinkTypes).toEqual(['junction'])
-      expect((await lstat(copiedAssets)).isSymbolicLink()).toBe(true)
-      expect(await realpath(copiedAssets)).toBe(await realpath(assets))
-      await expect(readFile(join(copiedAssets, 'index.js'), 'utf8')).resolves.toBe(
-        'window.wework = true\n'
-      )
-    } finally {
-      await root.remove()
-    }
-  })
-
   test('selects only the bundled core version', async () => {
     const root = await temporaryDirectory('core-dsh-selection-')
     const rc8 = await writeRuntime(root.path, '0.1.0-rc.8', '8')
@@ -248,6 +201,7 @@ describe('core DSH runtime', () => {
         )
       )
     ).toEqual({
+      managedPluginCopyVersion: 1,
       dshVersion: CORE_DSH_VERSION,
       managedUiPlugins: true,
       role: 'core',
@@ -476,43 +430,47 @@ describe('core DSH runtime', () => {
     await root.remove()
   })
 
-  test('upgrades a legacy stamp without the plugin fingerprint', async () => {
-    const root = await temporaryDirectory('core-dsh-legacy-stamp-')
-    const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
-    const dataDirectory = join(root.path, 'data')
-    const environment = {
-      PATH: '/usr/bin',
-      WEWORK_CORE_PLUGIN_ROOT: runtime.pluginsRoot,
-      WEWORK_CORE_PLUGINS_SHA256: 'f'.repeat(64),
-      WEWORK_NODE_PATH: '/managed/node',
+  test.each(['corePluginsFingerprint', 'managedPluginCopyVersion'])(
+    'upgrades a legacy stamp without %s',
+    async field => {
+      const root = await temporaryDirectory('core-dsh-legacy-stamp-')
+      const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
+      const dataDirectory = join(root.path, 'data')
+      const environment = {
+        PATH: '/usr/bin',
+        WEWORK_CORE_PLUGIN_ROOT: runtime.pluginsRoot,
+        WEWORK_CORE_PLUGINS_SHA256: 'f'.repeat(64),
+        WEWORK_NODE_PATH: '/managed/node',
+      }
+      const launch = await prepareCoreDshLaunch({
+        runtimeRoot: runtime.root,
+        dataDirectory,
+        environment,
+        port: 3080,
+      })
+      const stampPath = join(launch.dshHome, 'profiles', 'wework-core', '.wework-runtime.json')
+      const legacy = JSON.parse(await readFile(stampPath, 'utf8')) as Record<string, unknown>
+      delete legacy[field]
+      await writeFile(stampPath, JSON.stringify(legacy))
+
+      await prepareCoreDshLaunch({
+        runtimeRoot: runtime.root,
+        dataDirectory,
+        environment,
+        port: 3081,
+      })
+
+      expect(JSON.parse(await readFile(stampPath, 'utf8'))).toEqual({
+        managedPluginCopyVersion: 1,
+        dshVersion: CORE_DSH_VERSION,
+        managedUiPlugins: true,
+        role: 'core',
+        sourceFingerprint: 'a'.repeat(64),
+        corePluginsFingerprint: 'f'.repeat(64),
+      })
+      await root.remove()
     }
-    const launch = await prepareCoreDshLaunch({
-      runtimeRoot: runtime.root,
-      dataDirectory,
-      environment,
-      port: 3080,
-    })
-    const stampPath = join(launch.dshHome, 'profiles', 'wework-core', '.wework-runtime.json')
-    const legacy = JSON.parse(await readFile(stampPath, 'utf8')) as Record<string, unknown>
-    delete legacy.corePluginsFingerprint
-    await writeFile(stampPath, JSON.stringify(legacy))
-
-    await prepareCoreDshLaunch({
-      runtimeRoot: runtime.root,
-      dataDirectory,
-      environment,
-      port: 3081,
-    })
-
-    expect(JSON.parse(await readFile(stampPath, 'utf8'))).toEqual({
-      dshVersion: CORE_DSH_VERSION,
-      managedUiPlugins: true,
-      role: 'core',
-      sourceFingerprint: 'a'.repeat(64),
-      corePluginsFingerprint: 'f'.repeat(64),
-    })
-    await root.remove()
-  })
+  )
 
   test('removes stale managed files when refreshing the profile', async () => {
     const root = await temporaryDirectory('core-dsh-stale-managed-file-')

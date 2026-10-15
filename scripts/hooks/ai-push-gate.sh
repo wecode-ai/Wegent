@@ -545,6 +545,12 @@ fi
 # Run Quality Checks
 # -----------------------------------------------------------------------------
 echo -e "${CYAN}══════════════════════════════════════════════════════════${NC}"
+# Keep background checks running across macOS idle and maintenance sleep.
+# The assertion ends automatically when this hook exits.
+if [ "$(uname -s)" = "Darwin" ]; then
+    caffeinate -is -w "$$" >/dev/null 2>&1 &
+fi
+
 echo -e "${CYAN}📊 Running Quality Checks${NC}"
 echo -e "${CYAN}══════════════════════════════════════════════════════════${NC}"
 echo ""

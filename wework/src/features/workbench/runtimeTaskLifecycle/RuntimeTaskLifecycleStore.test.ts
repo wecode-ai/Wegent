@@ -58,6 +58,45 @@ function transcript(overrides: Partial<RuntimePaneTranscript> = {}): RuntimePane
 }
 
 describe('RuntimeTaskLifecycleStore', () => {
+  test('retains the latest turn identity after a terminal task snapshot clears the active turn', () => {
+    const store = new RuntimeTaskLifecycleStore('latest-turn')
+    store.syncRuntimeWork(runtimeWork(task({ running: true, status: 'running' })))
+    store.turnStarted(address, 'turn-1')
+    store.turnSettled(address, 'turn-1', 'succeeded')
+    store.syncRuntimeWork(runtimeWork(task({ status: 'done', completedAt: 1000 })))
+    expect(store.getTask(address)?.turn.id).toBeNull()
+    expect(store.getTask(address)?.turn.latestId).toBe('turn-1')
+    store.syncRuntimeWork(runtimeWork(task({ status: 'done', completedAt: 1000, updatedAt: 2000 })))
+    expect(store.getTask(address)?.turn.latestId).toBe('turn-1')
+  })
+
+  test('preserves a completed turn identity when resolving a Runtime route alias', () => {
+    const store = new RuntimeTaskLifecycleStore('settled-alias')
+    const alias = { ...address, deviceId: 'cloud-device' }
+    store.turnStarted(alias, 'turn-1')
+    store.turnSettled(alias, 'turn-1')
+    store.executorSettled(alias)
+    const work = runtimeWork(task({ status: 'done', completedAt: 1000 }))
+    work.projects[0].deviceWorkspaces[0].remoteHostId = alias.deviceId
+    store.syncRuntimeWork(work)
+    expect(store.getTask(address)?.turn.latestId).toBe('turn-1')
+    expect(store.getTask(alias)?.turn.latestId).toBe('turn-1')
+  })
+
+  test('restores the latest completed turn identity from the transcript', () => {
+    const store = new RuntimeTaskLifecycleStore('restored-turn')
+    store.syncRuntimeWork(runtimeWork(task({ status: 'done', completedAt: 1000 })))
+    store.syncTranscript(
+      address,
+      transcript({
+        running: false,
+        turns: [{ id: 'turn-1', status: 'done', items: [], completedAt: 1000 }],
+      })
+    )
+    expect(store.getTask(address)?.turn.latestId).toBe('turn-1')
+    expect(store.getTask(address)?.derived.isBusy).toBe(false)
+  })
+
   test('keeps an unresolved action running when the previous completion gains precision', () => {
     const store = new RuntimeTaskLifecycleStore('pending-action-completion-test')
     store.syncRuntimeWork(

@@ -301,6 +301,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn preserves_windows_marketplace_paths_in_literal_toml_strings() {
+        let source = r"D:\workspace\capabilities\bundled-marketplaces\wework-personal";
+        let updated =
+            set_configured_marketplace_source("", WEWORK_PERSONAL_MARKETPLACE_ID, source).unwrap();
+        let config = updated.parse::<DocumentMut>().unwrap();
+        assert_eq!(
+            config["marketplaces"][WEWORK_PERSONAL_MARKETPLACE_ID]["source"].as_str(),
+            Some(source)
+        );
+        assert!(
+            updated.contains(&format!("source = '{source}'")),
+            "{updated}"
+        );
+    }
+
+    #[test]
     fn finds_the_registered_marketplace_source() {
         let response = json!({
             "marketplaces": [

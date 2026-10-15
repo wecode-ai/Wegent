@@ -614,13 +614,16 @@ export function requestLocalExecutor<T = unknown>(
       initializeBundledPluginMarketplacePromise = null
       reconciledBundledPluginMarketplaceKey = ''
     }
-    console.error('[local-ipc] request failed', {
-      method,
-      paramsKeys: Object.keys(params ?? {}),
-      error: String(cause),
-      message: (cause as { message?: unknown } | null)?.message ?? null,
-      stack: (cause as { stack?: unknown } | null)?.stack ?? null,
-    })
+    console.error(
+      '[local-ipc] request failed',
+      JSON.stringify({
+        method,
+        paramsKeys: Object.keys(params ?? {}),
+        error: String(cause),
+        message: (cause as { message?: unknown } | null)?.message ?? null,
+        stack: (cause as { stack?: unknown } | null)?.stack ?? null,
+      })
+    )
     throw cause
   })
 }

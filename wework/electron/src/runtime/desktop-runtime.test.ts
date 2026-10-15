@@ -365,13 +365,11 @@ describe('DesktopRuntime lifecycle generation', () => {
     expect(prepareState.prepareCalls).toBe(1)
     expect(executor.startCalls).toBe(0)
     expect(startupSteps).toContain('core-dsh-prepare:started')
-    expect(startupSteps).not.toContain('core-dsh-port-allocation:started')
 
     deviceIdentityState.resolve?.('test-device-id')
     await vi.waitFor(() => expect(executor.startCalls).toBe(1))
     expect(created).toHaveLength(0)
     expect(runtime.state().ready).toBe(false)
-    expect(startupSteps).not.toContain('core-dsh-port-allocation:started')
     expect(startupSteps).not.toContain('core-dsh-process-start:started')
 
     prepareState.resolveLaunch?.({
@@ -387,19 +385,12 @@ describe('DesktopRuntime lifecycle generation', () => {
     })
     await flush()
     expect(created).toHaveLength(0)
-    expect(startupSteps).not.toContain('core-dsh-port-allocation:started')
 
     executor.startHang.resolve()
     await vi.waitFor(() => expect(created).toHaveLength(1))
     expect(created[0].startCalls).toBe(1)
     expect(startupSteps.indexOf('core-dsh-prepare:started')).toBeLessThan(
       startupSteps.indexOf('executor-start:completed')
-    )
-    expect(startupSteps.indexOf('executor-start:completed')).toBeLessThan(
-      startupSteps.indexOf('core-dsh-port-allocation:started')
-    )
-    expect(startupSteps.indexOf('core-dsh-port-allocation:completed')).toBeLessThan(
-      startupSteps.indexOf('core-dsh-process-start:started')
     )
     expect(startupSteps.indexOf('executor-start:completed')).toBeLessThan(
       startupSteps.indexOf('core-dsh-process-start:started')

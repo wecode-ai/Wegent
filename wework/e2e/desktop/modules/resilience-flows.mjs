@@ -1,5 +1,6 @@
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { sendPromptWithButton } from './conversation-navigation.mjs'
+import { collectWindowsProcessIdentity, processInstanceMatches } from '../process-lifecycle.mjs'
 
 import {
   ACTIVE_WORKBENCH_SELECTOR,
@@ -147,6 +148,15 @@ async function verifyModelProxyRestartRecovery({
   const executorBeforeRestart = await waitForExecutorRuntimeEvidence(control, executorLogPath)
   const executorProcessIdBeforeRestart = executorBeforeRestart.processIds.at(-1)
   assert.ok(executorProcessIdBeforeRestart, 'The original executor process ID was not recorded')
+  const executorIdentityBeforeRestart = collectWindowsProcessIdentity(
+    executorProcessIdBeforeRestart
+  )
+  if (process.platform === 'win32') {
+    assert.ok(
+      executorIdentityBeforeRestart,
+      'The original executor process identity was not recorded'
+    )
+  }
 
   await restartDesktopApp()
 
@@ -157,13 +167,35 @@ async function verifyModelProxyRestartRecovery({
   )
   const executorProcessIdAfterRestart = executorAfterRestart.processIds.at(-1)
   assert.ok(executorProcessIdAfterRestart, 'The restarted executor process ID was not recorded')
-  assert.notEqual(
-    executorProcessIdAfterRestart,
-    executorProcessIdBeforeRestart,
+  const executorIdentityAfterRestart = collectWindowsProcessIdentity(executorProcessIdAfterRestart)
+  if (process.platform === 'win32') {
+    assert.ok(
+      executorIdentityAfterRestart,
+      'The restarted executor process identity was not recorded'
+    )
+  }
+  assert.equal(
+    process.platform === 'win32'
+      ? processInstanceMatches(executorIdentityBeforeRestart, executorIdentityAfterRestart)
+      : executorProcessIdAfterRestart === executorProcessIdBeforeRestart,
+    false,
     'Restarting Wework reused the executor process with the old model proxy registry'
   )
+  const originalIdentityAfterRestart = collectWindowsProcessIdentity(executorProcessIdBeforeRestart)
+  const originalExecutorIsAlive =
+    process.platform === 'win32'
+      ? processInstanceMatches(executorIdentityBeforeRestart, originalIdentityAfterRestart)
+      : processIsAlive(executorProcessIdBeforeRestart)
+  if (process.platform === 'win32' || originalExecutorIsAlive) {
+    console.log('[desktop-e2e] executor restart process identities', {
+      originalExecutorIsAlive,
+      before: executorIdentityBeforeRestart,
+      originalAfterRestart: originalIdentityAfterRestart,
+      replacementAfterRestart: executorIdentityAfterRestart,
+    })
+  }
   assert.equal(
-    processIsAlive(executorProcessIdBeforeRestart),
+    originalExecutorIsAlive,
     false,
     'The original executor remained alive after Wework restarted'
   )
@@ -185,21 +217,15 @@ async function verifyModelProxyRestartRecovery({
   await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  const followUpRequest = control.awaitNextScenarioRequest(
-    'model_proxy_restart',
-    WORKBENCH_READY_TIMEOUT_MS
-  )
-  await sendPromptWithButton(
-    control,
-    composerSelector,
-    MODEL_PROXY_RESTART_FOLLOW_UP_PROMPT,
-    WORKBENCH_READY_TIMEOUT_MS
-  )
-  await withTimeout(
-    followUpRequest,
-    WORKBENCH_READY_TIMEOUT_MS,
-    'The model service did not receive the post-restart model proxy request'
-  )
+  await Promise.all([
+    control.awaitNextScenarioRequest('model_proxy_restart', WORKBENCH_READY_TIMEOUT_MS),
+    sendPromptWithButton(
+      control,
+      composerSelector,
+      MODEL_PROXY_RESTART_FOLLOW_UP_PROMPT,
+      WORKBENCH_READY_TIMEOUT_MS
+    ),
+  ])
   await control.command(
     'waitFor',
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,

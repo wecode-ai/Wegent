@@ -306,6 +306,110 @@ main instance and nested plugin-development instances. The runner also compacts
 inactive result directories left by interrupted runs so repeated local
 execution does not continuously consume disk space.
 
+The Linux CI plugin-development shard starts Electron-managed Executor processes
+under GDB and records all thread stacks on native crashes. A startup check verifies
+that the IPC file descriptor reaches the debugged process. Standalone MCP and schema
+queries retain their stdout protocol. Stack diagnostics omit arguments and locals.
+Desktop E2E Electron logs also retain redacted renderer errors. Git worktree and
+conversation-index replacement failures record Git stderr or the original OS error
+code to distinguish page timeouts from failures in the underlying execution.
+Windows plugin installation diagnostics also record application asset directory
+state, link targets, and file counts before and after pnpm operations. Static asset
+read failures record the parent directory's link state to locate missing resources.
+Windows component compositions and managed plugin packages own independent resource
+files so pnpm cleanup cannot traverse directory links into shared components. Layout
+fingerprints and copy-version stamps rebuild older layouts. Plugin-development E2E
+checks that starting the isolated window preserves main-application assets and that
+Windows package asset directories do not link to shared components.
+Windows worktree commands set `GIT_COMMON_DIR` from the existing `.git` and
+`commondir` parser so checkout children find shared objects before loading repository config.
+Paths passed to Git omit the Windows verbatim prefix, allowing its slash-separated
+`/config` suffix to be normalized by the Windows path layer.
+Worktree removal, restoration, and snapshot-ref cleanup use `--git-dir .` inside
+the common Git directory, avoiding Git's explicit-directory length rejection before
+configuration loads. Worktree target paths remain absolute.
+Windows conversation indexes use POSIX replacement semantics with `FileRenameInfoEx`:
+existing readers retain the complete old index, and new readers see the newly published index.
+The destination parent is canonicalized to retain the long-path prefix for the direct
+Win32 call, including initial index creation.
+Native CI covers repeated replacements with open readers and replacements beyond `MAX_PATH`.
+
+Plugin cache mutations restart the Codex app-server, so synchronization waits for both
+AI tasks and background terminals to finish. Regression coverage verifies deferred updates
+while a process runs and publication after its native exit notification. Desktop coverage
+retains output-reading and process-stopping assertions after a window reload.
+Windows fixtures use cross-shell terminal commands and verify a completed output line;
+settings controls are scrolled into view. Git fixtures disable automatic line-ending
+conversion, and queue/sidebar fixtures explicitly select the test model without weakening
+behavioral assertions. CI verifies the development Electron binary during setup so its
+first import does not download it inside a scenario.
+
+Remote collaboration initializes the execution environment catalog through the real
+Backend and verifies authorization for the remote device before opening the Agent form.
+Native model catalog initialization does not consume the form's 10-second UI step budget.
+On desktop startup failures, `scenario-state.json` records application launch and exit
+times and exit codes. Windows also retains `electron.log` to diagnose native failures
+before the renderer connects.
+Migration fixtures isolate workbench data through `HOME` and preserve the operating
+system's `USERPROFILE`. The controller acknowledges each action before polling for
+the next command, keeping pending long polls out of the result acknowledgement path.
+System proxy scenarios and the initial task-status synchronization request use the
+model-stage budget for model requests and retain 10-second ordinary UI steps.
+Initial tasks and follow-up messages reuse `sendPromptUntilScenarioRequest`,
+registering request listeners before sending with the shared 30-second model-request limit.
+Background guidance uses the same model-stage budget for real tool output and subsequent model
+requests. A native tool can yield a still-running session after ten seconds; this tool phase
+must not use the ordinary UI-step limit.
+The message-order scenario waits for the current turn's SSE response to finish sending with the model-stage budget, then uses the unchanged ten-second UI budget for its message content. The recorded response number must match the current turn. HTTP diagnostics retain request start, finish, and duration so Codex execution delays are not mistaken for missing virtual rows.
+The stream-recovery scenario selects its registered fixture model before the first send;
+the composer appearing does not establish model-catalog readiness. It still verifies that
+streaming continues during renderer reload and restores the complete output.
+Post-restart follow-ups wait for the send control to become enabled before sending Enter once;
+stable composer text does not establish restored model-catalog readiness. The model request and
+send action are awaited together so either failure follows the normal diagnostics and cleanup
+path instead of an unhandled Promise rejection exiting Node without a failure snapshot.
+Model-request waits stop polling when their budget expires, leaving no active poll timers.
+The ordinary send-control wait retains the 10-second step limit.
+Restoring native model-catalog defaults temporarily unmounts model rows while refreshing.
+The scenario observes the stable page until the original row returns without its customization
+marker, then verifies native data and the persisted override file.
+The overload cancellation phase selects its fixture model independently for the new conversation.
+Action execution and result acknowledgement are separate: an acknowledgement failure must not
+produce a fabricated failed-action result. E2E Electron logs retain loopback request paths and
+network error codes without headers or query parameters. Windows failure artifacts include
+`windows-network-diagnostics.json` with TCP state and process connection counts, excluding addresses,
+to diagnose Winsock resource exhaustion.
+Task-board bulk actions confirm that the blank conversation is active before each input;
+the editor node alone is insufficient. Goal restart fixtures observe one running task and
+one queued task before releasing the model response occupying the single execution slot.
+Work-list refreshes preserve the device owning an opened workspace so an earlier response
+cannot replace a newly selected cloud workspace. Diagnostics record project-selection
+reducer actions and IDs, draft scopes and parent acknowledgement revisions, Codex app-server
+process IDs and initialization exit states, and failed Windows process-tree termination states.
+Configuration normalization and replacement record file size and the presence of model and built-in OpenAI URL fields; replacements also record their call site, without configuration contents.
+Only a missing configuration file permits empty initialization; other read failures stop startup and preserve the existing file. A regression uses invalid UTF-8 to trigger a real read error and verifies that the original bytes remain unchanged, preventing normalization from silently clearing model addresses.
+`codex-invalid-launch-cwd` records isolated configuration fingerprints and fixture-field matches before launch, around executor restart, and before sending. It also reads native configuration-layer sources and field presence to distinguish disk changes from runtime loading failures.
+Codex app-server restarts and configuration changes hold the admission lock until the old process exits before admitting a new process.
+Failure artifacts include `codex-sqlite-diagnostics.json` with isolated database file sizes,
+read-only integrity results, and SQLite error codes; conversation tables are never queried.
+Failed executor compatibility queries record elapsed time, exit code, signal and termination status
+without child output, command paths or environment variables.
+Desktop fixtures bind the workspace root to their temporary Home and remove other inherited
+workspace path overrides, avoiding stale test or personal worktrees. Turn preparation failures
+record their error code and reason instead of leaving only a UI timeout.
+
+Executor configures loopback `NO_PROXY` before creating the Tokio runtime, avoiding
+process environment mutation on asynchronous connection threads. The startup scenario
+verifies that Executor becomes ready before Core DSH starts and that DSH binds a valid port.
+The blocked-proxy startup scenario verifies that the workbench starts without waiting
+for Codex network access, then releases the proxy and waits for local plugin registration
+before clearing the proxy setting, avoiding cancellation of in-flight initialization.
+
+Core DSH binds port `0` directly and lets the OS assign its listening port.
+Electron reads the actual DSH address before probing the host, Executor, Terminal,
+and application endpoints. It does not discover a port by opening and closing a
+temporary listener, avoiding collisions during concurrent startup.
+
 Before upload, GitHub Actions repeats the cleanup and excludes
 `managed-components` at any depth from the Artifact path so a teardown failure
 cannot upload the complete Web and WASM component payload from either the main
@@ -533,6 +637,18 @@ New E2E tests should prefer this helper and `data-testid` locators instead of un
 
 ## CI Guidance
 
+Local list bootstrap reads and manual refreshes share one revision. A superseded bootstrap read must exit before both publishing its list and starting cloud synchronization, preventing stale startup work from restarting synchronization and clearing a selected local project. The original task-discovery E2E keeps its execution-mode and local execution assertions unchanged.
+
+Cloud Issue change notifications must invalidate an in-flight older board snapshot and start a read after the notification. Use the shared controller’s `loadProjectSnapshot(projectId, { invalidate: true })` to reuse its mutation-generation protection. This prevents a reassignment notification from sharing an older read triggered by unassignment. Ordinary duplicate reads remain coalesced. Frontend CI runs the controller concurrency regression; the original human Issue E2E retains its 10-second UI wait.
+
+Platform E2E services must start etcd and MinIO before Milvus. The GitHub runner pulls and starts containers sequentially in configuration order. Placing MinIO after Milvus can leave its DNS name unavailable during Milvus initialization while later images are being pulled. Health checks run after all containers have started and cannot repair this startup ordering.
+
+Desktop E2E `clickWhenEnabled` starts the existing ten-second conversation layout diagnostic window. Milestone and failure artifacts retain `conversation-diagnostics` JSON with virtual ranges, message measurements, and scroll positions. These records contain no message text and do not change UI waits or business assertions. Compare them with `workbench-debug.json` when a completed message is missing from the rendered conversation.
+
+Opening project settings waits for and clicks the current project's edit or rename action directly. The sidebar chooses its menu identifier from the project's state owner and source; a snapshot taken before the menu renders cannot determine that action. Cloud project save, restart, and restored-settings assertions remain unchanged.
+
+During local macOS verification of cloud project state files, a running ChatGPT or Codex desktop application activates the existing state-write guard. A runner whose HOME and Codex Home are both inside its isolated test-result directory can use `WEGENT_FORCE_CODEX_GLOBAL_STATE_OPLOG_FLUSH=1` to verify that state reaches disk.
+
 CI can run Wework E2E as a separate job:
 
 ```bash
@@ -595,6 +711,27 @@ label starts only the memory gate and does not repeat browser, Linux desktop, or
 Windows desktop E2E. Applying `ci:all` runs browser, Linux desktop, Windows
 desktop, and macOS memory E2E even when the PR's changed paths would not
 normally select Wework E2E. The workflow also runs a complete regression every
-day at 04:00 UTC.
+day at 04:00 UTC. Keeping `ci:all` on a PR also runs all Windows Core shards
+on subsequent pushes. Windows builds, shards, and the summary share one
+scheduling condition; skipped required jobs fail the gate. The macOS memory
+check invokes the Node checkpoint runner directly, including on build cache hits.
+On macOS, pre-push checks use `caffeinate -is -w` to remain awake while running;
+the assertion ends automatically with the hook, avoiding sleep-induced test timeouts.
 
 Authenticated flows should create users and data through backend APIs before the test, then use real login or a real token injection. Do not mock backend HTTP responses in Playwright.
+
+### Readiness for Local Project Scenarios
+
+`createSingleRootLocalProject` must wait until the new project is the workbench’s current project. Closing the creation dialog or finding an older composer is insufficient. The cloud-context and running-history scenarios also select a registered model explicitly through `selectE2EModel` before entering the first message. Their stalled-context, attachment, history recovery, and task-move assertions remain intact.
+
+The running-history scenario measures its three-second responsiveness gate with the workbench snapshot, excluding the debugger protocol cost of forced GC inside `performanceSnapshot`. Full history, pagination, transfer, and memory assertions remain intact. Windows restart checks still require the original executor to exit and record the selected PID’s process name and start time together with the `taskkill` exit code and output, distinguishing a surviving executor from PID reuse without collecting process command lines or environment variables.
+
+Windows restart gates compare process instances by PID, process name and creation time instead of checking only the old PID after launching the new app. The same PID with a different creation time identifies a new instance; a surviving original instance still fails. Failed identity queries and missing creation times also fail. Keep the original model-proxy reconstruction, conversation restoration, follow-up assertions and UI timeouts. See [Windows process handles and identifiers](https://learn.microsoft.com/en-us/windows/win32/procthread/process-handles-and-identifiers).
+
+Checkpoint tasks use the existing 30-second model-request budget before starting the original 10-second UI completion assertion. Model startup does not consume the rendering budget. Await submission and request observation together so an observer timeout after input failure cannot become an unhandled rejection; the original error still reaches normal diagnostics and cleanup.
+
+After a held cloud model request times out and is cancelled, explicitly refresh the catalog by opening the real model selector, then close it so recovery can reopen it. Local model settings events refresh only the local catalog; repeatedly dispatching them cannot replace a cloud refresh. Preserve the cloud failure, recovery, model provenance and plugin assertions.
+
+When a blank conversation submission completes, reuse the current-task identity check and consume its draft key only if the created task is still selected. A late completion from the previous request must not clear text entered after returning to a new conversation. Rejected creation still restores the original draft and attachments. Regressions cover delayed creation and delayed refresh; the original nine-task bulk completion and archive E2E remains unchanged.
+
+Chunked history transport names immutable snapshots by their compressed-content hash. Concurrent requests reuse the same file through atomic publication without replacement, avoiding replacement of a snapshot being read on Windows. Regressions preserve the published file and its modification time, keep active readers valid, and restore the complete history from four concurrent requests. The original running-history E2E remains unchanged.

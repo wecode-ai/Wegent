@@ -177,6 +177,16 @@ async function createCloudProjectFixture(control, workspacePath) {
   }
 }
 
+export async function openRuntimeProjectEditor(control, projectId) {
+  await control.command('hover', `[data-testid="project-row-${projectId}"]`)
+  await control.command('click', `[data-testid="project-menu-${projectId}"]`)
+  await control.command(
+    'clickWhenEnabled',
+    `[data-testid="edit-project-${projectId}"], [data-testid="rename-project-${projectId}"]`
+  )
+  await control.command('waitFor', '[data-testid="local-project-edit-dialog"]')
+}
+
 async function verifyCloudProjectCreationSources(
   control,
   workspacePath,
@@ -226,17 +236,7 @@ async function verifyCloudProjectCreationSources(
     'Creating a blank cloud project did not add it to the sidebar'
   )
   const projectId = blankProjectMenu.slice('project-menu-'.length)
-  const openEditor = async () => {
-    await control.command('hover', `[data-testid="project-row-${projectId}"]`)
-    await control.command('click', `[data-testid="project-menu-${projectId}"]`)
-    const menu = JSON.parse(await control.command('snapshot', 'body'))
-    const editId = menu.testIds.includes(`edit-project-${projectId}`)
-      ? `edit-project-${projectId}`
-      : `rename-project-${projectId}`
-    await control.command('click', `[data-testid="${editId}"]`)
-    await control.command('waitFor', '[data-testid="local-project-edit-dialog"]')
-  }
-  await openEditor()
+  await openRuntimeProjectEditor(control, projectId)
   await control.command('waitFor', '[data-testid="add-local-project-folders"]', { enabled: true })
   assert.equal(
     Number(
@@ -352,7 +352,7 @@ async function verifyCloudProjectCreationSources(
     project => project.id === mirror.id
   )
   assert.deepEqual(restartedMirror, mirror, 'Restart changed the stable sidebar mirror')
-  await openEditor()
+  await openRuntimeProjectEditor(control, projectId)
   assert.equal(
     await control.command('getValue', '[data-testid="local-project-name-input"]'),
     'Cloud edited project'

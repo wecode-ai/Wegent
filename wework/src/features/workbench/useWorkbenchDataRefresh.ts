@@ -657,7 +657,7 @@ export function useWorkbenchDataRefresh({
           ok: runtimeWorkResult.status === 'fulfilled',
           cancelled,
         })
-        if (cancelled) return
+        if (cancelled || bootstrapRevision !== workListRefreshRevisionRef.current) return
         console.info('[startup][renderer]', {
           step: 'task-list-load',
           status: runtimeWorkResult.status === 'fulfilled' ? 'completed' : 'failed',
@@ -678,10 +678,7 @@ export function useWorkbenchDataRefresh({
           runtimeWorkResult.status === 'fulfilled'
             ? applyRuntimeTaskOverrides(runtimeWorkResult.value, true)
             : EMPTY_RUNTIME_WORK
-        if (
-          runtimeWorkResult.status === 'fulfilled' &&
-          bootstrapRevision === workListRefreshRevisionRef.current
-        ) {
+        if (runtimeWorkResult.status === 'fulfilled') {
           localRuntimeWorkRef.current = runtimeWork
           dispatch({
             type: 'runtime_work_refreshed',
