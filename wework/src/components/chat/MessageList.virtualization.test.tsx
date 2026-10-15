@@ -651,6 +651,23 @@ describe('MessageList desktop virtualization', () => {
     expect(screen.getByText('navigation message 99')).toBeInTheDocument()
   })
 
+  test('mounts an offscreen search match and expands only that user message', () => {
+    const messages = buildMessages(100, 'search')
+    messages[80] = { ...messages[80], content: 'search match\n'.repeat(100) }
+    const props = {
+      messages,
+      scrollElementRef: { current: createScrollElement(200) },
+      forceVirtualMessageId: 'user-80',
+    }
+    const { rerender } = render(<MessageList {...props} searchMessageId="user-80" />)
+    const target = screen.getByText(/search match/).closest('[data-testid="user-message-content"]')
+    expect(target).toBeInTheDocument()
+    expect(target?.className).not.toContain('max-h-')
+    expect(screen.getAllByTestId('message-user')).toHaveLength(3)
+    rerender(<MessageList {...props} />)
+    expect(target?.className).toContain('max-h-')
+  })
+
   test('keeps an active streaming message mounted outside the visible range', () => {
     const messages = buildMessages(100, 'streaming')
     messages[80] = {

@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { selectCollaborationDomain } from '../modules/workspace-flows.mjs'
+import {
+  selectCollaborationDomain,
+  selectCollaborationIssueAgent,
+} from '../modules/workspace-flows.mjs'
 import {
   assistantMessage,
   codexRequestKind,
@@ -113,10 +116,10 @@ export function createDesktopScenario({ modelResponseTimeoutMs, workbenchReadyTi
         'clickWhenEnabled',
         scoped(`[data-testid="cloud-todo-card-${issue.id}"]`)
       )
-      await control.command('click', scoped('[data-testid="cloud-todo-detail-assignee"]'))
-      await control.command(
-        'click',
-        `[data-testid="cloud-todo-detail-assignee-option-agent:${agent.id}"]`
+      await selectCollaborationIssueAgent(
+        control,
+        scoped('[data-testid="cloud-todo-detail-assignee"]'),
+        agent.id
       )
       await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'))
       await control.command('waitFor', scoped('[data-testid="cloud-task-activity-list"]'), {

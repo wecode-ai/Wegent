@@ -3,6 +3,10 @@ import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributi
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useTranslation } from '@/hooks/useTranslation'
 import { focusComposerAtEnd, WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
+import { useConversationFind } from '@/components/chat/useConversationFind'
+import { ConversationFindBar } from '@/components/chat/ConversationFindBar'
+
+const EMPTY_CONVERSATION = { messages: [] }
 
 interface DesktopEmptyTaskLauncherProps {
   projectName?: string | null
@@ -13,6 +17,7 @@ interface DesktopEmptyTaskLauncherProps {
   /** Defaults to the workbench empty-state composer input. */
   composerInputTestId?: string
   compact?: boolean
+  searchActive?: boolean
 }
 
 export function DesktopEmptyTaskLauncher({
@@ -23,8 +28,10 @@ export function DesktopEmptyTaskLauncher({
   connectorAuthCard,
   composerInputTestId = 'chat-message-input',
   compact = false,
+  searchActive = false,
 }: DesktopEmptyTaskLauncherProps) {
   const { t } = useTranslation('common')
+  const find = useConversationFind(EMPTY_CONVERSATION, searchActive)
   const launcherRef = useRef<HTMLElement>(null)
   const composerInputSelector = `[data-testid="${composerInputTestId}"]`
 
@@ -80,6 +87,7 @@ export function DesktopEmptyTaskLauncher({
           : 'flex min-h-0 min-w-0 flex-1 flex-col px-6 pb-2 pt-8'
       }
     >
+      <ConversationFindBar find={find} />
       {!compact && (
         <div className="flex min-h-0 flex-1 items-center justify-center pb-8">
           <DshContributionSlotSurface

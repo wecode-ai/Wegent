@@ -28,11 +28,16 @@ from app.schemas.workspace import (
 
 TaskProvider = Literal["local", "github", "gitlab", "dingtalk_aitable"]
 ProjectVisibility = Literal["private", "public"]
-PublicAccessRole = Literal["Developer", "Viewer"]
+PublicAccessRole = Literal["Viewer"]
 
 
 class PublicAccessGrant(BaseModel):
     role: PublicAccessRole = "Viewer"
+
+    @field_validator("role", mode="before")
+    @classmethod
+    def read_legacy_public_role(cls, value):
+        return "Viewer" if value == "Developer" else value
 
 
 def _normalize_repository(task_provider: str, repository: str) -> str:
@@ -83,6 +88,7 @@ def normalize_provider_config(
 
 class CloudProjectCreate(BaseModel):
     workspace_id: SnowflakeId | None = None
+    membership_mode: Literal["inherit", "restricted"] = "inherit"
     project_key: str | None = Field(
         default=None, min_length=2, max_length=16, pattern=r"^[A-Za-z0-9]+$"
     )
@@ -216,6 +222,7 @@ class CloudProjectPullRequestAutomation(BaseModel):
 
 
 class CloudProjectUpdate(BaseModel):
+    membership_mode: Literal["inherit", "restricted"] | None = None
     name: str | None = Field(default=None, min_length=1, max_length=100)
     description: str | None = None
     tags: list[str] | None = Field(default=None, max_length=MAX_TAGS_PER_ITEM)
@@ -258,6 +265,9 @@ class CloudProjectResponse(BaseModel):
 
     id: SnowflakeId
     workspace_id: SnowflakeId | None = None
+    membership_mode: Literal["inherit", "restricted"] = "inherit"
+    workspace_access_role: BaseRole | None = None
+    permission_sources: list[dict] = Field(default_factory=list)
     workspace_context: WorkspaceNavigationContextResponse | None = None
     public_id: str
     project_key: str
@@ -344,6 +354,9 @@ class CloudProjectMemberCreate(BaseModel):
     @field_validator("role")
     @classmethod
     def reject_owner(cls, value: BaseRole) -> BaseRole:
+        from app.schemas.base_role import COLLABORATION_ROLE_ALIASES
+
+        value = BaseRole(COLLABORATION_ROLE_ALIASES.get(value.value, value.value))
         if value not in {BaseRole.Maintainer, BaseRole.Developer, BaseRole.Viewer}:
             raise ValueError("Only project member roles may be assigned")
         return value
@@ -356,6 +369,10 @@ class CloudProjectMemberUpdate(BaseModel):
     @field_validator("role")
     @classmethod
     def reject_owner(cls, value: BaseRole | None) -> BaseRole | None:
+        from app.schemas.base_role import COLLABORATION_ROLE_ALIASES
+
+        if value is not None:
+            value = BaseRole(COLLABORATION_ROLE_ALIASES.get(value.value, value.value))
         if value is not None and value not in {
             BaseRole.Maintainer,
             BaseRole.Developer,
@@ -377,6 +394,11 @@ class CloudProjectMemberResponse(BaseModel):
     user_name: str
     email: str | None
     role: BaseRole
+    direct_role: BaseRole | None = None
+    inherited_role: BaseRole | None = None
+    permission_sources: list[dict] = Field(default_factory=list)
+    inherited_from_workspace_id: SnowflakeId | None = None
+    can_be_assignee: bool = False
     capability_description: str = ""
 
 

@@ -82,6 +82,7 @@ import { prepareDevelopmentHistory } from './runtime/development-history-migrati
 import { FeedbackBundleManager } from './host/feedback-bundle-manager.js'
 import {
   createStartupReadyHandler,
+  resolveStartupSplashHoldMs,
   resolveStartupSplashTheme,
   StartupSplash,
   startupSplashBlocksMainWindowActivation,
@@ -90,7 +91,7 @@ import {
 import { assertStartupRecoverySender, StartupRecoveryService } from './host/startup-recovery.js'
 import { clearStartupRuntimeFiles, clearStartupUserFiles } from './host/startup-recovery-files.js'
 import { ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
-import { createTrayIcon } from './host/tray-icon.js'
+import { createTrayIcon, trayIconFilename } from './host/tray-icon.js'
 import { trayGuidForApplicationId } from './host/tray-guid.js'
 import { TrayNativeStatusController } from './host/tray-native-status.js'
 import { WindowClosePolicy, type WindowCloseDecision } from './host/window-close-policy.js'
@@ -394,6 +395,10 @@ const appUpdateLogger = new AppUpdateLogger(join(app.getPath('logs'), 'app-updat
 const runtimeDiagnosticsLog = new RuntimeDiagnosticsLog(
   join(app.getPath('logs'), 'runtime-launch.log')
 )
+const conversationSearchDiagnosticsLog = new RuntimeDiagnosticsLog(
+  join(app.getPath('logs'), 'conversation-search.log'),
+  '[Wework] Conversation search diagnostic '
+)
 app.on('web-contents-created', (_event, contents) => {
   const logLoadEvent = (event: string) => () => {
     console.info('[renderer-load]', { event, webContentsId: contents.id })
@@ -423,6 +428,9 @@ app.on('web-contents-created', (_event, contents) => {
     }
     void runtimeDiagnosticsLog.record(contents.id, message).catch(error => {
       console.warn('[Wework] Failed to write runtime diagnostics', error)
+    })
+    void conversationSearchDiagnosticsLog.record(contents.id, message).catch(error => {
+      console.warn('[Wework] Failed to write conversation search diagnostics', error)
     })
   })
 })
@@ -1219,6 +1227,13 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
       },
     },
     theme: startupTheme,
+    // The splash is the only visible window until the workbench reports
+    // readiness, so a user closing it through the native close button means
+    // quitting the application instead of dismissing the window.
+    onCloseRequest: () => {
+      if (quitting) return
+      requestApplicationShutdown(() => app.quit())
+    },
   })
   startupSplashWindow.on('closed', () => {
     startupSplashWindow = null
@@ -1270,6 +1285,16 @@ async function setDockVisible(visible: boolean): Promise<void> {
   if (visible) await app.dock.show()
   else await app.dock.hide()
   dockVisible = visible
+}
+
+async function holdStartupSplashForDesktopE2e(): Promise<void> {
+  const holdMs = resolveStartupSplashHoldMs(process.env)
+  if (holdMs <= 0) return
+  logStartupStep('startup-splash-hold', 'started', { holdMs })
+  await new Promise<void>(resolve => {
+    setTimeout(resolve, holdMs)
+  })
+  logStartupStep('startup-splash-hold', 'completed')
 }
 
 async function applyWindowCloseDecision(decision: WindowCloseDecision): Promise<void> {
@@ -1355,7 +1380,7 @@ function dispatchTrayAction(action: TrayAction): void {
 
 function createTrayManager(): ElectronTrayManager<Electron.Menu | null, Tray> {
   const resourcesRoot = packagedApplication ? process.resourcesPath : developmentResourcesRoot
-  const iconPath = join(resourcesRoot, 'icons', '128x128.png')
+  const iconPath = join(resourcesRoot, 'icons', trayIconFilename())
   const trayGuid = trayGuidForApplicationId(applicationId)
   return new ElectronTrayManager({
     createTray: () => new Tray(createTrayIcon(nativeImage, iconPath), trayGuid),
@@ -1497,6 +1522,11 @@ async function shutdown(): Promise<void> {
   }
   workspaceWindows.clear()
   disposeSystemDragWindow()
+  // The startup splash refuses native close requests until the workbench is
+  // ready. When the app quits within that window, an open splash cancels
+  // app.quit() and strands the app on the splash, so close it through the
+  // controlled-close path as part of every shutdown.
+  await startupSplash?.close()
   popoutWindow?.destroy()
   popoutWindow = null
   popoutWindowCreationPromise = null
@@ -1779,6 +1809,10 @@ async function configureDesktopRuntime(): Promise<void> {
             if (!mainWindow || mainWindow.isDestroyed()) return
             logStartupStep('renderer-startup-ready', 'completed', { source })
             startupTelemetrySuccess.markRendererReady()
+            await holdStartupSplashForDesktopE2e()
+            // A quit request during startup owns the exit: never present the
+            // workbench while shutdown is already tearing the app down.
+            if (quitting || !mainWindow || mainWindow.isDestroyed()) return
             if (!keepE2EWindowInBackground) mainWindow.show()
             logStartupStep('main-window-show', 'completed')
             await startupSplash?.close({
@@ -1797,6 +1831,12 @@ async function configureDesktopRuntime(): Promise<void> {
             return startupSplash?.showError()
           },
           startupSplashSnapshot: () => startupSplash?.snapshot() ?? null,
+          closeStartupSplash: () => {
+            const target = startupSplashWindow
+            if (!target || target.isDestroyed()) return false
+            target.close()
+            return true
+          },
           trayActivate: activation => trayManager?.activate(activation) ?? false,
           traySetState: state => {
             trayManager?.setState(state)

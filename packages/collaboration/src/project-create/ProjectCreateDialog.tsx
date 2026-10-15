@@ -1013,14 +1013,6 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                       description={labels.viewerRoleDescription}
                       onClick={() => commands.setPublicAccessRole("Viewer")}
                     />
-                    <ChoiceButton
-                      testId="cloud-project-public-access-developer"
-                      selected={state.publicAccessRole === "Developer"}
-                      icon={<ListTodo aria-hidden="true" />}
-                      label={labels.developerRole}
-                      description={labels.developerRoleDescription}
-                      onClick={() => commands.setPublicAccessRole("Developer")}
-                    />
                   </div>
                 </div>
               )}

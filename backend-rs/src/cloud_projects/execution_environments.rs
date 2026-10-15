@@ -9,34 +9,15 @@ use brz_http_server::StatusCode;
 use brz_mysql::{FromMysqlRow, Json, Mysql};
 use chrono::NaiveDateTime;
 
-use super::{LOOP_ITEMS_COLUMNS, ProjectListRow};
 use crate::devices;
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 use brz_json::{JsonProjection, OpaqueJson};
 
-/// Mirrors `app.api.endpoints.cloud_projects.list_project_execution_environments`
-/// -> `cloud_project_service.list_execution_environments`. The source pipeline:
-/// 1. `get_current_user_jwt_apikey_tasktoken` — JWT / API-key / task-token
-///    authentication with the labeled `users` lookup;
-/// 2. `require_cloud_project_role(db, project_id, user_id)` with the default
-///    `Viewer` role — the recorded COM_QUERY renders the source's point-form
-///    `project_access_query` union with every value inlined (entity id as a
-///    quoted string, project snowflake id as an unquoted integer);
-/// 3. `workspace_id_for_project` — the approved `resource_members` workspace
-///    grant's `entity_id`; an empty result returns `items: []`;
-/// 4. the approved `Device` grants joined with `kinds`, ordered by
-///    `resource_members.created_at, id`;
-/// 5. one Redis `MGET` of the per-device online keys (`device:online:<user>:
-///    <route>`, where the route is the `runtime_device_route_id`), which the
-///    source computes through `cache_manager.mget`;
-/// 6. per device, one `users` lookup (`db.get(User, device.user_id)`) for the
-///    `owner_name`. The source session's identity map is weak and the loaded
-///    `User` is not retained, so only the authenticated user's instance stays
-///    alive across devices: a device owned by the current user resolves
-///    without a query, while every other device issues its own lookup and a
-///    repeated owner is re-read per device; a missing owner renders an empty
-///    string.
+/// Resolve the project's effective read permission and unique active parent,
+/// then expose its bound devices with current space/project consent. Revoked or
+/// inactive devices remain in the catalog as unavailable; legacy owner-installed
+/// bindings retain only their original project's consent and revocation markers.
 #[brz_http_server::get("/api/v1/cloud-projects/:project_id/execution-environments")]
 async fn list_execution_environments(
     #[inject(state)] state: &AppState,
@@ -66,6 +47,8 @@ struct ExecutionEnvironmentItem {
     owner_id: String,
     owner_name: String,
     status: String,
+    can_use: bool,
+    unavailable_reason: Option<&'static str>,
     owner_user_id: Option<i32>,
     added_by_user_id: i32,
     created_at: Option<String>,
@@ -85,18 +68,14 @@ struct ExecutionEnvironmentRow {
     #[mysql(rename = "resource_members_id")]
     #[allow(dead_code, reason = "selected to match source column list")]
     member_id: i32,
-    #[mysql(rename = "resource_members_role")]
-    #[allow(
-        dead_code,
-        reason = "Device project grants are always 'Developer'; owner type is user"
-    )]
-    role: String,
     #[mysql(rename = "resource_members_invited_by_user_id")]
     invited_by_user_id: i32,
     #[mysql(rename = "resource_members_created_at")]
     grant_created_at: Option<NaiveDateTime>,
     #[mysql(rename = "kinds_id")]
     id: i64,
+    #[mysql(rename = "kinds_is_active")]
+    is_active: bool,
     #[mysql(rename = "kinds_user_id")]
     device_user_id: i32,
     #[mysql(rename = "kinds_name")]
@@ -157,93 +136,9 @@ impl ExecutionEnvironmentRow {
     }
 }
 
-/// The source's inline point-form `project_access_query`
-/// (`cloud_project_visibility.project_access_query(db, user_id, project_id)`).
-///
-/// The four `union_all` branches follow the source construction order: the
-/// caller's direct `CloudProject` membership (`VALID_CLOUD_PROJECT_MEMBER_ROLES`
-/// = Owner/Maintainer/Developer/Viewer with the `case(ROLE_HIERARCHY)`
-/// priority), the grant inherited through an active `CollaborationWorkspace` at
-/// the `Viewer` priority 4, the `authenticated_users` public grant restricted
-/// to Developer/Viewer, and the projects the caller created at `Owner` priority
-/// 0. The point form narrows every branch to the requested project, so the
-/// outer aggregation keeps at most one row.
-///
-/// The recorded COM_QUERY inlines every authority value: the caller's user id
-/// as a quoted string (`entity_id = '52'`), the project snowflake id as an
-/// unquoted integer on the `resource_members.resource_id` branches and as a
-/// quoted string on the `loop_items.id` branches, and the caller's user id as
-/// an integer on the `created_by_user_id` branch. This differs from the bound
-/// projection the board-snapshot repository issues for loop-item-pages, so the
-/// execution-environments recording matches only this inline shape.
-fn inline_point_access_sql(project_id: &str, user_id: i32) -> String {
-    format!(
-        "SELECT {LOOP_ITEMS_COLUMNS}, anon_1.priority AS anon_1_priority \n\
-         FROM loop_items INNER JOIN (SELECT anon_2.project_id AS project_id, min(anon_2.priority) AS priority \n\
-         FROM (SELECT CAST(resource_members.resource_id AS CHAR(64)) AS project_id, CASE resource_members.`role` WHEN 'Owner' THEN 0 WHEN 'Maintainer' THEN 1 WHEN 'Developer' THEN 2 WHEN 'Reporter' THEN 3 WHEN 'Viewer' THEN 4 WHEN 'RestrictedAnalyst' THEN 5 END AS priority \n\
-         FROM resource_members \n\
-         WHERE resource_members.resource_type = 'CloudProject' AND resource_members.entity_type = 'user' AND resource_members.entity_id = '{user_id}' AND resource_members.status = 'approved' AND resource_members.`role` IN ('Owner', 'Maintainer', 'Developer', 'Viewer') AND resource_members.resource_id = {project_id} UNION ALL SELECT CAST(resource_members.resource_id AS CHAR(64)) AS project_id, 4 AS priority \n\
-         FROM resource_members INNER JOIN (SELECT resource_members.resource_id AS resource_id \n\
-         FROM resource_members INNER JOIN kinds ON kinds.id = resource_members.resource_id \n\
-         WHERE resource_members.resource_type = 'Workspace' AND resource_members.entity_type = 'user' AND resource_members.entity_id = '{user_id}' AND resource_members.status = 'approved' AND kinds.kind = 'CollaborationWorkspace' AND kinds.is_active IS true AND resource_members.`role` IN ('Owner', 'Maintainer', 'Developer', 'Reporter')) AS anon_3 ON CAST(resource_members.entity_id AS SIGNED INTEGER) = anon_3.resource_id \n\
-         WHERE resource_members.resource_type = 'CloudProject' AND resource_members.entity_type = 'workspace' AND resource_members.status = 'approved' AND resource_members.resource_id = {project_id} UNION ALL SELECT CAST(resource_members.resource_id AS CHAR(64)) AS project_id, CASE resource_members.`role` WHEN 'Owner' THEN 0 WHEN 'Maintainer' THEN 1 WHEN 'Developer' THEN 2 WHEN 'Reporter' THEN 3 WHEN 'Viewer' THEN 4 WHEN 'RestrictedAnalyst' THEN 5 END AS priority \n\
-         FROM resource_members \n\
-         WHERE resource_members.resource_type = 'CloudProject' AND resource_members.entity_type = 'authenticated_users' AND resource_members.entity_id = '*' AND resource_members.status = 'approved' AND resource_members.`role` IN ('Developer', 'Viewer') AND resource_members.resource_id = {project_id} UNION ALL SELECT loop_items.id AS project_id, 0 AS priority \n\
-         FROM loop_items \n\
-         WHERE loop_items.created_by_user_id = {user_id} AND loop_items.status = 'active' AND loop_items.id = '{project_id}' AND loop_items.resource_type IN ('project')) AS anon_2 GROUP BY anon_2.project_id) AS anon_1 ON loop_items.id = anon_1.project_id \n\
-         WHERE loop_items.status = 'active' AND loop_items.resource_type IN ('project') \n LIMIT 1",
-    )
-}
-
-/// `require_cloud_project_role`'s first read: the source's point-form
-/// `project_access_query` union with inlined authority values, resolving the
-/// caller's effective role in one statement. The `Viewer` default never 403s
-/// a resolved role, so only the 404 path applies.
-async fn project_access_inline<M: Mysql>(
-    mysql: &M,
-    project_id: &str,
-    user_id: i32,
-) -> Result<Option<ProjectListRow>, brz_mysql::MysqlError> {
-    let row: Option<ProjectListRow> = mysql
-        .fetch_optional(inline_point_access_sql(project_id, user_id), ())
-        .await?;
-    Ok(row)
-}
 fn internal_execution_error(error: brz_mysql::MysqlError) -> FastApiError {
     tracing::error!(%error, "cloud-projects execution-environments dependency failure");
     FastApiError::detail(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
-}
-
-/// `workspace_id_for_project`: the approved `resource_members` workspace
-/// grant's `entity_id`; `None` produces `items: []`.
-async fn workspace_id_for_project<M: Mysql>(
-    mysql: &M,
-    project_id: &str,
-) -> Result<Option<i64>, brz_mysql::MysqlError> {
-    #[derive(Debug, FromMysqlRow)]
-    struct WorkspaceIdRow {
-        #[mysql(rename = "resource_members_entity_id")]
-        entity_id: String,
-    }
-    let row: Option<WorkspaceIdRow> = mysql
-        .fetch_optional(
-            &format!(
-                "SELECT resource_members.entity_id AS resource_members_entity_id \n\
-                 FROM resource_members \n\
-                 WHERE resource_members.resource_type = 'CloudProject' AND resource_members.resource_id = {project_id} \
-                 AND resource_members.entity_type = 'workspace' AND resource_members.status = 'approved' \n LIMIT 1",
-            ),
-            (),
-        )
-        .await?;
-    let entity_id = match row {
-        Some(row) => row.entity_id.trim().to_string(),
-        None => return Ok(None),
-    };
-    match entity_id.parse::<i64>() {
-        Ok(workspace_id) => Ok(Some(workspace_id)),
-        Err(_) => Ok(None),
-    }
 }
 
 /// The approved `Device` grants joined with `kinds`, ordered by
@@ -282,7 +177,7 @@ async fn device_env_rows<M: Mysql>(
                  FROM resource_members INNER JOIN kinds ON kinds.id = resource_members.resource_id \n\
                  WHERE resource_members.resource_type = 'Device' AND resource_members.entity_type = 'project' \
                  AND resource_members.entity_id = '{project_id}' AND resource_members.status = 'approved' \
-                 AND kinds.kind = 'Device' AND kinds.is_active IS true \
+                 AND kinds.kind = 'Device' \
                  ORDER BY resource_members.created_at, resource_members.id",
             ),
             (),
@@ -470,28 +365,32 @@ async fn execution_environments(
     project_id: &str,
     current_user: &crate::loop_tasks::auth::UserRow,
 ) -> Result<ExecutionEnvironmentListResponse, FastApiError> {
-    // `require_cloud_project_role(db, project_id, user_id)` with the default
-    // `Viewer` role: the inline point-form `project_access_query` union. A
-    // missing access source raises `404 {"detail": "Cloud project not found"}`.
-    project_access_inline(&state.mysql, project_id, current_user.id)
-        .await
-        .map_err(internal_execution_error)?
-        .ok_or_else(|| {
-            FastApiError::detail(
-                brz_http_server::StatusCode::NOT_FOUND,
-                "Cloud project not found",
-            )
-        })?;
-
-    // `workspace_id_for_project`: empty when the project has no approved
-    // workspace grant.
-    let workspace_id = workspace_id_for_project(&state.mysql, project_id)
-        .await
-        .map_err(internal_execution_error)?;
-    let Some(workspace_id) = workspace_id else {
-        return Ok(ExecutionEnvironmentListResponse { items: Vec::new() });
-    };
-    let workspace_id = workspace_id.to_string();
+    let id = super::parse_project_id(project_id)?;
+    let access = super::collaboration_access::authorized_projects(
+        &state.mysql,
+        current_user.id,
+        Some(id),
+        None,
+    )
+    .await
+    .map_err(internal_execution_error)?
+    .into_iter()
+    .next()
+    .ok_or_else(|| FastApiError::detail(StatusCode::NOT_FOUND, "Cloud project not found"))?;
+    let workspace_id = access.workspace.id.clone();
+    let metadata = access
+        .project
+        .metadata
+        .as_ref()
+        .and_then(|m| m.0.value.as_ref());
+    let authorized = super::environment_authorization::authorized_device_ids(
+        &state.mysql,
+        project_id,
+        workspace_id.parse().expect("workspace IDs are numeric"),
+        metadata,
+    )
+    .await
+    .map_err(internal_execution_error)?;
 
     // The approved Device grants joined with `kinds`.
     let rows = device_env_rows(&state.mysql, project_id)
@@ -538,6 +437,7 @@ async fn execution_environments(
             .filter(|value| !value.is_empty())
             .map(str::to_string);
 
+        let can_use = row.is_active && authorized.contains(&row.id);
         items.push(ExecutionEnvironmentItem {
             id: row.id.to_string(),
             workspace_id: workspace_id.clone(),
@@ -553,10 +453,16 @@ async fn execution_environments(
             owner_type: "user".to_string(),
             owner_id: row.device_user_id.to_string(),
             owner_name,
-            status: status_map
-                .get(&row.id)
-                .cloned()
-                .unwrap_or_else(|| "offline".to_string()),
+            status: if can_use {
+                status_map
+                    .get(&row.id)
+                    .cloned()
+                    .unwrap_or_else(|| "offline".to_string())
+            } else {
+                "error".to_owned()
+            },
+            can_use,
+            unavailable_reason: (!can_use).then_some("resource_authorization_revoked"),
             owner_user_id: Some(row.device_user_id),
             added_by_user_id: row.invited_by_user_id,
             created_at: row.grant_created_at.map(datetime_value),
@@ -584,49 +490,6 @@ mod tests {
 
     fn normalize(sql: &str) -> String {
         sql.split_whitespace().collect::<Vec<_>>().join(" ")
-    }
-
-    #[test]
-    fn inline_point_access_sql_inlines_all_authority_values() {
-        let sql = inline_point_access_sql("1000000000000000002", 301);
-        let normalized = normalize(&sql);
-        assert!(normalized.contains("'301'"), "entity_id is a quoted string");
-        assert!(
-            normalized.contains("created_by_user_id = 301"),
-            "owner branch is an integer"
-        );
-        assert!(normalized.contains("resource_members.resource_id = 1000000000000000002"));
-        assert!(normalized.contains("loop_items.id = '1000000000000000002'"));
-        assert!(!sql.contains('?'), "no bound markers in the recorded shape");
-        assert!(normalized.ends_with("LIMIT 1"), "point form keeps one row");
-    }
-
-    #[test]
-    fn inline_point_access_sql_matches_the_source_union_branches() {
-        let sql = inline_point_access_sql("1000000000000000002", 301);
-        let normalized = normalize(&sql);
-        // The direct grant keeps the Viewer role and the ROLE_HIERARCHY case.
-        assert!(normalized.contains(
-            "`role` IN ('Owner', 'Maintainer', 'Developer', 'Viewer') AND \
-             resource_members.resource_id = 1000000000000000002"
-        ));
-        assert!(normalized.contains(
-            "WHEN 'Reporter' THEN 3 WHEN 'Viewer' THEN 4 WHEN 'RestrictedAnalyst' THEN 5 END"
-        ));
-        // The inherited workspace grant sits at the Viewer priority.
-        assert!(normalized.contains(
-            "project_id, 4 AS priority FROM resource_members INNER JOIN (SELECT \
-             resource_members.resource_id AS resource_id"
-        ));
-        assert!(normalized.contains("`role` IN ('Owner', 'Maintainer', 'Developer', 'Reporter')"));
-        // The public grant is the `authenticated_users` entity, not visibility.
-        assert!(
-            normalized.contains(
-                "entity_type = 'authenticated_users' AND resource_members.entity_id = '*'"
-            )
-        );
-        assert!(normalized.contains("`role` IN ('Developer', 'Viewer')"));
-        assert!(!normalized.contains("visibility"));
     }
 
     #[test]
@@ -736,6 +599,8 @@ mod tests {
             owner_id: "301".to_string(),
             owner_name: "example-owner".to_string(),
             status: "online".to_string(),
+            can_use: true,
+            unavailable_reason: None,
             owner_user_id: Some(301),
             added_by_user_id: 301,
             created_at: None,

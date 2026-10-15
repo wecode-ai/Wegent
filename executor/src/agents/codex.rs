@@ -165,6 +165,7 @@ pub(crate) use home::{
 use home::{prepare_wework_codex_home, read_wework_codex_user_instructions, CODEX_HOME_ENV};
 use plugin_skills::PluginSkillResolver;
 mod github_cli;
+mod local_connector_auth;
 
 pub type CodexNotificationSender = mpsc::UnboundedSender<Value>;
 pub type CodexThreadStartedCallback = Box<dyn FnOnce(String) + Send + 'static>;
@@ -3370,6 +3371,7 @@ fn codex_thread_developer_instructions(user_instructions: &str, task_instruction
         WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS,
         WEWORK_COMPUTER_USE_DEVELOPER_INSTRUCTIONS,
         WEWORK_SPACE_DEVELOPER_INSTRUCTIONS,
+        local_connector_auth::INSTRUCTIONS,
         github_cli::INSTRUCTIONS,
     ]
     .into_iter()

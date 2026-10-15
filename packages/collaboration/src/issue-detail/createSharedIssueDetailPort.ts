@@ -78,6 +78,7 @@ export interface SharedIssueDetailAgent {
   id: string;
   name: string;
   status?: string;
+  teamId?: number;
 }
 
 export interface SharedIssueDetailCreateInput {
@@ -377,6 +378,14 @@ export function createSharedIssueDetailPort(
             id: agent.id,
             name: agent.name,
             status: typeof agent.status === "string" ? agent.status : undefined,
+            ...((agent.team_id ?? agent.wegentTeamId ?? agent.wegent_team_id) ==
+            null
+              ? {}
+              : {
+                  teamId: Number(
+                    agent.team_id ?? agent.wegentTeamId ?? agent.wegent_team_id,
+                  ),
+                }),
           })),
         ),
     },

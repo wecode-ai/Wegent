@@ -52,6 +52,77 @@ describe("IssueActivityPanel", () => {
   let container: HTMLDivElement;
   let root: Root;
 
+  it.each([true, false])(
+    "reads an empty discussion only if its subscription succeeds (%s)",
+    async (succeeds) => {
+      const frames = new Map<number, FrameRequestCallback>();
+      let nextFrame = 0;
+      vi.stubGlobal(
+        "requestAnimationFrame",
+        (callback: FrameRequestCallback) => {
+          frames.set(++nextFrame, callback);
+          return nextFrame;
+        },
+      );
+      vi.stubGlobal("cancelAnimationFrame", (id: number) => {
+        frames.delete(id);
+      });
+      const geometry = vi
+        .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+        .mockReturnValue({ top: 0, bottom: 400, height: 400 } as DOMRect);
+      const unreadIssue = { ...issue, is_unread: true, content_revision: 1 };
+      const readIssue = {
+        ...unreadIssue,
+        is_unread: false,
+        activity_read_sequence: 0,
+      };
+      const markRead = vi.fn().mockResolvedValue(readIssue);
+      const api = {
+        activity: {
+          subscribe: succeeds
+            ? vi.fn().mockResolvedValue({
+                snapshot: { messages: [] },
+                unsubscribe: vi.fn(),
+              })
+            : vi.fn().mockRejectedValue(new Error("subscription failed")),
+        },
+        issues: { markRead },
+      } as unknown as Parameters<typeof IssueActivityPanel>[0]["api"];
+      const onTaskUpdated = vi.fn();
+      await act(async () =>
+        root.render(
+          <IssueActivityPanel
+            api={api}
+            issue={unreadIssue}
+            members={[]}
+            agents={[]}
+            assignments={[]}
+            comments={[]}
+            executions={[]}
+            canComment={false}
+            translate={createCollaborationTranslator("en")}
+            onCommentsChange={vi.fn()}
+            onError={vi.fn()}
+            onTaskUpdated={onTaskUpdated}
+          />,
+        ),
+      );
+      await act(async () => {
+        const pending = [...frames.values()];
+        frames.clear();
+        pending.forEach((callback) => callback(0));
+      });
+      if (succeeds) {
+        expect(markRead).toHaveBeenCalledExactlyOnceWith(issue.id, 0);
+        expect(onTaskUpdated).toHaveBeenCalledExactlyOnceWith(readIssue);
+      } else {
+        expect(markRead).not.toHaveBeenCalled();
+        expect(onTaskUpdated).not.toHaveBeenCalled();
+      }
+      geometry.mockRestore();
+    },
+  );
+
   it("uses only the current Issue chat stream instead of adding REST records to the PC feed", async () => {
     const messages: ProjectChatMessage[] = Array.from(
       { length: 7 },

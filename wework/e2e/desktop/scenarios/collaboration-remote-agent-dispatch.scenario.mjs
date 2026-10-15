@@ -26,8 +26,11 @@ import {
   resultDir,
 } from '../modules/shared.mjs'
 import {
+  openDirectProjectCreation,
+  openProjectAgentCreator,
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
+  selectCollaborationIssueAgent,
 } from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -147,8 +150,7 @@ async function createWorkspaceAndProject(control, request, timeoutMs) {
       timeoutMs,
     }
   )
-  await control.command('click', scoped('[data-testid="collaboration-workspace-project-create"]'))
-  await control.command('click', '[data-testid="collaboration-workspace-project-create-blank"]')
+  await openDirectProjectCreation(control, CONTENT)
   await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {
     value: PROJECT,
   })
@@ -169,10 +171,12 @@ async function createWorkspaceAndProject(control, request, timeoutMs) {
 
 async function createAgent(control, request, projectId, timeoutMs, environmentId) {
   await control.command('click', scoped('[data-testid="collaboration-project-settings-agents"]'))
-  await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
+  await openProjectAgentCreator(
+    control,
+    scoped('[data-testid="project-agent-add"]'),
     timeoutMs,
-  })
-  await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', { timeoutMs })
+    'wework-agent-resource-creator'
+  )
   await control.command('fill', '[data-testid="wework-agent-display-name"]', { value: AGENT })
   await selectCloudAgentModel(control, request, MODEL, timeoutMs, environmentId)
   await control.command('fill', '[data-testid="wework-agent-system-prompt"]', {
@@ -205,10 +209,11 @@ async function createAndAssignIssue(control, request, projectId, agent, timeoutM
     'Wework UI did not persist the Issue',
     timeoutMs
   )
-  await control.command('click', scoped('[data-testid="cloud-todo-detail-assignee"]'))
-  await control.command(
-    'click',
-    `[data-testid="cloud-todo-detail-assignee-option-agent:${agent.id}"]`
+  await selectCollaborationIssueAgent(
+    control,
+    scoped('[data-testid="cloud-todo-detail-assignee"]'),
+    agent.id,
+    timeoutMs
   )
   await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
     timeoutMs,
@@ -376,6 +381,43 @@ async function verifyManualSessionReply(
     afterReply.map(binding => [binding.device_id, binding.task_id]).sort(),
     bindings.map(binding => [binding.device_id, binding.task_id]).sort(),
     'The reply created a new task instead of continuing the bound session'
+  )
+  await waitForValue(
+    () => readProjectChatMessages(cloud, issueId, timeoutMs),
+    messages =>
+      messages.some(
+        message =>
+          message.messageId === replyId &&
+          message.status === 'completed' &&
+          message.content.trim() === CONTINUATION_RESULT
+      ),
+    'The completed reply was not persisted before refreshing its Issue',
+    timeoutMs
+  )
+  const completedIssue = await request(`/api/v1/loop-items/${issueId}`)
+  const refreshedTitle = `${completedIssue.title} · refreshed`
+  const refreshedIssue = await request(`/api/v1/loop-items/${issueId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ version: completedIssue.version, title: refreshedTitle }),
+  })
+  assert.ok(refreshedIssue.version > completedIssue.version)
+  assert.equal(refreshedIssue.status, completedIssue.status)
+  await waitForValue(
+    () => control.command('getValue', scoped('[data-testid="cloud-todo-detail-title"]')),
+    value => value === refreshedTitle,
+    'The Issue update did not refresh the open activity view',
+    timeoutMs
+  )
+  await control.command('waitFor', content, {
+    text: CONTINUATION_RESULT,
+    stableMs: 500,
+    timeoutMs,
+  })
+  assert.equal((await control.command('getText', content)).trim(), CONTINUATION_RESULT)
+  await control.command(
+    'waitFor',
+    scoped(`[data-testid="cloud-task-activity-execution-badge-${replyId}"]`),
+    { text: '已完成', stableMs: 500, timeoutMs }
   )
   await control.command('scrollIntoView', content)
   await captureScreenshot(control, 'remote-agent-dispatch-04-manual-reply-completed.png', CONTENT)

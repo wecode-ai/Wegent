@@ -4,23 +4,25 @@ sidebar_position: 35
 
 # 项目角色与 Issue 可见性
 
-云端项目使用一套项目角色：Owner、Maintainer、Developer、Viewer。Owner 管理项目及成员；Maintainer 管理项目设置、成员和 Issue 安全级别；Developer 创建和修改可见 Issue，并可指派负责人；Issue 创建者也可以指派自己的 Issue；Viewer 只读。项目创建者保留 Owner 权限。工作区成员通过已有项目关联获得 Viewer 权限；项目直接授权可提高权限。
+完整规则见[协作权限契约](../wegent/developer-guide/collaboration-permissions.md)。项目管理角色为管理员（Maintainer）、成员（Developer）和只读成员（Viewer）。创建者只保留审计身份；创建项目时单独授予创建者管理员角色。
 
-项目的“私有”或“公开”由 `resource_members` 中的授权决定。公开项目向所有登录用户授予 Viewer 或 Developer；私有项目没有这条授权。项目成员、工作区继承授权和所有登录用户授权取最高角色。待审批、被拒绝或无效的授权不生效。已归档项目不可访问。
+每个项目通过既有 `CloudProject → workspace` 关系归属唯一空间；`workspace_id` 是读取属性，不是新增列。默认项目继承空间成员角色；受限项目仅继承空间所有者和管理员的治理权。直接邀请与继承权限取并集，较低的直接角色不能降低继承权限。公开项目仅授予 Viewer，不把浏览者变成负责人候选。
 
-Issue 可见性与项目角色分别配置。项目设置提供新 Issue 的默认安全级别，单个 Issue 可设为“项目成员可见”（`open`）或“仅相关人员可见”（`related`）。Owner 和 Maintainer 可查看全部 Issue；其他角色只可查看 `open` Issue，或与自己相关的 `related` Issue。相关人员包括创建者、负责人、协作者、有效任务关联用户，以及被指派机器人的创建者。列表、详情、交付物、执行记录和项目会话使用同一判定；读取无关 Issue 返回 404。
+Issue 先检查项目访问，再检查 `open` 或 `related` 安全级别。项目管理员可读取全部 Issue；其他成员只能读取公开 Issue 或与自己相关的 Issue。相关人员包括创建者、负责人、协作者、有效任务关联用户以及被指派智能体的所有者。列表、详情、交付物、执行记录与会话遵循同一判定；无关 Issue 返回 404。创建者的读取关系不提供额外修改、评论或指派权限。
 
-钉钉多维表格记录由钉钉直接提供，其记录权限仍由钉钉控制；Wework 的项目角色控制表格入口和编辑操作，不对这些记录提供 Issue 安全级别。
+钉钉多维表格的记录权限仍由钉钉控制；项目角色控制表格入口和操作能力。
 
 ```mermaid
 flowchart LR
-    A[项目成员授权] --> D[合并项目角色]
-    B[工作区继承授权] --> D
-    C[所有登录用户授权] --> D
-    D --> E[项目访问]
-    E --> F[Issue 安全级别与相关人员判定]
+    Space[有效空间角色] --> Union[继承与直接授权取并集]
+    Mode[继承或受限模式] --> Union
+    Invite[直接邀请] --> Union
+    Public[公开只读访问] --> Access[项目访问]
+    Union --> Access
+    Access --> Issue[Issue 安全级别与相关人员]
+    Issue --> Operation[操作角色及当前资源授权]
 ```
 
-项目列表和详情复用 `cloud_project_visibility.py`。列表批量读取授权、公开角色和父空间信息，非空列表执行三次查询。响应中的 `workspace_context` 仅包含父空间 ID、公开 ID 和名称；显示父空间名称不会授予空间设置、成员或其他私有项目的访问权限。
+项目列表使用固定四次批量查询返回项目、父空间、公开授权和权限来源，不随项目数量增加。`workspace_context` 仅用于父空间导航；`workspace_access_role` 明确表示是否具有空间权限。仅获得项目权限不会获得空间成员、资源目录或其他项目权限。
 
-已有公开项目的数据迁移只更新现有 `resource_members` 和 Issue 元数据，不新增表或列。旧公开项目的 Issue 默认收紧为 `related`，避免迁移时扩大可见范围。
+无需改表或洗数据。成员模式存入原 JSON，旧角色读取时规范化，原父空间关系保持不变。旧合法安装绑定保留原项目内使用效力；显式 private 定义仍仅创建者可见和可用。新绑定使用明确资源授权。旧后端执行旧规则，新权限上线需统一后端策略；详见协作权限契约。

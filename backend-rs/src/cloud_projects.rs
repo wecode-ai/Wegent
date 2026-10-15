@@ -2,37 +2,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Cloud-project read endpoints
-//! (`app.api.endpoints.cloud_projects`, router prefix `/v1/cloud-projects`
-//! under the app prefix `/api`):
+//! Cloud-project reads and migration candidates.
 //!
-//! - `GET /api/v1/cloud-projects` — list the projects accessible to the
-//!   current user (`list_cloud_projects`);
-//! - `GET /api/v1/cloud-projects/{project_id}` — one project by id
-//!   (`get_cloud_project`).
+//! The selected project-list API and project execution-environment API use
+//! `collaboration_access` to enforce the approved CP contract. A single query
+//! resolves explicit and inherited grants, a unique active parent, provenance,
+//! and read-only public discovery. Historical creators receive no implicit grant.
 //!
-//! Shared pipeline:
-//! 1. `security.get_current_user[_jwt_apikey_tasktoken]` — JWT session decode
-//!    plus the labeled `users` lookup (the full twelve-column
-//!    `users_<column>` projection);
-//! 2. `cloud_project_visibility.project_access_query` — one statement that
-//!    unions the four grant sources (direct `CloudProject` membership with the
-//!    role-priority `CASE`, `Workspace`-membership inheritance, grants to the
-//!    `authenticated_users` entity, and projects the caller created), reduces
-//!    each project to `min(priority)` and joins the active `loop_items`
-//!    project rows. The joined `anon_1.priority` column is the caller's
-//!    `access_role`, so no per-project authorization read is issued. The point
-//!    form pushes the requested id into every branch and keeps one row;
-//! 3. `_parent_contexts` — one `resource_members`/`kinds` read that resolves
-//!    the parent `CollaborationWorkspace` (`workspace_id` plus
-//!    `workspace_context`); the query is skipped when the list is empty;
-//! 4. `_all_user_grant_roles` — one `resource_members` read that resolves the
-//!    approved `authenticated_users` grant driving `visibility` and
-//!    `public_access`.
-//!
-//! The per-project body derives from the `loop_items` row plus its
-//! `metadata` JSON (`CloudProjectResponse.populate_tags` in
-//! `app.schemas.cloud_project`); see the `response` submodule.
+//! Unselected route bodies remain migration candidates. The shared point-access
+//! guard uses the same policy; route ownership is defined by config/routes.toml.
 use brz_http_server::StatusCode;
 use brz_json::{JsonProjection, OpaqueJson};
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlRow};
@@ -46,7 +24,7 @@ use crate::state::AppState;
 
 mod response;
 
-pub(crate) use response::{CloudProjectBody, ProjectListResponse, WorkspaceContext};
+pub(crate) use response::{CloudProjectBody, WorkspaceContext};
 
 /// `ProjectWorkflowDefinition` rendering for the project response body.
 mod workflow_definition;
@@ -59,6 +37,8 @@ mod execution_environments;
 mod collaboration_groups;
 
 mod access;
+mod collaboration_access;
+mod environment_authorization;
 
 pub(crate) use access::{
     LOOP_ITEMS_COLUMNS, ProjectAccessMode, entity_columns, project_access_statement,
@@ -71,6 +51,8 @@ mod update;
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]
 pub struct CloudMetadataInput {
+    pub membership_mode: Option<String>,
+    pub legacy_device_revocations: Option<OpaqueJson>,
     pub visibility: Option<String>,
     pub task_provider: Option<String>,
     pub default_issue_security: Option<String>,
@@ -136,26 +118,6 @@ const ALL_USER_GRANT_ROLES_SQL: &str = "\
 SELECT resource_members.resource_id AS resource_members_resource_id, resource_members.`role` AS resource_members_role \n\
 FROM resource_members \n\
 WHERE resource_members.resource_type = 'CloudProject' AND resource_members.resource_id IN ({placeholders}) AND resource_members.entity_type = 'authenticated_users' AND resource_members.entity_id = '*' AND resource_members.status = 'approved'";
-
-/// `list_project_responses` first read: the accessible projects with the
-/// caller's resolved role priority, newest first. An optional `workspace_id`
-/// narrows the list through `workspace_project_ids`.
-async fn accessible_projects<M: Mysql>(
-    mysql: &M,
-    user_id: i32,
-    workspace_id: Option<i64>,
-) -> Result<Vec<(ProjectListRow, i64)>, brz_mysql::MysqlError> {
-    let sql = project_access_statement(ProjectAccessMode::List { workspace_id }, user_id, None);
-    let rows: Vec<MysqlRow> = mysql.fetch_all(sql, ()).await?;
-    rows.into_iter()
-        .map(|row| {
-            // The joined aggregate supplies `access_role`; read it before the
-            // typed project projection consumes the row.
-            let priority: i64 = row.get_required("anon_1_priority")?;
-            ProjectListRow::from_mysql_row(row).map(|project| (project, priority))
-        })
-        .collect()
-}
 
 /// `_parent_contexts`: resolve the parent `CollaborationWorkspace` of every
 /// listed project. The source skips the query entirely for an empty list.
@@ -301,59 +263,35 @@ async fn list_cloud_projects(
     #[inject(state)] state: &AppState,
     #[auth] current_user: SessionUser,
     query: brz_http_server::Query<CloudProjectListQuery>,
-) -> Result<ProjectListResponse, FastApiError> {
+) -> Result<collaboration_access::CollaborativeProjectList, FastApiError> {
     cloud_projects(state, &current_user, &query).await
 }
 
 /// Handler body for `GET /api/v1/cloud-projects`.
 ///
 /// Mirrors `app.api.endpoints.cloud_projects.list_cloud_projects` ->
-/// `list_project_responses(db, current_user, workspace_id)`: one
-/// `project_access_query` read supplying both the projects and the caller's
-/// role priority, followed by one `_parent_contexts` read for the parent
-/// workspace navigation context of every listed project.
+/// Resolve projects, effective roles, provenance and parent navigation in one read.
 async fn cloud_projects(
     state: &AppState,
     current_user: &SessionUser,
     params: &CloudProjectListQuery,
-) -> Result<ProjectListResponse, FastApiError> {
+) -> Result<collaboration_access::CollaborativeProjectList, FastApiError> {
     let workspace_id = params.validated()?;
-    let projects = accessible_projects(&state.mysql, current_user.0.id, workspace_id)
-        .await
-        .map_err(internal_error)?;
-
-    // `_parent_contexts(db, [str(project.id) for project, _ in rows])` resolves
-    // the parent collaboration workspace of every listed project in one read.
-    let project_ids: Vec<String> = projects
-        .iter()
-        .map(|(project, _)| project.id.clone())
-        .collect();
-    let contexts = parent_contexts(&state.mysql, &project_ids)
-        .await
-        .map_err(internal_error)?;
-    // `_all_user_grant_roles(db, [str(project.id) ...])` resolves the
-    // all-signed-in-users grant that drives `visibility`/`public_access`.
-    let all_user_roles = all_user_grant_roles(&state.mysql, &project_ids)
-        .await
-        .map_err(internal_error)?;
+    let projects = collaboration_access::authorized_projects(
+        &state.mysql,
+        current_user.0.id,
+        None,
+        workspace_id,
+    )
+    .await
+    .map_err(internal_error)?;
 
     let items = projects
         .iter()
-        .map(|(project, priority)| {
-            response::project_response(
-                project,
-                current_user.0.id,
-                &current_user.0.user_name,
-                // The union only produces the mapped priorities; the
-                // source indexes `ROLES_BY_PRIORITY` with a plain lookup.
-                role_for_priority(*priority).unwrap_or("RestrictedAnalyst"),
-                all_user_roles.get(&project.id).map(String::as_str),
-                contexts.get(&project.id),
-            )
-        })
+        .map(|project| project.response(current_user.0.id, &current_user.0.user_name))
         .collect();
 
-    Ok(ProjectListResponse { items })
+    Ok(collaboration_access::CollaborativeProjectList { items })
 }
 
 /// GET /api/v1/cloud-projects/{project_id}: the single-cloud-project free

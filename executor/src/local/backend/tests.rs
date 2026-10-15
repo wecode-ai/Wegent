@@ -198,7 +198,7 @@ fn backend_config(device_id: &str) -> LocalBackendConfig {
         runtime_transfer_host: "127.0.0.1".to_string(),
         heartbeat_interval: Duration::from_secs(30),
         heartbeat_timeout: Duration::from_secs(10),
-        runtime_work_poll_interval: Duration::from_secs(2),
+        runtime_work_poll_interval: Duration::from_secs(5),
         registration_timeout: Duration::from_secs(10),
         reconnect_delay: Duration::from_secs(1),
         reconnect_delay_max: Duration::from_secs(30),

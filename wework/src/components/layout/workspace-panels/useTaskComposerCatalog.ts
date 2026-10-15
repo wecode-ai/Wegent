@@ -21,7 +21,6 @@ export function useTaskComposerCatalog(
     const binding: ComposerCatalogBinding = {
       appsStore: createComposerCatalogStore(),
       catalogEvents: { catalogChanged: LOCAL_PLUGIN_SKILLS_CHANGED_EVENT },
-      prefetchLocalAuth: !taskId,
     }
     // Before creation, the composer's project controls supply its contextual catalog.
     // Once bound, neither picker nor slash may use the main workbench's task catalog.

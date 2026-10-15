@@ -370,6 +370,16 @@ async function verifyPersistedWorkspacePaths(control, folderName, fileName, comp
   await verifySentWorkspacePaths(control, folderName, fileName)
 }
 
+function assertSourceAttachmentPath(control, scenario, sourcePath) {
+  const requests = control.scenarioRequests.get(scenario) ?? []
+  assert.equal(requests.length, 1, 'The source attachment did not send exactly one model request')
+  const requestText = JSON.stringify(requests[0].body).replaceAll('\\\\', '/')
+  assert.ok(
+    requestText.includes(sourcePath.replaceAll('\\', '/')),
+    'The local attachment was copied instead of referencing its source path'
+  )
+}
+
 async function verifyPastedWorkspacePaths({ composerSelector, control, workspacePath }) {
   control.setScenario('pasted_workspace_paths')
   const folderPath = join(workspacePath, PASTED_PATH_FOLDER_NAME)
@@ -435,6 +445,7 @@ async function verifyPastedWorkspacePaths({ composerSelector, control, workspace
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.awaitScenarioRequestCount('pasted_workspace_paths', 1)
+  assertSourceAttachmentPath(control, 'pasted_workspace_paths', filePath)
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: PASTED_PATH_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -674,6 +685,7 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control }) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.awaitScenarioRequestCount('dropped_workspace_paths', 1)
+  assertSourceAttachmentPath(control, 'dropped_workspace_paths', filePath)
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: DROPPED_PATH_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

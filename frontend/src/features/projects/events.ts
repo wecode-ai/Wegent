@@ -3,6 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export const PROJECT_DELETED_EVENT = 'wegent:project-deleted'
+export const PROJECT_TASKS_CHANGED_EVENT = 'wegent:project-tasks-changed'
+
+export function dispatchProjectTasksChangedEvent() {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new Event(PROJECT_TASKS_CHANGED_EVENT))
+}
 
 export interface ProjectDeletedEventDetail {
   projectId: number

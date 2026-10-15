@@ -34,7 +34,7 @@ import { decodeMarkdownFilePath } from '@/components/chat/assistantMarkdownLinks
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
 import { PluginWorkspaceConversationResult } from '@/components/plugins/PluginWorkspaceConversationResult'
-import { useLocalConnectorAuthGate } from '@/features/plugins/useLocalConnectorAuthGate'
+import { useLocalConnectorAuthRecovery } from '@/features/plugins/useLocalConnectorAuthRecovery'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import {
   SubagentConversationPanel,
@@ -108,8 +108,10 @@ import {
   type RightWorkspacePanelTab,
   type RightWorkspacePanelView,
   type RightWorkspaceTerminalTab,
+  type RightWorkspacePanelHandle,
 } from './workspace-panels/RightWorkspacePanel'
 import { retainElectronEmbeddedBrowserView } from './workspace-panels/electronEmbeddedBrowserHost'
+import { useRightWorkspaceShortcuts } from './workspace-panels/useRightWorkspaceShortcuts'
 import {
   attachRightWorkspaceSidebarController,
   encodeRightWorkspaceExtensionTabId,
@@ -1452,24 +1454,23 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     ]
   )
 
-  const connectorAuthGate = useLocalConnectorAuthGate({
+  const connectorAuthRecovery = useLocalConnectorAuthRecovery({
     active: paneActive && paneVisible && workbenchVisible,
     onError: message => paneSession.setError(message),
     messages: paneSession.messages,
     onResumeSend: async input => {
-      await sendPaneInputWithContext(input)
+      await paneSession.sendContinuation(input)
     },
-    onRetryMessage: message => paneSession.retryFailedMessage(message),
   })
 
-  const connectorAuthCard = connectorAuthGate.pending ? (
+  const connectorAuthCard = connectorAuthRecovery.pending ? (
     <ConnectorAuthCard
-      target={connectorAuthGate.pending.target}
-      title={connectorAuthGate.pending.title}
+      target={connectorAuthRecovery.pending.target}
+      title={connectorAuthRecovery.pending.title}
       onSuccess={() => {
-        void connectorAuthGate.completePending()
+        void connectorAuthRecovery.completePending()
       }}
-      onCancel={connectorAuthGate.clearPending}
+      onCancel={connectorAuthRecovery.clearPending}
     />
   ) : null
 
@@ -1486,18 +1487,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         wegentTeamId?: number
       }
     ) => {
-      const submitted = (value ?? paneSession.input).trim()
-      if (submitted) {
-        const gate = await connectorAuthGate.gateBeforeSend(submitted)
-        if (gate === 'blocked') {
-          // Keep composer text so cancel does not discard the draft; resume
-          // send still uses pendingInput and clears after a successful send.
-          return false
-        }
-      }
+      connectorAuthRecovery.clearPending()
       return sendPaneInputWithContext(value, options)
     },
-    [connectorAuthGate, paneSession, sendPaneInputWithContext]
+    [connectorAuthRecovery, sendPaneInputWithContext]
   )
 
   const setTaskSupervisor = useCallback(
@@ -1765,6 +1758,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const restoredReviewState = initialWorkspaceState?.reviewState
   const restoredLoadingReviewRef = useRef(restoredReviewState?.loading ? restoredReviewState : null)
   const [fileWorkspaceDirty, setFileWorkspaceDirty] = useState(false)
+  const rightWorkspacePanelRef = useRef<RightWorkspacePanelHandle>(null)
   const temporaryChatTabSequence = useRef(0)
   const browserTabSequence = useRef(initialBrowserWorkspaceState.maxSequence)
   const [browserStates, setBrowserStates] = useState<
@@ -4341,6 +4335,21 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const selectChatView = useCallback(() => {
     openTemporaryChatTab()
   }, [openTemporaryChatTab])
+  const navigateRightWorkspace = useCallback((action: () => void) => {
+    if (rightWorkspacePanelRef.current) rightWorkspacePanelRef.current.navigate(action)
+    else action()
+  }, [])
+  useRightWorkspaceShortcuts({
+    active: paneActive && paneVisible && workbenchVisible,
+    canOpenReview: Boolean(loadEnvironmentDiff && workspaceTarget),
+    allowTemporaryChat: temporaryChatAvailable,
+    canBrowseFiles,
+    onNavigate: navigateRightWorkspace,
+    onSelectReview: selectReviewView,
+    onSelectBrowser: selectBrowserView,
+    onSelectChat: selectChatView,
+    onSelectFiles: selectFilesView,
+  })
   const selectPlanView = useCallback(() => {
     openRightPanelTab('plan')
   }, [openRightPanelTab])
@@ -5220,6 +5229,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   onClick={focusComposerFromConversationClick}
                 >
                   <ScrollableMessageArea
+                    searchActive={paneActive && paneVisible && workbenchVisible}
                     workspacePath={composerWorkspaceTarget?.path}
                     imageTarget={remoteImageTarget}
                     messages={paneMessages}
@@ -5611,6 +5621,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 </div>
               ) : displayedRightPanelExpanded ? null : (
                 <DesktopEmptyTaskLauncher
+                  searchActive={paneActive && paneVisible && workbenchVisible}
                   connectorAuthCard={connectorAuthCard}
                   compact={presentation === 'popout'}
                   projectName={currentProject?.name}
@@ -5840,6 +5851,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         >
           {shouldRenderRightPanel ? (
             <RightWorkspacePanel
+              ref={rightWorkspacePanelRef}
               showWorkbenchBackground={hasMainBackground && !displayedRightPanelExpanded}
               visible={paneVisible && workbenchVisible && displayedRightPanelOpen}
               renderTabsInAppTitlebar={!splitMode}

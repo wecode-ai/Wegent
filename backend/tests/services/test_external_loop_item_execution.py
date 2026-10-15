@@ -47,6 +47,11 @@ from app.services.loop_items.provider_router import loop_item_provider_router
 from app.services.loop_items.service import loop_item_service
 from app.services.project_chat.service import project_chat_service
 from tests.utils.agent_resources import create_runnable_wegent_team
+from tests.utils.collaboration import (
+    authorize_project,
+    authorize_project_agent,
+    authorize_resource,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -69,6 +74,7 @@ def _make_gitlab_project(db: Session, user: User) -> CloudProject:
             "provider_config": {"repository": "group/project"},
         },
     )
+    authorize_project(db, project)
     db.add(project)
     db.commit()
     db.refresh(project)
@@ -112,7 +118,18 @@ def _make_bot(
             "visibility": "public",
         },
     )
+    authorize_project_agent(db, bot)
     db.add(bot)
+    db.flush()
+    authorize_resource(
+        db,
+        project,
+        db.query(Kind)
+        .filter_by(kind="Device", name=device_id, namespace="default", user_id=user.id)
+        .one(),
+    )
+    if wegent_team_id:
+        authorize_resource(db, project, db.get(Kind, wegent_team_id))
     db.commit()
     db.refresh(bot)
     return bot
@@ -822,6 +839,35 @@ def test_reassigning_same_external_collaboration_group_dispatches_once(
         "stages": [],
         "created_at": datetime.now(),
     }
+    from app.models.resource_member import ResourceMember
+
+    record = Kind(
+        kind="CollaborationGroup",
+        name="External group",
+        namespace=f"projects/{project.id}",
+        user_id=test_user.id,
+        is_active=True,
+        json={
+            "spec": {
+                key: group[key]
+                for key in ("leader", "members", "stages", "instructions")
+            }
+        },
+    )
+    test_db.add(record)
+    test_db.flush()
+    group["id"] = str(record.id)
+    test_db.add(
+        ResourceMember.create(
+            resource_type="CollaborationGroup",
+            resource_id=record.id,
+            entity_type="project",
+            entity_id=str(project.id),
+            role="Developer",
+            status="approved",
+        )
+    )
+    test_db.commit()
     monkeypatch.setattr(
         "app.services.workspaces.workspace_service.list_project_collaboration_groups",
         lambda _db, _project_id, _user_id: [group],
@@ -829,7 +875,7 @@ def test_reassigning_same_external_collaboration_group_dispatches_once(
     assignment = LoopItemAssign(
         version=1,
         assignee_type="group",
-        assignee_id="group-1",
+        assignee_id=str(group["id"]),
     )
 
     external_loop_item_provider.assign(

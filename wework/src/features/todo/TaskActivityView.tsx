@@ -413,6 +413,18 @@ export function TaskActivityView({
   const selectedCommentProjectId =
     commentProjectChoice ?? taskPageProject?.id ?? assignedAgentProjectId ?? ''
   const [loading, setLoading] = useState(Boolean(client))
+  const [loadedActivity, setLoadedActivity] = useState<{
+    client: ProjectChatClient
+    projectId: string
+    issueId: string
+    version: number
+  } | null>(null)
+  const activityLoaded =
+    !client ||
+    (loadedActivity?.client === client &&
+      loadedActivity.projectId === project.id &&
+      loadedActivity.issueId === task.id &&
+      loadedActivity.version === task.version)
   const [sending, setSending] = useState(false)
   const cancellation = useIssueExecutionCancellation(
     String(task.id),
@@ -421,6 +433,7 @@ export function TaskActivityView({
   )
   const cancellingMessageId = cancellation.stoppingMessageId
   const [error, setError] = useState<string | null>(null)
+  const [readError, setReadError] = useState<string | null>(null)
   const executionBinding = useActivityExecutionBinding(messages, executionDetail?.messageId)
   const compact = rail || linear
   const threadMessages = useMemo(
@@ -432,21 +445,23 @@ export function TaskActivityView({
       if (!projectDeliveryApi) return
       try {
         const updated = await projectDeliveryApi.markLoopItemRead(task.id, sequence)
+        setReadError(null)
         onTaskUpdated?.(updated)
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : t('workbench.save_failed'))
+        setReadError(cause instanceof Error ? cause.message : t('workbench.save_failed'))
         throw cause
       }
     },
-    [projectDeliveryApi, task.id, onTaskUpdated, t]
+    [onTaskUpdated, projectDeliveryApi, t, task.id]
   )
   const { listRef, followCard, scrollTaskCommentsToBottom, revealCardBottom } =
     useIssueActivityScroll({
       messages: threadMessages,
-      loading,
+      loading: loading || !activityLoaded,
       issueId: issueTimeline ? task.id : undefined,
       readSequence: task.activity_read_sequence ?? 0,
       unread: Boolean(task.is_unread),
+      unreadRevision: task.is_unread ? (task.content_revision ?? task.version) : undefined,
       onReadSequence: issueTimeline && projectDeliveryApi ? markActivityRead : undefined,
       linear,
       compact,
@@ -498,6 +513,12 @@ export function TaskActivityView({
           return
         }
         unsubscribe = subscription.unsubscribe
+        setLoadedActivity({
+          client,
+          projectId: project.id,
+          issueId: task.id,
+          version: task.version,
+        })
         setChatCurrentUserId(subscription.snapshot.currentUserId)
         setMessages(current => mergeProjectChatMessages(current, subscription.snapshot.messages))
         setLoading(false)
@@ -977,7 +998,7 @@ export function TaskActivityView({
         translate={activityTranslate}
         count={issueTimeline ? activityEntries.length : threadMessages.length}
         loading={loading}
-        error={cancellation.error}
+        error={cancellation.error ?? readError}
         emptyDescription={
           assignedAgent
             ? activityTranslate('activity.task_activity_empty_with_ai', undefined, {
@@ -1157,13 +1178,15 @@ export function TaskActivityView({
                   : undefined
                 return (
                   <div key={rootId}>
-                    <IssueManagerEvent
-                      message={card.root}
-                      task={task}
-                      onOpenExecution={
-                        binding && onOpenTask ? () => onOpenTask(binding) : undefined
-                      }
-                    />
+                    <div data-activity-sequence={card.root.sequenceNumber}>
+                      <IssueManagerEvent
+                        message={card.root}
+                        task={task}
+                        onOpenExecution={
+                          binding && onOpenTask ? () => onOpenTask(binding) : undefined
+                        }
+                      />
+                    </div>
                     {card.replies.map(reply => renderActivityMessage(reply))}
                   </div>
                 )

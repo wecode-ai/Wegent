@@ -4,11 +4,11 @@
 
 'use client'
 
-import { useMemo } from 'react'
-import { ChevronDown, Search } from 'lucide-react'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useMemo, type ReactNode } from 'react'
+import { ChevronDown } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { DroppableHistory, ProjectSection, useProjectContext } from '@/features/projects'
+import { isTaskInProject } from '@/features/projects/utils/projectClassification'
 import type { Task } from '@/types/api'
 import TaskListSection from './TaskListSection'
 
@@ -23,8 +23,7 @@ interface TaskHistorySectionProps {
   getUnreadCount: (tasks: Task[]) => number
   totalUnreadCount: number
   handleMarkAllAsViewed: () => void
-  handleOpenSearchDialog: () => void
-  shortcutDisplayText: string
+  searchAction: ReactNode
   setIsMobileSidebarOpen: (open: boolean) => void
   isSearchResult: boolean
   onTaskSelect: () => void
@@ -46,24 +45,29 @@ export default function TaskHistorySection({
   getUnreadCount,
   totalUnreadCount,
   handleMarkAllAsViewed,
-  handleOpenSearchDialog,
-  shortcutDisplayText,
+  searchAction,
   setIsMobileSidebarOpen,
   isSearchResult,
   onTaskSelect,
   onSelectMultiple,
 }: TaskHistorySectionProps) {
   const { t } = useTranslation()
-  const { projectTaskIds } = useProjectContext()
+  const { projects, projectTaskIds, isWorkspaceEnabled } = useProjectContext()
 
   // Filter out tasks that are already in projects from history lists.
   const filteredPersonalTasks = useMemo(
-    () => personalTasks.filter(task => !projectTaskIds.has(task.id)),
-    [personalTasks, projectTaskIds]
+    () =>
+      personalTasks.filter(
+        task => !isTaskInProject(task, projects, projectTaskIds, isWorkspaceEnabled)
+      ),
+    [personalTasks, projects, projectTaskIds, isWorkspaceEnabled]
   )
   const filteredGroupTasks = useMemo(
-    () => groupTasks.filter(task => !projectTaskIds.has(task.id)),
-    [groupTasks, projectTaskIds]
+    () =>
+      groupTasks.filter(
+        task => !isTaskInProject(task, projects, projectTaskIds, isWorkspaceEnabled)
+      ),
+    [groupTasks, projects, projectTaskIds, isWorkspaceEnabled]
   )
 
   if (isSearchResult && filteredGroupTasks.length === 0 && filteredPersonalTasks.length === 0) {
@@ -81,7 +85,7 @@ export default function TaskHistorySection({
           {!isCollapsed && (
             <div className="px-1 pb-1 pt-2 mt-1.5 border-t border-border-light text-xs font-medium text-text-muted flex items-center justify-between">
               <span>{t('common:tasks.history_title')}</span>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1">
                 {totalUnreadCount > 0 && (
                   <button
                     onClick={handleMarkAllAsViewed}
@@ -90,28 +94,7 @@ export default function TaskHistorySection({
                     {t('common:tasks.mark_all_read')}
                   </button>
                 )}
-                <TooltipProvider>
-                  <Tooltip delayDuration={300}>
-                    <TooltipTrigger asChild>
-                      <button
-                        onClick={handleOpenSearchDialog}
-                        className="p-0.5 text-text-muted hover:text-text-primary transition-colors rounded"
-                        aria-label={t('common:tasks.search_placeholder_chat')}
-                      >
-                        <Search className="h-3.5 w-3.5" />
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent side="right">
-                      <p>
-                        {shortcutDisplayText
-                          ? t('common:tasks.search_hint_with_shortcut', {
-                              shortcut: shortcutDisplayText,
-                            })
-                          : t('common:tasks.search_placeholder_chat')}
-                      </p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
+                {searchAction}
               </div>
             </div>
           )}

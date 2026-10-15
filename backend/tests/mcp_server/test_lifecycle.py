@@ -21,6 +21,7 @@ from app.mcp_server.server import (
 from app.mcp_server.tools import wework_space
 from app.models.delivery import CloudProject
 from app.models.user import User
+from tests.utils.collaboration import authorize_project
 
 MCP_HEADERS = {
     "Accept": "application/json, text/event-stream",
@@ -65,6 +66,7 @@ def _create_project(db: Session, user: User) -> CloudProject:
         storage_prefix=f"projects/{public_id}",
         metadata_json={"task_provider": "local"},
     )
+    authorize_project(db, project)
     db.add(project)
     db.commit()
     db.refresh(project)

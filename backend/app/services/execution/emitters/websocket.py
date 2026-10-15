@@ -44,6 +44,7 @@ class WebSocketResultEmitter(BaseResultEmitter):
         team_name: Optional[str] = None,
         task_title: Optional[str] = None,
         is_group_chat: bool = False,
+        project_id: Optional[int] = None,
     ):
         """Initialize the WebSocket emitter.
 
@@ -55,6 +56,7 @@ class WebSocketResultEmitter(BaseResultEmitter):
             team_name: Optional team name for task:created event
             task_title: Optional task title for task:created event
             is_group_chat: Whether this is a group chat task
+            project_id: Project associated with the task, if any
         """
         super().__init__(task_id, subtask_id)
         self.user_id = user_id
@@ -62,6 +64,7 @@ class WebSocketResultEmitter(BaseResultEmitter):
         self.team_name = team_name
         self.task_title = task_title
         self.is_group_chat = is_group_chat
+        self.project_id = project_id
 
     async def emit(self, event: ExecutionEvent) -> None:
         """Emit event via WebSocket.
@@ -213,6 +216,7 @@ class WebSocketResultEmitter(BaseResultEmitter):
             team_id=self.team_id,
             team_name=self.team_name,
             is_group_chat=self.is_group_chat,
+            project_id=self.project_id,
         )
         logger.debug(
             f"[WebSocketResultEmitter] task:created emitted: "

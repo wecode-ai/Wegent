@@ -88,6 +88,7 @@ describe('CollaborationApp project collaboration groups', () => {
   } = {}) {
     return {
       workspaces: {
+        list: jest.fn().mockResolvedValue([{ id: project.workspace_id }]),
         listCollaborationGroups: jest.fn().mockResolvedValue(workspaceGroups),
         listAgents: jest.fn().mockResolvedValue([]),
         listMembers: jest.fn().mockResolvedValue([]),
@@ -181,6 +182,7 @@ describe('CollaborationApp project collaboration groups', () => {
     await waitFor(() =>
       expect(addCollaborationGroup).toHaveBeenCalledWith(project.id, workspaceGroup.id)
     )
+    expect(api.workspaces?.list).toHaveBeenCalled()
   })
 
   it('creates a project-owned collaboration group', async () => {

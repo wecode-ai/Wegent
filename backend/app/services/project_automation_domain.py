@@ -99,22 +99,37 @@ def runtime_config(value: dict) -> dict:
 def project_agent(
     db: Session, project_id: str, agent_id: str | None
 ) -> ProjectChatAgent:
-    agent = db.get(ProjectChatAgent, agent_id) if agent_id else None
-    if (
-        agent is None
-        or str(agent.cloud_project_id) != str(project_id)
-        or agent.status != "active"
-    ):
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Robot is not active")
-    return agent
+    from app.services.collaboration_permissions import collaboration_permission_service
 
-
-def wegent_team(db: Session, user_id: int, team_id: int | None) -> Kind:
-    team = (
-        team_share_service.get_resource(db, team_id, user_id)
-        if team_id is not None
-        else None
+    return collaboration_permission_service.require_project_agent(
+        db, project_id, agent_id or ""
     )
+
+
+def wegent_team(
+    db: Session,
+    user_id: int,
+    team_id: int | None,
+    *,
+    project_id: str | int | None = None,
+    require_binding: bool = True,
+) -> Kind:
+    """Resolve execution access through personal sharing or a project grant."""
+
+    if project_id is not None and team_id is not None:
+        from app.services.collaboration_permissions import (
+            collaboration_permission_service,
+        )
+
+        team = collaboration_permission_service.require_project_team(
+            db, project_id, team_id, require_binding=require_binding
+        )
+    else:
+        team = (
+            team_share_service.get_resource_for_use(db, team_id, user_id)
+            if team_id is not None
+            else None
+        )
     if team is None or team.kind != "Team" or not team.is_active:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -123,10 +138,19 @@ def wegent_team(db: Session, user_id: int, team_id: int | None) -> Kind:
     return team
 
 
-def runnable_wegent_team(db: Session, user_id: int, team_id: int | None) -> Kind:
+def runnable_wegent_team(
+    db: Session,
+    user_id: int,
+    team_id: int | None,
+    *,
+    project_id: str | int | None = None,
+    require_binding: bool = True,
+) -> Kind:
     """Resolve an accessible Team and prove its execution dependencies exist."""
 
-    team = wegent_team(db, user_id, team_id)
+    team = wegent_team(
+        db, user_id, team_id, project_id=project_id, require_binding=require_binding
+    )
     try:
         validate_team_execution_readiness(
             db,

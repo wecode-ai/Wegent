@@ -75,6 +75,24 @@ manifest 就算完成适配，必须验证实际业务路径通过平台代理�
 不要把密码/API Key 输入伪装成扫码。如果没有适合的原生登录机制，说明缺失的宿主能力。
 命令使用包内相对路径；公共状态只包含状态码、二维码路径等必要元数据。
 
+## 使用期授权与对话恢复
+
+选择插件和发送消息不会预先检查登录。业务工具实际发现未登录或凭据失效时，应返回
+`connector_auth_required`，并包含准确的插件 key 和连接器 slug，例如：
+
+```json
+{
+  "error": "connector_auth_required",
+  "pluginKey": "my-service",
+  "connectorSlug": "my-service-account"
+}
+```
+
+身份必须与本地已安装插件及其 `connectors[].slug` 一致，并声明可用的 `localAuth`。
+模型收到此错误后停止该插件操作并结束本轮回复，保留错误身份，由宿主定向解析本地
+manifest 并显示登录卡。不能把网络故障或业务权限不足改写成登录错误，也不能借此
+替代远程 MCP 原生的授权流程。授权完成后从阻塞步骤继续，不重放已经完成的操作。
+
 ## OAuth 与特殊 CLI
 
 OAuth 模板包含 `authorize`、`refresh`、`revoke` 回调，通过 `accountAuth.oauth2`

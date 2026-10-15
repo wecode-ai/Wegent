@@ -98,6 +98,7 @@ export function UserMessage({
   onOpenLocalSkillFile,
   editable = false,
   editing = false,
+  forceExpanded = false,
   editSubmitting = false,
   onStartEdit,
   onCancelEdit,
@@ -112,6 +113,7 @@ export function UserMessage({
   onOpenLocalSkillFile?: (path: string) => void
   editable?: boolean
   editing?: boolean
+  forceExpanded?: boolean
   editSubmitting?: boolean
   onStartEdit?: () => void
   onCancelEdit?: () => void
@@ -279,7 +281,7 @@ export function UserMessage({
               data-message-selectable-text
               className={[
                 'relative overflow-hidden break-words bg-muted px-4 py-1.5',
-                shouldCollapse && !isExpanded ? 'max-h-44' : '',
+                shouldCollapse && !isExpanded && !forceExpanded ? 'max-h-44' : '',
               ].join(' ')}
             >
               {replyQuestions && replyQuestions.length > 0 ? (
@@ -332,11 +334,11 @@ export function UserMessage({
                   </CodeCommentPreview>
                 </div>
               )}
-              {shouldCollapse && !isExpanded && (
+              {shouldCollapse && !isExpanded && !forceExpanded && (
                 <span className="pointer-events-none absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-muted to-transparent" />
               )}
             </div>
-            {shouldCollapse && (
+            {shouldCollapse && !forceExpanded && (
               <button
                 type="button"
                 data-testid="toggle-user-message-button"
@@ -376,6 +378,12 @@ export function UserMessage({
         />
       )}
     </div>
+  )
+}
+
+export function getUserMessageTextContent(content: string): string {
+  return normalizeCodexUserMessageContent(
+    parseCodexLocalFileMentions(content)?.requestText ?? visibleRuntimeUserMessage(content)
   )
 }
 

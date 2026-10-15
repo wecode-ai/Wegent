@@ -35,6 +35,7 @@ from app.services.project_incoming_hooks import (
     parse_incoming_body,
     project_incoming_hook_service,
 )
+from tests.utils.collaboration import authorize_project
 
 
 def test_normalize_github_failed_check() -> None:
@@ -352,6 +353,7 @@ async def test_unresolved_change_request_event_resumes_after_binding(
         created_by_user_id=test_user.id,
         storage_prefix="projects/late-binding",
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.flush()
     subscription = ProjectIncomingHook(
@@ -510,6 +512,7 @@ def test_change_request_cannot_bind_to_two_active_tasks(
         created_by_user_id=test_user.id,
         storage_prefix="projects/unique-change-request",
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.flush()
     first_item = LoopItem(
@@ -581,6 +584,7 @@ def test_ambiguous_change_request_resolution_does_not_guess(
         created_by_user_id=test_user.id,
         storage_prefix="projects/ambiguous-change-request",
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.flush()
     change_request = {
@@ -635,6 +639,7 @@ async def test_internal_event_is_persisted_before_rule_matching(
         created_by_user_id=test_user.id,
         storage_prefix="projects/internal-event",
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.commit()
 

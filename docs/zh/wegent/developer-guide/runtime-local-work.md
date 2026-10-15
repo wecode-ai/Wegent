@@ -220,7 +220,19 @@ Wework 通过设备级 RPC `runtime.worktrees.settings.get/update`、`runtime.wo
 
 项目操作菜单可以从项目当前 Git 工作区的 `HEAD` 创建永久工作树，并把新目录立即注册为独立项目。此类请求通过 `runtime.worktrees.prepare` 传递 `permanent: true`；Executor 把该标记持久化到 `worktrees.json`，自动清理候选计算必须排除永久工作树。永久只表示不会因关联任务归档或保留数量限制而被自动删除，用户仍可通过项目移除或工作树管理操作显式删除它。
 
-在打包 Wework App 的 `local-first` 模式下，粘贴或选择的文件会保存到 executor home 的附件草稿目录（配置 `WEGENT_EXECUTOR_HOME` 时为 `$WEGENT_EXECUTOR_HOME/workspace/attachments/draft`，未配置时为 `~/.wegent-executor/workspace/attachments/draft`），并作为本机 `attachments` 通过 executor IPC 发送，不使用 Backend `attachmentIds`。图片进入附件区时直接使用浏览器对象 URL 显示预览，不展示本机持久化复制的进度；后台复制完成后继续复用同一预览，直到附件发送、删除或输入框重置时释放。非图片文件仍按上传或持久化状态显示进度。图片附件会保留 `local_preview_url`，发送后的消息可以通过 desktop local-file capability 立即预览，Codex 也会收到同一路径对应的 `localImage` 输入。文本类本机附件不会全文注入上下文；executor 只注入前 10 行或 4 KiB（先到为准）的有界预览，并同时给出 `Local File Path`，需要完整内容时由 Codex 读取本机文件。Wework 会把 `text_length` 和 `text_preview` 保存在本机附件 metadata 中，刷新后仍能渲染紧凑的文本预览附件；在 Electron app 中点击该附件会通过 `open_local_file` 命令打开原始本机文件。连接 Backend 并使用上传附件时，刷新后仍以持久化附件 ID 为准。
+在打包 Wework App 的 `local-first` 模式下，选择、拖拽或粘贴已有本地文件时，附件的 `local_path` 直接引用源文件，不创建附件副本。会话后续读取的是该路径上的文件；源文件移动或删除后，读取可能失败。移除附件不会删除源文件。截图、粘贴正文等没有源路径的内容仍保存到 `$WEGENT_EXECUTOR_HOME/workspace/attachments/draft`。本机执行通过 executor IPC 传递本地 `attachments`；云端或远程执行仍在发送前上传附件，使用 Backend `attachmentIds`，并移除请求中的本机路径。
+
+```mermaid
+flowchart LR
+  Source[已有本地文件] --> Path[引用源路径]
+  Generated[截图或粘贴内容] --> Draft[创建本地附件文件]
+  Path --> Target{执行设备}
+  Draft --> Target
+  Target -->|本机| Local[读取本地路径]
+  Target -->|云端或远程| Upload[上传后传递附件 ID]
+```
+
+图片进入附件区时直接使用浏览器对象 URL 显示预览，直到附件发送、删除或输入框重置时释放。图片附件会保留 `local_preview_url`，发送后的消息可以通过 desktop local-file capability 预览，Codex 收到同一路径对应的 `localImage` 输入。文本类本机附件不会全文注入上下文；executor 只注入前 10 行或 4 KiB（先到为准）的有界预览，并同时给出 `Local File Path`，需要完整内容时由 Codex 读取本机文件。Wework 会把 `text_length` 和 `text_preview` 保存在本机附件 metadata 中，刷新后仍能渲染紧凑的文本预览附件。连接 Backend 并使用上传附件时，刷新后仍以持久化附件 ID 为准。
 
 消息渲染时，如果消息已经带有持久化图片附件，Wework 优先展示附件预览，并忽略 Codex prompt 中的本地图片文件提及，避免同时展示上传附件和临时本机路径。只有没有附件记录时，才把 Codex 本地图片提及作为本机预览兜底；如果当前环境不能通过 the desktop local-file URL converter 转换本机路径，或转换后的图片加载失败，前端不展示该本机路径。
 
