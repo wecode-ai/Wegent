@@ -37,7 +37,7 @@
   background: rgb(var(--color-bg-base));
   box-shadow:
     0 12px 28px -8px rgb(0 0 0 / 18%),
-    0 0 24px rgb(0 0 0 / 5%);
+    0 0 24px rgb(var(--color-text-primary) / 5%);
 }
 
 .todo-panel-stack.has-conversation .task-detail-workspace-panel-shell {
@@ -215,7 +215,7 @@
   background: rgb(var(--color-bg-base));
   box-shadow:
     0 8px 16px -4px rgb(0 0 0 / 12%),
-    0 0 20px rgb(0 0 0 / 5%);
+    0 0 20px rgb(var(--color-text-primary) / 5%);
   animation: task-conversation-workspace-panel-enter 220ms
     cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
@@ -974,9 +974,9 @@
 
 .issue-automation-stage.is-completed .issue-automation-stage-icon,
 .issue-automation-stage.is-forced_completed .issue-automation-stage-icon {
-  border-color: rgb(16 185 129 / 30%);
-  color: rgb(16 185 129);
-  background: rgb(16 185 129 / 8%);
+  border-color: rgb(var(--color-success) / 30%);
+  color: rgb(var(--color-success));
+  background: rgb(var(--color-success) / 8%);
 }
 
 .issue-automation-stage-content {
@@ -1260,7 +1260,7 @@
 }
 
 .task-detail-workspace-tag button:hover {
-  color: rgb(51 156 255);
+  color: rgb(var(--color-focus));
 }
 
 .task-detail-workspace-layout .task-detail-rail-value > .pointer-events-none {
@@ -1305,8 +1305,8 @@
 }
 
 .issue-workflow-stage.is-selected {
-  border-color: rgb(51 156 255);
-  background: rgb(51 156 255 / 0.06);
+  border-color: rgb(var(--color-focus));
+  background: rgb(var(--color-focus) / 0.06);
 }
 
 .issue-workflow-stage-index {
@@ -1363,20 +1363,20 @@
 .issue-workflow-status.is-running,
 .issue-workflow-status.is-ready,
 .issue-workflow-status.is-queued {
-  background: rgb(51 156 255 / 0.1);
-  color: rgb(26 127 212);
+  background: rgb(var(--color-focus) / 0.1);
+  color: rgb(var(--color-focus));
 }
 
 .issue-workflow-status.is-awaiting-approval,
 .issue-workflow-status.is-awaiting-deliverables {
-  background: rgb(232 134 12 / 0.1);
-  color: rgb(180 83 9);
+  background: rgb(var(--color-warning) / 0.1);
+  color: rgb(var(--color-warning));
 }
 
 .issue-workflow-status.is-completed,
 .issue-workflow-status.is-forced-completed {
-  background: rgb(0 162 64 / 0.08);
-  color: rgb(0 142 58);
+  background: rgb(var(--color-success) / 0.08);
+  color: rgb(var(--color-success));
 }
 
 .issue-workflow-status.is-failed,
@@ -1426,17 +1426,17 @@
   border-radius: 8px;
   padding: 0 12px;
   color: rgb(var(--color-text-primary));
-  background: rgb(0 0 0 / 5%);
+  background: rgb(var(--color-text-primary) / 5%);
   font-size: var(--text-xs);
 }
 
 .issue-workflow-secondary-action:hover {
-  background: rgb(0 0 0 / 10%);
+  background: rgb(var(--color-text-primary) / 10%);
 }
 
 .issue-workflow-secondary-action.is-approve {
-  color: rgb(0 142 58);
-  background: rgb(0 162 64 / 8%);
+  color: rgb(var(--color-success));
+  background: rgb(var(--color-success) / 8%);
 }
 
 .issue-workflow-secondary-action.is-reject {
@@ -1512,8 +1512,8 @@
 }
 
 .issue-workflow-task-row[data-selected="true"] {
-  border-color: rgb(51 156 255 / 35%);
-  background: rgb(229 243 255);
+  border-color: rgb(var(--color-focus) / 35%);
+  background: rgb(var(--color-focus) / 0.1);
 }
 
 .issue-workflow-task-info {
@@ -1582,7 +1582,7 @@
 .issue-workflow-task-dot.is-running,
 .task-detail-flat-task-dot.is-running,
 .task-detail-flat-task-dot.is-selected {
-  background: rgb(51 156 255);
+  background: rgb(var(--color-focus));
 }
 
 .issue-workflow-task-dot.is-success,
@@ -1596,7 +1596,7 @@
 }
 
 .task-detail-flat-task-dot.is-queued {
-  background: rgb(217 119 6);
+  background: rgb(var(--color-warning));
 }
 
 .task-detail-flat-task-list {
@@ -1659,8 +1659,8 @@
 .task-detail-flat-task-status[data-status="waiting_runtime"],
 .task-detail-flat-task-status[data-status="running"],
 .task-detail-flat-task-status[data-status="cancelling"] {
-  background: rgb(245 158 11 / 12%);
-  color: rgb(180 83 9);
+  background: rgb(var(--color-warning) / 12%);
+  color: rgb(var(--color-warning));
 }
 
 .task-detail-flat-task-status[data-status="succeeded"] {
@@ -2054,7 +2054,7 @@
 }
 
 .task-detail-execution-status-trigger[data-status="succeeded"] {
-  color: rgb(22 163 74);
+  color: rgb(var(--color-success));
 }
 
 .task-detail-execution-status-trigger[data-status="failed"] {
@@ -2064,7 +2064,7 @@
 .task-detail-execution-status-trigger[data-status="waiting_approval"],
 .task-detail-execution-status-trigger[data-status="queued"],
 .task-detail-execution-status-trigger[data-status="waiting_runtime"] {
-  color: rgb(180 83 9);
+  color: rgb(var(--color-warning));
 }
 
 .task-detail-execution-status-trigger[data-status="cancelled"],
@@ -2189,7 +2189,7 @@
   border: 1px solid rgb(var(--color-border));
   border-radius: 16px;
   background: rgb(var(--color-bg-base));
-  box-shadow: 0 1px 2px rgb(0 0 0 / 5%);
+  box-shadow: 0 1px 2px rgb(var(--color-text-primary) / 5%);
 }
 
 .task-detail-comment-replies {
@@ -2692,7 +2692,7 @@
 
 .task-detail-workspace-panel .task-detail-title:focus {
   background: transparent;
-  box-shadow: 0 1px 0 rgb(51 156 255);
+  box-shadow: 0 1px 0 rgb(var(--color-focus));
 }
 
 .task-detail-workspace-panel .task-detail-comments {
@@ -2962,14 +2962,14 @@
 }
 
 .task-detail-execution-pill[data-status="succeeded"] {
-  background: rgba(22, 163, 74, 0.1);
-  color: rgb(22 163 74);
+  background: rgb(var(--color-success) / 10%);
+  color: rgb(var(--color-success));
 }
 
 .task-detail-execution-pill[data-status="waiting_approval"],
 .task-detail-execution-pill[data-status="queued"],
 .task-detail-execution-pill[data-status="waiting_runtime"] {
-  color: rgb(180 83 9);
+  color: rgb(var(--color-warning));
 }
 
 .task-detail-execution-main {

@@ -109,7 +109,7 @@ export function ProjectArchiveDialog({
         <p className="mt-3 break-words font-medium">{project.name}</p>
         <p className="mt-2 text-sm text-text-secondary">{messages.hint}</p>
         {error && (
-          <p role="alert" className="mt-3 text-sm text-red-600">
+          <p role="alert" className="mt-3 text-sm text-destructive">
             {error}
           </p>
         )}
