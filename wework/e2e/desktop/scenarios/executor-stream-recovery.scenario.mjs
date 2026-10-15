@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 
-import { createSingleRootLocalProject } from '../modules/shared.mjs'
+import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -157,6 +157,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       active = true
       await createSingleRootLocalProject(control, workspacePath, 'executor-stream-recovery')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await selectE2EModel(control, undefined, undefined, ACTIVE_WORKBENCH_SELECTOR)
       await control.command('fill', COMPOSER_SELECTOR, { value: PROMPT })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
       await Promise.race([

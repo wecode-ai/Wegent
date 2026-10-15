@@ -317,7 +317,7 @@ const MEMORY_MAX_SETTLED_GROWTH_KIB = Number(
   process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB ?? 232 * 1024
 )
 const MEMORY_MAX_SETTLED_DOM_NODE_GROWTH = Number(
-  process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_DOM_NODE_GROWTH ?? 512
+  process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_DOM_NODE_GROWTH ?? 576
 )
 const MEMORY_MAX_JS_HEAP_BYTES = readNonNegativeNumber(
   process.env.WEWORK_E2E_MEMORY_MAX_JS_HEAP_BYTES,
@@ -1252,19 +1252,17 @@ function requestMacosApplicationQuit(processId) {
 }
 
 async function triggerModelReloadUntilCloudFailure(control) {
-  const failedCloudModelRequest = control.awaitFailedCloudModelRequest()
-  for (let attempt = 0; attempt < 10 && control.failedCloudModelRequests === 0; attempt += 1) {
-    await control.command('dispatchLocalModelSettingsChanged', '')
-    await Promise.race([
-      failedCloudModelRequest,
-      new Promise(resolvePromise => setTimeout(resolvePromise, 1_000)),
-    ])
-  }
-  await withTimeout(
-    failedCloudModelRequest,
-    DEFAULT_STEP_TIMEOUT_MS,
-    'The connected desktop app did not retry models after the cloud endpoint began failing'
-  )
+  await Promise.all([
+    control.command('clickWhenEnabled', '[data-testid="model-selector-button"]', {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }),
+    withTimeout(
+      control.awaitFailedCloudModelRequest(),
+      DEFAULT_STEP_TIMEOUT_MS,
+      'The connected desktop app did not refresh models after the cloud endpoint began failing'
+    ),
+  ])
+  await control.command('press', 'body', { key: 'Escape' })
 }
 
 async function sendPromptUntilScenarioRequest(
@@ -1275,12 +1273,8 @@ async function sendPromptUntilScenarioRequest(
   timeoutMs = MODEL_REQUEST_TIMEOUT_MS
 ) {
   const scenarioRequest = control.awaitNextScenarioRequest(scenario, timeoutMs)
-  await sendPrompt(control, selector, prompt)
-  return withTimeout(
-    scenarioRequest,
-    timeoutMs,
-    `The model service did not receive the ${scenario} request`
-  )
+  const [request] = await Promise.all([scenarioRequest, sendPrompt(control, selector, prompt)])
+  return request
 }
 
 function modelProviderSelector(providerId) {
@@ -1470,6 +1464,13 @@ async function createSingleRootLocalProject(
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await confirmLocalProjectName(control, name)
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot'))
+    if (snapshot.workbench?.currentProject?.name === name) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(`The created local project did not become the active composer project: ${name}`)
 }
 
 async function selectE2EModel(

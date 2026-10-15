@@ -142,7 +142,7 @@ jobs:
         working-directory: backend
         env:
           COLLABORATION_PERMISSION_MYSQL_TEST_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/plugin_auth_test
-        run: uv run pytest integration_checks/test_collaboration_permission_mysql.py -n 0
+        run: uv run pytest integration_checks/test_collaboration_permission_mysql.py integration_checks/test_rust_collaboration_permissions_mysql.py -n 0
 
   test-executor:
     name: Test Executor
@@ -232,7 +232,7 @@ jobs:
           name: executor-manager-coverage
 
   test-executor-local-auth-platforms:
-    name: Test Executor Local Auth (${{ matrix.os }})
+    name: Test Executor Platform Regressions (${{ matrix.os }})
     needs: changes
     if: needs.changes.outputs.executor == 'true'
     runs-on: ${{ matrix.os }}
@@ -271,6 +271,40 @@ jobs:
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
         run: cargo test --all-features --lib runtime_work::local_connector_auth::tests
+
+      - name: Run native index platform regressions
+        if: ${{ !cancelled() }}
+        shell: bash
+        working-directory: ./executor
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
+        run: cargo test --all-features --lib runtime_work::store::tests::atomic_write
+
+      - name: Run native worktree platform regressions
+        if: ${{ !cancelled() }}
+        shell: bash
+        working-directory: ./executor
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
+        run: cargo test --all-features --lib worktree_metadata_can_exceed_the_windows_max_path_limit
+
+      - name: Run native clone platform regressions
+        if: ${{ !cancelled() }}
+        shell: bash
+        working-directory: ./executor
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
+        run: cargo test --all-features --lib clones_and_reuses_repositories_beyond_windows_max_path
+
+      - name: Set up Node for native package filesystem regressions
+        if: ${{ !cancelled() }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run native managed package filesystem regressions
+        if: ${{ !cancelled() }}
+        run: node --experimental-strip-types --test wework/electron/src/runtime/managed-plugin-files.test.mjs
 
   test-shared:
     name: Test Shared

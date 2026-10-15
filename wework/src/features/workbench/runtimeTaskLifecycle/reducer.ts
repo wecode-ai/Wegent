@@ -91,6 +91,10 @@ export function reduceRuntimeTaskLifecycle(
         executionPhase,
         turnPhase,
         activeTurnId,
+        latestTurnId:
+          typeof event.task.runtimeHandle?.lastTurnId === 'string'
+            ? event.task.runtimeHandle.lastTurnId
+            : state.latestTurnId,
         interactionStatus,
         goalStatus:
           event.task.goalStatus === undefined || state.hasAuthoritativeGoalStatus
@@ -219,6 +223,7 @@ export function reduceRuntimeTaskLifecycle(
         turnPhase: 'streaming',
         turnOutcome: null,
         activeTurnId: event.turnId ?? null,
+        latestTurnId: event.turnId ?? state.latestTurnId,
         expectedExecutorRunning: true,
         unread: false,
       }
@@ -232,6 +237,7 @@ export function reduceRuntimeTaskLifecycle(
         turnPhase: 'idle',
         turnOutcome: event.outcome ?? state.turnOutcome,
         activeTurnId: null,
+        latestTurnId: event.turnId ?? state.activeTurnId ?? state.latestTurnId,
         expectedExecutorRunning: null,
       }
     }
@@ -244,6 +250,7 @@ export function reduceRuntimeTaskLifecycle(
             turnPhase: 'streaming',
             turnOutcome: null,
             activeTurnId: event.turnId ?? null,
+            latestTurnId: event.turnId ?? state.latestTurnId,
             expectedExecutorRunning: true,
           }
         : state

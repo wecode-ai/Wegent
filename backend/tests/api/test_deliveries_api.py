@@ -1584,68 +1584,69 @@ def test_delivery_rejects_oversized_asset_and_discards_draft(
     assert not delivery_storage.objects
 
 
-def test_project_member_can_discover_shared_todo_and_delivery(
-    test_client: TestClient,
-    test_db: Session,
-    test_token: str,
-    delivery_project: CloudProject,
-    delivery_storage: FakeDeliveryStorage,
-) -> None:
-    item_id = test_client.post(
-        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
-        headers=_auth(test_token),
-        json={"title": "Continue shared work"},
-    ).json()["id"]
-    member = User(
-        user_name="delivery-member",
-        password_hash=get_password_hash("member-password"),
-        email="delivery-member@example.com",
-        is_active=True,
-    )
-    test_db.add(member)
-    test_db.flush()
-    test_db.add(
-        ResourceMember.create(
-            resource_type=ResourceType.CLOUD_PROJECT.value,
-            resource_id=delivery_project.id,
-            entity_id=str(member.id),
-            role="Viewer",
-            status=MemberStatus.APPROVED.value,
-        )
-    )
-    test_db.commit()
-    member_token = create_access_token(data={"sub": member.user_name})
-
-    projects_response = test_client.get(
-        "/api/v1/cloud-projects", headers=_auth(member_token)
-    )
-    items_response = test_client.get(
-        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
-        headers=_auth(member_token),
-    )
-
-    assert projects_response.status_code == 200
-    assert any(
-        str(item["id"]) == str(delivery_project.id)
-        for item in projects_response.json()["items"]
-    )
-    assert items_response.status_code == 200
-    assert items_response.json()["items"][0]["id"] == item_id
-
-    collaborator_response = test_client.post(
-        f"/api/v1/loop-items/{item_id}/collaborators",
-        headers=_auth(test_token),
-        json={"user_id": member.id},
-    )
-    assert collaborator_response.status_code == 201
-    assert collaborator_response.json()["user_name"] == member.user_name
-
-    member_collaborators = test_client.get(
-        f"/api/v1/loop-items/{item_id}/collaborators",
-        headers=_auth(member_token),
-    )
-    assert member_collaborators.status_code == 200
-    assert [row["user_id"] for row in member_collaborators.json()] == [member.id]
+# MIGRATION-CANDIDATE: retired Python HTTP test; this API is owned by Rust.
+# def test_project_member_can_discover_shared_todo_and_delivery(
+#     test_client: TestClient,
+#     test_db: Session,
+#     test_token: str,
+#     delivery_project: CloudProject,
+#     delivery_storage: FakeDeliveryStorage,
+# ) -> None:
+#     item_id = test_client.post(
+#         f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+#         headers=_auth(test_token),
+#         json={"title": "Continue shared work"},
+#     ).json()["id"]
+#     member = User(
+#         user_name="delivery-member",
+#         password_hash=get_password_hash("member-password"),
+#         email="delivery-member@example.com",
+#         is_active=True,
+#     )
+#     test_db.add(member)
+#     test_db.flush()
+#     test_db.add(
+#         ResourceMember.create(
+#             resource_type=ResourceType.CLOUD_PROJECT.value,
+#             resource_id=delivery_project.id,
+#             entity_id=str(member.id),
+#             role="Viewer",
+#             status=MemberStatus.APPROVED.value,
+#         )
+#     )
+#     test_db.commit()
+#     member_token = create_access_token(data={"sub": member.user_name})
+#
+#     projects_response = test_client.get(
+#         "/api/v1/cloud-projects", headers=_auth(member_token)
+#     )
+#     items_response = test_client.get(
+#         f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+#         headers=_auth(member_token),
+#     )
+#
+#     assert projects_response.status_code == 200
+#     assert any(
+#         str(item["id"]) == str(delivery_project.id)
+#         for item in projects_response.json()["items"]
+#     )
+#     assert items_response.status_code == 200
+#     assert items_response.json()["items"][0]["id"] == item_id
+#
+#     collaborator_response = test_client.post(
+#         f"/api/v1/loop-items/{item_id}/collaborators",
+#         headers=_auth(test_token),
+#         json={"user_id": member.id},
+#     )
+#     assert collaborator_response.status_code == 201
+#     assert collaborator_response.json()["user_name"] == member.user_name
+#
+#     member_collaborators = test_client.get(
+#         f"/api/v1/loop-items/{item_id}/collaborators",
+#         headers=_auth(member_token),
+#     )
+#     assert member_collaborators.status_code == 200
+#     assert [row["user_id"] for row in member_collaborators.json()] == [member.id]
 
 
 def test_loop_item_unread_follows_content_revision_and_read_cursor(

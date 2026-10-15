@@ -677,12 +677,12 @@
 
 .collaboration-issue-home {
   display: grid;
-  width: min(680px, 100%);
+  width: min(768px, 100%);
   min-height: calc(100vh - 180px);
   align-content: center;
-  gap: 20px;
+  gap: 24px;
   margin: 0 auto;
-  padding: 32px 0;
+  padding: 40px 0 72px;
 }
 
 .collaboration-issue-home-heading {
@@ -693,37 +693,62 @@
 
 .collaboration-issue-home-heading h1 {
   margin: 0;
+  font-size: var(--text-3xl);
   font-weight: 500;
+  line-height: 1.2;
   letter-spacing: -0.02em;
 }
 
 .collaboration-issue-home-heading p {
-  margin: 8px 0 0;
-  color: rgb(var(--color-text-muted));
+  margin: 12px 0 0;
+  color: rgb(var(--color-text-secondary));
+  font-size: var(--text-lg);
+  line-height: 1.5;
 }
 
 .collaboration-issue-home-guides {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 8px;
+  column-gap: 24px;
+  row-gap: 8px;
 }
 
 .collaboration-issue-home-guides > button {
   display: inline-flex;
+  min-height: 44px;
   align-items: center;
-  min-height: 28px;
-  padding: 4px 12px;
-  border: 1px solid rgb(var(--color-border));
+  gap: 8px;
+  padding: 0 8px;
+  border: 0;
   border-radius: 8px;
-  color: rgb(var(--color-text-primary));
+  color: rgb(var(--color-text-secondary));
   background: transparent;
+  font-size: var(--text-lg);
   text-align: left;
+  cursor: pointer;
 }
 
 .collaboration-issue-home-guides > button:hover {
-  border-color: rgb(var(--color-text-muted) / 0.45);
-  background: rgb(var(--color-bg-subtle));
+  color: rgb(var(--color-text-primary));
+  background: rgb(var(--color-bg-muted));
+}
+
+.collaboration-issue-home-guides > button:focus-visible {
+  outline: 2px solid rgb(var(--color-focus));
+  outline-offset: 2px;
+}
+
+.collaboration-issue-home-guides svg {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  stroke-width: 1.75;
+}
+
+.collaboration-issue-home-guides svg:last-child {
+  width: 16px;
+  height: 16px;
 }
 
 .collaboration-issue-home-guides strong {
@@ -742,7 +767,15 @@
 @media (max-width: 767px) {
   .collaboration-issue-home {
     min-height: auto;
-    padding: 24px 0;
+    gap: 20px;
+    padding: 24px 16px 40px;
+  }
+  .collaboration-issue-home-heading h1 {
+    font-size: var(--text-2xl);
+  }
+  .collaboration-issue-home-heading p {
+    margin-top: 8px;
+    font-size: var(--text-base);
   }
   .collaboration-issue-home-guides button,
   .collaboration-issue-home-composer select {

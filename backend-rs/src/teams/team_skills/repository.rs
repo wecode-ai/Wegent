@@ -172,36 +172,6 @@ where
         .await
 }
 
-/// The source `get_team_skills` share-access check
-/// (`db.query(ResourceMember).filter(resource_type == Team, resource_id,
-/// entity_type == 'user', entity_id == str(user_id), status == approved)`):
-/// one row is enough to grant access. The source `get_team_skills` uses the
-/// strict `ResourceType.TEAM` / `MemberStatus.APPROVED` enum values
-/// (rendered as `'Team'` and `'approved'`), not the dual-value `IN` lists
-/// the team-union query uses.
-pub async fn shared_team_member<M>(mysql: &M, team_id: i64, user_id: i64) -> MysqlResult<bool>
-where
-    M: Mysql,
-{
-    #[derive(FromMysqlRow)]
-    struct MemberId {
-        #[allow(dead_code)]
-        resource_members_id: i64,
-    }
-    let row: Option<MemberId> = mysql
-        .fetch_optional(
-            "SELECT resource_members.id AS resource_members_id \nFROM resource_members \n\
-             WHERE resource_members.resource_type IN ('Team', 'TEAM') \
-             AND resource_members.resource_id = ? \
-             AND resource_members.entity_type = 'user' \
-             AND resource_members.entity_id = ? \
-             AND resource_members.status IN ('approved', 'APPROVED') \n LIMIT 1",
-            (team_id, user_id.to_string()),
-        )
-        .await?;
-    Ok(row.is_some())
-}
-
 /// Escape one string literal with MySQL's default quoting rules (the same
 /// helper the kind-ref queries use for inline COM_QUERY literals).
 fn escape_sql_string(value: &str) -> String {

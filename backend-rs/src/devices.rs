@@ -35,7 +35,6 @@ use brz_json::raw_json;
 use brz_json::{JsonProjection, OpaqueJson};
 use brz_redis::Redis;
 use serde::de::DeserializeOwned;
-#[cfg(test)]
 use serde_json::Value;
 #[cfg(test)]
 use serde_json::json;
@@ -184,7 +183,8 @@ struct DeviceListResponse {
 ///
 /// The source model emits every known member, so `runtimeTaskCreate`,
 /// `interactiveSessions`, and `worktrees` are JSON null when the stored
-/// document omits them. `extensions` carries the members a distribution
+/// document omits them. `projectEditing` is omitted when unadvertised so verified
+/// legacy runtimes retain their version contract. `extensions` carries the members a distribution
 /// registers through `register_runtime_feature_normalizer` (the source
 /// extension schema registers `desktop`); any other stored member is
 /// dropped, exactly like the model's registered-extension filter.
@@ -195,8 +195,19 @@ pub struct RuntimeFeatures {
     pub runtime_task_create: Option<RawJson>,
     pub interactive_sessions: Option<RawJson>,
     pub worktrees: Option<RawJson>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_editing: Option<RuntimeProjectEditingFeatures>,
     #[serde(flatten)]
     pub extensions: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeProjectEditingFeatures {
+    pub multi_roots: Option<bool>,
+    pub ai_settings: Option<bool>,
+    pub default_project_space: Option<bool>,
+    pub plugins: Option<bool>,
 }
 
 /// The configured cloud device store's contribution to one listing entry:
@@ -284,12 +295,24 @@ impl OnlineStateInput {
 #[serde(default)]
 struct RuntimeFeatureInput {
     #[serde(rename = "schemaVersion")]
-    schema_version: Option<i64>,
+    schema_version: Option<OpaqueJson>,
     #[serde(rename = "runtimeTaskCreate")]
     runtime_task_create: Option<OpaqueJson>,
     #[serde(rename = "interactiveSessions")]
     interactive_sessions: Option<OpaqueJson>,
     worktrees: Option<OpaqueJson>,
+    #[serde(
+        rename = "projectEditing",
+        deserialize_with = "present_project_editing"
+    )]
+    project_editing: Option<OpaqueJson>,
+}
+
+fn present_project_editing<'de, D>(deserializer: D) -> Result<Option<OpaqueJson>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    <OpaqueJson as serde::Deserialize>::deserialize(deserializer).map(Some)
 }
 
 #[derive(Default, serde::Deserialize)]
@@ -409,6 +432,7 @@ async fn list_cloud_devices(
     state: &AppState,
     user_id: i64,
     kinds: &[DeviceKindRow],
+    request_id: Option<&str>,
 ) -> Result<Vec<DeviceItem>, FastApiError> {
     let cloud: Vec<&DeviceKindRow> = kinds
         .iter()
@@ -435,7 +459,7 @@ async fn list_cloud_devices(
         let executor_version = online_state
             .as_ref()
             .and_then(|info| info.executor_version.clone());
-        let latest_version = latest_executor_version(state).await;
+        let latest_version = latest_executor_version(state, request_id).await;
         let update_available =
             is_update_available(executor_version.as_deref(), latest_version.as_deref());
         let status = online_status(online.as_ref());
@@ -536,6 +560,7 @@ async fn list_mget_devices(
     user_id: i64,
     kinds: &[DeviceKindRow],
     device_type: DeviceType,
+    request_id: Option<&str>,
 ) -> Vec<DeviceItem> {
     let group: Vec<&DeviceKindRow> = kinds
         .iter()
@@ -556,7 +581,7 @@ async fn list_mget_devices(
         .collect();
     let online_map: Vec<Option<JsonProjection<OnlineStateInput>>> =
         cache_manager_mget(state, keys.clone()).await;
-    let latest_version = latest_executor_version(state).await;
+    let latest_version = latest_executor_version(state, request_id).await;
     let mut result = Vec::new();
     for (row, online) in group.iter().zip(online_map.iter()) {
         let spec = spec(row);
@@ -659,14 +684,16 @@ pub(crate) fn spec(row: &DeviceKindRow) -> DeviceSpecInput {
 ///
 /// The stored dict is `RuntimeFeatures.model_dump(by_alias=True,
 /// exclude_none=True)`, so it may carry `schemaVersion`, `runtimeTaskCreate`,
-/// `interactiveSessions`, and `worktrees`. The endpoint's `DeviceInfo` model
+/// `interactiveSessions`, `worktrees`, and `projectEditing`. The endpoint's `DeviceInfo` model
 /// re-validates through `RuntimeFeatures` and FastAPI serializes the response
 /// with `by_alias=True` (the framework default):
-/// - `schemaVersion` is required (ge=1); an empty or invalid dict normalizes
-///   to absent (None).
+/// - `schemaVersion` is required (ge=1); invalid envelopes stay absent unless
+///   explicit project editing metadata must retain conservative write denials.
 /// - `runtimeTaskCreate`, `interactiveSessions`, and `worktrees` are always
 ///   emitted: the stored value round-trips, or null when absent (the model's
 ///   Optional defaults).
+/// - `projectEditing` is omitted when absent. Explicit malformed advertisements
+///   retain a conservative object; only actual booleans authorize writes.
 /// - Any other stored key is dropped unless the distribution registers it as
 ///   an extension feature.
 fn project_runtime_features(info: &OnlineStateInput) -> Option<RuntimeFeatures> {
@@ -674,20 +701,56 @@ fn project_runtime_features(info: &OnlineStateInput) -> Option<RuntimeFeatures> 
         .runtime_features
         .as_ref()?
         .project::<RuntimeFeatureInput>()?;
-    let schema_version = features.schema_version.filter(|version| *version >= 1)?;
+    let valid_schema_version = features
+        .schema_version
+        .as_ref()
+        .and_then(|value| value.to_value().as_i64())
+        .filter(|version| *version >= 1);
+    let valid_header = valid_schema_version.is_some();
+    let schema_version =
+        valid_schema_version.or_else(|| features.project_editing.as_ref().map(|_| 1))?;
     Some(RuntimeFeatures {
         schema_version,
         runtime_task_create: features
             .runtime_task_create
             .as_ref()
+            .filter(|_| valid_header)
             .map(OpaqueJson::to_raw_value),
         interactive_sessions: features
             .interactive_sessions
             .as_ref()
+            .filter(|_| valid_header)
             .map(OpaqueJson::to_raw_value),
-        worktrees: features.worktrees.as_ref().map(OpaqueJson::to_raw_value),
+        worktrees: features
+            .worktrees
+            .as_ref()
+            .filter(|_| valid_header)
+            .map(OpaqueJson::to_raw_value),
+        project_editing: features
+            .project_editing
+            .as_ref()
+            .map(|value| project_editing_features(value, valid_header)),
         extensions: serde_json::Map::new(),
     })
+}
+
+fn project_editing_features(
+    value: &OpaqueJson,
+    valid_header: bool,
+) -> RuntimeProjectEditingFeatures {
+    let editing = value.to_value();
+    let flag = |name| {
+        editing
+            .get(name)
+            .and_then(Value::as_bool)
+            .filter(|enabled| valid_header || !enabled)
+    };
+    RuntimeProjectEditingFeatures {
+        multi_roots: flag("multiRoots"),
+        ai_settings: flag("aiSettings"),
+        default_project_space: flag("defaultProjectSpace"),
+        plugins: flag("plugins"),
+    }
 }
 
 impl DeviceItem {
@@ -712,9 +775,10 @@ impl DeviceItem {
 #[brz_http_server::get("/api/devices")]
 async fn get_all_devices(
     #[inject(state)] state: &AppState,
+    #[header("x-request-id")] request_id: Option<String>,
     #[auth] user: SessionUser,
 ) -> Result<DeviceListResponse, FastApiError> {
-    let items = list_all_devices(state, user.id).await?;
+    let items = list_all_devices(state, user.id, request_id.as_deref()).await?;
     Ok(DeviceListResponse {
         total: items.len(),
         items,
@@ -728,6 +792,7 @@ async fn get_all_devices(
 pub(crate) async fn list_all_devices(
     state: &AppState,
     user_id: i32,
+    request_id: Option<&str>,
 ) -> Result<Vec<DeviceItem>, FastApiError> {
     // Source queries `kinds` once per provider in registration order:
     // cloud, local, app, remote.
@@ -749,9 +814,10 @@ pub(crate) async fn list_all_devices(
         };
         match device_type {
             DeviceType::Cloud => {
-                items.extend(list_cloud_devices(state, user_id.into(), &kinds).await?)
+                items.extend(list_cloud_devices(state, user_id.into(), &kinds, request_id).await?)
             }
-            other => items.extend(list_mget_devices(state, user_id.into(), &kinds, other).await),
+            other => items
+                .extend(list_mget_devices(state, user_id.into(), &kinds, other, request_id).await),
         }
     }
     Ok(items)
@@ -892,6 +958,69 @@ mod tests {
     }
 
     #[test]
+    fn invalid_feature_envelopes_preserve_project_denials_without_granting_writes() {
+        for schema in [Value::Null, json!("invalid"), json!(0)] {
+            let features = runtime_features(&json!({
+                "runtime_features": {
+                "schemaVersion": schema,
+                "projectEditing": {"multiRoots": false, "aiSettings": true, "plugins": false},
+                "worktrees": {"version": "invalid"},
+                }
+            }))
+            .expect("explicit project advertisement must survive malformed headers");
+            let projected = crate::json_contract_tests::serialized(features).unwrap();
+            assert_eq!(projected["schemaVersion"], 1);
+            assert_eq!(projected["projectEditing"]["multiRoots"], false);
+            assert_eq!(projected["projectEditing"]["aiSettings"], Value::Null);
+            assert_eq!(projected["projectEditing"]["plugins"], false);
+            assert_eq!(projected["worktrees"], Value::Null);
+        }
+        assert!(
+            runtime_features(&json!({"runtime_features": {"schemaVersion": "invalid"}})).is_none()
+        );
+    }
+
+    #[test]
+    fn runtime_features_preserves_independent_project_editing_flags() {
+        let info = json!({
+            "runtime_features": {
+                "schemaVersion": 4,
+                "projectEditing": {"multiRoots": true, "aiSettings": false, "defaultProjectSpace": true, "plugins": false},
+            },
+        });
+        let projected =
+            crate::json_contract_tests::serialized(runtime_features(&info).unwrap()).unwrap();
+        assert_eq!(
+            projected["projectEditing"],
+            info["runtime_features"]["projectEditing"]
+        );
+    }
+
+    #[test]
+    fn absent_project_editing_does_not_mask_legacy_runtime_contracts() {
+        let info = json!({"runtime_features": {"schemaVersion": 4}});
+        let projected =
+            crate::json_contract_tests::serialized(runtime_features(&info).unwrap()).unwrap();
+        assert!(projected.get("projectEditing").is_none());
+    }
+
+    #[test]
+    fn malformed_explicit_project_editing_is_preserved_conservatively() {
+        for editing in [
+            Value::Null,
+            json!("invalid"),
+            json!({"multiRoots": "true", "plugins": false}),
+        ] {
+            let info = json!({"runtime_features": {"schemaVersion": 4, "projectEditing": editing}});
+            let projected =
+                crate::json_contract_tests::serialized(runtime_features(&info).unwrap()).unwrap();
+            assert!(projected["projectEditing"].is_object());
+            assert_eq!(projected["projectEditing"]["multiRoots"], Value::Null);
+            assert_eq!(projected["projectEditing"]["aiSettings"], Value::Null);
+        }
+    }
+
+    #[test]
     fn runtime_features_includes_interactive_sessions() {
         let info = json!({
             "runtime_features": {
@@ -936,6 +1065,7 @@ mod tests {
             runtime_task_create: None,
             interactive_sessions: None,
             worktrees: None,
+            project_editing: None,
             extensions: std::iter::once((
                 "desktop".to_string(),
                 json!({

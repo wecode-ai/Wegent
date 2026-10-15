@@ -18,10 +18,11 @@ use crate::state::AppState;
 use crate::task_creation::{TaskCrdInput, WorkspaceRepository};
 
 use super::model::parse_model_string;
-use super::resolution::{bots_by_names, model_by_name_namespace, resolve_team, resolve_team_bots};
+use super::resolution::{kinds_row, model_by_name_namespace, resolve_team_bots};
 use super::schema::{ResponseCreateInput, extract_input_text, parse_wegent_tools};
 use super::seam::{self, BodyStream, DispatchInput};
 use super::session::{SetupChatSessionInput, setup_chat_session};
+use crate::task_skills::kinds::KindCacheStore;
 
 /// The create response: a JSON `ResponseObject` or the SSE framing stream.
 type CreateResponse = brz_http_server::HttpResponse<BodyStream>;
@@ -68,11 +69,19 @@ async fn create_response_flow(
     let user_id = i64::from(user.id);
     let model = parse_model_string(&input.model)?;
 
-    // `kindReader.get_by_name_and_namespace(user_id, TEAM, namespace, name)`.
-    let team = resolve_team(&state.mysql, user_id, &model.namespace, &model.team_name)
+    // Team resolution reads the `kind:v2` cached documents first and
+    // queries SQL on a miss, so the create flow shares the cached store.
+    let kinds_cache = KindCacheStore {
+        mysql: &state.mysql,
+        redis: state.redis.as_ref(),
+        erp: Some(state.erp.as_ref()),
+        resolvers: Some(&state.entity_resolvers),
+    };
+    let team = kinds_cache
+        .resolve_team(user_id, &model.namespace, &model.team_name)
         .await
         .map_err(dependency)?;
-    let Some(team) = team else {
+    let Some(team) = team.map(kinds_row) else {
         return Err(FastApiError::detail(
             StatusCode::NOT_FOUND,
             format!(
@@ -82,8 +91,8 @@ async fn create_response_flow(
         ));
     };
 
-    // `get_bot_ids_from_team`.
-    let bots = resolve_team_bots(&state.mysql, &team.json.0)
+    // `get_bot_ids_from_team`: one `kindReader` read per member.
+    let bots = resolve_team_bots(&kinds_cache, team.user_id, &team.json.0)
         .await
         .map_err(dependency)?;
     if bots.bot_ids.is_empty() {
@@ -93,14 +102,15 @@ async fn create_response_flow(
         ));
     }
 
-    // `_resolve_requested_model`: the requested Model, then the caller's
-    // `default` namespace when the team namespace misses.
+    // `_resolve_requested_model`: the requested Model in the team namespace
+    // (direct then referenced), then the caller's `default` namespace.
     if let Some(model_id) = model.model_id.as_deref() {
-        let mut resolved = model_by_name_namespace(&state.mysql, model_id, &model.namespace)
-            .await
-            .map_err(dependency)?;
+        let mut resolved =
+            model_by_name_namespace(&state.mysql, user_id, model_id, &model.namespace)
+                .await
+                .map_err(dependency)?;
         if resolved.is_none() && model.namespace != "default" {
-            resolved = model_by_name_namespace(&state.mysql, model_id, "default")
+            resolved = model_by_name_namespace(&state.mysql, user_id, model_id, "default")
                 .await
                 .map_err(dependency)?;
         }
@@ -112,15 +122,18 @@ async fn create_response_flow(
         }
     }
 
-    // The first team-member bot row (`_get_first_bot`).
-    let bot_rows = bots_by_names(
-        &state.mysql,
-        std::slice::from_ref(&bots.first_bot_namespace),
-        std::slice::from_ref(&bots.first_bot_name),
-    )
-    .await
-    .map_err(dependency)?;
-    let Some(bot) = bot_rows.into_iter().next() else {
+    // The first team-member bot row (`_get_first_bot`): the same cached
+    // `kindReader` read.
+    let bot = kinds_cache
+        .get_by_name_and_namespace_row(
+            team.user_id,
+            "Bot",
+            &bots.first_bot_namespace,
+            &bots.first_bot_name,
+        )
+        .await
+        .map_err(dependency)?;
+    let Some(bot) = bot.map(kinds_row) else {
         return Err(FastApiError::detail(
             StatusCode::BAD_REQUEST,
             "No valid bots found in team",

@@ -50,6 +50,7 @@ import { DeliveryDialog } from '@/features/delivery/DeliveryDialog'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
+  findNativeLocalWorkbenchDevice,
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
   getWorkbenchDeviceNamesById,
@@ -107,8 +108,10 @@ import {
   type RightWorkspacePanelTab,
   type RightWorkspacePanelView,
   type RightWorkspaceTerminalTab,
+  type RightWorkspacePanelHandle,
 } from './workspace-panels/RightWorkspacePanel'
 import { retainElectronEmbeddedBrowserView } from './workspace-panels/electronEmbeddedBrowserHost'
+import { useRightWorkspaceShortcuts } from './workspace-panels/useRightWorkspaceShortcuts'
 import {
   attachRightWorkspaceSidebarController,
   encodeRightWorkspaceExtensionTabId,
@@ -1764,6 +1767,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const restoredReviewState = initialWorkspaceState?.reviewState
   const restoredLoadingReviewRef = useRef(restoredReviewState?.loading ? restoredReviewState : null)
   const [fileWorkspaceDirty, setFileWorkspaceDirty] = useState(false)
+  const rightWorkspacePanelRef = useRef<RightWorkspacePanelHandle>(null)
   const temporaryChatTabSequence = useRef(0)
   const browserTabSequence = useRef(initialBrowserWorkspaceState.maxSequence)
   const [browserStates, setBrowserStates] = useState<
@@ -3003,7 +3007,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     paneSession.status.workspaceCreationKind
   )
   const hasMainBackground = Boolean(background.imagePath && background.inMain)
-  const activeDevice = findWorkbenchDevice(devices, activeDeviceId)
+  const nativeLocalDevice =
+    !currentProject && !currentRuntimeTask
+      ? findNativeLocalWorkbenchDevice(devices, activeDeviceId)
+      : null
+  const activeDevice = nativeLocalDevice ?? findWorkbenchDevice(devices, activeDeviceId)
   const activeDeviceSupportsGoal = Boolean(activeDevice && isClaudeCodeDevice(activeDevice))
   const currentRuntimeUsesCodex =
     (runtimeTaskSummary?.runtime ?? currentRuntimeTask?.runtime ?? 'codex').toLowerCase() ===
@@ -4336,6 +4344,21 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const selectChatView = useCallback(() => {
     openTemporaryChatTab()
   }, [openTemporaryChatTab])
+  const navigateRightWorkspace = useCallback((action: () => void) => {
+    if (rightWorkspacePanelRef.current) rightWorkspacePanelRef.current.navigate(action)
+    else action()
+  }, [])
+  useRightWorkspaceShortcuts({
+    active: paneActive && paneVisible && workbenchVisible,
+    canOpenReview: Boolean(loadEnvironmentDiff && workspaceTarget),
+    allowTemporaryChat: temporaryChatAvailable,
+    canBrowseFiles,
+    onNavigate: navigateRightWorkspace,
+    onSelectReview: selectReviewView,
+    onSelectBrowser: selectBrowserView,
+    onSelectChat: selectChatView,
+    onSelectFiles: selectFilesView,
+  })
   const selectPlanView = useCallback(() => {
     openRightPanelTab('plan')
   }, [openRightPanelTab])
@@ -5835,6 +5858,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         >
           {shouldRenderRightPanel ? (
             <RightWorkspacePanel
+              ref={rightWorkspacePanelRef}
               showWorkbenchBackground={hasMainBackground && !displayedRightPanelExpanded}
               visible={paneVisible && workbenchVisible && displayedRightPanelOpen}
               renderTabsInAppTitlebar={!splitMode}

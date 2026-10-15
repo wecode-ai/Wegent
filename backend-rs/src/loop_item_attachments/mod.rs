@@ -21,6 +21,7 @@
 //! The recorded case is a local item with no attachments, so the response is
 //! `[]`.
 
+mod content;
 mod handler;
 
 mod external;

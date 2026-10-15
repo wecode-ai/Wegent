@@ -22,6 +22,11 @@ pub struct AppState {
     /// Current-user `GET /api/users/me` `git_info` resolution. The public
     /// default renders the stored column.
     pub user_git_info: Arc<dyn crate::user_profile::UserGitInfoProvider>,
+    /// Post-update `git_info` masking for `PUT /api/users/me`. The public
+    /// default returns no mask, so the public update emits no second write; an
+    /// application whose deployment keeps placeholder Git credentials registers
+    /// its own implementation before route construction.
+    pub user_git_info_mask: Arc<dyn crate::user_profile::UserGitInfoMasker>,
     pub media_policy: Arc<dyn crate::media_policy::MediaPolicy>,
     /// `_stream_external_attachment`: the registered external media playback
     /// resolvers and their relay. The public default resolves nothing.

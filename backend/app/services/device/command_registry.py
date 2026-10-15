@@ -1516,7 +1516,14 @@ OPEN_TERMINAL_COMMAND = (
 
 DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "pwd": LocalDeviceCommandDefinition(command="pwd"),
-    "home_dir": LocalDeviceCommandDefinition(command="printenv HOME"),
+    "home_dir": LocalDeviceCommandDefinition(
+        command=(
+            "sh -c "
+            '\'case "$(uname -s)" in '
+            'MINGW*|MSYS*|CYGWIN*) cygpath -w "$HOME" ;; '
+            '* ) printf "%s\\n" "$HOME" ;; esac\''
+        )
+    ),
     "project_workspace_root": LocalDeviceCommandDefinition(
         command=(
             "sh -c "

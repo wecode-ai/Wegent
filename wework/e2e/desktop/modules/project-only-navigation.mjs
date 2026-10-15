@@ -77,12 +77,27 @@ export function createProjectOnlyNavigationRegression({ uiTimeoutMs }) {
         assert.ok(project, 'The project-only grant must appear in the authorized project list')
         assert.equal(project.access_role, role)
         assert.equal(project.workspace_context.id, workspace.id)
+        assert.equal(project.workspace_access_role, null)
+        assert.deepEqual(project.permission_sources, [
+          index === 0 ? { type: 'public', role: 'Viewer' } : { type: 'direct', role },
+        ])
+        const environments = await request(
+          readerToken,
+          `/api/v1/cloud-projects/${project.id}/execution-environments`
+        )
+        assert.deepEqual(environments.items, [])
       }
       assert.ok(!accessible.items.some(item => item.id === projects[2].id))
       for (const suffix of ['', '/members', '/agents', '/execution-environments']) {
         await request(readerToken, `/api/v1/workspaces/${workspace.id}${suffix}`, {}, 404)
       }
       await request(readerToken, `/api/v1/cloud-projects/${projects[2].id}`, {}, 404)
+      await request(
+        readerToken,
+        `/api/v1/cloud-projects/${projects[2].id}/execution-environments`,
+        {},
+        404
+      )
       await request(
         readerToken,
         `/api/v1/cloud-projects/${projects[0].id}/loop-items`,

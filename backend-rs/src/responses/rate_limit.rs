@@ -28,6 +28,10 @@ pub const CREATE_RESPONSE_LIMIT_ENV: &str = "RATE_LIMIT_CREATE_RESPONSE";
 /// (`app.core.config.Settings.RATE_LIMIT_GET_RESPONSE`).
 pub const GET_RESPONSE_LIMIT_ENV: &str = "RATE_LIMIT_GET_RESPONSE";
 
+/// Source setting holding the `DELETE /api/v1/responses/{response_id}` window
+/// (`app.core.config.Settings.RATE_LIMIT_DELETE_RESPONSE`).
+pub const DELETE_RESPONSE_LIMIT_ENV: &str = "RATE_LIMIT_DELETE_RESPONSE";
+
 /// `RATE_LIMIT_GET_RESPONSE` parsed as `(amount, multiples, granularity)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RateLimit {
@@ -109,6 +113,15 @@ impl RateLimit {
     /// override it (the source deployment sets `10000/minute`).
     pub fn cancel_response() -> Self {
         crate::config::env_or_dotenv("RATE_LIMIT_CANCEL_RESPONSE")
+            .as_deref()
+            .and_then(Self::parse)
+            .unwrap_or_else(|| Self::per_minute(30))
+    }
+
+    /// `@limiter.limit(settings.RATE_LIMIT_DELETE_RESPONSE)` on
+    /// `delete_response`. The source default is `30/minute`.
+    pub fn delete_response() -> Self {
+        crate::config::env_or_dotenv(DELETE_RESPONSE_LIMIT_ENV)
             .as_deref()
             .and_then(Self::parse)
             .unwrap_or_else(|| Self::per_minute(30))

@@ -254,7 +254,11 @@ async fn runtime_sidebar_semantic_rpcs_update_codex_global_state() {
             "id": "remote-1",
             "hostId": "remote-host-1",
             "remotePath": "/srv/remote",
-            "label": "Remote"
+            "label": "Remote",
+            "projectKey": null,
+            "roots": ["/srv/remote"],
+            "defaultProjectSpace": null,
+            "aiSettings": null
         }])
     );
     assert_eq!(state["active-remote-project-id"], "remote-1");

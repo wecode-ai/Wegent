@@ -203,6 +203,9 @@ fn main() {
     } else {
         None
     };
+    // Loopback backend sockets must bypass system HTTP proxies. Set this before
+    // Tokio starts: POSIX environment mutation can race with TLS and DNS readers.
+    env::set_var("NO_PROXY", "localhost,127.0.0.1,::1");
     let runtime_instance = runtime();
     let outcome = runtime_instance.block_on(wegent_executor::app::run_with_shell_environment(
         args,

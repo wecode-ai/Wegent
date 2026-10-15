@@ -283,8 +283,10 @@ export function createDesktopScenario({
       await control.command('click', '[data-testid="settings-menu-button"]', { visible: true })
       await control.command('click', '[data-testid="settings-nav-worktrees"]', { visible: true })
       const remove = `[data-testid="delete-worktree-button-${isolated.taskId}"]`
-      await control.command('waitFor', remove, { visible: true })
-      await control.command('click', remove, { visible: true })
+      await control.command('clickElementWithText', remove, {
+        text: '归档并回收',
+        visible: true,
+      })
       await access(markerPath)
       await control.command(
         'click',

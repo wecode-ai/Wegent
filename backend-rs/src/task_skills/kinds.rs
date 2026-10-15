@@ -23,6 +23,15 @@ use super::repository::KindRow;
 use brz_mysql::{Mysql, MysqlResult};
 use brz_redis::Redis;
 
+/// The cached kind-reader failure mapping: a MySQL failure keeps the driver
+/// error (callers with their own mapping reuse it); the read itself has no
+/// other failure mode.
+fn kind_read_failed(error: ApiError) -> brz_mysql::MysqlError {
+    brz_mysql::MysqlError::InvalidQuery {
+        reason: format!("kind read failed: {}", error.detail()),
+    }
+}
+
 /// Cache TTL of the deployment's cached-reader contract.
 const CACHE_TTL_SECONDS: u64 = 300;
 
@@ -226,6 +235,23 @@ impl<M: Mysql, R: Redis> KindCacheStore<'_, M, R> {
             .map(|team| team.kinds_id))
     }
 
+    /// `kindReader.get_by_name_and_namespace` for a non-Team kind through the
+    /// cached reader: the group read for a non-`default` namespace, else the
+    /// personal read with the public fallback (Bot and Ghost support it).
+    pub async fn get_by_name_and_namespace_row(
+        &self,
+        user_id: i64,
+        kind: &str,
+        namespace: &str,
+        name: &str,
+    ) -> MysqlResult<Option<KindRow>> {
+        self.cached_kinds()
+            .get_by_name_and_namespace(user_id, kind, namespace, name)
+            .await
+            .map_err(kind_read_failed)
+            .map(|record| record.map(kind_row))
+    }
+
     /// The cached kind reader over the same clients: `None` keeps every read
     /// on the direct SQL path, exactly like the extension's `wrap`.
     fn cached_kinds(&self) -> KindStore<'_, M, R> {
@@ -264,7 +290,10 @@ impl<M: Mysql, R: Redis> KindCacheStore<'_, M, R> {
     /// effective role, then the entity bindings through the registered
     /// resolvers, then the native group-role pass for non-default
     /// namespaces. `get_effective_role` defaults an empty role to Reporter.
-    async fn team_share_permission(
+    ///
+    /// Shared with `GET /api/teams/{team_id}/skills`, whose
+    /// `team_share_service.get_resource_for_use` runs the same check.
+    pub(crate) async fn team_share_permission(
         &self,
         team_id: i64,
         user_id: i64,

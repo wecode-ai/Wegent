@@ -139,6 +139,7 @@ pub(super) async fn download_attachment(
     download_token: Option<&str>,
     share_token: Option<&str>,
     purpose: Option<&str>,
+    range_header: Option<&str>,
     user: Option<&UserRow>,
 ) -> Result<AttachmentDownload, crate::http_compat::FastApiError> {
     // The source tests `if download_token:` first, so an empty parameter is
@@ -253,6 +254,9 @@ pub(super) async fn download_attachment(
             attachment_id,
             user_id: context.user_id.into(),
             original_filename: &context.original_filename(),
+            // `download_attachment`'s `range_header` (`Header(None, alias
+            // "Range")`), forwarded by `_stream_remote_media`.
+            range_header,
             reference: ExternalMediaReference::from_context(&context),
         })
         .await?

@@ -393,11 +393,7 @@ class SandboxManager(metaclass=SingletonMeta):
             self._repository.save_sandbox(sandbox)
             return sandbox, workspace_error
 
-        if not await self._restore_sandbox_after_create(sandbox):
-            error = "Sandbox archive restoration failed; refusing to start without historical state"
-            sandbox.set_failed(error)
-            self._repository.save_sandbox(sandbox)
-            return sandbox, error
+        await self._restore_sandbox_after_create(sandbox)
 
         logger.info(
             f"[SandboxManager] Sandbox created: sandbox_id={sandbox.sandbox_id}, "

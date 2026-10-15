@@ -188,7 +188,8 @@ async def get_feature_flags(
     )
 
 
-@router.get("/me", response_model=UserInDB)
+# MIGRATION-CANDIDATE(api="GET /api/users/me"): remove after final confirmation.
+# @router.get("/me", response_model=UserInDB)
 async def read_current_user(
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(security.get_current_user_optional),

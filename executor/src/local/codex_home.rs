@@ -251,7 +251,7 @@ fn write_remote_apps_enabled(codex_home: &Path, enabled: bool) -> Result<(), Str
     replace_config(&config_path, updated)
 }
 
-fn read_optional_config(config_path: &Path) -> Result<String, String> {
+pub(crate) fn read_optional_config(config_path: &Path) -> Result<String, String> {
     match fs::read_to_string(config_path) {
         Ok(content) => Ok(content),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),

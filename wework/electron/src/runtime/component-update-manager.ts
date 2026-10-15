@@ -16,6 +16,7 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { Readable, Transform } from 'node:stream'
 import type { ComponentDownloadProgress } from '../host/app-update-progress.js'
 import { cloudFetch } from '../host/cloud-http.js'
+import { copyManagedPlugin } from './managed-plugin-files.js'
 import { pipeline } from 'node:stream/promises'
 import { publishImmutableDirectory } from './immutable-directory.js'
 import * as tar from 'tar'
@@ -572,6 +573,7 @@ export class ComponentUpdateManager {
     staticSha256: string
   ): Promise<string> {
     const fingerprint = createHash('sha256')
+      .update(process.platform === 'win32' ? 'windows-owned-plugin-files-v1\0' : '')
       .update(coreSha256)
       .update('\0')
       .update(staticSha256)
@@ -611,10 +613,7 @@ export class ComponentUpdateManager {
     const entries = await readdir(source, { withFileTypes: true })
     for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
       if (excluded.has(entry.name)) continue
-      await cp(join(source, entry.name), join(destination, entry.name), {
-        recursive: true,
-        force: true,
-      })
+      await copyManagedPlugin(join(source, entry.name), join(destination, entry.name))
     }
   }
 
@@ -631,9 +630,13 @@ export class ComponentUpdateManager {
   }
 
   private async linkEntry(source: string, destination: string): Promise<void> {
+    if (process.platform === 'win32') {
+      await copyManagedPlugin(source, destination)
+      return
+    }
     const metadata = await lstat(source)
     if (metadata.isDirectory()) {
-      await symlink(source, destination, process.platform === 'win32' ? 'junction' : 'dir')
+      await symlink(source, destination, 'dir')
       return
     }
     if (metadata.isFile()) {

@@ -146,6 +146,50 @@ where
     }))
 }
 
+/// `KnowledgeService.update_document_content`'s own KB lookup
+/// (`db.query(Kind).filter(Kind.id == document.kind_id, Kind.kind ==
+/// "KnowledgeBase").first()`): the same labeled projection as
+/// [`knowledge_base_record`] without the `is_active` predicate, so the two are
+/// distinct recorded statements.
+pub(crate) async fn document_kb_record<M>(
+    mysql: &M,
+    knowledge_base_id: i64,
+) -> MysqlResult<Option<KnowledgeBase>>
+where
+    M: Mysql,
+{
+    #[derive(Debug, FromMysqlRow)]
+    struct Row {
+        kinds_id: i64,
+        kinds_user_id: i64,
+        kinds_namespace: String,
+        kinds_json: Json<OpaqueJson>,
+        kinds_created_at: chrono::NaiveDateTime,
+        kinds_updated_at: chrono::NaiveDateTime,
+    }
+    let row: Option<Row> = mysql
+        .fetch_optional(
+            &format!(
+                "SELECT kinds.id AS kinds_id, kinds.user_id AS kinds_user_id, \
+                 kinds.kind AS kinds_kind, kinds.name AS kinds_name, \
+                 kinds.namespace AS kinds_namespace, kinds.json AS kinds_json, \
+                 kinds.is_active AS kinds_is_active, kinds.created_at AS kinds_created_at, \
+                 kinds.updated_at AS kinds_updated_at \nFROM kinds \n\
+                 WHERE kinds.id = {knowledge_base_id} AND kinds.kind = 'KnowledgeBase' \n LIMIT 1"
+            ),
+            (),
+        )
+        .await?;
+    Ok(row.map(|row| KnowledgeBase {
+        kinds_id: row.kinds_id,
+        kinds_user_id: row.kinds_user_id,
+        kinds_namespace: row.kinds_namespace,
+        kinds_json: row.kinds_json.0,
+        kinds_created_at: row.kinds_created_at,
+        kinds_updated_at: row.kinds_updated_at,
+    }))
+}
+
 /// `get_knowledge_base`: resolve the permission and apply
 /// `meets_direct_access_requirement`. The `user` row (`db.query(User)` by
 /// id) is part of the source dependency sequence.

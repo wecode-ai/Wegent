@@ -222,32 +222,33 @@ def test_github_oauth_api_flow_connects_polls_and_disconnects(
     assert disconnect_response.status_code == 204
 
 
-def test_runtime_token_is_scoped_to_connector_invocation(
-    test_client: TestClient,
-    test_user: User,
-    test_token: str,
-):
-    token_response = test_client.post(
-        "/api/connector-runtime/token", headers=_admin_headers(test_token)
-    )
-
-    assert token_response.status_code == 200
-    assert token_response.json()["expires_in"] == 900
-    claims = jwt.decode(
-        token_response.json()["access_token"],
-        settings.SECRET_KEY,
-        algorithms=[settings.ALGORITHM],
-        audience="wegent-connector-runtime",
-    )
-    assert claims["sub"] == test_user.user_name
-    assert claims["user_id"] == test_user.id
-    assert claims["token_type"] == "connector"
-    assert claims["scope"] == "connectors:invoke"
-
-    invalid_runtime_response = test_client.get(
-        "/api/connector-runtime/tools", headers=_admin_headers(test_token)
-    )
-    assert invalid_runtime_response.status_code == 401
+# MIGRATION-CANDIDATE: retired Python HTTP test; this API is owned by Rust.
+# def test_runtime_token_is_scoped_to_connector_invocation(
+#     test_client: TestClient,
+#     test_user: User,
+#     test_token: str,
+# ):
+#     token_response = test_client.post(
+#         "/api/connector-runtime/token", headers=_admin_headers(test_token)
+#     )
+#
+#     assert token_response.status_code == 200
+#     assert token_response.json()["expires_in"] == 900
+#     claims = jwt.decode(
+#         token_response.json()["access_token"],
+#         settings.SECRET_KEY,
+#         algorithms=[settings.ALGORITHM],
+#         audience="wegent-connector-runtime",
+#     )
+#     assert claims["sub"] == test_user.user_name
+#     assert claims["user_id"] == test_user.id
+#     assert claims["token_type"] == "connector"
+#     assert claims["scope"] == "connectors:invoke"
+#
+#     invalid_runtime_response = test_client.get(
+#         "/api/connector-runtime/tools", headers=_admin_headers(test_token)
+#     )
+#     assert invalid_runtime_response.status_code == 401
 
 
 def test_role_visibility_is_enforced_for_user_catalog(

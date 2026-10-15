@@ -766,6 +766,21 @@ fn atomic_write_file(index_path: &Path, payload: &[u8]) -> io::Result<()> {
     }
 
     if let Err(error) = replace_file(&temp_path, index_path) {
+        crate::logging::log_executor_event(
+            "runtime work index replacement failed",
+            &[
+                ("source", temp_path.display().to_string()),
+                ("destination", index_path.display().to_string()),
+                ("os_error", format!("{:?}", error.raw_os_error())),
+                (
+                    "destination_readonly",
+                    format!(
+                        "{:?}",
+                        fs::metadata(index_path).map(|metadata| metadata.permissions().readonly())
+                    ),
+                ),
+            ],
+        );
         return Err(clean_up_temp_file(
             &temp_path,
             io_error_with_context("replace runtime work index", index_path, error),
@@ -790,26 +805,47 @@ fn replace_file(source: &Path, destination: &Path) -> io::Result<()> {
 
 #[cfg(windows)]
 fn replace_file(source: &Path, destination: &Path) -> io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::{ffi::OsStrExt, fs::OpenOptionsExt, io::AsRawHandle};
     use windows_sys::Win32::Storage::FileSystem::{
-        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+        FileRenameInfoEx, SetFileInformationByHandle, DELETE, FILE_RENAME_INFO,
+    };
+    use windows_sys::Win32::System::WindowsProgramming::{
+        FILE_RENAME_FLAG_POSIX_SEMANTICS, FILE_RENAME_FLAG_REPLACE_IF_EXISTS,
     };
 
-    let source = source
+    let source = OpenOptions::new().access_mode(DELETE).open(source)?;
+    // Rust's filesystem layer expands long paths, but this direct Win32 call
+    // needs the canonical parent's verbatim prefix even for a new index.
+    let destination =
+        fs::canonicalize(index_parent(destination))?.join(destination.file_name().ok_or_else(
+            || io::Error::new(io::ErrorKind::InvalidInput, "index path has no file name"),
+        )?);
+    let name = destination
         .as_os_str()
         .encode_wide()
         .chain(std::iter::once(0))
         .collect::<Vec<_>>();
-    let destination = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect::<Vec<_>>();
+    let buffer_size = std::mem::size_of::<FILE_RENAME_INFO>() + name.len() * 2;
+    // Word storage aligns the variable-length FILE_RENAME_INFO and owns its tail.
+    let mut buffer = vec![0usize; buffer_size.div_ceil(std::mem::size_of::<usize>())];
+    let information = buffer.as_mut_ptr().cast::<FILE_RENAME_INFO>();
+    // POSIX replacement keeps existing readers on the old file while new opens
+    // see the new index. MoveFileExW rejects an open destination even when its
+    // handles share DELETE access.
     let result = unsafe {
-        MoveFileExW(
-            source.as_ptr(),
-            destination.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        (*information).Anonymous.Flags =
+            FILE_RENAME_FLAG_REPLACE_IF_EXISTS | FILE_RENAME_FLAG_POSIX_SEMANTICS;
+        (*information).FileNameLength = ((name.len() - 1) * 2) as u32;
+        std::ptr::copy_nonoverlapping(
+            name.as_ptr(),
+            std::ptr::addr_of_mut!((*information).FileName).cast::<u16>(),
+            name.len(),
+        );
+        SetFileInformationByHandle(
+            source.as_raw_handle(),
+            FileRenameInfoEx,
+            information.cast(),
+            buffer_size as u32,
         )
     };
     if result == 0 {

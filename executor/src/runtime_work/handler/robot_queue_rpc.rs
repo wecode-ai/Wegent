@@ -91,7 +91,9 @@ impl RuntimeWorkRpcHandler {
                     &[("error", error.to_string())],
                 );
             }
-            let catalog = match store.has_queued_routed_executions() {
+            // Claim materializes nested runtime payloads. Always load the catalog
+            // for a nonempty queue; a top-level routing probe can also race enqueue.
+            let catalog = match store.has_queued_executions() {
                 Ok(true) => match self.runner_catalog().await {
                     Ok(catalog) => Some(catalog),
                     Err(error) => {
@@ -102,7 +104,7 @@ impl RuntimeWorkRpcHandler {
                         return;
                     }
                 },
-                Ok(false) => None,
+                Ok(false) => return,
                 Err(error) => {
                     log_executor_event(
                         "local queue inspection failed",

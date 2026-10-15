@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { access } from 'node:fs/promises'
 
 import { ensureProjectExpandedInActiveSidebar } from '../modules/project-sidebar.mjs'
-import { createSingleRootLocalProject } from '../modules/shared.mjs'
+import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -89,6 +89,7 @@ async function sendNewTask(
     timeoutMs,
   })
   await control.command('waitFor', COMPOSER_SELECTOR)
+  await selectE2EModel(control, undefined, undefined, ACTIVE_WORKBENCH_SELECTOR)
   await control.command('waitFor', '[data-testid="execution-mode-button"]')
   await control.command('click', '[data-testid="execution-mode-button"]')
   const executionModeSelector =

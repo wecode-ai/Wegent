@@ -170,6 +170,15 @@ export async function selectWhenOptionAvailable(control, selector, value, timeou
   await control.command('select', selector, { value })
 }
 
+export async function selectCollaborationProjectView(control, contentSelector, view) {
+  const compact = `${contentSelector} [data-testid="collaboration-project-view-select"]`
+  if (Number(await control.command('getElementCount', compact)) > 0) {
+    await control.command('select', compact, { value: view })
+  } else {
+    await control.command('click', `${contentSelector} [data-testid="collaboration-tab-${view}"]`)
+  }
+}
+
 /** Native fixtures require an explicit environment; automatic routing is cloud-only. */
 export async function selectProjectRunnerModel(control, timeoutMs) {
   const prefix = 'cloud-project-chat-agent'
@@ -661,6 +670,17 @@ const HARNESS_MILESTONE_SCREENSHOTS = new Set([
 ])
 
 async function captureVerificationScreenshot(control, name, selector = 'body') {
+  const conversationDiagnostics = await control.command(
+    'getConversationDiagnosticsSnapshot',
+    'body'
+  )
+  if (conversationDiagnostics !== 'null') {
+    await writeFile(
+      join(resultDir, `${name}.conversation-diagnostics.json`),
+      `${conversationDiagnostics}\n`,
+      'utf8'
+    )
+  }
   const screenshotMode = process.env.WEWORK_E2E_SCREENSHOTS
   if (screenshotMode === 'final' && !name.endsWith('04-task-completed-after-reopen.png')) {
     return null
@@ -895,7 +915,7 @@ async function verifyWorkspaceIssueCreation(control) {
     boardContentSelector,
     DEFAULT_STEP_TIMEOUT_MS
   )
-  await control.command('click', `${boardContentSelector} [data-testid="collaboration-tab-board"]`)
+  await selectCollaborationProjectView(control, boardContentSelector, 'board')
 
   const createIssueSelector = `${boardContentSelector} [data-testid="collaboration-issue-create"]`
   const createIssueDialog = `${boardContentSelector} [data-testid="collaboration-issue-create-dialog"]`
@@ -1361,34 +1381,21 @@ async function openBoardTaskPageByText(control, activeBoardContentSelector, text
   assert.ok(boardCardId.startsWith('cloud-todo-card-drop-'))
   const boardItemId = boardCardId.slice('cloud-todo-card-drop-'.length)
   const boardCardSelector = `${activeBoardContentSelector} [data-testid="${boardCardId}"]`
-  const openTaskTestId = `cloud-todo-card-open-task-${boardItemId}`
-  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
-  await control.command(
-    'click',
-    `${boardCardSelector} [data-testid="cloud-todo-card-${boardItemId}"]`,
-    {
-      visible: true,
-    }
-  )
-  if (!snapshot.testIds.includes(openTaskTestId)) {
-    await control.command('waitFor', '[data-testid="cloud-todo-detail"]', {
-      visible: true,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    })
-    return
-  }
+  const openTaskSelector = `${boardCardSelector} [data-testid="cloud-todo-card-open-task-${boardItemId}"]`
+  const selector =
+    Number(await control.command('getElementCount', openTaskSelector)) > 0
+      ? openTaskSelector
+      : `${boardCardSelector} [data-testid="cloud-todo-card-${boardItemId}"]`
+  await control.command('scrollIntoView', selector)
+  await control.command('click', selector, { visible: true })
   await control.command(
     'waitFor',
-    `[data-testid="cloud-todo-card-progress-popup-${boardItemId}"]`,
+    `${activeBoardContentSelector} [data-testid="cloud-todo-detail"]`,
     {
       visible: true,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
-  await control.command('click', `[data-testid="${openTaskTestId}"]`, {
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
 }
 
 async function enrichTrackedDefaultIssueTitle(control, taskTabTestId, title) {
@@ -1562,10 +1569,7 @@ async function verifyExistingTaskBoardAssociation(
     activeBoardContentSelector,
     DEFAULT_STEP_TIMEOUT_MS
   )
-  await control.command(
-    'click',
-    `${activeBoardContentSelector} [data-testid="collaboration-tab-board"]`
-  )
+  await selectCollaborationProjectView(control, activeBoardContentSelector, 'board')
   await control.command(
     'waitFor',
     `${activeBoardContentSelector} [data-testid="collaboration-issue-create"]`,

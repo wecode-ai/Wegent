@@ -30,9 +30,11 @@ use crate::plugins_marketplace::db::{
     PLUGIN_COLUMNS, PluginReleaseRow, PluginRow, RELEASE_COLUMNS, ResourceMemberRow,
 };
 
-use super::auto_update::{
-    can_access_plugin, component_states, kind_name, load_access_context,
-    marketplace_name_for_visibility, source_label, source_provider,
+use super::auto_update::{can_access_plugin, load_access_context, marketplace_name_for_visibility};
+use super::catalog_write::{
+    apply_catalog_ref_to_installed_kind, clear_device_installations,
+    deactivate_duplicate_installed_kind, deactivate_orphaned_catalog_install,
+    reset_failed_device_installations,
 };
 
 /// One active `InstalledPlugin` kinds row (`_desired_installs` projection).
@@ -63,48 +65,53 @@ const USER_DEVICE_ROWS_QUERY: &str =
     "SELECT {cols} FROM plugin_device_installations WHERE plugin_device_installations.user_id = ?";
 
 /// `_clear_device_installations`.
-const DELETE_DEVICE_BY_KIND_QUERY: &str = "DELETE FROM plugin_device_installations WHERE plugin_device_installations.installed_kind_id = ?";
+pub(super) const DELETE_DEVICE_BY_KIND_QUERY: &str = "DELETE FROM plugin_device_installations WHERE plugin_device_installations.installed_kind_id = ?";
 
 /// `db.delete(device_row)`.
 const DELETE_DEVICE_BY_ID_QUERY: &str =
     "DELETE FROM plugin_device_installations WHERE plugin_device_installations.id = ?";
 
 /// `_reset_failed_device_installations`'s failing-row read.
-const FAILED_DEVICE_ROWS_QUERY: &str = "SELECT plugin_device_installations.id AS \
+pub(super) const FAILED_DEVICE_ROWS_QUERY: &str = "SELECT plugin_device_installations.id AS \
      plugin_device_installations_id FROM plugin_device_installations WHERE \
      plugin_device_installations.installed_kind_id = ? AND plugin_device_installations.state = \
      'failed'";
 
-/// A small SQLAlchemy-identity-map stand-in for `Plugin` rows: the grouping
-/// loop's `matched` local keeps each plugin strongly referenced for the rest
-/// of `reconcile_stale_installed_catalog_refs`, so `db.get(Plugin, id)` serves
-/// later passes without a second query. `PluginRelease` locals have no such
-/// surviving reference between helper calls, and SQLAlchemy's identity map is
-/// weak, so the source re-reads a release in every pass; `get_release`
-/// therefore never caches.
-#[derive(Default)]
-struct CatalogCache {
-    plugins: HashMap<i64, Option<PluginRow>>,
-}
-
+/// The source's SQLAlchemy identity-map semantics for `Plugin` rows.
+///
+/// The identity map is weak: a `db.get(Plugin, id)` only avoids a query when
+/// some live local still strongly references that row. The references that
+/// matter, proven by the recorded sync-device exchanges:
+///
+/// - `reconcile_stale_installed_catalog_refs`'s `matched` local is reassigned
+///   by each phase-A iteration (the previous plugin dies at reassignment) and
+///   the last iteration's plugin stays referenced through phases B and C;
+/// - `_reconcile_installed_kind_catalog_ref`'s own `plugin`, `release`, and
+///   `matched` locals keep their rows alive only for that one call.
+///
+/// Every other `db.get` re-reads the row, so `get_plugin` takes the rows that
+/// are strongly referenced at its call site instead of caching. Releases are
+/// never referenced between helper calls; `get_release` always queries, and
+/// `_latest_release` only reuses the caller's `release` local when both read
+/// the same id.
 async fn get_plugin<M: Mysql>(
-    cache: &mut CatalogCache,
+    alive: &[Option<&PluginRow>],
     mysql: &M,
     id: i64,
 ) -> MysqlResult<Option<PluginRow>> {
-    if let Some(cached) = cache.plugins.get(&id) {
-        return Ok(cached.clone());
+    for row in alive.iter().flatten() {
+        if row.id == id {
+            return Ok(Some((*row).clone()));
+        }
     }
     let row: Option<PluginRow> = mysql
         .fetch_optional(PLUGIN_BY_ID_QUERY.replace("{cols}", PLUGIN_COLUMNS), (id,))
         .await?;
-    cache.plugins.insert(id, row.clone());
     Ok(row)
 }
 
-/// `db.get(PluginRelease, id)`: never cached, because no strong reference to
-/// the release row survives between the source's helper calls, so its weak
-/// identity map misses and the read is issued again on every pass.
+/// `db.get(PluginRelease, id)`: never an identity-map hit between helper
+/// calls, because no strong reference to a release row survives them.
 async fn get_release<M: Mysql>(mysql: &M, id: i64) -> MysqlResult<Option<PluginReleaseRow>> {
     let row: Option<PluginReleaseRow> = mysql
         .fetch_optional(
@@ -115,8 +122,23 @@ async fn get_release<M: Mysql>(mysql: &M, id: i64) -> MysqlResult<Option<PluginR
     Ok(row)
 }
 
+/// `_latest_release`'s `db.get(PluginRelease, plugin.latest_release_id)`:
+/// an identity-map hit only when the caller's `release` local already holds
+/// that row (both reads use the same id inside one
+/// `_reconcile_installed_kind_catalog_ref` call).
+async fn get_release_or_alive<M: Mysql>(
+    alive_release: Option<&PluginReleaseRow>,
+    mysql: &M,
+    id: i64,
+) -> MysqlResult<Option<PluginReleaseRow>> {
+    if alive_release.is_some_and(|release| release.id == id) {
+        return Ok(alive_release.cloned());
+    }
+    get_release(mysql, id).await
+}
+
 /// `spec.<key>` as a string (`str(value or "")`).
-fn spec_str(json: &Value, key: &str) -> String {
+pub(super) fn spec_str(json: &Value, key: &str) -> String {
     json.get("spec")
         .and_then(|spec| spec.get(key))
         .map(as_python_str)
@@ -215,7 +237,6 @@ where
 
 /// `_published_plugin_by_key`.
 async fn published_plugin_by_key<M, R>(
-    cache: &mut CatalogCache,
     mysql: &M,
     redis: Option<&R>,
     resolvers: &EntityResolvers<R>,
@@ -245,7 +266,6 @@ where
             continue;
         }
         if plugin_can_access(mysql, redis, resolvers, &plugin, user_id).await? {
-            cache.plugins.insert(plugin.id, Some(plugin.clone()));
             return Ok(Some(plugin));
         }
     }
@@ -261,8 +281,15 @@ struct PluginMatch<'a> {
 }
 
 /// `_matching_published_plugin`.
+///
+/// `caller_plugin` is the caller's live `plugin` local (when the caller is
+/// `_reconcile_installed_kind_catalog_ref`, which reads the same plugin id
+/// before matching); `matched_alive` is the enclosing function's `matched`
+/// local. During the call both are strong references, so `db.get(Plugin, id)`
+/// hits the identity map for either.
 async fn matching_published_plugin<M, R>(
-    cache: &mut CatalogCache,
+    matched_alive: Option<&PluginRow>,
+    caller_plugin: Option<&PluginRow>,
     mysql: &M,
     redis: Option<&R>,
     resolvers: &EntityResolvers<R>,
@@ -272,8 +299,9 @@ where
     M: Mysql,
     R: brz_redis::Redis,
 {
+    let alive = [matched_alive, caller_plugin];
     let plugin = match request.plugin_id {
-        Some(id) => get_plugin(cache, mysql, id).await?,
+        Some(id) => get_plugin(&alive, mysql, id).await?,
         None => None,
     };
     if let Some(plugin) = plugin {
@@ -291,7 +319,6 @@ where
         }
     }
     published_plugin_by_key(
-        cache,
         mysql,
         redis,
         resolvers,
@@ -303,21 +330,26 @@ where
 }
 
 /// `_latest_release`: the plugin's latest release when it is ready and scanned.
+/// `caller_release` is the caller's live `release` local, which keeps the row
+/// in the identity map for the duration of one
+/// `_reconcile_installed_kind_catalog_ref` call.
 async fn latest_release<M: Mysql>(
-    _cache: &mut CatalogCache,
+    caller_release: Option<&PluginReleaseRow>,
     mysql: &M,
     plugin: &PluginRow,
 ) -> MysqlResult<Option<PluginReleaseRow>> {
     if plugin.latest_release_id == 0 {
         return Ok(None);
     }
-    let release = get_release(mysql, plugin.latest_release_id).await?;
+    let release = get_release_or_alive(caller_release, mysql, plugin.latest_release_id).await?;
     Ok(release.filter(|release| release.status == "ready" && release.scan_status == "passed"))
 }
 
-/// `_installed_kind_catalog_score`: catalog-match scoring for the keeper choice.
+/// `_installed_kind_catalog_score`: catalog-match scoring for the keeper
+/// choice. The call's own `plugin`/`release` locals die at return, so only the
+/// enclosing function's `matched` local can serve a plugin without a query.
 async fn installed_kind_catalog_score<M: Mysql>(
-    cache: &mut CatalogCache,
+    matched_alive: Option<&PluginRow>,
     mysql: &M,
     json: &Value,
     row_id: i64,
@@ -332,7 +364,7 @@ async fn installed_kind_catalog_score<M: Mysql>(
         .and_then(|spec| spec.get("releaseId"))
         .and_then(as_int);
     let plugin = match plugin_id {
-        Some(id) => get_plugin(cache, mysql, id).await?,
+        Some(id) => get_plugin(&[matched_alive], mysql, id).await?,
         None => None,
     };
     let release = match release_id {
@@ -353,8 +385,11 @@ async fn installed_kind_catalog_score<M: Mysql>(
 }
 
 /// `_reconcile_installed_kind_catalog_ref`. Returns whether the row changed.
+///
+/// The call's `plugin`, `release`, and `matched` locals keep their rows in the
+/// identity map for the duration of the call; all of them die at return.
 async fn reconcile_installed_kind_catalog_ref<M, R>(
-    cache: &mut CatalogCache,
+    matched_alive: Option<&PluginRow>,
     mysql: &M,
     redis: Option<&R>,
     resolvers: &EntityResolvers<R>,
@@ -379,7 +414,7 @@ where
         .and_then(|spec| spec.get("releaseId"))
         .and_then(as_int);
     let plugin = match plugin_id {
-        Some(id) => get_plugin(cache, mysql, id).await?,
+        Some(id) => get_plugin(&[matched_alive], mysql, id).await?,
         None => None,
     };
     let release = match release_id {
@@ -388,7 +423,8 @@ where
     };
     let marketplace = source_str(&json, "marketplace");
     let matched = matching_published_plugin(
-        cache,
+        matched_alive,
+        plugin.as_ref(),
         mysql,
         redis,
         resolvers,
@@ -415,7 +451,7 @@ where
     let needs_repair = key_mismatch || release_missing || plugin_missing || release_wrong;
 
     if let Some(matched) = matched {
-        let mut target = latest_release(cache, mysql, &matched).await?;
+        let mut target = latest_release(release.as_ref(), mysql, &matched).await?;
         if let Some(release) = &release
             && release.plugin_id == matched.id
             && release.status == "ready"
@@ -454,280 +490,6 @@ where
     Ok(true)
 }
 
-/// The MySQL `DATETIME` literal shape (`YYYY-MM-DD HH:MM:SS.ffffff`).
-fn now_literal() -> String {
-    chrono::Utc::now()
-        .naive_utc()
-        .format("%Y-%m-%d %H:%M:%S%.6f")
-        .to_string()
-}
-
-async fn write_kind<M: Mysql>(
-    mysql: &M,
-    id: i64,
-    json: &Value,
-    name: Option<&str>,
-    is_active: Option<bool>,
-) -> MysqlResult<()> {
-    let serialized = serde_json::to_string(json).expect("kind document serializes");
-    let updated_at = now_literal();
-    match (name, is_active) {
-        (Some(name), Some(is_active)) => {
-            mysql
-                .execute(
-                    "UPDATE kinds SET json=?, name=?, is_active=?, updated_at=? WHERE kinds.id = ?",
-                    (serialized, name.to_string(), is_active, updated_at, id),
-                )
-                .await?;
-        }
-        (Some(name), None) => {
-            mysql
-                .execute(
-                    "UPDATE kinds SET json=?, name=?, updated_at=? WHERE kinds.id = ?",
-                    (serialized, name.to_string(), updated_at, id),
-                )
-                .await?;
-        }
-        _ => {
-            mysql
-                .execute(
-                    "UPDATE kinds SET json=?, is_active=?, updated_at=? WHERE kinds.id = ?",
-                    (serialized, is_active, updated_at, id),
-                )
-                .await?;
-        }
-    }
-    Ok(())
-}
-
-/// `_apply_catalog_ref_to_installed_kind`.
-async fn apply_catalog_ref_to_installed_kind<M: Mysql>(
-    mysql: &M,
-    row: &InstalledKindRow,
-    plugin: &PluginRow,
-    release: &PluginReleaseRow,
-) -> MysqlResult<()> {
-    let mut document = row.json.0.to_value();
-    let mut spec = document
-        .get("spec")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
-    let mut source = spec
-        .get("source")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
-    source.insert("type".to_string(), Value::String("marketplace".to_string()));
-    source.insert(
-        "providerKey".to_string(),
-        Value::String("wegent-market".to_string()),
-    );
-    source.insert("pluginKey".to_string(), Value::String(plugin.name.clone()));
-    source.insert(
-        "catalogItemId".to_string(),
-        Value::String(plugin.id.to_string()),
-    );
-    source.insert(
-        "marketplace".to_string(),
-        Value::String(marketplace_name_for_visibility(&plugin.visibility).to_string()),
-    );
-    let package_ref = serde_json::json!({
-        "storageKey": release.storage_key,
-        "checksum": format!("sha256:{}", release.sha256),
-        "sizeBytes": release.size_bytes,
-    });
-    let mut source_payload = spec
-        .get("sourcePayload")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
-    source_payload.insert("releaseId".to_string(), Value::from(release.id));
-
-    spec.insert("source".to_string(), Value::Object(source));
-    spec.insert(
-        "origin".to_string(),
-        spec.get("origin")
-            .cloned()
-            .unwrap_or_else(|| Value::String("market".to_string())),
-    );
-    spec.insert("pluginId".to_string(), Value::from(plugin.id));
-    spec.insert("releaseId".to_string(), Value::from(release.id));
-    spec.insert(
-        "desiredVersion".to_string(),
-        Value::String(release.version.clone()),
-    );
-    spec.insert(
-        "version".to_string(),
-        Value::String(release.version.clone()),
-    );
-    if !plugin.display_name.is_empty() {
-        spec.insert(
-            "displayName".to_string(),
-            Value::String(plugin.display_name.clone()),
-        );
-    }
-    let description = if !plugin.summary.is_empty() {
-        plugin.summary.clone()
-    } else if !plugin.description_md.is_empty() {
-        plugin.description_md.clone()
-    } else {
-        spec.get("description")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string()
-    };
-    spec.insert("description".to_string(), Value::String(description));
-    spec.insert(
-        "sourceProvider".to_string(),
-        Value::String(source_provider(plugin).to_string()),
-    );
-    spec.insert(
-        "sourceLabel".to_string(),
-        Value::String(source_label(plugin).to_string()),
-    );
-    spec.insert(
-        "visibility".to_string(),
-        Value::String(plugin.visibility.clone()),
-    );
-    spec.insert(
-        "installState".to_string(),
-        Value::String("installed".to_string()),
-    );
-    if !release.manifest_json.0.is_null() {
-        spec.insert("manifest".to_string(), release.manifest_json.0.to_value());
-    }
-    if !release.interface_json.0.is_null() {
-        spec.insert("interface".to_string(), release.interface_json.0.to_value());
-    }
-    let scan_report = release.scan_report_json.0.to_value();
-    let components = scan_report
-        .get("components")
-        .filter(|value| value.is_object())
-        .cloned();
-    if let Some(components) = components {
-        spec.insert("components".to_string(), component_states(&components));
-    }
-    spec.insert("packageRef".to_string(), package_ref);
-    spec.insert("sourcePayload".to_string(), Value::Object(source_payload));
-    document
-        .as_object_mut()
-        .expect("kind document is an object")
-        .insert("spec".to_string(), Value::Object(spec));
-
-    let slug = if plugin.slug.is_empty() {
-        plugin.name.as_str()
-    } else {
-        plugin.slug.as_str()
-    };
-    let name = kind_name(&plugin.catalog_namespace, slug);
-    if let Some(metadata) = document.get_mut("metadata").and_then(Value::as_object_mut) {
-        metadata.insert("name".to_string(), Value::String(name.clone()));
-    }
-    write_kind(mysql, row.id, &document, Some(&name), None).await
-}
-
-/// `_detach_stale_catalog_ref_from_installed_kind` applied in place.
-fn detach_stale_catalog_ref(document: &mut Value) {
-    let Some(spec) = document.get_mut("spec").and_then(Value::as_object_mut) else {
-        return;
-    };
-    if let Some(source) = spec.get_mut("source").and_then(Value::as_object_mut) {
-        source.remove("catalogItemId");
-    }
-    spec.insert("pluginId".to_string(), Value::Null);
-    spec.insert("releaseId".to_string(), Value::Null);
-    spec.insert("packageRef".to_string(), Value::Null);
-    spec.insert(
-        "installState".to_string(),
-        Value::String("installed".to_string()),
-    );
-    if let Some(source_payload) = spec.get_mut("sourcePayload").and_then(Value::as_object_mut) {
-        source_payload.remove("releaseId");
-    }
-}
-
-/// `_deactivate_orphaned_catalog_install`.
-async fn deactivate_orphaned_catalog_install<M: Mysql>(
-    mysql: &M,
-    row: &InstalledKindRow,
-) -> MysqlResult<()> {
-    let mut document = row.json.0.to_value();
-    detach_stale_catalog_ref(&mut document);
-    if let Some(spec) = document.get_mut("spec").and_then(Value::as_object_mut) {
-        spec.insert("enabled".to_string(), Value::Bool(false));
-        spec.insert(
-            "installState".to_string(),
-            Value::String("uninstalled".to_string()),
-        );
-    }
-    write_kind(mysql, row.id, &document, None, Some(false)).await
-}
-
-/// `_deactivate_duplicate_installed_kind`. Returns whether the row changed.
-async fn deactivate_duplicate_installed_kind<M: Mysql>(
-    mysql: &M,
-    row: &InstalledKindRow,
-) -> MysqlResult<bool> {
-    let mut document = row.json.0.to_value();
-    let install_state = spec_str(&document, "installState");
-    if !row.is_active && install_state == "uninstalled" {
-        return Ok(false);
-    }
-    if let Some(spec) = document.get_mut("spec").and_then(Value::as_object_mut) {
-        spec.insert("enabled".to_string(), Value::Bool(false));
-        spec.insert(
-            "installState".to_string(),
-            Value::String("uninstalled".to_string()),
-        );
-    }
-    write_kind(mysql, row.id, &document, None, Some(false)).await?;
-    clear_device_installations(mysql, row.id).await?;
-    Ok(true)
-}
-
-/// `_clear_device_installations`.
-async fn clear_device_installations<M: Mysql>(
-    mysql: &M,
-    installed_kind_id: i64,
-) -> MysqlResult<()> {
-    mysql
-        .execute(DELETE_DEVICE_BY_KIND_QUERY, (installed_kind_id,))
-        .await?;
-    Ok(())
-}
-
-/// `_reset_failed_device_installations`.
-async fn reset_failed_device_installations<M: Mysql>(
-    mysql: &M,
-    installed_kind_id: i64,
-    release_id: i64,
-) -> MysqlResult<()> {
-    #[derive(Debug, brz_mysql::FromMysqlRow)]
-    struct IdRow {
-        plugin_device_installations_id: i64,
-    }
-    let rows: Vec<IdRow> = mysql
-        .fetch_all(FAILED_DEVICE_ROWS_QUERY, (installed_kind_id,))
-        .await?;
-    let updated_at = now_literal();
-    for row in rows {
-        mysql
-            .execute(
-                "UPDATE plugin_device_installations SET state='pending', desired_release_id=?, \
-                 error_code='', error_message='', attempt_count=0, updated_at=? WHERE \
-                 plugin_device_installations.id = ?",
-                (
-                    release_id,
-                    updated_at.clone(),
-                    row.plugin_device_installations_id,
-                ),
-            )
-            .await?;
-    }
-    Ok(())
-}
-
 /// Source `reconcile_stale_installed_catalog_refs`. Returns the changed count.
 pub(super) async fn reconcile_stale_installed_catalog_refs<M, R>(
     mysql: &M,
@@ -745,11 +507,13 @@ where
     if rows.is_empty() {
         return Ok(0);
     }
-    let mut cache = CatalogCache::default();
     let mut changed = 0usize;
 
     // Group marketplace installs by their catalog identity, preserving the
-    // source's insertion order.
+    // source's insertion order. `matched_local` mirrors the source's `matched`
+    // local: reassigned at the end of each iteration, so the previous plugin
+    // loses its last strong reference exactly then.
+    let mut matched_local: Option<PluginRow> = None;
     let mut by_key: Vec<((String, String), Vec<usize>)> = Vec::new();
     for (index, row) in rows.iter().enumerate() {
         let json = row.json.0.to_value();
@@ -766,7 +530,8 @@ where
             .and_then(|spec| spec.get("pluginId"))
             .and_then(as_int);
         let matched = matching_published_plugin(
-            &mut cache,
+            matched_local.as_ref(),
+            None,
             mysql,
             redis,
             resolvers,
@@ -778,7 +543,10 @@ where
             },
         )
         .await?;
-        let identity = match matched {
+        // The source reassigns `matched` after the helper returns; the previous
+        // plugin is garbage-collected at that point (weak identity map).
+        matched_local = matched;
+        let identity = match &matched_local {
             Some(plugin) => ("plugin".to_string(), plugin.id.to_string()),
             None => (marketplace.to_lowercase(), plugin_key.to_lowercase()),
         };
@@ -793,7 +561,7 @@ where
     for (_, group) in &by_key {
         let mut best = group[0];
         let mut best_score = installed_kind_catalog_score(
-            &mut cache,
+            matched_local.as_ref(),
             mysql,
             &rows[best].json.0.to_value(),
             rows[best].id,
@@ -801,7 +569,7 @@ where
         .await?;
         for &index in &group[1..] {
             let score = installed_kind_catalog_score(
-                &mut cache,
+                matched_local.as_ref(),
                 mysql,
                 &rows[index].json.0.to_value(),
                 rows[index].id,
@@ -831,7 +599,7 @@ where
             continue;
         }
         if reconcile_installed_kind_catalog_ref(
-            &mut cache,
+            matched_local.as_ref(),
             mysql,
             redis,
             resolvers,
@@ -916,7 +684,7 @@ mod tests {
                 "sourcePayload": {"releaseId": 38},
             }
         });
-        detach_stale_catalog_ref(&mut document);
+        crate::plugins_installed::catalog_write::detach_stale_catalog_ref(&mut document);
         let spec = &document["spec"];
         assert!(spec["source"].get("catalogItemId").is_none());
         assert_eq!(spec["pluginId"], Value::Null);
@@ -947,14 +715,115 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn plugin_reads_are_cached_across_passes() {
-        // The grouping loop's `matched` local keeps the plugin strongly
-        // referenced for the rest of the source method, so `db.get(Plugin, id)`
-        // does not re-query in later passes.
+    async fn release_read_reuses_the_caller_local_for_latest_release() {
+        // Inside one `_reconcile_installed_kind_catalog_ref` call, the
+        // `release` local keeps the row alive, so `_latest_release`'s
+        // `db.get(PluginRelease, latest_release_id)` does not re-query when
+        // the ids are equal (recorded case: `plugin_releases.id = 150` read
+        // once for both the spec release and the plugin's latest release).
         let mysql = crate::sql_test_support::KindQueryCapture::default();
-        let mut cache = CatalogCache::default();
-        assert!(get_plugin(&mut cache, &mysql, 18).await.unwrap().is_none());
-        assert!(get_plugin(&mut cache, &mysql, 18).await.unwrap().is_none());
+        let release = release_row(150, 18);
+        let resolved = get_release_or_alive(Some(&release), &mysql, 150)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(resolved.id, 150);
+        assert_eq!(mysql.queries().len(), 0);
+        // A different latest id must re-query.
+        assert!(
+            get_release_or_alive(Some(&release), &mysql, 144)
+                .await
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(mysql.queries().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn plugin_reads_hit_only_while_referenced() {
+        // `db.get(Plugin, id)` avoids a query only while a live local holds
+        // the row. The recorded sync-device sequence proves both sides: the
+        // enclosing `matched` local serves later passes without a query
+        // (plugin 10 in the recorded case), while every other pass re-reads
+        // its plugin (plugin 18 re-read in the score and keeper passes).
+        let mysql = crate::sql_test_support::KindQueryCapture::default();
+        let alive = plugin_row(18);
+        // Identity-map hit while the local is alive.
+        let hit = get_plugin(&[Some(&alive)], &mysql, 18).await.unwrap();
+        assert!(hit.is_some());
+        assert_eq!(mysql.queries().len(), 0);
+        // No strong reference: re-read.
+        assert!(get_plugin(&[], &mysql, 18).await.unwrap().is_none());
+        assert_eq!(mysql.queries().len(), 1);
+        // A different id than the referenced row: re-read.
+        assert!(
+            get_plugin(&[Some(&alive)], &mysql, 10)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(mysql.queries().len(), 2);
+    }
+
+    /// A `PluginRow` with the fields the identity-map logic reads.
+    fn plugin_row(id: i64) -> PluginRow {
+        PluginRow {
+            id,
+            catalog_namespace: "enterprise".to_string(),
+            slug: "slug".to_string(),
+            name: "name".to_string(),
+            display_name: "Display".to_string(),
+            summary: "summary".to_string(),
+            description_md: "md".to_string(),
+            listing_type: "plugin".to_string(),
+            source_type: "native".to_string(),
+            source_provider: "wework".to_string(),
+            owner_user_id: 0,
+            origin_plugin_id: 0,
+            category: String::new(),
+            keywords_json: brz_mysql::Json(brz_json::OpaqueJson::from_serializable(
+                Vec::<()>::new(),
+            )),
+            interface_json: brz_mysql::Json(brz_json::OpaqueJson::from_serializable(
+                Vec::<()>::new(),
+            )),
+            visibility: "public".to_string(),
+            allow_copy: false,
+            status: "published".to_string(),
+            latest_release_id: 0,
+            featured_rank: 0,
+            created_at: chrono::NaiveDateTime::default(),
+            updated_at: chrono::NaiveDateTime::default(),
+            published_at: chrono::NaiveDateTime::default(),
+        }
+    }
+
+    /// A `PluginReleaseRow` with the fields the identity-map logic reads.
+    fn release_row(id: i64, plugin_id: i64) -> PluginReleaseRow {
+        PluginReleaseRow {
+            id,
+            plugin_id,
+            version: "1.0.0".to_string(),
+            manifest_json: brz_mysql::Json(brz_json::OpaqueJson::from_serializable(
+                Vec::<()>::new(),
+            )),
+            interface_json: brz_mysql::Json(brz_json::OpaqueJson::from_serializable(
+                Vec::<()>::new(),
+            )),
+            release_notes: String::new(),
+            storage_key: String::new(),
+            sha256: String::new(),
+            size_bytes: 0,
+            status: "ready".to_string(),
+            scan_status: "passed".to_string(),
+            scan_report_json: brz_mysql::Json(brz_json::OpaqueJson::from_serializable(
+                Vec::<()>::new(),
+            )),
+            created_by_user_id: 0,
+            publication_revision_id: 0,
+            source_commit_sha: String::new(),
+            created_at: chrono::NaiveDateTime::default(),
+            published_at: chrono::NaiveDateTime::default(),
+        }
     }
 }

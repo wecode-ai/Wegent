@@ -22,9 +22,9 @@
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/knowledge-bases/:knowledge_base_id/document-protection"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/users/me"
+[[routes]]
+methods = ["GET"]
+path = "/api/users/me"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/users/features"
@@ -56,9 +56,9 @@ path = "/api/v1/wework-notifications"
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/runtime-work/llm-responses-proxy/responses"
-#[[routes]]
-#methods = ["PUT"]
-#path = "/api/runtime-work/im-notifications/presence"
+[[routes]]
+methods = ["PUT"]
+path = "/api/runtime-work/im-notifications/presence"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/knowledge-bases/:knowledge_base_id/artifacts"
@@ -74,17 +74,17 @@ path = "/api/v1/wework-notifications"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/users/me/pet"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/v1/cloud-projects"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/cloud-projects"
 # `GET /api/v1/cloud-projects/{project_id}/runtime-default` reads the
 # current user's default Runtime profile binding for one cloud project.
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/v1/cloud-projects/:project_id/runtime-default"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/v1/cloud-projects/:project_id/execution-environments"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/cloud-projects/:project_id/execution-environments"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/v1/workspaces"
@@ -106,12 +106,12 @@ path = "/api/quota/*path"
 [[routes]]
 methods = ["GET"]
 path = "/api/quota"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/wework-transcripts"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/wework-transcripts/:transcript_id/encryption-key"
+[[routes]]
+methods = ["GET"]
+path = "/api/wework-transcripts"
+[[routes]]
+methods = ["GET"]
+path = "/api/wework-transcripts/:transcript_id/encryption-key"
 # `GET /api/wework-transcripts/{transcript_id}/turns` lists the transcript's
 # finalized turns (`app/api/endpoints/wework_transcripts.py:205`). The source
 # route allows only `GET`, so the recorded `POST /api/wework-transcripts/*/turns`
@@ -299,18 +299,18 @@ path = "/api/teams"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/users/quick-access"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/teams/:team_id/skills"
+[[routes]]
+methods = ["GET"]
+path = "/api/teams/:team_id/skills"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/users/quick-launch"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/users/recent-teams"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/attachments/task/:task_id/all"
+[[routes]]
+methods = ["GET"]
+path = "/api/attachments/task/:task_id/all"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/v1/loop-items/:item_id/tasks"
@@ -323,12 +323,12 @@ path = "/api/teams"
 [[routes]]
 methods = ["GET"]
 path = "/api/v1/runtime-tasks/cloud-context"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/plugins/marketplace"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/models/unified"
+[[routes]]
+methods = ["GET"]
+path = "/api/plugins/marketplace"
+[[routes]]
+methods = ["GET"]
+path = "/api/models/unified"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/models/error-recommendations"
@@ -357,9 +357,9 @@ path = "/api/plugins/installed"
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/plugins/installed/sync-device"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/tasks/:task_id/skills"
+[[routes]]
+methods = ["GET"]
+path = "/api/tasks/:task_id/skills"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/tasks/:task_id/export/docx"
@@ -371,9 +371,9 @@ path = "/api/plugins/installed"
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/tasks/:task_id/export/docx/download-url"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/tasks/:task_id"
+[[routes]]
+methods = ["GET"]
+path = "/api/tasks/:task_id"
 # `/api/tasks/bulk` is a literal sibling of `/api/tasks/:task_id`; the static
 # route wins dispatch, but the rule keeps the cutover inventory explicit.
 #[[routes]]
@@ -391,15 +391,15 @@ path = "/api/plugins/installed"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/v1/cloud-projects/:project_id/board-snapshot"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/work-queues/messages/unread-count"
+[[routes]]
+methods = ["GET"]
+path = "/api/work-queues/messages/unread-count"
 [[routes]]
 methods = ["GET"]
 path = "/api/apps/installed"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/knowledge/documents/:document_id/content"
+[[routes]]
+methods = ["GET"]
+path = "/api/knowledge/documents/:document_id/content"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/resource-library/listings"
@@ -409,9 +409,9 @@ path = "/api/apps/installed"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/resource-library/tags"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/v1/responses/:response_id"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/responses/:response_id"
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/v1/responses/:response_id/cancel"
@@ -554,9 +554,9 @@ path = "/api/apps/installed"
 # `POST /api/connector-runtime/token` — issue a connector-scoped access token
 # (`app/api/endpoints/connector_runtime.py`). The `/tools` and `/call` siblings
 # remain on the Python fallback.
-#[[routes]]
-#methods = ["POST"]
-#path = "/api/connector-runtime/token"
+[[routes]]
+methods = ["POST"]
+path = "/api/connector-runtime/token"
 
 # `GET /api/internal/health` — internal chat-storage health probe
 # (`app/api/endpoints/internal/chat_storage.py`).
@@ -589,9 +589,9 @@ path = "/api/apps/installed"
 
 # `POST /api/v1/dsh-plugin-storage/units/{unit}/load`
 # (`app/api/endpoints/dsh_plugin_storage.py`, `dsh_plugin_storage::load_unit`).
-#[[routes]]
-#methods = ["POST"]
-#path = "/api/v1/dsh-plugin-storage/units/:unit/load"
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/dsh-plugin-storage/units/:unit/load"
 
 # `GET /api/v1/loop-item-attachments/{attachment_id}/content`
 # (`app/api/endpoints/deliveries.py`).

@@ -387,7 +387,8 @@ async def upload_plugin(
     return installed
 
 
-@router.get("/marketplace", response_model=PluginMarketplaceListResponse)
+# MIGRATION-CANDIDATE(api="GET /api/plugins/marketplace"): remove after final confirmation.
+# @router.get("/marketplace", response_model=PluginMarketplaceListResponse)
 def list_marketplace_plugins(
     q: str | None = None,
     source: str | None = None,

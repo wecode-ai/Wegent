@@ -2718,18 +2718,22 @@ function IssueHomeLauncher({
   }, [api, selectedProjectId, messages.issueHomeMembersFailed]);
   const guides = [
     {
+      Icon: SquarePen,
       title: messages.issueGuideRequirement,
       hint: messages.issueGuideRequirementHint,
     },
     {
+      Icon: AlertTriangle,
       title: messages.issueGuideBug,
       hint: messages.issueGuideBugHint,
     },
     {
+      Icon: CircleCheck,
       title: messages.issueGuideReview,
       hint: messages.issueGuideReviewHint,
     },
     {
+      Icon: Search,
       title: messages.issueGuideResearch,
       hint: messages.issueGuideResearchHint,
     },
@@ -2794,8 +2798,12 @@ function IssueHomeLauncher({
       data-testid="collaboration-issue-home"
     >
       <div className="collaboration-issue-home-heading">
-        <h1 className="heading-md">{messages.issueHomeTitle}</h1>
-        <p>{messages.issueHomeHint}</p>
+        <h1 data-testid="collaboration-issue-home-title">
+          {messages.issueHomeTitle}
+        </h1>
+        <p data-testid="collaboration-issue-home-hint">
+          {messages.issueHomeHint}
+        </p>
       </div>
       <div className="collaboration-issue-home-guides">
         {guides.map((guide, index) => (
@@ -2812,7 +2820,9 @@ function IssueHomeLauncher({
               composerRef.current?.focus();
             }}
           >
+            <guide.Icon aria-hidden="true" />
             <strong>{guide.title}</strong>
+            <ChevronRight aria-hidden="true" />
           </button>
         ))}
       </div>

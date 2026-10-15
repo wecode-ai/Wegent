@@ -433,17 +433,23 @@ class TestSandboxManager:
         restore.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_create_sandbox_fails_when_archive_restore_fails(
+    async def test_create_sandbox_remains_running_when_archive_restore_fails(
         self, sandbox_manager_with_mock_redis, mock_redis_client, mocker
     ):
-        """Test a sandbox is not returned as ready without its task workspace."""
+        """Test archive restore failure does not block a healthy sandbox."""
+        from executor_manager.models.sandbox import SandboxStatus
+
         manager = sandbox_manager_with_mock_redis
         mock_redis_client.hget.return_value = None
+
+        async def start_container(sandbox):
+            sandbox.set_running("http://sandbox.example:8080")
+
         mocker.patch.object(
             manager,
             "_start_sandbox_container",
             new_callable=AsyncMock,
-            return_value=None,
+            side_effect=start_container,
         )
         mocker.patch.object(
             manager,
@@ -465,8 +471,9 @@ class TestSandboxManager:
             metadata={"task_id": 99999},
         )
 
-        assert "archive restoration failed" in error
-        assert sandbox.error_message == error
+        assert error is None
+        assert sandbox.status == SandboxStatus.RUNNING
+        assert sandbox.error_message is None
         restore.assert_awaited_once_with(sandbox)
 
     @pytest.mark.asyncio

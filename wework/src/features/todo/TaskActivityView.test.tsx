@@ -532,6 +532,80 @@ describe('TaskActivityView', () => {
     expect(unsubscribeFirst).toHaveBeenCalledOnce()
   })
 
+  it('preserves a live agent result when a same-second empty snapshot arrives later', async () => {
+    const liveAgentMessage: ProjectChatMessage = {
+      ...agentMessage,
+      content: 'Continuation result',
+    }
+    type Subscription = Awaited<ReturnType<ProjectChatClient['subscribe']>>
+    let resolveSnapshot!: (subscription: Subscription) => void
+    const pendingSnapshot = new Promise<Subscription>(resolve => {
+      resolveSnapshot = resolve
+    })
+    const client = {
+      subscribe: vi
+        .fn<ProjectChatClient['subscribe']>()
+        .mockResolvedValueOnce({
+          snapshot: {
+            messages: [agentMessage],
+            latestSequence: 2,
+            currentUserId: '1',
+          },
+          unsubscribe: vi.fn(),
+        })
+        .mockImplementationOnce(async (_projectId, _taskId, _afterSequence, onMessage) => {
+          onMessage(liveAgentMessage)
+          return pendingSnapshot
+        }),
+      send: vi.fn(async () => userMessage),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+    const project = { id: '11', name: 'Wework' } as never
+    const task = {
+      id: 'WEG-1',
+      title: 'Inspect changes',
+      description: 'Review the current diff',
+      status: 'in_progress',
+      version: 1,
+    }
+
+    const { rerender } = render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={project}
+        task={task as never}
+        linear
+      />
+    )
+
+    await screen.findByTestId('cloud-task-activity-message-message-2')
+    rerender(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={project}
+        task={{ ...task, version: 2 } as never}
+        linear
+      />
+    )
+    expect(await screen.findByText(liveAgentMessage.content)).toBeInTheDocument()
+
+    await act(async () => {
+      resolveSnapshot({
+        snapshot: { messages: [agentMessage], latestSequence: 2, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })
+      await pendingSnapshot
+    })
+
+    expect(screen.getByTestId('cloud-task-activity-message-message-2')).toHaveTextContent(
+      liveAgentMessage.content
+    )
+  })
+
   it('starts the assigned AI when a task comment is added without an @ mention', async () => {
     const user = userEvent.setup()
     const client = {

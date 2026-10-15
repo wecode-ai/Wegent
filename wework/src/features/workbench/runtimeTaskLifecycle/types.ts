@@ -25,6 +25,7 @@ export interface RuntimeTaskLifecycleState {
   turnPhase: RuntimeTaskTurnPhase
   turnOutcome: RuntimeTaskTurnOutcome
   activeTurnId: string | null
+  latestTurnId: string | null
   goalStatus: RuntimeGoalStatus | null
   interactionStatus: RuntimeTaskInteractionStatus | null
   hasAuthoritativeGoalStatus: boolean
@@ -61,6 +62,7 @@ export interface RuntimeTaskLifecycleSnapshot {
     phase: RuntimeTaskTurnPhase
     active: boolean
     id: string | null
+    latestId: string | null
     outcome: RuntimeTaskTurnOutcome
   }
   goalStatus: RuntimeGoalStatus | null

@@ -116,7 +116,7 @@ def test_cp02_cp03_cp05_role_union_and_restricted_projects(
 
 
 @pytest.mark.parametrize("role", ["Viewer", "Developer", "Maintainer"])
-def test_cp04_project_guest_does_not_inherit_upward(test_client, scope, role):
+def test_cp04_project_guest_does_not_inherit_upward(test_client, test_db, scope, role):
     invite(test_client, scope, role, project=True)
     wid = scope["space"]["id"]
     pid = scope["project"]["id"]
@@ -149,9 +149,12 @@ def test_cp04_project_guest_does_not_inherit_upward(test_client, scope, role):
         ).status_code
         == 404
     )
-    listed_projects = test_client.get(
-        "/api/v1/cloud-projects", headers=scope["member"]
-    ).json()["items"]
+    from app.services.cloud_projects.responses import list_project_responses
+
+    # HTTP list ownership moved to Rust; retain source-service contract coverage.
+    listed_projects = [
+        row.model_dump() for row in list_project_responses(test_db, scope["user"])
+    ]
     assert pid in {row["id"] for row in listed_projects}
     assert sibling["id"] not in {row["id"] for row in listed_projects}
 

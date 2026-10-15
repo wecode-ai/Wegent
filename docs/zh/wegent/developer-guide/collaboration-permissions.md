@@ -131,6 +131,8 @@ sequenceDiagram
 
 回归入口：
 
+- Rust 已接管的项目列表和项目执行设备查询遵循同一 CP 契约。`test_rust_collaboration_permissions_mysql.py` 在真实 MySQL 上执行 Rust 使用的 SQL，核对角色组合、受限继承、项目访客、公开只读及撤权；Rust 单元测试保护来源字段与设备授权交集。Python 服务测试保留相同业务断言，迁移接口的 HTTP 断言沿现有桌面 CI 场景运行。
+
 - API 角色矩阵与资源契约：`test_collaboration_permission_contract.py`、`test_collaboration_permission_resources.py`、`test_workspace_shared_agents.py`。
 - 领取、指派、评论与队列：`test_loop_item_executions.py`、`test_runner_routing.py`、`test_loop_item_assignment.py`、`test_project_comment_execution.py`。
 - 原表兼容与数据保持：`test_collaboration_permission_compatibility.py`；CI 的 `integration_checks/test_collaboration_permission_mysql.py` 验证已填充旧数据库及迁移中断留下的未使用结构。

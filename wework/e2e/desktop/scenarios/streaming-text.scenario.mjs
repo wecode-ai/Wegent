@@ -926,11 +926,30 @@ async function retainSecondTaskWorkspace(control, timeoutMs) {
   )
 }
 
+export async function sendOrderFollowUp(control, index, uiTimeoutMs, modelResponseTimeoutMs) {
+  await control.command('fill', COMPOSER_SELECTOR, { value: `${ORDER_FOLLOW_UP_PREFIX}_${index}` })
+  await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
+    timeoutMs: uiTimeoutMs,
+  })
+  const response = await control.awaitScenarioRequestCount(
+    'message_order_follow_up',
+    index,
+    modelResponseTimeoutMs
+  )
+  assert.equal(response.followUpNumber, index, 'The model answered a different follow-up turn')
+  await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+    text: `${ORDER_COMPLETION_PREFIX}_${index}`,
+    timeoutMs: uiTimeoutMs,
+  })
+}
+
 export function createDesktopScenario({
   captureScreenshot,
   resultDir,
   standalone,
   uiTimeoutMs,
+  modelResponseTimeoutMs,
+  recordScenarioRequest,
   workspacePath,
 }) {
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
@@ -1211,16 +1230,7 @@ export function createDesktopScenario({
     })
     await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
     for (let index = 1; index <= ORDER_FOLLOW_UP_COUNT; index += 1) {
-      const prompt = `${ORDER_FOLLOW_UP_PREFIX}_${index}`
-      const completion = `${ORDER_COMPLETION_PREFIX}_${index}`
-      await control.command('fill', COMPOSER_SELECTOR, { value: prompt })
-      await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
-        text: completion,
-        timeoutMs: uiTimeoutMs,
-      })
+      await sendOrderFollowUp(control, index, uiTimeoutMs, modelResponseTimeoutMs)
     }
     await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
     const durationSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="processing-duration-label"]`
@@ -1258,6 +1268,11 @@ export function createDesktopScenario({
   }
 
   const verifySubagentStreamingPanel = async control => {
+    const previousSize = JSON.parse(
+      await control.command('setMainWindowSize', 'body', {
+        value: JSON.stringify({ width: 1600, height: 900 }),
+      })
+    )
     await openNewChatWithE2EModel(control, uiTimeoutMs)
 
     await control.command('fill', COMPOSER_SELECTOR, { value: SUBAGENT_PROMPT })
@@ -1473,6 +1488,7 @@ export function createDesktopScenario({
     )
     await captureSubagent(control, 'streaming-text-subagent-06-restored-history.png')
     await control.command('click', '[data-testid="right-workspace-subagents-tab-close-button"]')
+    await control.command('setMainWindowSize', 'body', { value: JSON.stringify(previousSize) })
   }
 
   return {
@@ -1752,6 +1768,9 @@ export function createDesktopScenario({
         return true
       }
       if (followUpNumber !== null) {
+        response.once('finish', () => {
+          recordScenarioRequest('message_order_follow_up', { followUpNumber })
+        })
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
         response.write(sse([responseCreated(responseId)]))
         if (followUpNumber === ORDER_FOLLOW_UP_COUNT) {

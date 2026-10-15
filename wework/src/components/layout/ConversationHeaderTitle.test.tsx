@@ -18,6 +18,7 @@ vi.mock('@/lib/local-terminal', async importOriginal => ({
 vi.mock('@/features/workbench/useWorkbench', () => ({
   useWorkbench: () => ({
     ...actions,
+    services: {},
     projectChat: { models: [] },
     state: { devices: [{ device_id: 'local-device', device_type: 'local', status: 'online' }] },
   }),
@@ -58,7 +59,14 @@ test('shows the project task count and all configured roots, and opens the exist
       projectWork={{
         ...projectWork,
         totalTasks: 7,
-        project: { ...project, stateDeviceId: 'local-device', source: 'local_project', roots },
+        project: {
+          ...project,
+          stateDeviceId: 'local-device',
+          ownerDeviceId: 'local-device',
+          ownerProjectKey: 'app',
+          source: 'local_project',
+          roots,
+        },
       }}
     />
   )

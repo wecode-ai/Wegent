@@ -4,6 +4,11 @@ import { join } from 'node:path'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
+const COMPOSER_SELECTOR =
+  ACTIVE_WORKBENCH_SELECTOR + ' [data-testid="chat-message-input"][contenteditable="true"]'
+const BROWSER_URL_SELECTOR =
+  ACTIVE_WORKBENCH_SELECTOR +
+  ' [data-testid="right-workspace-panel"] div:not(.hidden) > [data-testid="workspace-browser-panel"] [data-testid="workspace-browser-url-input"]'
 const FILE_TREE_ITEM_SELECTOR = 'button[data-type="item"]'
 const DIRECTORY_MENU_SELECTOR = '[data-testid="workspace-file-directory-menu"]'
 const SIBLINGS_MENU_SELECTOR = '[data-testid="workspace-file-siblings-menu"]'
@@ -88,6 +93,7 @@ async function waitForFileContent(filePath, expectedContent, timeoutMs) {
 export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
   return {
     async verify(control) {
+      const fileTabsSelector = '[role="tab"][data-testid^="right-workspace-file-tab"]'
       const breadcrumbDirectory = join(workspacePath, 'breadcrumb-fixture')
       await mkdir(breadcrumbDirectory, { recursive: true })
       await writeFile(join(breadcrumbDirectory, 'first.ts'), 'export const first = 1\n')
@@ -99,15 +105,21 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       await control.command('click', '[data-testid="appearance-mode-dark"]')
       await control.command('navigate', 'body', { value: '/' })
       await createLocalProject(control, workspacePath, uiTimeoutMs)
-      await control.command('waitFor', ACTIVE_WORKBENCH_SELECTOR, { timeoutMs: uiTimeoutMs })
-      await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
-      await control.command('waitFor', '[data-testid="right-workspace-file-option"]', {
+      await control.command('waitFor', COMPOSER_SELECTOR, {
+        visible: true,
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', '[data-testid="right-workspace-file-option"]')
+      const primary = process.platform === 'darwin' ? 'Meta' : 'Control'
+      await control.command('nativePress', COMPOSER_SELECTOR, { key: `${primary}+Alt+F` })
       await control.command('waitFor', '[data-testid="workspace-file-tree-pierre"]', {
         timeoutMs: uiTimeoutMs,
       })
+      await control.command('nativePress', COMPOSER_SELECTOR, { key: `${primary}+T` })
+      await control.command('waitFor', BROWSER_URL_SELECTOR, { visible: true })
+      await control.command('nativePress', BROWSER_URL_SELECTOR, {
+        key: `${primary}+Alt+F`,
+      })
+      await control.command('waitFor', '[data-testid="workspace-file-tree-pierre"]')
 
       const readmeSelector = await findTreeItem(control, 'README.md', uiTimeoutMs)
       await control.command('click', readmeSelector)
@@ -143,8 +155,25 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       })
       assert.equal(
         await control.command('getText', '[data-testid="workspace-file-path"]'),
-        join(workspacePath, 'auth.ts'),
+        join(workspacePath, 'auth.ts').replaceAll('\\', '/'),
         'The second local file did not replace the retained preview after loading'
+      )
+      await showFileTree(control)
+      await clickTreeItem(control, 'breadcrumb-fixture', uiTimeoutMs)
+      await control.command(
+        'waitFor',
+        `${FILE_TREE_ITEM_SELECTOR}[data-item-path="breadcrumb-fixture/first.ts"]`,
+        { visible: true, timeoutMs: uiTimeoutMs }
+      )
+      await control.command(
+        'waitFor',
+        `${FILE_TREE_ITEM_SELECTOR}[data-item-path="breadcrumb-fixture/"][data-item-selected="true"]`,
+        { visible: true, stableMs: 300, timeoutMs: uiTimeoutMs }
+      )
+      assert.equal(
+        await control.command('getText', '[data-testid="workspace-file-path"]'),
+        join(workspacePath, 'auth.ts').replaceAll('\\', '/'),
+        'Browsing another directory must retain the opened file preview'
       )
       await captureScreenshot(control, 'local-file-preview-01-dark-editor.png', 'body')
       await control.command('contextMenu', '[data-testid="workspace-file-name-button"]')
@@ -184,11 +213,26 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       await control.command('fill', '[data-testid="workspace-file-editor"] .cm-content', {
         value: 'export const authenticated = false\n',
       })
+      await control.command('nativePress', '[data-testid="workspace-file-editor"] .cm-content', {
+        key: `${primary}+T`,
+      })
+      await control.command('waitFor', BROWSER_URL_SELECTOR, { visible: true })
       await waitForFileContent(
         join(workspacePath, 'auth.ts'),
         'export const authenticated = false',
         uiTimeoutMs
       )
+      await control.command('nativePress', BROWSER_URL_SELECTOR, {
+        key: `${primary}+Alt+F`,
+      })
+      await control.command(
+        'waitFor',
+        '[data-testid="right-workspace-file-tab"][aria-selected="true"]'
+      )
+      await control.command('click', `${fileTabsSelector}[title$="auth.ts"]`)
+      await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
+        text: 'export const authenticated = false',
+      })
       await waitForMissing(control, '[data-testid="workspace-file-saving-status"]', uiTimeoutMs)
       assert.equal(
         Number(
@@ -213,7 +257,6 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         timeoutMs: uiTimeoutMs,
       })
       await waitForMissing(control, '[data-testid="workspace-file-directory-menu"]', uiTimeoutMs)
-      const fileTabsSelector = '[role="tab"][data-testid^="right-workspace-file-tab"]'
       await control.command('waitFor', `${fileTabsSelector}[title$="auth.ts"]`, {
         timeoutMs: uiTimeoutMs,
       })
@@ -286,10 +329,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       )
       await waitForMissing(control, `${fileTabsSelector}[title$="second.ts"]`, uiTimeoutMs)
       assert.equal(Number(await control.command('getElementCount', fileTabsSelector)), 3)
-      await control.command('click', '[data-testid="right-workspace-new-tab-button"]')
-      await control.command('clickWhenEnabled', '[data-testid="right-workspace-review-option"]', {
-        timeoutMs: uiTimeoutMs,
-      })
+      await control.command('nativePress', COMPOSER_SELECTOR, { key: `${primary}+Alt+R` })
       await control.command(
         'waitFor',
         '[data-testid="file-changes-review-panel"][data-theme="dark"]',

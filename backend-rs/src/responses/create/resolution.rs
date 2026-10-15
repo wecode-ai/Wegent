@@ -22,6 +22,7 @@
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult, MysqlRow};
 use serde_json::Value;
 
+use crate::task_skills::kinds::KindCacheStore;
 use crate::teams::teams_repository::placeholders;
 
 /// `kinds` columns as rendered by `db.query(Kind)`.
@@ -82,25 +83,44 @@ pub fn team_by_owner_name_first_statement() -> String {
     )
 }
 
-/// `get_bot_ids_from_team`'s batched bot read: the members' bots by
-/// namespace/name (`is_active = true`, no `LIMIT`).
-pub fn bot_by_names_statement(namespace_count: usize, name_count: usize) -> String {
+/// `resolve_model_kind`'s direct read (`shared/db/capability_reference.py`):
+/// the requested Model by name/namespace. A non-`default` namespace orders by
+/// `id ASC` (oldest duplicate wins); the `default` namespace restricts to the
+/// caller's own or the public (`user_id = 0`) Model, newest owner first.
+pub fn model_by_name_namespace_statement(namespace: &str) -> String {
+    let scope = if namespace == "default" {
+        " AND (kinds.user_id = ? OR kinds.user_id = 0) \
+         \nORDER BY kinds.user_id DESC, kinds.id ASC"
+    } else {
+        "\nORDER BY kinds.id ASC"
+    };
     format!(
-        "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.kind = 'Bot' \
-         AND kinds.namespace IN ({}) AND kinds.name IN ({}) \
-         AND kinds.is_active = true",
-        placeholders(namespace_count),
-        placeholders(name_count)
+        "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.kind = 'Model' \
+         AND kinds.name = ? AND kinds.namespace = ? AND kinds.is_active IS true{scope} \
+         LIMIT 1"
     )
 }
 
-/// `resolve_model_kind` (`shared/db/capability_reference.py`): the requested
-/// Model by name/namespace.
-pub fn model_by_name_namespace_statement() -> String {
+/// `_reference_scope`'s namespace id read (`capability_reference.py`): the
+/// scalar `namespace.id` for the referenced-capability scope of a non-default
+/// namespace. A missing namespace ends the referenced resolution.
+pub fn namespace_id_statement() -> String {
+    "SELECT namespace.id \nFROM namespace \nWHERE namespace.name = ? \
+     AND namespace.is_active IS true"
+        .to_string()
+}
+
+/// `resolve_referenced_model_kind` (`capability_reference.py`): the
+/// smallest-id approved Model shared into the caller-visible scope.
+pub fn referenced_model_statement() -> String {
     format!(
-        "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.kind = 'Model' \
-         AND kinds.name = ? AND kinds.namespace = ? AND kinds.is_active IS true \
-         \nORDER BY kinds.id ASC LIMIT 1"
+        "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.id IN \
+         (SELECT resource_members.resource_id \nFROM resource_members \
+         \nWHERE resource_members.resource_type = 'Model' \
+         AND resource_members.entity_type = ? AND resource_members.entity_id = ? \
+         AND resource_members.status = 'approved') \
+         AND kinds.kind = 'Model' AND kinds.name = ? AND kinds.user_id != 0 \
+         AND kinds.is_active IS true \nORDER BY kinds.id ASC LIMIT 1"
     )
 }
 
@@ -120,19 +140,6 @@ pub async fn team_by_owner<M: Mysql>(
 ) -> MysqlResult<Option<KindRow>> {
     mysql
         .fetch_optional(team_by_owner_statement(), (owner_user_id, namespace, name))
-        .await
-}
-
-/// `get_bot_ids_from_team`: the teams' member bots, batched by name.
-pub async fn bots_by_names<M: Mysql>(
-    mysql: &M,
-    namespaces: &[String],
-    names: &[String],
-) -> MysqlResult<Vec<KindRow>> {
-    let mut args: Vec<String> = namespaces.to_vec();
-    args.extend(names.iter().cloned());
-    mysql
-        .fetch_all(bot_by_names_statement(namespaces.len(), names.len()), args)
         .await
 }
 
@@ -173,27 +180,27 @@ pub struct TeamBots {
     pub first_bot_namespace: String,
 }
 
-/// `get_bot_ids_from_team`: read the team members' bots by name/namespace and
-/// collect their ids in member order. An empty team or a team whose bots all
+/// `get_bot_ids_from_team`: one `kindReader.get_by_name_and_namespace` read
+/// per team member through the deployment's cached-reader contract, collecting
+/// the resolved ids in member order. An empty team or a team whose bots all
 /// miss resolves to no ids, which the caller renders as the source's
 /// `400 "No valid bots found in team"`.
-pub async fn resolve_team_bots<M: Mysql>(
-    mysql: &M,
+pub async fn resolve_team_bots<M: Mysql, R: brz_redis::Redis>(
+    cache: &KindCacheStore<'_, M, R>,
+    team_owner_user_id: i64,
     team_json: &serde_json::Value,
 ) -> MysqlResult<TeamBots> {
     let refs = bot_refs(team_json);
-    if refs.is_empty() {
-        return Ok(TeamBots::default());
-    }
-    let namespaces: Vec<String> = refs.iter().map(|r| r.namespace.clone()).collect();
-    let names: Vec<String> = refs.iter().map(|r| r.name.clone()).collect();
-    let rows = bots_by_names(mysql, &namespaces, &names).await?;
-
     let mut bots = TeamBots::default();
     for reference in &refs {
-        let Some(row) = rows
-            .iter()
-            .find(|row| row.name == reference.name && row.namespace == reference.namespace)
+        let Some(row) = cache
+            .get_by_name_and_namespace_row(
+                team_owner_user_id,
+                "Bot",
+                &reference.namespace,
+                &reference.name,
+            )
+            .await?
         else {
             continue;
         };
@@ -201,19 +208,73 @@ pub async fn resolve_team_bots<M: Mysql>(
             bots.first_bot_name = reference.name.clone();
             bots.first_bot_namespace = reference.namespace.clone();
         }
-        bots.bot_ids.push(row.id);
+        bots.bot_ids.push(row.kinds_id);
     }
     Ok(bots)
 }
 
-/// `resolve_model_kind`: the requested Model by name/namespace.
+/// `resolve_model_kind` (`shared/db/capability_reference.py`): the direct
+/// Model by name/namespace, then the approved Model referenced into the
+/// caller-visible scope. `user_id` scopes the `default` namespace's direct
+/// read and the referenced resolution's entity.
 pub async fn model_by_name_namespace<M: Mysql>(
     mysql: &M,
+    user_id: i64,
     name: &str,
     namespace: &str,
 ) -> MysqlResult<Option<KindRow>> {
+    let direct = if namespace == "default" {
+        mysql
+            .fetch_optional::<_, _, KindRow>(
+                model_by_name_namespace_statement(namespace),
+                (name, namespace, user_id),
+            )
+            .await?
+    } else {
+        mysql
+            .fetch_optional::<_, _, KindRow>(
+                model_by_name_namespace_statement(namespace),
+                (name, namespace),
+            )
+            .await?
+    };
+    if direct.is_some() {
+        return Ok(direct);
+    }
+    resolve_referenced_model(mysql, user_id, name, namespace).await
+}
+
+/// `resolve_referenced_model_kind`: the smallest-id approved Model shared
+/// into the caller-visible scope. The `default` namespace's scope is the
+/// caller; another namespace resolves its id first and stops when it is
+/// unknown.
+async fn resolve_referenced_model<M: Mysql>(
+    mysql: &M,
+    user_id: i64,
+    name: &str,
+    namespace: &str,
+) -> MysqlResult<Option<KindRow>> {
+    #[derive(Debug, FromMysqlRow)]
+    struct NamespaceIdRow {
+        #[mysql(rename = "id")]
+        id: i64,
+    }
+    let (entity_type, entity_id) = if namespace == "default" {
+        ("user", user_id.to_string())
+    } else {
+        let Some(row) = mysql
+            .fetch_optional::<_, _, NamespaceIdRow>(namespace_id_statement(), (namespace,))
+            .await?
+        else {
+            return Ok(None);
+        };
+        ("namespace", row.id.to_string())
+    };
     mysql
-        .fetch_optional(model_by_name_namespace_statement(), (name, namespace))
+        .fetch_optional::<_, _, KindRow>(
+            referenced_model_statement(),
+            (entity_type, entity_id, name),
+        )
         .await
 }
 
@@ -323,7 +384,8 @@ pub fn model_public_statement() -> String {
 }
 
 /// `_find_model_with_namespace`: the caller's private Model, then a referenced
-/// capability in `default`, then a group Model, then the public Model.
+/// capability shared with the caller, then a group Model, then the public
+/// Model.
 ///
 /// Documented gaps (no recorded create case reaches them): the per-group
 /// referenced read and the `bind_model` pointer chain
@@ -341,8 +403,13 @@ pub async fn resolve_model_for_bot<M: Mysql>(
     {
         return Ok(Some(model));
     }
+    // `get_referenced_capability(kind="Model", namespace="default")`: the
+    // approved Model shared with the caller.
     if let Some(model) = mysql
-        .fetch_optional::<_, _, KindRow>(model_by_name_namespace_statement(), (name, "default"))
+        .fetch_optional::<_, _, KindRow>(
+            referenced_model_statement(),
+            ("user", user_id.to_string(), name),
+        )
         .await?
     {
         return Ok(Some(model));
@@ -413,7 +480,15 @@ pub async fn resolve_task_ref_team<M: Mysql>(
             .fetch_optional::<_, _, KindRow>(team_by_owner_statement(), (owner, namespace, name))
             .await;
     }
-    resolve_team(mysql, viewer_user_id, namespace, name).await
+    // A ref without `user_id` resolves through the cached-reader team branch;
+    // the store shares the caller's MySQL client.
+    let cache = KindCacheStore::<M, brz_redis::RedisService> {
+        mysql,
+        redis: None,
+        erp: None,
+        resolvers: None,
+    };
+    resolve_team(&cache, viewer_user_id, namespace, name).await
 }
 
 /// `team_share_service.get_resource_for_use`: whether the caller may use the
@@ -556,80 +631,38 @@ pub fn namespace_entity_check_statement() -> String {
         .to_string()
 }
 
-/// `KindReader._get_team`: the Team the caller may use.
-///
-/// * `namespace == "default"`: the caller's own Team, then (via the caller) the
-///   shared teams, then the public (`user_id = 0`) Team.
-/// * otherwise: the group Team when its namespace is public or the caller is an
-///   approved member.
-///
-/// The share-permission fallbacks (`sharedTeamReader`, `team_share_service`)
-/// run through the `teams` module's share chain and are not modeled here;
-/// a Team that only those paths would resolve returns `None`.
-pub async fn resolve_team<M: Mysql>(
-    mysql: &M,
+/// `KindReader._get_team`: the Team the caller may use, through the
+/// deployment's cached-reader contract (`KindCacheStore::resolve_team`):
+/// the `kind:v2` index/data documents decide the personal/group reads and
+/// only a miss reaches the SQL statements above, matching the recorded
+/// create exchanges.
+pub async fn resolve_team<M: Mysql, R: brz_redis::Redis>(
+    cache: &KindCacheStore<'_, M, R>,
     user_id: i64,
     namespace: &str,
     name: &str,
 ) -> MysqlResult<Option<KindRow>> {
-    if namespace != "default" {
-        let Some(team) = mysql
-            .fetch_optional::<_, _, KindRow>(team_group_statement(), (namespace, name))
-            .await?
-        else {
-            return Ok(None);
-        };
-        // `team_share_service`'s empty share checks run for the resolved Team
-        // in the recorded cases; keep the reads for dependency fidelity.
-        let _ = mysql
-            .fetch_optional::<_, _, MemberExistsRow>(
-                team_member_check_statement(),
-                (team.id, user_id.to_string()),
-            )
-            .await?;
-        let _ = mysql
-            .fetch_all::<_, _, MysqlRow>(team_entity_check_statement(), (team.id,))
-            .await?;
-        let group = mysql
-            .fetch_optional::<_, _, NamespaceRow>(namespace_by_name_statement(), (namespace,))
-            .await?;
-        let Some(group) = group else {
-            return Ok(None);
-        };
-        let _ = mysql
-            .fetch_all::<_, _, MysqlRow>(namespace_entity_check_statement(), (group.id,))
-            .await?;
-        // `groupReader.is_public`.
-        if group.visibility.as_deref() == Some("public") {
-            return Ok(Some(team));
-        }
-        // `groupMemberReader.is_member(namespace, user_id)`.
-        if user_id != 0 {
-            let member = mysql
-                .fetch_optional::<_, _, MemberExistsRow>(
-                    namespace_member_statement(),
-                    (group.id, user_id.to_string()),
-                )
-                .await?;
-            if member.is_some() {
-                return Ok(Some(team));
-            }
-        }
-        return Ok(None);
-    }
+    cache
+        .resolve_team(user_id, namespace, name)
+        .await
+        .map(|team| team.map(kinds_row))
+}
 
-    if user_id != 0 {
-        let personal = mysql
-            .fetch_optional::<_, _, KindRow>(team_personal_statement(), (user_id, namespace, name))
-            .await?;
-        if personal.is_some() {
-            return Ok(personal);
-        }
+/// Project a cached-reader row onto the create flow's `KindRow` shape: the
+/// same `kinds` projection, so a `kind:v2:data` hit and a driver row are
+/// interchangeable downstream.
+pub fn kinds_row(row: crate::task_skills::repository::KindRow) -> KindRow {
+    KindRow {
+        id: row.kinds_id,
+        user_id: row.kinds_user_id,
+        kind: row.kinds_kind,
+        name: row.kinds_name,
+        namespace: row.kinds_namespace,
+        json: Json(row.kinds_json.0.to_value()),
+        is_active: row.kinds_is_active,
+        created_at: Some(row.kinds_created_at),
+        updated_at: Some(row.kinds_updated_at),
     }
-    let public = mysql
-        .fetch_optional::<_, _, KindRow>(team_public_statement(), (namespace, name))
-        .await?;
-    Ok(public)
 }
 
 #[cfg(test)]
@@ -675,27 +708,44 @@ mod tests {
     }
 
     #[test]
-    fn bot_by_names_counts_both_in_lists() {
-        let sql = normalize(&bot_by_names_statement(1, 1));
-        assert!(sql.contains("kinds.kind = 'Bot'"));
-        assert!(sql.contains("kinds.namespace IN (?) AND kinds.name IN (?)"));
-        assert!(sql.contains("AND kinds.is_active = true"));
-        let two = normalize(&bot_by_names_statement(2, 3));
-        assert!(two.contains("kinds.namespace IN (?, ?)"));
-        assert!(two.contains("kinds.name IN (?, ?, ?)"));
+    fn model_read_matches_the_recorded_statement() {
+        // Recorded (group namespace): WHERE kinds.kind = 'Model' AND
+        // kinds.name = ? AND kinds.namespace = ? AND kinds.is_active IS true
+        // ORDER BY kinds.id ASC LIMIT 1.
+        let group = normalize(&model_by_name_namespace_statement("example-team"));
+        assert!(
+            group.contains("WHERE kinds.kind = 'Model' AND kinds.name = ? AND kinds.namespace = ?")
+        );
+        assert!(group.contains("AND kinds.is_active IS true"));
+        assert!(group.contains("ORDER BY kinds.id ASC LIMIT 1"));
+        // The group-namespace WHERE clause carries no owner filter.
+        let group_where = group.split(" WHERE ").nth(1).unwrap_or_default();
+        assert!(!group_where.contains("kinds.user_id"));
+
+        // Recorded (default namespace): the caller's own or the public Model,
+        // newest owner first.
+        let default_ns = normalize(&model_by_name_namespace_statement("default"));
+        assert!(default_ns.contains("(kinds.user_id = ? OR kinds.user_id = 0)"));
+        assert!(default_ns.contains("ORDER BY kinds.user_id DESC, kinds.id ASC LIMIT 1"));
     }
 
     #[test]
-    fn model_read_matches_the_recorded_statement() {
-        // Recorded: WHERE kinds.kind = 'Model' AND kinds.name = ? AND
-        // kinds.namespace = ? AND kinds.is_active IS true ORDER BY kinds.id ASC
-        // LIMIT 1
-        let sql = normalize(&model_by_name_namespace_statement());
-        assert!(
-            sql.contains("WHERE kinds.kind = 'Model' AND kinds.name = ? AND kinds.namespace = ?")
-        );
-        assert!(sql.contains("AND kinds.is_active IS true"));
-        assert!(sql.contains("ORDER BY kinds.id ASC LIMIT 1"));
+    fn referenced_model_reads_match_the_recorded_statements() {
+        // Recorded: SELECT namespace.id FROM namespace WHERE namespace.name =
+        // 'example-team' AND namespace.is_active IS true.
+        let ns = normalize(&namespace_id_statement());
+        assert!(ns.contains("SELECT namespace.id FROM namespace"));
+        assert!(ns.contains("WHERE namespace.name = ? AND namespace.is_active IS true"));
+
+        // Recorded: the approved Model shared into the scope, smallest id
+        // first, never the public row.
+        let referenced = normalize(&referenced_model_statement());
+        assert!(referenced.contains("resource_members.resource_type = 'Model'"));
+        assert!(referenced.contains("resource_members.entity_type = ?"));
+        assert!(referenced.contains("resource_members.entity_id = ?"));
+        assert!(referenced.contains("resource_members.status = 'approved'"));
+        assert!(referenced.contains("AND kinds.user_id != 0"));
+        assert!(referenced.contains("ORDER BY kinds.id ASC LIMIT 1"));
     }
 
     #[test]
@@ -779,19 +829,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolve_team_bots_reads_the_batched_bot_lookup() {
+    async fn resolve_team_bots_reads_one_cached_bot_per_member() {
         let mysql = crate::sql_test_support::KindQueryCapture::writing();
+        let store: KindCacheStore<'_, _> = KindCacheStore {
+            mysql: &mysql,
+            redis: None,
+            erp: None,
+            resolvers: None,
+        };
         let team = serde_json::json!({
             "spec": {"members": [{"botRef": {"name": "bot", "namespace": "ns-b"}}]}
         });
-        let bots = resolve_team_bots(&mysql, &team).await.expect("resolve");
+        let bots = resolve_team_bots(&store, 6527, &team)
+            .await
+            .expect("resolve");
         // The capture fake returns no rows.
         assert!(bots.bot_ids.is_empty());
         let queries = mysql.queries();
         assert_eq!(queries.len(), 1);
-        assert!(queries[0].sql.contains("kinds.kind = 'Bot'"));
-        assert!(queries[0].sql.contains("kinds.namespace IN (?)"));
-        assert_eq!(queries[0].args, 2);
+        // The cached reader's group predicate: kind/namespace/name params
+        // (`get_group`'s filter, no owner id).
+        assert!(queries[0].sql.contains("kinds.kind = ?"));
+        assert!(queries[0].sql.contains("kinds.namespace = ?"));
+        assert!(queries[0].sql.contains("kinds.name = ?"));
+        assert_eq!(queries[0].args, 3);
     }
 
     #[tokio::test]
@@ -813,11 +874,11 @@ mod tests {
         let _ = resolve_task_ref_team(&mysql, None, "ns-b", "team", 6527)
             .await
             .expect("team");
-        // The group branch of `resolve_team` runs first.
+        // The group branch of the cached team resolution runs first.
         assert!(
             mysql.queries()[0]
                 .sql
-                .contains("kinds.kind = 'Team' AND kinds.namespace = ?")
+                .contains("kinds.kind = ? AND kinds.namespace = ?")
         );
     }
 
@@ -875,13 +936,20 @@ mod tests {
     #[tokio::test]
     async fn resolve_team_group_branch_returns_none_when_the_group_is_absent() {
         let mysql = crate::sql_test_support::KindQueryCapture::writing();
-        let team = resolve_team(&mysql, 6527, "ns-b", "team-beta")
+        let store: KindCacheStore<'_, _> = KindCacheStore {
+            mysql: &mysql,
+            redis: None,
+            erp: None,
+            resolvers: None,
+        };
+        let team = resolve_team(&store, 6527, "ns-b", "team-beta")
             .await
             .expect("resolve");
         // The capture fake returns no rows, so the group read misses and the
         // chain stops before the namespace read.
         assert!(team.is_none());
         assert_eq!(mysql.queries().len(), 1);
-        assert!(mysql.queries()[0].sql.contains("kinds.kind = 'Team'"));
+        assert!(mysql.queries()[0].sql.contains("kinds.kind = ?"));
+        assert!(!mysql.queries()[0].sql.contains("kinds.user_id = ?"));
     }
 }

@@ -530,6 +530,15 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
     settledDomNodeGrowth <= MEMORY_MAX_SETTLED_DOM_NODE_GROWTH,
     `WebContent DOM retained ${settledDomNodeGrowth} additional nodes after rendering the long response`
   )
+  for (const sample of settledWindow) {
+    const chunks = sample.assistantDom.markdownChunks
+    if (chunks.length > 2) {
+      assert.ok(
+        chunks.some(chunk => chunk.placeholder),
+        'The settled long response kept every Markdown chunk mounted'
+      )
+    }
+  }
   assert.ok(
     settledGrowthKiB <= MEMORY_MAX_SETTLED_GROWTH_KIB,
     `WebContent settled physical footprint grew by ${settledGrowthKiB} KiB`

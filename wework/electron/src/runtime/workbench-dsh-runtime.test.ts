@@ -126,7 +126,14 @@ describe('workbench DSH runtime', () => {
     )
     expect(run).toHaveBeenCalledWith(
       managedNode,
-      expect.arrayContaining([pnpmEntry, 'add', '--ignore-scripts', `file:${hostPlugin}`]),
+      expect.arrayContaining([
+        pnpmEntry,
+        '--store-dir',
+        join(root.path, 'data', 'harness-apps', 'instances', 'test-app', 'pnpm-store'),
+        'add',
+        '--ignore-scripts',
+        `file:${hostPlugin}`,
+      ]),
       expect.objectContaining({
         cwd: join(root.path, 'data', 'harness-apps', 'instances', 'test-app', 'profiles', 'web'),
       })

@@ -78,6 +78,61 @@ pub(super) fn create_local_repository(
 }
 
 #[test]
+fn clones_and_reuses_repositories_beyond_windows_max_path() {
+    let _lock = crate::test_env::lock();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let directory = tempfile::tempdir().unwrap();
+        let source = create_local_repository(directory.path(), "source", "fixture.txt", "fixture");
+        // Match the CI clone boundary: repository discovery fits MAX_PATH,
+        // while Git's hook template paths require long-path support.
+        let destination = directory
+            .path()
+            .join("r".repeat(236 - directory.path().to_string_lossy().len() - 1));
+        assert!(
+            destination
+                .join(".git/hooks/fsmonitor-watchman.sample")
+                .to_string_lossy()
+                .len()
+                > 260
+        );
+
+        clone_repo(
+            &ExecutionRequest::default(),
+            source.to_str().unwrap(),
+            &destination,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            fs::read_to_string(destination.join("fixture.txt")).unwrap(),
+            "fixture"
+        );
+        assert_test_git_success(
+            "git status after long-path clone",
+            StdCommand::new("git")
+                .arg("-C")
+                .arg(&destination)
+                .args(["status", "--porcelain"]),
+        );
+        #[cfg(windows)]
+        {
+            let output = run_test_git(
+                StdCommand::new("git")
+                    .arg("-C")
+                    .arg(&destination)
+                    .args(["config", "core.longpaths"]),
+            );
+            assert!(output.status.success());
+            assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "true");
+        }
+    });
+}
+
+#[test]
 fn unified_workspace_clones_reuses_and_exposes_the_same_logical_tree() {
     let _lock = crate::test_env::lock();
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -537,4 +592,17 @@ fn git_clone_failure_fields_include_diagnostics_without_credentials() {
         .iter()
         .any(|(_, value)| value.contains("glpat-secret")));
     assert!(!fields.iter().any(|(_, value)| value.contains("ghp_secret")));
+}
+
+#[test]
+fn git_clone_diagnostics_keep_failure_after_a_long_destination_path() {
+    let mut fields = Vec::new();
+    let stderr = format!(
+        "Cloning into '{}'/project...\nfatal: could not create work tree dir: Filename too long",
+        "nested-directory/".repeat(30)
+    );
+    push_git_clone_failure_fields(&mut fields, Some(128), "", &stderr);
+    assert!(fields
+        .iter()
+        .any(|(key, value)| *key == "stderr" && value.ends_with("Filename too long")));
 }

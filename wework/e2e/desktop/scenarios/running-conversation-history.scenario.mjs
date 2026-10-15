@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { gunzipSync } from 'node:zlib'
 import { DatabaseSync } from 'node:sqlite'
 
-import { createSingleRootLocalProject } from '../modules/shared.mjs'
+import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -388,6 +388,7 @@ export function createDesktopScenario({
     async verify(control) {
       active = true
       await createSingleRootLocalProject(control, workspacePath, 'running-conversation-history')
+      await selectE2EModel(control)
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       const knownRows = new Set(
         JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
@@ -510,11 +511,9 @@ export function createDesktopScenario({
       })
       await assertMovedProject(control, moved.projectKey, moved.address, uiTimeoutMs)
       const hydrationStartedAt = Date.now()
-      const performanceSnapshot = JSON.parse(
-        await control.command('performanceSnapshot', 'body', {
-          timeoutMs: HYDRATION_RESPONSE_TIMEOUT_MS,
-        })
-      )
+      await control.command('getWorkbenchDebugSnapshot', 'body', {
+        timeoutMs: HYDRATION_RESPONSE_TIMEOUT_MS,
+      })
       assert.ok(
         Date.now() - hydrationStartedAt < HYDRATION_RESPONSE_TIMEOUT_MS,
         'Hydrating a long running transcript blocked the renderer'

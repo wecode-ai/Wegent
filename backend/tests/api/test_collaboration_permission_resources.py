@@ -407,7 +407,10 @@ def test_cp15_cp16_cp17_revocation_cancels_work_and_waits_for_runtime(
         assert reconciled.status == "cancelled"
 
 
-def test_cp15_cp18_resource_revocation_and_periodic_sweep(test_client, test_db, scope):
+@pytest.mark.asyncio
+async def test_cp15_cp18_resource_revocation_and_periodic_sweep(
+    test_client, test_db, scope
+):
     invite(test_client, scope, "Developer")
     run, agent, runner = make_execution(test_db, scope, "queued")
     parent_grant = (
@@ -423,10 +426,11 @@ def test_cp15_cp18_resource_revocation_and_periodic_sweep(test_client, test_db, 
     sweep_revoked_work(test_db)
     test_db.refresh(run)
     assert run.status == "cancelled"
-    rows = test_client.get(
-        f"/api/v1/cloud-projects/{scope['project']['id']}/execution-environments",
-        headers=scope["owner"],
-    ).json()["items"]
+    from app.services.cloud_projects.service import cloud_project_service
+
+    rows = await cloud_project_service.list_execution_environments(
+        test_db, int(scope["project"]["id"]), scope["project"]["created_by_user_id"]
+    )
     assert rows[0]["can_use"] is False
     assert rows[0]["unavailable_reason"] == "resource_authorization_revoked"
 
