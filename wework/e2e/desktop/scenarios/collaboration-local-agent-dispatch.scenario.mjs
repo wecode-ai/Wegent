@@ -13,8 +13,8 @@ import { verifyExecutionActivityOrder } from '../modules/issue-execution-activit
 import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
-  openProjectAgentCreator,
   selectProjectRunnerModel,
+  selectCollaborationIssueAgent,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
 
@@ -57,7 +57,18 @@ async function addLocalAgent(control, timeoutMs) {
   await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
 
   await control.command('click', scoped('[data-testid="collaboration-project-settings-agents"]'))
-  await openProjectAgentCreator(control, scoped('[data-testid="project-agent-add"]'), timeoutMs)
+  await control.command('click', scoped('[data-testid="project-agent-add"]'))
+  await control.command('waitFor', '[data-testid="project-agent-wegent-team"]', { timeoutMs })
+  const existingAgents = await control.command(
+    'getText',
+    '[data-testid="project-agent-wegent-team"]'
+  )
+  assert.ok(
+    existingAgents.includes('当前设备智能体'),
+    'The current-device Agent must remain selectable'
+  )
+  await control.command('click', '[data-testid="project-agent-mode-create"]')
+  await control.command('waitFor', '[data-testid="cloud-project-chat-agent-editor"]', { timeoutMs })
   await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
     value: AGENT,
   })
@@ -99,10 +110,11 @@ async function createIssueAndAssignAgent(control, agentId, timeoutMs) {
     text: ASSIGNED_TASK,
     timeoutMs,
   })
-  await control.command('click', scoped('[data-testid="cloud-todo-detail-assignee"]'))
-  await control.command(
-    'click',
-    `[data-testid="cloud-todo-detail-assignee-option-agent:${agentId}"]`
+  await selectCollaborationIssueAgent(
+    control,
+    scoped('[data-testid="cloud-todo-detail-assignee"]'),
+    agentId,
+    timeoutMs
   )
   await control.command('waitFor', scoped('[data-testid="cloud-todo-save"]'), { text: '保存分配' })
   assert.equal(

@@ -4,6 +4,8 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import {
   inCollaborationSidebar,
   inProjectCreateDialog,
+  openDirectProjectCreation,
+  openProjectAgentCreator,
   selectCloudAgentModel,
   selectCollaborationDomain,
   waitForTestIdByText,
@@ -38,6 +40,22 @@ async function requestJson(baseUrl, token, pathname, options = {}) {
 
 function scoped(selector) {
   return `${ACTIVE_WORKBENCH_SELECTOR} ${selector}`
+}
+
+async function openWorkspaceAgentSettings(control, workspaceId) {
+  const tree = inCollaborationSidebar(
+    `[data-testid="collaboration-workspace-tree-${workspaceId}"]`,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+  await control.command('hover', `${tree} .collaboration-workspace-row`)
+  await control.command('click', `${tree} [data-testid="collaboration-workspace-actions"]`)
+  await control.command('click', '[data-testid="collaboration-workspace-nav-settings"]')
+  await control.command('waitFor', scoped('[data-testid="workspace-settings-shell"]'))
+  await control.command('click', scoped('[data-testid="collaboration-workspace-nav-participants"]'))
+  await control.command(
+    'click',
+    scoped('[data-testid="collaboration-workspace-participants-tab-agents"]')
+  )
 }
 
 async function waitForApiValue(load, predicate, message, timeoutMs) {
@@ -236,14 +254,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           'click',
           scoped('[data-testid="collaboration-workspace-nav-projects"]')
         )
-        await control.command(
-          'click',
-          scoped('[data-testid="collaboration-workspace-project-create"]')
-        )
-        await control.command(
-          'click',
-          '[data-testid="collaboration-workspace-project-create-blank"]'
-        )
+        await openDirectProjectCreation(control, ACTIVE_WORKBENCH_SELECTOR)
         await control.command('waitFor', inProjectCreateDialog(), { timeoutMs: uiTimeoutMs })
         await control.command(
           'fill',
@@ -340,12 +351,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           scoped('[data-testid="collaboration-project-settings-agents"][aria-current="page"]'),
           { timeoutMs: uiTimeoutMs }
         )
-        await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
-          timeoutMs: uiTimeoutMs,
-        })
-        await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
-          timeoutMs: uiTimeoutMs,
-        })
+        await openProjectAgentCreator(
+          control,
+          scoped('[data-testid="project-agent-add"]'),
+          uiTimeoutMs,
+          'wework-agent-resource-creator'
+        )
         const agentDialogSnapshot = JSON.parse(
           await control.command('snapshot', '[data-testid="wework-agent-resource-creator"]')
         )
@@ -575,27 +586,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         )
         await capture(control, 'project-automation-07-group-deleted.png')
 
-        await control.command(
-          'click',
-          inCollaborationSidebar(
-            `[data-testid="collaboration-workspace-tree-${workspace.id}"] .collaboration-workspace-identity`,
-            ACTIVE_WORKBENCH_SELECTOR
-          )
+        await openWorkspaceAgentSettings(control, workspace.id)
+        await openProjectAgentCreator(
+          control,
+          scoped('[data-testid="project-agent-add"]'),
+          uiTimeoutMs,
+          'wework-agent-resource-creator'
         )
-        await control.command(
-          'waitFor',
-          scoped('[data-testid="collaboration-workspace-nav-participants"]')
-        )
-        await control.command(
-          'click',
-          scoped('[data-testid="collaboration-workspace-nav-participants"]')
-        )
-        await control.command(
-          'click',
-          scoped('[data-testid="collaboration-workspace-participants-tab-agents"]')
-        )
-        await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'))
-        await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]')
         await control.command('fill', '[data-testid="wework-agent-display-name"]', {
           value: '123',
         })
@@ -625,14 +622,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           'waitFor',
           scoped('[data-testid="collaboration-workspace-project-create"]')
         )
-        await control.command(
-          'click',
-          scoped('[data-testid="collaboration-workspace-nav-participants"]')
-        )
-        await control.command(
-          'click',
-          scoped('[data-testid="collaboration-workspace-participants-tab-agents"]')
-        )
+        await openWorkspaceAgentSettings(control, workspace.id)
         await control.command('waitFor', spaceAgentRow, { text: '123' })
       } finally {
         try {

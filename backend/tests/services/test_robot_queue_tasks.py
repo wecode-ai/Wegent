@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 import uuid
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -25,6 +26,11 @@ from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.services.loop_item_executions.profile import WeworkExecutionProfileError
 from app.services.loop_item_executions.service import loop_item_execution_service
+from tests.utils.collaboration import (
+    authorize_project,
+    authorize_project_agent,
+    authorize_resource,
+)
 
 
 def _make_execution(db: Session, user: User):
@@ -38,6 +44,7 @@ def _make_execution(db: Session, user: User):
         storage_prefix=f"projects/{public_id}",
         metadata_json={},
     )
+    authorize_project(db, project)
     db.add(project)
     db.commit()
     agent = ProjectChatAgent(
@@ -55,6 +62,7 @@ def _make_execution(db: Session, user: User):
             "execution_environment": "cloud",
         },
     )
+    authorize_project_agent(db, agent)
     item = LoopItem(
         id=f"T{uuid.uuid4().hex[:10]}",
         cloud_project_id=project.id,
@@ -74,6 +82,16 @@ def _make_execution(db: Session, user: User):
             is_active=True,
             json={"spec": {"deviceType": "cloud"}},
         )
+    )
+    db.flush()
+    authorize_resource(
+        db,
+        project,
+        db.query(Kind)
+        .filter_by(
+            kind="Device", name="cloud-device", namespace="default", user_id=user.id
+        )
+        .one(),
     )
     db.commit()
     execution = loop_item_execution_service.create_for_assignment(
@@ -472,17 +490,6 @@ def test_periodic_scan_publishes_unbound_work_to_project_environment(
         .one()
     )
     execution.execution_device_id = ""
-    test_db.add(
-        ResourceMember.create(
-            resource_type=ResourceType.DEVICE.value,
-            resource_id=device.id,
-            entity_type="project",
-            entity_id=execution.cloud_project_id,
-            role=BaseRole.Developer.value,
-            status=MemberStatus.APPROVED.value,
-            invited_by_user_id=test_user.id,
-        )
-    )
     test_db.commit()
 
     @contextmanager
@@ -523,6 +530,112 @@ def test_periodic_scan_publishes_unbound_work_to_project_environment(
         room=f"execution-target:{test_user.id}:cloud-device",
         namespace="/local-executor",
     )
+
+
+def test_routed_queue_wakes_shared_runner_owner_and_rechecks_revocation(
+    test_client,
+    test_db: Session,
+    test_user: User,
+    test_admin_user: User,
+    test_token: str,
+) -> None:
+    from app.schemas.runner_routing import RunnerCatalog
+    from app.services.runner_routing import save_catalog
+    from app.tasks.robot_queue_tasks import _queued_devices
+
+    workspace = test_client.post(
+        "/api/v1/workspaces",
+        headers={"Authorization": f"Bearer {test_token}"},
+        json={"name": "Shared queue regression"},
+    ).json()
+    execution = _make_execution(test_db, test_user)
+    runner = (
+        test_db.query(Kind)
+        .filter_by(kind="Device", name="cloud-device", user_id=test_user.id)
+        .one()
+    )
+    runner.user_id = test_admin_user.id
+    model = {"runtime": "codex", "provider": "openai", "model_id": "shared-model"}
+    save_catalog(
+        test_db,
+        runner,
+        RunnerCatalog(
+            models=[
+                {
+                    **model,
+                    "label": "Shared model",
+                    "local_model_id": "native-model",
+                }
+            ]
+        ),
+    )
+    project = test_db.get(CloudProject, execution.cloud_project_id)
+    old_grant = (
+        test_db.query(ResourceMember)
+        .filter_by(
+            resource_type="Device",
+            resource_id=runner.id,
+            entity_type="workspace",
+            entity_id=str(project.workspace_id),
+        )
+        .one()
+    )
+    test_db.delete(old_grant)
+    agent_grant = (
+        test_db.query(ResourceMember)
+        .filter_by(
+            resource_type="Workspace",
+            resource_id=project.workspace_id,
+            entity_type="project_agent",
+            entity_id=execution.agent_id,
+        )
+        .one()
+    )
+    agent_grant.resource_id = int(workspace["id"])
+    parent = (
+        test_db.query(ResourceMember)
+        .filter_by(
+            resource_type="CloudProject",
+            resource_id=int(project.id),
+            entity_type="workspace",
+        )
+        .one()
+    )
+    parent.entity_id = str(workspace["id"])
+    test_db.flush()
+    test_db.refresh(project)
+    authorize_resource(test_db, project, runner)
+    grant = (
+        test_db.query(ResourceMember)
+        .filter_by(
+            resource_type="Device",
+            resource_id=runner.id,
+            entity_type="workspace",
+            entity_id=str(project.workspace_id),
+        )
+        .one()
+    )
+    execution.execution_device_id = ""
+    execution.execution_payload = json.dumps(
+        {
+            "runtime_selection": {
+                "runner_routing": {
+                    "execution_policy": {
+                        "mode": "fixed",
+                        "environment_id": str(runner.id),
+                    },
+                    "model": model,
+                }
+            },
+        }
+    )
+    test_db.commit()
+
+    assert _queued_devices(test_db) == [(test_admin_user.id, "cloud-device")]
+
+    test_db.delete(grant)
+    test_db.commit()
+    assert _queued_devices(test_db) == []
 
 
 def test_runtime_cancel_routes_through_execution_target() -> None:

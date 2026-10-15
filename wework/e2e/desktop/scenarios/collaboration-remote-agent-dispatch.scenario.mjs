@@ -26,8 +26,11 @@ import {
   resultDir,
 } from '../modules/shared.mjs'
 import {
+  openDirectProjectCreation,
+  openProjectAgentCreator,
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
+  selectCollaborationIssueAgent,
 } from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -147,8 +150,7 @@ async function createWorkspaceAndProject(control, request, timeoutMs) {
       timeoutMs,
     }
   )
-  await control.command('click', scoped('[data-testid="collaboration-workspace-project-create"]'))
-  await control.command('click', '[data-testid="collaboration-workspace-project-create-blank"]')
+  await openDirectProjectCreation(control, CONTENT)
   await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {
     value: PROJECT,
   })
@@ -169,10 +171,12 @@ async function createWorkspaceAndProject(control, request, timeoutMs) {
 
 async function createAgent(control, request, projectId, timeoutMs, environmentId) {
   await control.command('click', scoped('[data-testid="collaboration-project-settings-agents"]'))
-  await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
+  await openProjectAgentCreator(
+    control,
+    scoped('[data-testid="project-agent-add"]'),
     timeoutMs,
-  })
-  await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', { timeoutMs })
+    'wework-agent-resource-creator'
+  )
   await control.command('fill', '[data-testid="wework-agent-display-name"]', { value: AGENT })
   await selectCloudAgentModel(control, request, MODEL, timeoutMs, environmentId)
   await control.command('fill', '[data-testid="wework-agent-system-prompt"]', {
@@ -205,10 +209,11 @@ async function createAndAssignIssue(control, request, projectId, agent, timeoutM
     'Wework UI did not persist the Issue',
     timeoutMs
   )
-  await control.command('click', scoped('[data-testid="cloud-todo-detail-assignee"]'))
-  await control.command(
-    'click',
-    `[data-testid="cloud-todo-detail-assignee-option-agent:${agent.id}"]`
+  await selectCollaborationIssueAgent(
+    control,
+    scoped('[data-testid="cloud-todo-detail-assignee"]'),
+    agent.id,
+    timeoutMs
   )
   await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
     timeoutMs,

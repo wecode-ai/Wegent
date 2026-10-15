@@ -21,26 +21,47 @@ from app.services.project_chat.comment_execution import _execution, execute_comm
 from app.services.project_chat.runtime_binding import collaboration_manager_task_id
 from app.services.project_chat.session_access import resolve_project_transcript
 from tests.services.test_project_comment_execution import comment, scenario
+from tests.utils.collaboration import authorize_project_agent
 
 
 @pytest.fixture
 def group_scenario(scenario, monkeypatch):
     s = scenario
-    device = Kind(
-        kind="Device",
-        name="admin-cloud",
-        namespace="default",
-        user_id=s.owner.id,
-        is_active=True,
-        json={"spec": {"deviceType": "cloud"}, "metadata": {"name": "admin-cloud"}},
+    from app.models.resource_member import ResourceMember
+
+    device = (
+        s.db.query(Kind)
+        .filter_by(
+            kind="Device", name="admin-cloud", namespace="default", user_id=s.owner.id
+        )
+        .one()
     )
-    s.db.add(device)
-    s.db.flush()
     group = {
         "id": "group-1",
         "leader": {"kind": "agent", "id": s.agent.id},
         "members": [],
     }
+    record = Kind(
+        kind="CollaborationGroup",
+        name="Comment group",
+        namespace=f"projects/{s.project.id}",
+        user_id=s.owner.id,
+        is_active=True,
+        json={"spec": group},
+    )
+    s.db.add(record)
+    s.db.flush()
+    group["id"] = str(record.id)
+    s.db.add(
+        ResourceMember.create(
+            resource_type="CollaborationGroup",
+            resource_id=record.id,
+            entity_type="project",
+            entity_id=str(s.project.id),
+            role="Developer",
+            status="approved",
+        )
+    )
     context = {
         "dispatch_kind": "collaboration_group",
         "dispatch_role": "manager",
@@ -126,6 +147,7 @@ def member_scenario(group_scenario):
             "model_type": "runtime",
         },
     )
+    authorize_project_agent(s.db, agent)
     s.db.add(agent)
     device = s.db.query(Kind).filter_by(kind="Device", name="admin-cloud").one()
     device.json = {
@@ -138,6 +160,8 @@ def member_scenario(group_scenario):
         "members": [{"kind": "agent", "id": agent.id}],
     }
     context["collaboration_group"] = group
+    record = s.db.get(Kind, int(group["id"]))
+    record.json = {"spec": group}
     s.execution.execution_payload = json.dumps(
         {**s.execution.execution_intent, "origin_context": context}
     )

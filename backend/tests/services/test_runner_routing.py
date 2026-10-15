@@ -17,18 +17,32 @@ from app.services.runner_routing import (
     issue_binding,
     resolve_routing,
 )
+from tests.services.test_loop_item_executions import _make_project
+from tests.utils.collaboration import authorize_project_agent, authorize_resource
+
+
+def _execution_stub(**kwargs):
+    values = dict(
+        agent_id="",
+        team_id=None,
+        execution_environment="local",
+        execution_intent={},
+        executor_owner_user_id=kwargs["assigner_user_id"],
+        runtime_device_id="",
+        execution_device_id="",
+    )
+    return SimpleNamespace(**{**values, **kwargs})
+
 
 MODEL = {"runtime": "codex", "provider": "openai", "model_id": "model-x"}
 
 
 @pytest.fixture
 def routing_setup(test_db, monkeypatch):
-    monkeypatch.setattr(
-        "app.services.runner_routing.require_cloud_project_role", lambda *_: None
-    )
     user = User(user_name="runner-owner", password_hash="test", preferences="{}")
     test_db.add(user)
     test_db.flush()
+    project = _make_project(test_db, user, project_id="1000000000001")
     devices = []
     for name in ("first", "second"):
         device = Kind(
@@ -55,13 +69,13 @@ def routing_setup(test_db, monkeypatch):
         )
         test_db.add(device)
         devices.append(device)
-    issue = LoopItem(id="routing-issue", title="Route", metadata_json={})
+    issue = LoopItem(
+        id="routing-issue", cloud_project_id=project.id, title="Route", metadata_json={}
+    )
     test_db.add(issue)
     test_db.flush()
-    monkeypatch.setattr(
-        "app.services.runner_routing.project_environment_ids",
-        lambda *_: {d.id for d in devices},
-    )
+    for device in devices:
+        authorize_resource(test_db, project, device)
     return user, devices, issue
 
 
@@ -93,7 +107,7 @@ def resolve(db, user, issue, mode="project_pool", selection=None, **kwargs):
             "model_policy": {"mode": "fixed", "model": MODEL},
         },
         user_id=user.id,
-        project_id="project",
+        project_id="1000000000001",
         issue_id=issue.id,
         selection=selection,
         **kwargs,
@@ -154,11 +168,11 @@ def test_fixed_model_cannot_be_overridden(test_db, routing_setup):
 def test_claim_checks_binding_and_model_again(test_db, routing_setup):
     user, devices, issue = routing_setup
     selection = {"runner_routing": resolve(test_db, user, issue).snapshot()}
-    execution = SimpleNamespace(
+    execution = _execution_stub(
         runtime_selection=selection,
         execution_intent={"runtime_selection": selection},
         loop_item_id=issue.id,
-        cloud_project_id="project",
+        cloud_project_id="1000000000001",
         assigner_user_id=user.id,
     )
     assert claim_routing(test_db, execution, devices[0])
@@ -194,7 +208,7 @@ def test_six_policy_combinations(test_db, routing_setup, environment_mode, model
                 else {"mode": "user_select"}
             ),
         },
-        project_id="project",
+        project_id="1000000000001",
         issue_id=issue.id,
         user_id=user.id,
         selection=selection,
@@ -213,10 +227,10 @@ def test_revoked_project_access_blocks_claim(test_db, routing_setup, monkeypatch
     monkeypatch.setattr(
         "app.services.runner_routing.require_cloud_project_role", revoked
     )
-    execution = SimpleNamespace(
+    execution = _execution_stub(
         runtime_selection={"runner_routing": snapshot},
         loop_item_id=issue.id,
-        cloud_project_id="project",
+        cloud_project_id="1000000000001",
         assigner_user_id=user.id,
     )
     assert not claim_routing(test_db, execution, devices[0])
@@ -227,10 +241,10 @@ def test_model_removal_blocks_claim_without_binding_issue(test_db, routing_setup
     user, devices, issue = routing_setup
     snapshot = resolve(test_db, user, issue).snapshot()
     devices[0].json = {"spec": {"runnerCatalog": {"models": []}}}
-    execution = SimpleNamespace(
+    execution = _execution_stub(
         runtime_selection={"runner_routing": snapshot},
         loop_item_id=issue.id,
-        cloud_project_id="project",
+        cloud_project_id="1000000000001",
         assigner_user_id=user.id,
     )
     assert not claim_routing(test_db, execution, devices[0])
@@ -270,6 +284,7 @@ def test_cross_owner_claim_compiles_native_payload(
     agent = _make_bot(test_db, project, test_user)
     issue = _make_item(test_db, project, test_user)
     runner = _ensure_device(test_db, test_admin_user, "shared-runner", "local")
+    authorize_resource(test_db, project, runner)
     save_catalog(
         test_db,
         runner,
@@ -297,12 +312,6 @@ def test_cross_owner_claim_compiles_native_payload(
         else {}
     )
     test_db.flush()
-    monkeypatch.setattr(
-        "app.services.runner_routing.require_cloud_project_role", lambda *_: None
-    )
-    monkeypatch.setattr(
-        "app.services.runner_routing.project_environment_ids", lambda *_: {runner.id}
-    )
     execution = loop_item_execution_service.create_for_assignment(
         test_db,
         loop_item_id=issue.id,
@@ -349,13 +358,23 @@ def test_cross_owner_claim_compiles_native_payload(
     assert payload["executionRequest"]["user"]["id"] == test_user.id
 
     # A lost pull acknowledgement must not bypass a later authorization revocation.
+    from app.models.resource_member import ResourceMember
     from app.services.loop_item_executions.service import (
         WeworkRuntimeConfigurationError,
     )
 
-    monkeypatch.setattr(
-        "app.services.runner_routing.project_environment_ids", lambda *_: set()
+    source = (
+        test_db.query(ResourceMember)
+        .filter_by(
+            resource_type="Device",
+            resource_id=runner.id,
+            entity_type="workspace",
+            entity_id=str(project.workspace_id),
+        )
+        .one()
     )
+    source.status = "rejected"
+    test_db.flush()
     with pytest.raises(
         WeworkRuntimeConfigurationError, match="RUNNER_CONFIGURATION_CONFLICT"
     ):
@@ -402,14 +421,19 @@ def test_two_concurrent_first_claims_bind_only_one_environment(tmp_path, monkeyp
             for index in range(2)
         ]
         db.add_all(runners)
-        issue = LoopItem(id="concurrent-issue", title="Issue", metadata_json={})
+        project = _make_project(db, owner, project_id="1000000000001")
+        issue = LoopItem(
+            id="concurrent-issue",
+            cloud_project_id=project.id,
+            title="Issue",
+            metadata_json={},
+        )
         db.add(issue)
         db.flush()
+        for runner in runners:
+            authorize_resource(db, project, runner)
         ids, owner_id = [runner.id for runner in runners], owner.id
         db.commit()
-    monkeypatch.setattr(
-        "app.services.runner_routing.require_cloud_project_role", lambda *_: None
-    )
     monkeypatch.setattr(
         "app.services.runner_routing.project_environment_ids", lambda *_: set(ids)
     )
@@ -418,9 +442,9 @@ def test_two_concurrent_first_claims_bind_only_one_environment(tmp_path, monkeyp
     def claim(device_id):
         with Session(engine) as db:
             runner = db.get(Kind, device_id)
-            execution = SimpleNamespace(
+            execution = _execution_stub(
                 loop_item_id="concurrent-issue",
-                cloud_project_id="project",
+                cloud_project_id="1000000000001",
                 assigner_user_id=owner_id,
                 runtime_selection={
                     "runner_routing": {
@@ -462,7 +486,7 @@ def test_group_routes_require_one_runner_for_every_member(test_db, routing_setup
     for index, model in enumerate([MODEL, other_model]):
         agent = ProjectChatAgent(
             id=f"group-member-{index}",
-            cloud_project_id="project",
+            cloud_project_id="1000000000001",
             name=f"Member {index}",
             status="active",
             created_by_user_id=user.id,
@@ -472,6 +496,7 @@ def test_group_routes_require_one_runner_for_every_member(test_db, routing_setup
                 "model_policy": {"mode": "fixed", "model": model},
             },
         )
+        authorize_project_agent(test_db, agent)
         agents.append(agent)
         test_db.add(agent)
     test_db.flush()
@@ -482,19 +507,19 @@ def test_group_routes_require_one_runner_for_every_member(test_db, routing_setup
     routes = resolve_group_routing(
         test_db,
         group=group,
-        project_id="project",
+        project_id="1000000000001",
         issue_id=issue.id,
         user_id=user.id,
         selection=None,
         automatic=True,
     )
-    run = SimpleNamespace(
+    run = _execution_stub(
         runtime_selection={
             "runner_routing": routes[agents[0].id],
             "group_runner_requirements": routes,
         },
         loop_item_id=issue.id,
-        cloud_project_id="project",
+        cloud_project_id="1000000000001",
         assigner_user_id=user.id,
     )
     assert not eligible_runner(test_db, run, devices[0])
@@ -504,7 +529,7 @@ def test_group_routes_require_one_runner_for_every_member(test_db, routing_setup
         resolve_group_routing(
             test_db,
             group=group,
-            project_id="project",
+            project_id="1000000000001",
             issue_id=issue.id,
             user_id=user.id,
             selection=None,
@@ -526,6 +551,7 @@ def test_routed_approval_preserves_deferred_claim(test_db, test_user, monkeypatc
     agent = _make_bot(test_db, project, test_user, mode="manual_approval")
     issue = _make_item(test_db, project, test_user)
     runner = _ensure_device(test_db, test_user, "approval-runner", "local")
+    authorize_resource(test_db, project, runner)
     save_catalog(
         test_db,
         runner,
@@ -577,6 +603,7 @@ def test_group_automation_keeps_run_identity_and_assignment_snapshot(
     agent = _make_bot(test_db, project, test_user)
     issue = _make_item(test_db, project, test_user)
     runner = _ensure_device(test_db, test_user, "group-runner", "local")
+    authorize_resource(test_db, project, runner)
     save_catalog(
         test_db,
         runner,
@@ -593,6 +620,30 @@ def test_group_automation_keeps_run_identity_and_assignment_snapshot(
         "leader": {"kind": "agent", "id": agent.id},
         "members": [],
     }
+    from app.models.resource_member import ResourceMember
+
+    record = Kind(
+        kind="CollaborationGroup",
+        name="Group",
+        namespace=f"projects/{project.id}",
+        user_id=test_user.id,
+        is_active=True,
+        json={"spec": group},
+    )
+    test_db.add(record)
+    test_db.flush()
+    group["id"] = str(record.id)
+    test_db.add(
+        ResourceMember.create(
+            resource_type="CollaborationGroup",
+            resource_id=record.id,
+            entity_type="project",
+            entity_id=str(project.id),
+            role="Developer",
+            status="approved",
+        )
+    )
+    test_db.flush()
     issue.metadata_json = {
         "collaboration_group": group,
         "collaboration_group_assignment_key": "assignment",
@@ -638,7 +689,7 @@ async def test_queue_explains_offline_capacity_and_revoked_model(
     snapshot = resolve(test_db, user, issue).snapshot()
     run = LoopItemExecution(
         loop_item_id=issue.id,
-        cloud_project_id="project",
+        cloud_project_id="1000000000001",
         assigner_user_id=user.id,
         executor_owner_user_id=user.id,
         status="queued",
@@ -685,6 +736,9 @@ def test_role_downgrade_prevents_queued_execution_claim(
 
     user, devices, issue = routing_setup
     project = _make_project(test_db, test_admin_user)
+    issue.cloud_project_id = project.id
+    for device in devices:
+        authorize_resource(test_db, project, device)
     grant = ResourceMember(
         resource_type="CloudProject",
         resource_id=project.id,
@@ -716,7 +770,7 @@ def test_role_downgrade_prevents_queued_execution_claim(
     with pytest.raises(HTTPException) as error:
         resolve_routing(test_db, **kwargs)
     assert error.value.detail["error_code"] == "RUNNER_PROJECT_ACCESS_REVOKED"
-    execution = SimpleNamespace(
+    execution = _execution_stub(
         runtime_selection={"runner_routing": route.snapshot()},
         loop_item_id=issue.id,
         cloud_project_id=str(project.id),
@@ -737,9 +791,9 @@ def test_claim_writes_binding_to_metadata_and_rollback_discards_it(
     issue.metadata_json = metadata
     test_db.commit()
     snapshot = resolve(test_db, user, issue).snapshot()
-    execution = SimpleNamespace(
+    execution = _execution_stub(
         loop_item_id=issue.id,
-        cloud_project_id="project",
+        cloud_project_id="1000000000001",
         assigner_user_id=user.id,
         runtime_selection={"runner_routing": snapshot},
     )
@@ -840,6 +894,40 @@ def test_stale_content_writer_preserves_committed_binding(tmp_path):
             "runner_binding": {"environment_id": "42"},
         }
     engine.dispose()
+
+
+@pytest.mark.parametrize("mode", ["fixed", "project_pool", "user_select"])
+def test_cp12_all_routing_policies_require_current_project_resource_grants(
+    test_db, routing_setup, mode
+):
+    from app.models.resource_member import ResourceMember
+
+    user, devices, issue = routing_setup
+    test_db.query(ResourceMember).filter_by(
+        resource_type="Device", entity_type="workspace"
+    ).delete()
+    test_db.flush()
+    policy = {"mode": mode}
+    selection = None
+    if mode == "fixed":
+        policy["environment_id"] = str(devices[0].id)
+    elif mode == "user_select":
+        selection = {
+            "execution_policy": {"mode": "fixed", "environment_id": str(devices[0].id)}
+        }
+    with pytest.raises(HTTPException):
+        resolve_routing(
+            test_db,
+            config={
+                "runtime": "codex",
+                "execution_policy": policy,
+                "model_policy": {"mode": "fixed", "model": MODEL},
+            },
+            user_id=user.id,
+            project_id=issue.cloud_project_id,
+            issue_id=issue.id,
+            selection=selection,
+        )
 
 
 def test_catalog_report_preserves_device_config_updated_after_loading(

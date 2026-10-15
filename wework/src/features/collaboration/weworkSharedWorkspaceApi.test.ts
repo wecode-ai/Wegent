@@ -253,6 +253,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       description: 'Description',
       taskProvider: 'local',
       visibility: 'private',
+      membershipMode: 'restricted',
       providerConfig: { repository: 'repo' },
     })
     expect(deliveryApi.createCloudProject).toHaveBeenCalledWith({
@@ -261,10 +262,12 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       description: 'Description',
       task_provider: 'local',
       visibility: 'private',
+      membership_mode: 'restricted',
       provider_config: { repository: 'repo' },
     })
     await api.projects.update('project-1', {
       version: 2,
+      membershipMode: 'inherit',
       boardConfig: project.board_config,
       cardDisplay: project.card_display,
       pullRequestAutomation: { enabled: true },
@@ -290,6 +293,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
     })
     expect(deliveryApi.updateCloudProject).toHaveBeenCalledWith('project-1', {
       version: 2,
+      membership_mode: 'inherit',
       pull_request_automation: { enabled: true },
       workflow_definition: { version: 1 },
       execution_environment: {
@@ -674,6 +678,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       execution_environment_count: 1,
       project_count: 1,
       created_by_user_id: 1,
+      owner_user_id: 1,
       version: 1,
       created_at: '2026-09-11T00:00:00Z',
       updated_at: '2026-09-11T00:00:00Z',
@@ -1034,10 +1039,12 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
     await expect(api.projects.list('workspace-1')).resolves.toEqual([project])
     await api.projects.create({
       workspaceId: 'workspace-1',
+      membershipMode: 'restricted',
       projectKey: 'PROJ',
       name: 'Project',
     })
     expect(client.post).toHaveBeenCalledWith('/v1/workspaces/workspace-1/projects', {
+      membership_mode: 'restricted',
       project_key: 'PROJ',
       name: 'Project',
     })

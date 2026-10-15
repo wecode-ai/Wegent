@@ -22,6 +22,7 @@ import {
 import {
   inCollaborationSidebar,
   inProjectCreateDialog,
+  openDirectProjectCreation,
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
 } from '../modules/workspace-flows.mjs'
@@ -218,8 +219,7 @@ async function createWorkspaceAndProject(control, request, uiTimeoutMs) {
       timeoutMs: uiTimeoutMs,
     }
   )
-  await control.command('click', scoped('[data-testid="collaboration-workspace-project-create"]'))
-  await control.command('click', '[data-testid="collaboration-workspace-project-create-blank"]')
+  await openDirectProjectCreation(control, CONTENT)
   await control.command(
     'fill',
     inProjectCreateDialog('[data-testid="collaboration-project-name-input"]'),

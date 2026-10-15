@@ -79,7 +79,7 @@ interface LocalConnectorAuthHealthOptions {
   bypassCache?: boolean
 }
 
-/** Short TTL so send preflight does not re-probe an already-healthy connector. */
+/** Reuse recent success for management views; runtime authorization recovery bypasses it. */
 const OK_HEALTH_TTL_MS = 120_000
 const okHealthCache = new Map<string, number>()
 let healthCacheRevision = 0

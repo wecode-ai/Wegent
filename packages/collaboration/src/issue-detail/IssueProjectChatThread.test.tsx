@@ -202,7 +202,10 @@ describe("shared Issue threads", () => {
     act(() =>
       root.render(
         <IssueProjectChatThread
-          thread={{ root: message, replies: [] }}
+          thread={{
+            root: { ...message, updatedAt: new Date(2026, 8, 17, 8).toISOString() },
+            replies: [],
+          }}
           canComment
           send={vi.fn()}
           translate={translate}

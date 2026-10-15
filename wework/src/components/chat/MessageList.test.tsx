@@ -181,7 +181,6 @@ describe('MessageList', () => {
         value={{
           appsStore: desktopComposerCatalogStore,
           catalogEvents: { catalogChanged: 'test-skill-refresh' },
-          prefetchLocalAuth: false,
           listSkills,
         }}
       >
@@ -230,7 +229,6 @@ describe('MessageList', () => {
         value={{
           appsStore: desktopComposerCatalogStore,
           catalogEvents: {},
-          prefetchLocalAuth: false,
           listSkills,
         }}
       >
@@ -6886,7 +6884,6 @@ describe('MessageList', () => {
         value={{
           appsStore: desktopComposerCatalogStore,
           catalogEvents: {},
-          prefetchLocalAuth: false,
           listSkills: async () => [
             { name: 'env-context', path: skillPath, description: '', source: 'codex' },
           ],

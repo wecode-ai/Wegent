@@ -5,6 +5,7 @@
 import { expect, type APIRequestContext, type Locator, type Page } from '@playwright/test'
 import { ADMIN_USER } from '../config/test-users'
 import { createApiClient } from './api-client'
+import { openBlankProjectCreation } from './collaboration-test-support'
 import {
   authHeaders,
   clearToolScenario,
@@ -122,8 +123,7 @@ export async function createProjectFixture(
 
   const workspaceId = decodeURIComponent(new URL(page.url()).pathname.split('/').at(-1) ?? '')
   expect(workspaceId).not.toBe('')
-  await page.getByTestId('collaboration-workspace-project-create').click()
-  await page.getByTestId('collaboration-workspace-project-create-blank').click()
+  await openBlankProjectCreation(page)
   await page.getByTestId('collaboration-project-name-input').fill(`Dispatch Project ${suffix}`)
   await expect(page.getByTestId('collaboration-project-storage-local')).toHaveCount(0)
   await expect(page.getByTestId('collaboration-project-storage-cloud')).toHaveCount(0)

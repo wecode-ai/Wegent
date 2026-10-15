@@ -16,7 +16,7 @@ Manage the matching app under **App authorizations** on the plugin detail page; 
 
 Other Codex apps use their own provided authorization entry. Complete that app's authorization in the browser, then return to Wework and choose **Authorization completed, verify connection**. Opening a browser does not establish a connection. A blocked, timed-out, or unavailable app catalog produces a short message and leaves the app disconnected, rather than displaying a raw HTML error page as an authorization result.
 
-Plugins supporting local QR login can show a login card before task submission. Cancellation or login failure preserves the draft. Switching to a new conversation must not submit the previous draft automatically, and a plugin's pending authorization must not block ordinary text messages.
+Selecting a plugin and sending a message do not check login in advance. When actual plugin use reports missing or expired authentication, Wework uses the exact plugin identity to show the local login card and continues from the blocked step after authorization. Cancelling, sending another message, or switching conversations prevents an obsolete task from continuing automatically. Pending authorization does not block ordinary chat.
 
 For cloud-managed plugins, uninstall completes when the account removal is committed; local cleanup synchronizes asynchronously. The backend retains pending cleanup for disconnected devices or failed cleanup and resumes it on later connections, rather than keeping the marketplace button waiting for a device response. Update the backend, desktop, and executor together for these behaviors; no new database migration is required.
 
