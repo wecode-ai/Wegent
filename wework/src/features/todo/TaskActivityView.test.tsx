@@ -1699,6 +1699,56 @@ describe('TaskActivityView', () => {
     } satisfies ProjectChatClient
   }
 
+  it.each([1, 2])(
+    'does not offer a task bound to an older assignment (new owner=%s)',
+    async nextUserId => {
+      const user = userEvent.setup()
+      const messages = humanAssignmentMessages(1)
+      const latest = humanAssignmentMessages(nextUserId)[1]
+      latest.messageId = 'new-manager-assignment'
+      latest.sequenceNumber = 3
+      latest.metadata = {
+        ...latest.metadata,
+        coordination_round_id: 'round-2',
+        dispatch_assignments: [
+          {
+            assignee_type: 'human',
+            human_assignment_id: 'human-2',
+            human_user_id: nextUserId,
+            assignment_id: 'assignment-2',
+            task_title: 'Current work',
+          },
+        ],
+      }
+      messages.push(latest)
+      render(
+        <TaskActivityView
+          client={humanAssignmentClient(messages)}
+          currentUserId={1}
+          project={{ id: '11', name: 'Cloud', location: 'cloud' } as never}
+          task={{ id: 'WEG-1', title: 'CPU', status: 'in_progress', version: 1 } as never}
+          issueTimeline
+          linear
+          onStartHumanTaskFromReply={vi.fn()}
+        />
+      )
+
+      await screen.findByTestId('cloud-task-activity-card-new-manager-assignment')
+      expect(screen.queryByTestId('cloud-task-activity-reply-toggle-manager-assignment')).toBeNull()
+      if (nextUserId === 1) {
+        await user.click(
+          screen.getByTestId('cloud-task-activity-reply-toggle-new-manager-assignment')
+        )
+        expect(screen.getByTestId('issue-reply-starts-task-hint')).toHaveTextContent('Current work')
+      } else {
+        expect(
+          screen.queryByTestId('cloud-task-activity-reply-toggle-new-manager-assignment')
+        ).toBeNull()
+        expect(screen.queryByTestId('issue-reply-starts-task-hint')).not.toBeInTheDocument()
+      }
+    }
+  )
+
   it.each([
     [false, 'cloud', '1'],
     [true, 'cloud', '1'],

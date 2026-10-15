@@ -189,6 +189,79 @@ fn personal_task_does_not_guess_between_multiple_open_human_assignments() {
 }
 
 #[test]
+fn later_delivery_does_not_replace_a_completed_assignment_evidence() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+    let issue_id = task(&store, None);
+    let human_id = human_assignment(&store, &issue_id);
+    let first = finalize_from_issue(&store, &issue_id, true, None, Some(&human_id));
+    let before = store.get_item(&human_id, "task").unwrap();
+
+    let second = finalize_from_issue(&store, &issue_id, true, None, Some(&human_id));
+
+    let after = store.get_item(&human_id, "task").unwrap();
+    assert_ne!(first.id, second.id);
+    assert_eq!(
+        after.current_delivery_id.as_deref(),
+        Some(first.id.as_str())
+    );
+    assert_eq!(after.version, before.version);
+    assert_eq!(after.completed_at, before.completed_at);
+}
+
+#[test]
+fn delivery_cannot_settle_another_issues_human_assignment() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+    let issue_id = task(&store, None);
+    let other_issue = task(&store, None);
+    let human_id = human_assignment(&store, &other_issue);
+
+    finalize_from_issue(&store, &issue_id, true, None, Some(&human_id));
+
+    let human = store.get_item(&human_id, "task").unwrap();
+    assert_eq!(human.status.as_deref(), Some("pending"));
+    assert!(human.current_delivery_id.is_none());
+}
+
+#[test]
+fn repeated_delivery_directly_to_a_completed_human_assignment_is_rejected() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+    let issue_id = task(&store, None);
+    let human_id = human_assignment(&store, &issue_id);
+    let first = finalize_from_issue(&store, &human_id, false, None, None);
+    let next = store
+        .create_delivery(
+            DEFAULT_WORK_ITEM_PROJECT_ID,
+            &human_id,
+            true,
+            DeliveryCreate {
+                markdown: "Another delivery".to_owned(),
+                chat: None,
+                source_task: None,
+            },
+        )
+        .unwrap();
+
+    assert!(store
+        .finalize_delivery(&human_id, &next.id, DeliveryFinalize::default())
+        .is_err());
+    assert_eq!(
+        store.get_delivery(&human_id, &next.id).unwrap().status,
+        "draft"
+    );
+    assert_eq!(
+        store
+            .get_item(&human_id, "task")
+            .unwrap()
+            .current_delivery_id
+            .as_deref(),
+        Some(first.id.as_str())
+    );
+}
+
+#[test]
 fn delivery_on_human_assignment_needs_no_source_binding() {
     let directory = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();

@@ -612,23 +612,29 @@ export function WorkspaceCollaborationGroupsConfiguration({
   // Persist display names with the roster so a manager can resolve "@name"
   // references in the group rules instead of seeing bare member ids. People
   // keep their real user name; the picker label ("我") is presentation only.
-  const persistedMemberName = (kind: "human" | "agent", id: string): string => {
+  const persistedMemberName = (
+    kind: "human" | "agent",
+    id: string,
+    storedName = "",
+  ): string => {
     if (kind === "human") {
-      const person = members.find((member) => String(member.user_id) === id);
-      if (person?.user_name) return person.user_name;
+      return (
+        members.find((member) => String(member.user_id) === id)?.user_name ||
+        storedName
+      );
     }
     const candidate = candidates.find(
       (entry) => entry.kind === kind && entry.id === id,
     );
-    return candidate && candidate.name !== "我" && candidate.name !== "Me"
-      ? candidate.name
-      : "";
+    return candidate?.name || storedName;
   };
-  const withCandidateName = <T extends { kind: "human" | "agent"; id: string }>(
+  const withCandidateName = <
+    T extends { kind: "human" | "agent"; id: string; name?: string },
+  >(
     member: T,
   ): T & { name: string } => ({
     ...member,
-    name: persistedMemberName(member.kind, member.id),
+    name: persistedMemberName(member.kind, member.id, member.name),
   });
   const selectedGroup =
     groups.find((group) => group.id === selectedGroupId) ?? null;
@@ -965,6 +971,10 @@ export function WorkspaceCollaborationGroupsConfiguration({
                     name: persistedMemberName(
                       leaderKind as "human" | "agent",
                       leaderId,
+                      selectedGroup.leader.kind === leaderKind &&
+                        selectedGroup.leader.id === leaderId
+                        ? selectedGroup.leader.name
+                        : undefined,
                     ),
                     responsibility: "",
                   },

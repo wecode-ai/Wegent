@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 
+import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   assistantMessage,
@@ -822,6 +823,19 @@ export function createDesktopScenario({
       )
       assert.equal(binding.assignment_id, HUMAN_ASSIGNMENT_ID)
       assert.equal(binding.task_title, HUMAN_TASK)
+      const runtimeTask = await requestExecutor(
+        control,
+        'runtime.tasks.get',
+        { taskId: binding.task_id },
+        uiTimeoutMs
+      )
+      assert.equal(runtimeTask.task.title, HUMAN_TASK)
+      assert.equal(runtimeTask.task.runtimeHandle.origin.type, 'issue_dispatch')
+      assert.equal(
+        runtimeTask.task.runtimeHandle.origin.humanAssignmentId,
+        humanAssignment.payload.humanAssignmentId
+      )
+      assert.equal(runtimeTask.task.runtimeHandle.origin.assignmentId, HUMAN_ASSIGNMENT_ID)
       await waitForPromise(
         humanCompleted,
         modelResponseTimeoutMs,

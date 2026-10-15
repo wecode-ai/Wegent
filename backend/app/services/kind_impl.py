@@ -7,6 +7,7 @@ Implementation of specific Kind services
 """
 
 import logging
+from copy import deepcopy
 from typing import Any, Dict
 
 from sqlalchemy.orm import Session
@@ -147,25 +148,18 @@ class ModelKindService(KindBaseService):
         return resource_data
 
     def _format_resource(self, resource: Kind) -> Dict[str, Any]:
-        """Format Model resource for API response with decrypted API key"""
-        # Get the stored resource data
-        result = super()._format_resource(resource)
-
-        # Decrypt API key for display
+        """Format credentials for display without modifying the stored resource."""
+        result = deepcopy(super()._format_resource(resource))
+        spec = result.get("spec")
+        model_config = spec.get("modelConfig") if isinstance(spec, dict) else None
+        env = model_config.get("env") if isinstance(model_config, dict) else None
+        if not isinstance(env, dict) or not env.get("api_key"):
+            return result
         try:
-            if "spec" in result and "modelConfig" in result["spec"]:
-                model_config = result["spec"]["modelConfig"]
-                if "env" in model_config and "api_key" in model_config["env"]:
-                    api_key = model_config["env"]["api_key"]
-                    if api_key:
-                        result["spec"]["modelConfig"]["env"]["api_key"] = (
-                            decrypt_api_key(api_key)
-                        )
+            env["api_key"] = decrypt_api_key(env["api_key"])
         except (ValueError, KeyError, CryptoConfigurationError) as e:
-            # A malformed credential store must not fail the whole Model list;
-            # the field keeps its stored value and the warning names the cause.
             logger.warning("Failed to decrypt API key: %r", e)
-
+            env["api_key"] = "***"
         return result
 
 

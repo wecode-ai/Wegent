@@ -105,7 +105,7 @@ impl LocalTaskStore {
                         &transaction,
                         &manager.loop_item_id,
                         &manager.cloud_project_id,
-                        assignee_id,
+                        &agent.id,
                         &agent,
                         manager.task_priority.as_deref().unwrap_or("none"),
                         payload,
@@ -115,7 +115,7 @@ impl LocalTaskStore {
                         "assignment_id": assignment_id,
                         "assignee_type": "agent",
                         "task_title": title,
-                        "agent_id": assignee_id,
+                        "agent_id": agent.id,
                         "agent_name": agent_display_name(&agent),
                         "workflow_stage_id": assignment.get("workflow_stage_id"),
                         "model_id": selected_model_id,
@@ -255,9 +255,11 @@ impl LocalTaskStore {
                    AND assignee_agent_id IN (SELECT agent_id FROM loop_item_executions
                      WHERE loop_item_id = ?2
                        AND json_extract(execution_payload, '$.coordination_round_id') = ?3)
-                   AND NOT EXISTS(SELECT 1 FROM loop_item_executions
+                   AND NOT EXISTS(SELECT 1 FROM loop_item_executions attempt
                      WHERE loop_item_id = ?2 AND status != 'completed'
-                       AND json_extract(execution_payload, '$.coordination_round_id') = ?3)
+                       AND json_extract(execution_payload, '$.coordination_round_id') = ?3
+                       AND NOT EXISTS(SELECT 1 FROM loop_item_executions retry
+                         WHERE retry.previous_execution_id = attempt.id))
                    AND NOT EXISTS(SELECT 1 FROM loop_item_executions
                      WHERE loop_item_id = ?2 AND status IN ('queued','pending_approval','claimed','running','cancel_requested'))",
                 params![now(), item_id, round_id],

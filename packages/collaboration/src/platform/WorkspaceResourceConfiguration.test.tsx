@@ -457,6 +457,75 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     });
   });
 
+  it("preserves stored leader and member names when candidates are unavailable", async () => {
+    const savedGroup: CollaborationGroup = {
+      ...group,
+      leader: { ...group.leader, name: "Stored leader" },
+      members: [
+        { ...group.members[0], name: "Stored leader" },
+        { ...group.members[1], name: "Stored reviewer" },
+        {
+          kind: "human",
+          id: "7",
+          name: "Stored human",
+          responsibility: "Review",
+        },
+      ],
+    };
+    await act(async () =>
+      root.render(
+        <WorkspaceCollaborationGroupsConfiguration
+          groups={[savedGroup]}
+          members={[]}
+          agents={[]}
+          locale="zh-CN"
+          commands={commands}
+          canManage
+        />,
+      ),
+    );
+    await click(byTestId("collaboration-group-manage-group-1"));
+    await click(byTestId("collaboration-group-detail-save"));
+
+    expect(commands.updateCollaborationGroup).toHaveBeenCalledWith(
+      group.id,
+      expect.objectContaining({
+        leader: expect.objectContaining({ name: "Stored leader" }),
+        members: expect.arrayContaining([
+          expect.objectContaining({ id: "2", name: "Stored reviewer" }),
+          expect.objectContaining({ id: "7", name: "Stored human" }),
+        ]),
+      }),
+    );
+  });
+
+  it.each(["Me", "我"])("preserves an agent's actual name %s", async (name) => {
+    await act(async () =>
+      root.render(
+        <WorkspaceCollaborationGroupsConfiguration
+          groups={[group]}
+          members={[]}
+          agents={[{ ...codexAgent, name }, claudeAgent]}
+          locale="zh-CN"
+          commands={commands}
+          canManage
+        />,
+      ),
+    );
+    await click(byTestId("collaboration-group-manage-group-1"));
+    await click(byTestId("collaboration-group-detail-save"));
+
+    expect(commands.updateCollaborationGroup).toHaveBeenCalledWith(
+      group.id,
+      expect.objectContaining({
+        leader: expect.objectContaining({ name }),
+        members: expect.arrayContaining([
+          expect.objectContaining({ id: "1", name }),
+        ]),
+      }),
+    );
+  });
+
   it("edits member delegation rules, workflow stages, and environment requirements", async () => {
     await act(async () => {
       root.render(

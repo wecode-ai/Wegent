@@ -8,14 +8,20 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use axum::{extract::State, http::StatusCode, routing::post, Json, Router};
 
 async fn assignment_report_backend() -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
+    assignment_report_backend_with_status(StatusCode::SERVICE_UNAVAILABLE).await
+}
+
+async fn assignment_report_backend_with_status(
+    first_status: StatusCode,
+) -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
     let reports = Arc::new(AtomicUsize::new(0));
     let router = Router::new()
         .route(
             "/api/v1/cloud-projects/7/executions/assignment-status",
             post(
-                |State(reports): State<Arc<AtomicUsize>>, Json(_payload): Json<Value>| async move {
+                move |State(reports): State<Arc<AtomicUsize>>, Json(_payload): Json<Value>| async move {
                     if reports.fetch_add(1, Ordering::SeqCst) == 0 {
-                        StatusCode::SERVICE_UNAVAILABLE
+                        first_status
                     } else {
                         StatusCode::OK
                     }
@@ -181,6 +187,80 @@ async fn unstarted_member_terminal_failure_is_retried_until_acknowledged() {
     assert_eq!(reports.load(Ordering::SeqCst), 2);
     assert_eq!(outcomes[0]["status"], "failed");
     server.abort();
+}
+
+#[tokio::test]
+async fn rejected_terminal_report_stops_without_finishing_or_restarting_the_round() {
+    let root = tempfile::tempdir().unwrap();
+    let (backend_url, reports, server) =
+        assignment_report_backend_with_status(StatusCode::NOT_FOUND).await;
+    let handler = round_handler(root.path(), &backend_url);
+    let mut command = command();
+    command.human_assignment_ids.clear();
+    handler.store.upsert_task(source_link());
+    store_completed_member(&handler, &command);
+    handler.persist_cloud_collaboration_round(&command).unwrap();
+
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        handler.monitor_cloud_collaboration_round(command.clone()),
+    )
+    .await
+    .unwrap();
+
+    let failed = handler
+        .local_task_link(&command.manager_runtime_task_id)
+        .unwrap();
+    assert!(
+        failed.runtime_handle[CLOUD_COLLABORATION_ROUND_KEY]["report_error"]
+            .as_str()
+            .unwrap()
+            .contains("404")
+    );
+    assert!(handler
+        .local_task_link(&fresh_cloud_manager_task_id(&command))
+        .is_none());
+    assert_eq!(reports.load(Ordering::SeqCst), 1);
+
+    let mut restarted = round_handler(root.path(), &backend_url);
+    restarted.store = RuntimeWorkStore::new(root.path().join("index.json"));
+    restarted.resume_cloud_collaboration_rounds();
+    sleep(CLOUD_COLLABORATION_POLL_INTERVAL + Duration::from_millis(50)).await;
+    assert_eq!(reports.load(Ordering::SeqCst), 1);
+    server.abort();
+}
+
+#[tokio::test]
+async fn terminal_report_classifies_http_rejections_and_recoverable_failures() {
+    for (status, retryable) in [
+        (StatusCode::UNAUTHORIZED, false),
+        (StatusCode::FORBIDDEN, false),
+        (StatusCode::NOT_FOUND, false),
+        (StatusCode::UNPROCESSABLE_ENTITY, false),
+        (StatusCode::REQUEST_TIMEOUT, true),
+        (StatusCode::TOO_MANY_REQUESTS, true),
+        (StatusCode::SERVICE_UNAVAILABLE, true),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let (backend_url, _, server) = assignment_report_backend_with_status(status).await;
+        let handler = round_handler(root.path(), &backend_url);
+        let command = command();
+
+        let error = handler
+            .report_cloud_collaboration_assignment(
+                &command,
+                &command.assignments[0],
+                "member-1",
+                "completed",
+                "result",
+                "",
+            )
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.retryable, retryable, "{status}");
+        server.abort();
+    }
 }
 
 #[tokio::test]

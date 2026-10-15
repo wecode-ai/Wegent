@@ -401,6 +401,10 @@ export function TaskActivityView({
     ]
   )
   const [messages, setMessages] = useState<ProjectChatMessage[]>([])
+  const threadMessages = useMemo(
+    () => messages.filter(message => message.taskId === task.id),
+    [messages, task]
+  )
   const requestedTaskBindingAddresses = useRef(new Set<string>())
   const [chatCurrentUserId, setChatCurrentUserId] = useState<string | null>(null)
   const [newCommentDraft, setNewCommentDraft] = useState('')
@@ -415,14 +419,18 @@ export function TaskActivityView({
   // A reply on a thread with no execution to continue only lands as a comment.
   // When a manager assigned this member a human work item, the reply also opens
   // that work item's task composer.
+  // Local spaces expose both the signed-in identity and the device identity.
+  const humanUserIds =
+    projectLocation === 'local' || project.project_store === 'local'
+      ? [currentUserId, chatCurrentUserId].filter((id): id is string | number => id != null)
+      : (chatCurrentUserId ?? currentUserId)
+  const currentHumanDispatch = humanDispatchAssignment(threadMessages, humanUserIds)
   function humanDispatchForCard(card: TaskReplyCard) {
-    // Local spaces expose the signed-in identity while the local chat store
-    // retains the device identity. Both identify this machine's human member.
-    const userIds =
-      projectLocation === 'local' || project.project_store === 'local'
-        ? [currentUserId, chatCurrentUserId].filter((id): id is string | number => id != null)
-        : (chatCurrentUserId ?? currentUserId)
-    return humanDispatchAssignment([card.root, ...card.replies], userIds)
+    if (!currentHumanDispatch) return null
+    const assignment = humanDispatchAssignment([card.root, ...card.replies], humanUserIds)
+    return assignment?.humanAssignmentId === currentHumanDispatch.humanAssignmentId
+      ? assignment
+      : null
   }
   function cardReplyLabel(card: TaskReplyCard) {
     if (humanDispatchForCard(card)) return t('workbench.task_activity_reply_start_new_task')
@@ -462,10 +470,6 @@ export function TaskActivityView({
   const [error, setError] = useState<string | null>(null)
   const executionBinding = useActivityExecutionBinding(messages, executionDetail?.messageId)
   const compact = rail || linear
-  const threadMessages = useMemo(
-    () => messages.filter(message => message.taskId === task.id),
-    [messages, task]
-  )
   const markActivityRead = useCallback(
     async (sequence: number) => {
       if (!projectDeliveryApi) return

@@ -3273,6 +3273,8 @@ class LoopItemService:
                 )
                 if _execution_needs_runtime_cancellation(cancelled):
                     cancelled_runs.append(cancelled)
+        if item.status == "completed":
+            return cancelled_runs
         if target_type == "agent" and agent is not None:
             config = bot_config(agent)
             loop_item_execution_service.create_for_assignment(

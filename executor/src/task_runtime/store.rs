@@ -6632,15 +6632,29 @@ mod tests {
 
     #[test]
     fn collaboration_group_round_runs_members_through_executor_then_restarts_manager() {
-        assert_collaboration_round_completion(true);
+        assert_collaboration_round_completion(true, false, false);
     }
 
     #[test]
     fn agent_only_collaboration_round_keeps_owner_without_manager_summary() {
-        assert_collaboration_round_completion(false);
+        assert_collaboration_round_completion(false, false, false);
     }
 
-    fn assert_collaboration_round_completion(has_human: bool) {
+    #[test]
+    fn agent_only_collaboration_round_accepts_successful_member_retry() {
+        assert_collaboration_round_completion(false, true, false);
+    }
+
+    #[test]
+    fn collaboration_round_uses_canonical_robot_identity_for_team_alias() {
+        assert_collaboration_round_completion(false, false, true);
+    }
+
+    fn assert_collaboration_round_completion(
+        has_human: bool,
+        retry_member: bool,
+        team_alias: bool,
+    ) {
         let (directory, store, project) = chat_agent_store();
         let _ = directory;
         let leader = make_local_agent(&store, DEFAULT_WORK_ITEM_PROJECT_ID, "auto");
@@ -6680,6 +6694,15 @@ mod tests {
                 },
             )
             .unwrap();
+        let member_assignment_id = if team_alias {
+            store.connection().unwrap().execute(
+                "UPDATE loop_items SET metadata = json_set(metadata, '$.wegent_team_id', 42) WHERE id = ?1",
+                [&member.id],
+            ).unwrap();
+            "42".to_owned()
+        } else {
+            member.id.clone()
+        };
         let reviewer = store
             .create_chat_agent(
                 DEFAULT_WORK_ITEM_PROJECT_ID,
@@ -6734,7 +6757,7 @@ mod tests {
                         },
                         "members": [{
                             "kind": "agent",
-                            "id": member.id,
+                            "id": member_assignment_id,
                             "responsibility": "Collect CPU evidence."
                         }, {
                             "kind": "agent",
@@ -6839,7 +6862,7 @@ mod tests {
                                 }
                             }
                         }, {
-                            "memberIds": [member.id],
+                            "memberIds": [member.id, member_assignment_id],
                             "runtimePayload": {
                                 "taskId": "member-template",
                                 "runtime": "codex",
@@ -6962,7 +6985,7 @@ mod tests {
                 "title": "采集运行证据",
                 "instructions": "Collect verifiable evidence.",
                 "assignee_type": "agent",
-                "assignee_id": member.id,
+                "assignee_id": member_assignment_id,
                 "workflow_stage_id": "diagnosis",
             }, {
                 "assignment_id": "review-agent",
@@ -7116,8 +7139,35 @@ mod tests {
         );
         assert_eq!(second_member_execution.execution_scope, "");
 
+        let completed_member_id = if retry_member {
+            accept_and_start(&store, &first_member_execution);
+            let retry = store
+                .fail_execution(first_member_execution.id, "Runtime interrupted", true)
+                .unwrap()
+                .unwrap();
+            assert_eq!(retry.previous_execution_id, Some(first_member_execution.id));
+            let claimed_retry = store
+                .claim_next_local_execution(&LocalExecutionClaim {
+                    execution_device_id: Some("local-device".to_owned()),
+                    runtime_instance_id: "runtime-1".to_owned(),
+                    device_capacity: 2,
+                    runtime_active: 1,
+                    runtime_active_task_ids: vec![second_member_execution
+                        .runtime_task_id
+                        .clone()
+                        .unwrap()],
+                    lease_seconds: 300,
+                })
+                .unwrap()
+                .expect("retry must be claimable");
+            assert_eq!(claimed_retry.id, retry.id);
+            accept_and_start(&store, &claimed_retry);
+            retry.id
+        } else {
+            first_member_execution.id
+        };
         store
-            .complete_execution(first_member_execution.id, Some("Evidence collected."))
+            .complete_execution(completed_member_id, Some("Evidence collected."))
             .unwrap();
         assert!(store
             .claim_next_local_execution(&LocalExecutionClaim {

@@ -15,6 +15,21 @@ const CLOUD_COLLABORATION_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const CLOUD_COLLABORATION_LAUNCH_RETRY_INTERVAL: Duration = Duration::from_secs(1);
 const CLOUD_COLLABORATION_LAUNCH_MAX_ATTEMPTS: u32 = 5;
 
+#[derive(Debug)]
+struct CollaborationReportError {
+    message: String,
+    retryable: bool,
+}
+
+impl From<String> for CollaborationReportError {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            retryable: true,
+        }
+    }
+}
+
 impl RuntimeWorkRpcHandler {
     pub(super) fn register_cloud_collaboration_dispatcher(&self) {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
@@ -43,6 +58,13 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) fn resume_cloud_collaboration_rounds(&self) {
         for link in self.local_task_links(false) {
+            if link
+                .runtime_handle
+                .get(CLOUD_COLLABORATION_ROUND_KEY)
+                .is_some_and(|round| round.get("report_error").is_some())
+            {
+                continue;
+            }
             let Some(command) = link
                 .runtime_handle
                 .get(CLOUD_COLLABORATION_ROUND_KEY)
@@ -393,10 +415,30 @@ impl RuntimeWorkRpcHandler {
                         )
                         .await
                     {
+                        if !error.retryable {
+                            self.store
+                                .update_task(&command.manager_runtime_task_id, |link| {
+                                    if let Some(round) = link
+                                        .runtime_handle
+                                        .get_mut(CLOUD_COLLABORATION_ROUND_KEY)
+                                        .and_then(Value::as_object_mut)
+                                    {
+                                        round.insert(
+                                            "report_error".to_owned(),
+                                            json!(error.message),
+                                        );
+                                    }
+                                    link.runtime_handle["lastError"] = json!(error.message);
+                                });
+                            return Err(error.message);
+                        }
                         all_reported = false;
                         log_executor_event(
                             "cloud collaboration terminal report failed",
-                            &[("round_id", command.round_id.clone()), ("error", error)],
+                            &[
+                                ("round_id", command.round_id.clone()),
+                                ("error", error.message),
+                            ],
                         );
                     }
                 }
@@ -432,7 +474,7 @@ impl RuntimeWorkRpcHandler {
         status: &str,
         result: &str,
         error: &str,
-    ) -> Result<(), String> {
+    ) -> Result<(), CollaborationReportError> {
         let connection = self
             .backend_connection_snapshot()
             .map_err(|value| value.message)?
@@ -466,9 +508,13 @@ impl RuntimeWorkRpcHandler {
             return Ok(());
         }
         let body = response.text().await.unwrap_or_default();
-        Err(format!(
-            "Collaboration assignment status report failed ({response_status}): {body}"
-        ))
+        Err(CollaborationReportError {
+            message: format!(
+                "Collaboration assignment status report failed ({response_status}): {body}"
+            ),
+            retryable: !response_status.is_client_error()
+                || matches!(response_status.as_u16(), 408 | 429),
+        })
     }
 
     async fn report_cloud_collaboration_assignment_best_effort(
@@ -496,7 +542,7 @@ impl RuntimeWorkRpcHandler {
                 &[
                     ("round_id", command.round_id.clone()),
                     ("status", status.to_owned()),
-                    ("error", report_error),
+                    ("error", report_error.message),
                 ],
             );
         }

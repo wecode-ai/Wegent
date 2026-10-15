@@ -5460,24 +5460,24 @@ export function CloudTodoWorkspace({
                       )
                       return
                     }
+                    if (dispatch) {
+                      createIssueAssignmentTask(selectedItemProject, selectedItem, dispatch, false)
+                      return
+                    }
                     setSelectedTaskBinding(null)
                     setBackgroundTaskItemId(null)
-                    if (!selectedItemProject) return
                     openTaskComposer({
                       workItemId: selectedItem.id,
-                      dispatch,
-                      initialInput: dispatch
-                        ? issueDispatchPersonalTaskInput(dispatch)
-                        : selectedItem.human_work
-                          ? [
-                              workItemComposerReference(selectedItemProject, selectedItem),
-                              selectedItem.title,
-                              selectedItem.description,
-                              t('todo.human_work_ai_prompt'),
-                            ]
-                              .filter(Boolean)
-                              .join('\n\n')
-                          : workItemComposerReference(selectedItemProject, selectedItem),
+                      initialInput: selectedItem.human_work
+                        ? [
+                            workItemComposerReference(selectedItemProject, selectedItem),
+                            selectedItem.title,
+                            selectedItem.description,
+                            t('todo.human_work_ai_prompt'),
+                          ]
+                            .filter(Boolean)
+                            .join('\n\n')
+                        : workItemComposerReference(selectedItemProject, selectedItem),
                       backgroundAfterSend: false,
                     })
                   }}

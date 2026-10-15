@@ -27,7 +27,7 @@ from app.services.model_capabilities import normalize_model_capabilities
 from app.services.runtime_codex_model import get_enabled_codex_runtime_model_spec
 from shared.codex_model_catalog import codex_catalog_model_id_from_config
 from shared.models.execution import ExecutionRequest
-from shared.utils.crypto import decrypt_api_key
+from shared.utils.crypto import CryptoConfigurationError, decrypt_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -1105,11 +1105,17 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     # Decrypt API key if encrypted (only if it doesn't look like a placeholder)
+    if api_key == "***":
+        raise CryptoConfigurationError(
+            "Model API key is masked and unavailable for execution"
+        )
     if api_key and "${" not in api_key:
         try:
             decrypted_key = decrypt_api_key(api_key)
             logger.info("[model_resolver] _extract_model_config: decrypted api key")
             api_key = decrypted_key
+        except CryptoConfigurationError:
+            raise
         except Exception:
             logger.warning("Failed to decrypt API key; using configured value")
 

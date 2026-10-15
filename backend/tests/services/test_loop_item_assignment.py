@@ -890,6 +890,37 @@ def test_create_robot_assignee_starts_in_progress(
     assert _active_execution(test_db, item) is not None
 
 
+@pytest.mark.parametrize("target_type", ["agent", "team"])
+def test_create_completed_issue_does_not_start_execution(
+    test_db: Session, test_user: User, target_type: str
+) -> None:
+    project = _make_project(test_db, test_user)
+    if target_type == "agent":
+        bot = _make_bot(test_db, project, test_user)
+        assignment = {"assignee_agent_id": bot.id}
+    else:
+        team = create_runnable_wegent_team(
+            test_db, user_id=test_user.id, name_prefix="completed"
+        )
+        assignment = {"assignee_team_id": team.id}
+
+    item = loop_item_service.create(
+        test_db,
+        project.id,
+        test_user.id,
+        LoopItemCreate(title="Already done", status="completed", **assignment),
+    )
+
+    assert item.status == "completed"
+    assert item.completed_at is not None
+    assert (
+        test_db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == item.id)
+        .count()
+        == 0
+    )
+
+
 def test_refresh_execution_configuration_starts_run_without_snapshot(
     test_db: Session, test_user: User
 ) -> None:

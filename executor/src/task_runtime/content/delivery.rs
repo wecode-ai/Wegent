@@ -367,7 +367,7 @@ impl LocalTaskStore {
         // finalized: the work item itself, the assignment recorded on the
         // personal task binding, or - for a personal task started without a
         // recorded dispatch - the single open human assignment of the Issue.
-        let human_assignment_item: Option<String> = if is_human_collaboration_assignment {
+        let candidate_assignment: Option<String> = if is_human_collaboration_assignment {
             Some(item_id.to_owned())
         } else if let Some(human_assignment_id) = binding_human_assignment_id {
             Some(human_assignment_id)
@@ -379,6 +379,26 @@ impl LocalTaskStore {
         } else {
             None
         };
+        let human_assignment_item = candidate_assignment
+            .as_deref()
+            .map(|assignment_id| {
+                transaction.query_row(
+                    "SELECT id FROM loop_items
+                     WHERE id = ?1 AND resource_type = 'task' AND deleted_at IS NULL
+                       AND json_extract(metadata, '$.collaboration_assignment.assignee_type') = 'human'
+                       AND COALESCE(status, '') != 'completed' AND current_delivery_id IS NULL
+                       AND (id = ?2 OR parent_id = ?2)",
+                    params![assignment_id, item_id],
+                    |row| row.get::<_, String>(0),
+                ).optional()
+            })
+            .transpose()?
+            .flatten();
+        if is_human_collaboration_assignment && human_assignment_item.is_none() {
+            return Err(TaskRuntimeError::Invalid(
+                "human assignment is already completed".to_owned(),
+            ));
+        }
         let mut delivery_metadata =
             serde_json::from_str::<serde_json::Value>(&delivery_metadata)
                 .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?;
@@ -435,27 +455,34 @@ impl LocalTaskStore {
                  WHERE id = ?4",
                 params![delivery_id, metadata.to_string(), timestamp, item_id],
             )?;
-        } else {
+        } else if !is_human_collaboration_assignment {
             transaction.execute(
                 "UPDATE loop_items SET current_delivery_id = ?1, updated_at = ?2 WHERE id = ?3",
                 params![delivery_id, timestamp, item_id],
             )?;
         }
-        if let Some(human_assignment_item) = human_assignment_item.as_deref() {
-            transaction.execute(
-                "UPDATE loop_items
+        let settled_assignment =
+            if let Some(human_assignment_item) = human_assignment_item.as_deref() {
+                let changed = transaction.execute(
+                    "UPDATE loop_items
                  SET current_delivery_id = ?1, status = 'completed',
                      completed_at = ?2,
                      metadata = json_set(metadata, '$.is_unread', json('true')),
                      version = version + 1, updated_at = ?2
-                 WHERE id = ?3",
-                params![delivery_id, timestamp, human_assignment_item],
-            )?;
-        }
+                 WHERE id = ?3 AND resource_type = 'task' AND deleted_at IS NULL
+                   AND json_extract(metadata, '$.collaboration_assignment.assignee_type') = 'human'
+                   AND COALESCE(status, '') != 'completed'
+                   AND (id = ?4 OR parent_id = ?4)",
+                    params![delivery_id, timestamp, human_assignment_item, item_id],
+                )?;
+                (changed > 0).then_some(human_assignment_item.to_owned())
+            } else {
+                None
+            };
         transaction.commit()?;
         drop(connection);
         let delivery = self.get_delivery(item_id, delivery_id)?;
-        if let Some(human_assignment_item) = human_assignment_item {
+        if let Some(human_assignment_item) = settled_assignment {
             self.resume_manager_for_human_delivery(&human_assignment_item)?;
         }
         Ok(delivery)

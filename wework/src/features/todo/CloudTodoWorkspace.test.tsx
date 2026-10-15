@@ -239,6 +239,7 @@ vi.mock('./AiChatModal', () => ({
       data-task-force-start={String(initialTaskRequest?.forceStart ?? false)}
       data-task-device-id={initialTaskRequest?.deviceId}
       data-task-workspace-path={initialTaskRequest?.workspacePath}
+      data-task-request={JSON.stringify(initialTaskRequest ?? null)}
       data-initial-task-input={initialTaskInput}
       data-initial-local-project-id={initialLocalProjectId ?? undefined}
       data-initial-device-workspace-id={initialDeviceWorkspaceId ?? undefined}
@@ -2682,122 +2683,144 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('cloud-todo-detail')).not.toBeInTheDocument()
   }, 10_000)
 
-  it('opens a new personal task from its human assignment reply instead of the existing task', async () => {
-    const workbenchServices = services()
-    const onOpenRuntimeTask = vi.fn()
-    const assignment = {
-      assignee_type: 'human',
-      human_assignment_id: 'human-assignment-1',
-      human_user_id: 1,
-      assignment_id: 'collect-cpu',
-      task_title: 'Collect CPU evidence',
-      instructions: 'Collect read-only CPU evidence and deliver it.',
-    }
-    const managerMessage = {
-      messageId: 'human-dispatch',
-      clientMessageId: 'human-dispatch',
-      projectId: String(project.id),
-      taskId: item.id,
-      sequenceNumber: 1,
-      rootMessageId: null,
-      replyToMessageId: null,
-      threadRootMessageId: null,
-      sender: { type: 'agent', id: 'manager', name: 'Manager' },
-      type: 'text',
-      content: '',
-      metadata: {
-        dispatch_role: 'manager',
-        activity_type: 'manager_assignment',
-        dispatch_id: 'dispatch-1',
-        coordination_round_id: 'round-1',
-        dispatch_assignments: [assignment],
-      },
-      status: 'completed',
-      runtimeAddress: { deviceId: 'local-device', taskId: 'manager-task' },
-      createdAt: '2026-10-14T09:00:00Z',
-      updatedAt: '2026-10-14T09:00:00Z',
-    }
-    workbenchServices.projectChatClient = {
-      subscribe: vi.fn(async () => ({
-        snapshot: {
-          messages: [managerMessage],
-          currentUserId: '1',
-          latestSequence: 1,
+  it.each(['reply', 'direct'])(
+    'opens a new personal task for the current human assignment via %s',
+    async entry => {
+      const workbenchServices = services()
+      const onOpenRuntimeTask = vi.fn()
+      const assignment = {
+        assignee_type: 'human',
+        human_assignment_id: 'human-assignment-1',
+        human_user_id: 1,
+        assignment_id: 'collect-cpu',
+        task_title: 'Collect CPU evidence',
+        instructions: 'Collect read-only CPU evidence and deliver it.',
+      }
+      const managerMessage = {
+        messageId: 'human-dispatch',
+        clientMessageId: 'human-dispatch',
+        projectId: String(project.id),
+        taskId: item.id,
+        sequenceNumber: 1,
+        rootMessageId: null,
+        replyToMessageId: null,
+        threadRootMessageId: null,
+        sender: { type: 'agent', id: 'manager', name: 'Manager' },
+        type: 'text',
+        content: '',
+        metadata: {
+          dispatch_role: 'manager',
+          activity_type: 'manager_assignment',
+          dispatch_id: 'dispatch-1',
+          coordination_round_id: 'round-1',
+          dispatch_assignments: [assignment],
         },
-        unsubscribe: vi.fn(),
-      })),
-      send: vi.fn(async (input: { clientMessageId: string; text: string }) => ({
-        ...managerMessage,
-        messageId: input.clientMessageId,
-        sequenceNumber: 2,
-        content: input.text,
-        sender: { type: 'user', id: '1', name: 'local' },
-        rootMessageId: managerMessage.messageId,
-        replyToMessageId: managerMessage.messageId,
-        metadata: {},
-        runtimeAddress: null,
-      })),
-      dispose: vi.fn(),
-    } as never
-    const workbench = {
-      services: workbenchServices,
-      state: { devices: [], runtimeWork: null },
-      projectChat: { requestCatalogs: vi.fn() },
-      createProjectRuntimeTask: vi.fn(),
-      cancelRuntimeTask: vi.fn(),
-      sendRuntimePaneMessage: vi.fn(),
-    } as unknown as WorkbenchContextValue
-    render(
-      <RuntimeTaskLifecycleProvider store={new RuntimeTaskLifecycleStore(1)}>
-        <WorkbenchPaneContext.Provider value={workbench as unknown as WorkbenchPaneContextValue}>
-          <WorkbenchContext.Provider value={workbench}>
-            <CloudTodoWorkspace
-              user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
-              localProjects={[]}
-              services={workbenchServices}
-              onOpenRuntimeTask={onOpenRuntimeTask}
-            />
-          </WorkbenchContext.Provider>
-        </WorkbenchPaneContext.Provider>
-      </RuntimeTaskLifecycleProvider>
-    )
-    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await screen.findByTestId('cloud-todo-card-WEG-1')
-    await openIssueFromBoard()
-    await userEvent.click(
-      await screen.findByTestId('cloud-task-activity-reply-toggle-human-dispatch')
-    )
-    await userEvent.type(screen.getByTestId('cloud-task-activity-composer'), 'Received')
-    await userEvent.click(
-      within(screen.getByTestId('cloud-task-activity-composer').closest('form')!).getByRole(
-        'button',
-        { name: '发送消息' }
+        status: 'completed',
+        runtimeAddress: { deviceId: 'local-device', taskId: 'manager-task' },
+        createdAt: '2026-10-14T09:00:00Z',
+        updatedAt: '2026-10-14T09:00:00Z',
+      }
+      workbenchServices.projectChatClient = {
+        subscribe: vi.fn(async () => ({
+          snapshot: {
+            messages: [managerMessage],
+            currentUserId: '1',
+            latestSequence: 1,
+          },
+          unsubscribe: vi.fn(),
+        })),
+        send: vi.fn(async (input: { clientMessageId: string; text: string }) => ({
+          ...managerMessage,
+          messageId: input.clientMessageId,
+          sequenceNumber: 2,
+          content: input.text,
+          sender: { type: 'user', id: '1', name: 'local' },
+          rootMessageId: managerMessage.messageId,
+          replyToMessageId: managerMessage.messageId,
+          metadata: {},
+          runtimeAddress: null,
+        })),
+        dispose: vi.fn(),
+      } as never
+      const workbench = {
+        services: workbenchServices,
+        state: { devices: [], runtimeWork: null },
+        projectChat: { requestCatalogs: vi.fn() },
+        createProjectRuntimeTask: vi.fn(),
+        cancelRuntimeTask: vi.fn(),
+        sendRuntimePaneMessage: vi.fn(),
+      } as unknown as WorkbenchContextValue
+      render(
+        <RuntimeTaskLifecycleProvider store={new RuntimeTaskLifecycleStore(1)}>
+          <WorkbenchPaneContext.Provider value={workbench as unknown as WorkbenchPaneContextValue}>
+            <WorkbenchContext.Provider value={workbench}>
+              <CloudTodoWorkspace
+                user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+                localProjects={[]}
+                services={workbenchServices}
+                onOpenRuntimeTask={onOpenRuntimeTask}
+              />
+            </WorkbenchContext.Provider>
+          </WorkbenchPaneContext.Provider>
+        </RuntimeTaskLifecycleProvider>
       )
-    )
-    const composer = await screen.findByTestId('ai-chat-modal')
-    expect(composer).not.toHaveAttribute('data-runtime-task-id')
-    expect(composer).toHaveAttribute(
-      'data-initial-task-input',
-      expect.stringContaining(assignment.instructions)
-    )
-    expect(composer.getAttribute('data-initial-task-input')).not.toContain('Received')
-    expect(onOpenRuntimeTask).not.toHaveBeenCalled()
-    await userEvent.click(screen.getByTestId('mock-create-runtime-task'))
-    await waitFor(() =>
-      expect(workbenchServices.deliveryApi!.bindTask).toHaveBeenCalledWith(
-        item.id,
-        { deviceId: 'local-device', taskId: 'runtime-created' },
-        assignment.task_title,
-        null,
-        {
-          humanAssignmentId: assignment.human_assignment_id,
-          dispatchId: 'dispatch-1',
-          dispatchRoundId: 'round-1',
-          assignmentId: assignment.assignment_id,
-        }
+      await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+      await screen.findByTestId('cloud-todo-card-WEG-1')
+      await openIssueFromBoard()
+      if (entry === 'reply') {
+        await userEvent.click(
+          await screen.findByTestId('cloud-task-activity-reply-toggle-human-dispatch')
+        )
+        await userEvent.type(screen.getByTestId('cloud-task-activity-composer'), 'Received')
+        await userEvent.click(
+          within(screen.getByTestId('cloud-task-activity-composer').closest('form')!).getByRole(
+            'button',
+            { name: '发送消息' }
+          )
+        )
+      } else {
+        await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
+      }
+      const composer = await screen.findByTestId('ai-chat-modal')
+      expect(JSON.parse(composer.getAttribute('data-task-request')!)).toEqual(
+        expect.objectContaining({
+          title: assignment.task_title,
+          origin: {
+            type: 'issue_dispatch',
+            cloudProjectId: String(project.id),
+            loopItemId: item.id,
+            projectStore: 'backend',
+            humanAssignmentId: assignment.human_assignment_id,
+            dispatchId: 'dispatch-1',
+            roundId: 'round-1',
+            assignmentId: assignment.assignment_id,
+          },
+        })
       )
-    )
-  })
+      expect(composer).not.toHaveAttribute('data-runtime-task-id')
+      expect(composer).toHaveAttribute(
+        'data-initial-task-input',
+        expect.stringContaining(assignment.instructions)
+      )
+      expect(composer.getAttribute('data-initial-task-input')).not.toContain('Received')
+      expect(onOpenRuntimeTask).not.toHaveBeenCalled()
+      await userEvent.click(screen.getByTestId('mock-create-runtime-task'))
+      await waitFor(() =>
+        expect(workbenchServices.deliveryApi!.bindTask).toHaveBeenCalledWith(
+          item.id,
+          { deviceId: 'local-device', taskId: 'runtime-created' },
+          assignment.task_title,
+          null,
+          {
+            humanAssignmentId: assignment.human_assignment_id,
+            dispatchId: 'dispatch-1',
+            dispatchRoundId: 'round-1',
+            assignmentId: assignment.assignment_id,
+          }
+        )
+      )
+    }
+  )
 
   it('opens the existing personal task from an Issue dispatch notification', async () => {
     const workbenchServices = services()
