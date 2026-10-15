@@ -838,6 +838,7 @@
     "rename_empty_error": "Task name cannot be empty",
     "rename_save_error": "Failed to save, please try again",
     "searching": "Searching...",
+    "search_failed": "Search failed. Retry",
     "refreshing": "Syncing...",
     "press_enter_to_search": "Press Enter to search",
     "search_hint": "Enter keywords to search conversations",

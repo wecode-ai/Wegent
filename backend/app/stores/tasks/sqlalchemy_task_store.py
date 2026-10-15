@@ -10,17 +10,26 @@ from time import perf_counter
 from typing import Any, Callable, Literal, Optional, Sequence
 
 from sqlalchemy import and_, exists, func, or_, text, tuple_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Query, Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
-from app.stores.tasks.interfaces import RecentTaskTeamRef, WorkspaceRefLookup
+from app.stores.tasks.interfaces import (
+    ProjectTaskSummary,
+    RecentTaskTeamRef,
+    WorkspaceRefLookup,
+)
+from app.stores.tasks.project_task_summaries import list_project_task_summaries
 from app.stores.tasks.recent_team_refs import (
     list_recent_task_team_refs,
     recent_owner_only_query,
+)
+from app.stores.tasks.title_search import (
+    filter_tasks_by_title,
+    search_owned_task_ids_by_title,
 )
 
 logger = logging.getLogger(__name__)
@@ -1024,8 +1033,23 @@ class SqlAlchemyTaskStore:
         return [row[0] for row in rows], total
 
     def list_owned_task_ids(
-        self, db: Session, *, user_id: int, skip: int, limit: int, extra_limit: int
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        skip: int,
+        limit: int,
+        extra_limit: int,
+        title: Optional[str] = None,
     ) -> tuple[list[int], int]:
+        if title is not None:
+            return search_owned_task_ids_by_title(
+                db,
+                user_id=user_id,
+                title=title,
+                skip=skip,
+                limit=limit + extra_limit,
+            )
         total = _timed_scalar(
             db,
             _OWNED_COUNT_SQL,
@@ -1157,14 +1181,14 @@ class SqlAlchemyTaskStore:
         project_id: int,
         owner_user_id: Optional[int] = None,
         client_origin: Optional[str] = None,
+        title: Optional[str] = None,
     ) -> int:
-        query = db.query(func.count(TaskResource.id)).filter(
-            TaskResource.project_id == project_id,
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
-        )
-        query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
-        if client_origin:
-            query = query.filter(TaskResource.client_origin == client_origin)
+        query = self._filter_active_project_tasks(
+            db.query(func.count(TaskResource.id)),
+            owner_user_id=owner_user_id,
+            client_origin=client_origin,
+            title=title,
+        ).filter(TaskResource.project_id == project_id)
         return int(query.scalar() or 0)
 
     def list_active_project_tasks(
@@ -1174,16 +1198,82 @@ class SqlAlchemyTaskStore:
         project_id: int,
         owner_user_id: Optional[int] = None,
         client_origin: Optional[str] = None,
-    ) -> list[TaskResource]:
-        query = db.query(TaskResource).filter(
-            TaskResource.project_id == project_id,
+        skip: int = 0,
+        limit: Optional[int] = None,
+        before: Optional[tuple[datetime, int]] = None,
+        title: Optional[str] = None,
+        sort_by: Literal["updated_at", "created_at"] = "updated_at",
+    ) -> list[ProjectTaskSummary]:
+        if before is not None and sort_by != "created_at":
+            raise ValueError("Project task cursors require created_at ordering")
+        query = self._filter_active_project_tasks(
+            db.query(TaskResource),
+            owner_user_id=owner_user_id,
+            client_origin=client_origin,
+            title=title,
+        ).filter(TaskResource.project_id == project_id)
+        if before is not None:
+            created_at, task_id = before
+            query = query.filter(
+                or_(
+                    TaskResource.created_at < created_at,
+                    and_(
+                        TaskResource.created_at == created_at,
+                        TaskResource.id < task_id,
+                    ),
+                )
+            )
+        sort_column = (
+            TaskResource.created_at
+            if sort_by == "created_at"
+            else TaskResource.updated_at
+        )
+        query = query.order_by(sort_column.desc(), TaskResource.id.desc())
+        if limit is not None:
+            query = query.limit(limit)
+        if skip:
+            query = query.offset(skip)
+        return list_project_task_summaries(query)
+
+    def count_active_tasks_by_project(
+        self,
+        db: Session,
+        *,
+        project_owners: dict[int, int],
+        client_origin: Optional[str] = None,
+    ) -> dict[int, int]:
+        if not project_owners:
+            return {}
+        query = self._filter_active_project_tasks(
+            db.query(TaskResource.project_id, func.count(TaskResource.id)),
+            client_origin=client_origin,
+        ).filter(
+            tuple_(TaskResource.project_id, TaskResource.user_id).in_(
+                list(project_owners.items())
+            )
+        )
+        return dict(query.group_by(TaskResource.project_id).all())
+
+    def _filter_active_project_tasks(
+        self,
+        query: Query,
+        *,
+        owner_user_id: Optional[int] = None,
+        client_origin: Optional[str] = None,
+        title: Optional[str] = None,
+    ) -> Query:
+        query = query.filter(
             TaskResource.kind == "Task",
             TaskResource.is_active == TaskResource.STATE_ACTIVE,
+            func.coalesce(TaskResource.json["status"]["status"].as_string(), "")
+            != "DELETE",
         )
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
         if client_origin:
             query = query.filter(TaskResource.client_origin == client_origin)
-        return query.order_by(TaskResource.updated_at.desc()).all()
+        if title is not None:
+            query = filter_tasks_by_title(query, title=title, use_name_fallback=True)
+        return query
 
     def get_active_project_task(
         self,
