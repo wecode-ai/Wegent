@@ -30,88 +30,90 @@ def user_preferences_client(test_db: Session, test_user: User) -> TestClient:
     return TestClient(app)
 
 
-@pytest.mark.api
-def test_read_current_user_accepts_runtime_model_selection(
-    user_preferences_client: TestClient,
-    test_db: Session,
-    test_user: User,
-):
-    test_user.preferences = json.dumps(
-        {
-            "wework_new_chat_model_selection": {
-                "modelName": "codex-gpt-5.5",
-                "modelType": "runtime",
-                "options": {"reasoning": "medium"},
-            }
-        }
-    )
-    test_db.add(test_user)
-    test_db.commit()
+# MIGRATION-CANDIDATE: retired Python HTTP test; this API is owned by Rust.
+# @pytest.mark.api
+# def test_read_current_user_accepts_runtime_model_selection(
+#     user_preferences_client: TestClient,
+#     test_db: Session,
+#     test_user: User,
+# ):
+#     test_user.preferences = json.dumps(
+#         {
+#             "wework_new_chat_model_selection": {
+#                 "modelName": "codex-gpt-5.5",
+#                 "modelType": "runtime",
+#                 "options": {"reasoning": "medium"},
+#             }
+#         }
+#     )
+#     test_db.add(test_user)
+#     test_db.commit()
+#
+#     response = user_preferences_client.get("/api/users/me")
+#
+#     assert response.status_code == 200
+#     assert (
+#         response.json()["preferences"]["wework_new_chat_model_selection"]["modelType"]
+#         == "runtime"
+#     )
 
-    response = user_preferences_client.get("/api/users/me")
 
-    assert response.status_code == 200
-    assert (
-        response.json()["preferences"]["wework_new_chat_model_selection"]["modelType"]
-        == "runtime"
-    )
-
-
-@pytest.mark.api
-def test_update_user_preferences_preserves_quick_access(
-    user_preferences_client: TestClient,
-    test_db: Session,
-    test_user: User,
-):
-    response = user_preferences_client.put(
-        "/api/users/me",
-        json={
-            "preferences": {
-                "send_key": "enter",
-                "follow_up_behavior": "guide",
-                "search_key": "cmd_k",
-                "memory_enabled": False,
-                "mcp_provider_keys": None,
-                "default_execution_target": "cloud",
-                "wework_new_chat_model_selection": {
-                    "modelName": "codex-gpt-5.5",
-                    "modelType": "runtime",
-                    "options": {"reasoning": "medium"},
-                },
-                "wework_project_execution_mode": "git_worktree",
-                "wework_project_work_preferences": {
-                    "project:7": {
-                        "executionMode": "git_worktree",
-                        "worktreeBranch": "feature/alpha",
-                    }
-                },
-                "quick_access": {"teams": [188]},
-            }
-        },
-    )
-
-    assert response.status_code == 200
-    assert response.json()["preferences"]["quick_access"]["teams"] == [188]
-    assert response.json()["preferences"]["follow_up_behavior"] == "guide"
-
-    test_db.refresh(test_user)
-    stored_preferences = json.loads(test_user.preferences)
-    assert stored_preferences["quick_access"]["teams"] == [188]
-    assert stored_preferences["follow_up_behavior"] == "guide"
-    assert stored_preferences["wework_new_chat_model_selection"]["options"] == {
-        "reasoning": "medium"
-    }
-    assert stored_preferences["wework_project_execution_mode"] == "git_worktree"
-    assert stored_preferences["wework_project_work_preferences"]["project:7"] == {
-        "executionMode": "git_worktree",
-        "worktreeBranch": "feature/alpha",
-    }
-
-    read_response = user_preferences_client.get("/api/users/me")
-    assert read_response.status_code == 200
-    assert read_response.json()["preferences"]["wework_project_work_preferences"][
-        "project:7"
-    ] == {
-        "executionMode": "git_worktree",
-        "worktreeBranch": "feature/alpha",
-    }
+# MIGRATION-CANDIDATE: retired Python HTTP test; this API is owned by Rust.
+# @pytest.mark.api
+# def test_update_user_preferences_preserves_quick_access(
+#     user_preferences_client: TestClient,
+#     test_db: Session,
+#     test_user: User,
+# ):
+#     response = user_preferences_client.put(
+#         "/api/users/me",
+#         json={
+#             "preferences": {
+#                 "send_key": "enter",
+#                 "follow_up_behavior": "guide",
+#                 "search_key": "cmd_k",
+#                 "memory_enabled": False,
+#                 "mcp_provider_keys": None,
+#                 "default_execution_target": "cloud",
+#                 "wework_new_chat_model_selection": {
+#                     "modelName": "codex-gpt-5.5",
+#                     "modelType": "runtime",
+#                     "options": {"reasoning": "medium"},
+#                 },
+#                 "wework_project_execution_mode": "git_worktree",
+#                 "wework_project_work_preferences": {
+#                     "project:7": {
+#                         "executionMode": "git_worktree",
+#                         "worktreeBranch": "feature/alpha",
+#                     }
+#                 },
+#                 "quick_access": {"teams": [188]},
+#             }
+#         },
+#     )
+#
+#     assert response.status_code == 200
+#     assert response.json()["preferences"]["quick_access"]["teams"] == [188]
+#     assert response.json()["preferences"]["follow_up_behavior"] == "guide"
+#
+#     test_db.refresh(test_user)
+#     stored_preferences = json.loads(test_user.preferences)
+#     assert stored_preferences["quick_access"]["teams"] == [188]
+#     assert stored_preferences["follow_up_behavior"] == "guide"
+#     assert stored_preferences["wework_new_chat_model_selection"]["options"] == {
+#         "reasoning": "medium"
+#     }
+#     assert stored_preferences["wework_project_execution_mode"] == "git_worktree"
+#     assert stored_preferences["wework_project_work_preferences"]["project:7"] == {
+#         "executionMode": "git_worktree",
+#         "worktreeBranch": "feature/alpha",
+#     }
+#
+#     read_response = user_preferences_client.get("/api/users/me")
+#     assert read_response.status_code == 200
+#     assert read_response.json()["preferences"]["wework_project_work_preferences"][
+#         "project:7"
+#     ] == {
+#         "executionMode": "git_worktree",
+#         "worktreeBranch": "feature/alpha",
+#     }
