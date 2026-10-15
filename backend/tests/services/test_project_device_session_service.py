@@ -964,6 +964,41 @@ async def test_remote_device_session_service_uses_observed_client_ip(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_device_session_service_applies_registered_browser_url_policy(
+    monkeypatch,
+):
+    """A distribution policy should receive the resolved URL and logical ID."""
+    from app.services.device import session_service
+
+    _patch_code_server_session(
+        monkeypatch,
+        session_service,
+        device_spec={"deviceType": "remote"},
+        online_info={"socket_id": "socket-123", "client_ip": "10.0.0.24"},
+    )
+    received = {}
+
+    def rewrite(url, device_id, device_type):
+        received.update(url=url, device_id=device_id, device_type=device_type)
+        return url.replace(
+            "http://10.0.0.24:17888", f"https://proxy.example/{device_id}"
+        )
+
+    monkeypatch.setattr(session_service, "_device_session_url_rewriter", rewrite)
+
+    result = await _start_code_server_session(session_service)
+
+    assert result["url"] == (
+        "https://proxy.example/device-abc/s/session-123/?token=short"
+    )
+    assert received == {
+        "url": "http://10.0.0.24:17888/s/session-123/?token=short",
+        "device_id": "device-abc",
+        "device_type": session_service.DeviceType.REMOTE,
+    }
+
+
+@pytest.mark.asyncio
 async def test_remote_device_session_service_falls_back_to_reported_host(monkeypatch):
     """An unusable observed address hands over to the host the device reports."""
     from app.services.device import session_service
