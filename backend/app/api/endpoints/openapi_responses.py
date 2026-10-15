@@ -1742,7 +1742,8 @@ async def _create_streaming_response_unified(
     )
 
 
-@router.get("/{response_id}", response_model=WeworkResponseObject | ResponseObject)
+# MIGRATION-CANDIDATE(api="GET /api/v1/responses/{response_id}"): remove after final confirmation.
+# @router.get("/{response_id}", response_model=WeworkResponseObject | ResponseObject)
 @limiter.limit(settings.RATE_LIMIT_GET_RESPONSE)
 async def get_response(
     request: Request,

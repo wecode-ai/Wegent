@@ -69,7 +69,8 @@ def list_model_names(
     return {"data": data}
 
 
-@router.get("/unified")
+# MIGRATION-CANDIDATE(api="GET /api/models/unified"): remove after final confirmation.
+# @router.get("/unified")
 def list_unified_models(
     shell_type: Optional[str] = Query(
         None, description="Shell type to filter compatible models (Agno, ClaudeCode)"

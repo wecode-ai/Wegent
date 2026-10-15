@@ -608,7 +608,9 @@ where
 }
 
 /// `skill_binding_service.list_user_default_skill_ids`: the accessible
-/// user-default bindings' skill ids, in binding order.
+/// user-default bindings' skill ids. The source collects them into a `set`,
+/// so repeated bindings of the same Skill collapse to one id (the rendered
+/// `kinds.id IN (...)` list carries each id once, in binding order).
 async fn list_user_default_skill_ids<M, R: brz_redis::Redis>(
     kinds: &KindCacheStore<'_, M, R>,
     user_id: i64,
@@ -617,8 +619,11 @@ where
     M: Mysql,
 {
     let mut ids = Vec::new();
+    let mut seen: HashSet<i64> = HashSet::new();
     for binding in list_accessible_bindings(kinds, user_id).await? {
-        if let Some(skill_id) = extract_skill_id(&binding.kinds_json.0) {
+        if let Some(skill_id) = extract_skill_id(&binding.kinds_json.0)
+            && seen.insert(skill_id)
+        {
             ids.push(skill_id);
         }
     }

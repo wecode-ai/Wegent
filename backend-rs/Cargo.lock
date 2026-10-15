@@ -244,9 +244,9 @@ dependencies = [
 
 [[package]]
 name = "brz-ds"
-version = "0.0.5"
+version = "0.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e3ebae5a9350cd1790d1289e15c00835080317d8bc81125e976684bef62431b"
+checksum = "35d3c5e94c046c4d6e243fc1819b7cbbeacee1ff8cd070cca0d52ab494e8bb4b"
 dependencies = [
  "crossbeam-utils",
  "mimalloc",
@@ -255,9 +255,9 @@ dependencies = [
 
 [[package]]
 name = "brz-http"
-version = "0.0.9"
+version = "0.0.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69d3bd323e9ee445bee6872b05881b664433d7d43c5eadf8276a1159857ef1d3"
+checksum = "c3c97056032cca8900c00186b68c50579c35ef0dc8c89b42402140e83de2c2f5"
 dependencies = [
  "brz-metrics",
  "bytes",
@@ -269,18 +269,18 @@ dependencies = [
 
 [[package]]
 name = "brz-http-cors"
-version = "0.0.4"
+version = "0.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3473a1c9177cdf0c15de4f1f621d4f39dbee3bd46c2a5af169e208d99bbf39fc"
+checksum = "767d02caaa1ae4e2752ff643242d9f483ee262fec204ce0b4035d695a945ff08"
 dependencies = [
  "http",
 ]
 
 [[package]]
 name = "brz-http-gateway"
-version = "0.2.5"
+version = "0.2.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8ab636235235db6cf0778890f680ab7f9f24dc8995f272ee5b860b58d48251f"
+checksum = "db9f30ecb11b1bd19b785da92e737b1e0928314bc58722d36d51c7428b8e2e65"
 dependencies = [
  "brz-http-cors",
  "brz-http-router",
@@ -298,9 +298,9 @@ dependencies = [
 
 [[package]]
 name = "brz-http-router"
-version = "0.1.2"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5c6ecd0c1e45eff33195af14ee7d599ab4ec9c37cd18ed458c0029cfaf6e49c"
+checksum = "7f90e223e513f83cc61dd6f41832e7ff5c0e595e5ac4216090b0557ad40b3d90"
 dependencies = [
  "http",
  "percent-encoding",
@@ -309,9 +309,9 @@ dependencies = [
 
 [[package]]
 name = "brz-http-server"
-version = "0.0.28"
+version = "0.0.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "436d7377f5cc5126eee4c3c1fa267c66584505bc9aac5ad6881f89de16637453"
+checksum = "0578d526d5bb4518dc10b275661e8fe0b8b044a0ce4029e8244c64e9aec9eac2"
 dependencies = [
  "brz-ds",
  "brz-http-cors",
@@ -339,9 +339,9 @@ dependencies = [
 
 [[package]]
 name = "brz-http-server-macros"
-version = "0.0.28"
+version = "0.0.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9cf321d29b82aa2ccd1849072bbe6332bdb71493b1b0f62e2891bb6b54a23e9"
+checksum = "dbbf7ca65c6a94960d72a7e1a50e0a272e529db25952a1e1817b3b1d1f3ab268"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -351,9 +351,9 @@ dependencies = [
 
 [[package]]
 name = "brz-io"
-version = "0.0.6"
+version = "0.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ce95cb60641fdf3e8884cba56854e6a6eb9db355dc0c7837ad12b94086dbd43"
+checksum = "e49224e97f9e3095892330a671af79b2210eaf705a091873f381dfbef2f2c0a9"
 dependencies = [
  "brz-ds",
  "elsa",
@@ -362,9 +362,9 @@ dependencies = [
 
 [[package]]
 name = "brz-json"
-version = "0.0.9"
+version = "0.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "536160f5a05879db5a4caca9b4cae8c35a90383b620c15c09df5fe6ba44b21ef"
+checksum = "f08c252822a656f62ceb8e730eafb15ea76d2cac1e4dbae163c33614806e7612"
 dependencies = [
  "brz-io",
  "brz-json-macros",
@@ -375,9 +375,9 @@ dependencies = [
 
 [[package]]
 name = "brz-json-macros"
-version = "0.0.9"
+version = "0.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48ccb6facb728c119ab428910bae4e0f789259cffe4577ac999d9d75e6b67dc4"
+checksum = "67c33161a31f0c95295c2cef023172ce49dc93c1561cbda3aeddffdb797367b5"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -387,9 +387,9 @@ dependencies = [
 
 [[package]]
 name = "brz-logs"
-version = "0.0.12"
+version = "0.0.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5b2ece3db1777d8d826a1a9f5a1b3f4c1b73599e03b95b1c695c55849cc9975"
+checksum = "14f328b5d4cef26fd6b4fb9fd19ed124af1bb9902165c8aeec0a19661d1f6bd6"
 dependencies = [
  "brz-ds",
  "brz-metrics",
@@ -401,21 +401,20 @@ dependencies = [
 
 [[package]]
 name = "brz-metrics"
-version = "0.0.8"
+version = "0.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b24ea1df27696520fb70aff4ef3e053dc1e0da90344b3954c79debd601de85b"
+checksum = "2387b92c4ba623df7283bff20bcf0b8e2b4242683ab820fb5af6b39994f39125"
 dependencies = [
  "ahash",
  "arc-swap",
- "chrono",
- "serde_json",
+ "tokio",
 ]
 
 [[package]]
 name = "brz-mysql"
-version = "0.0.14"
+version = "0.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b04cf14676e08af7f51ba5acc612922edcdf8b1aa25bf48c2176a65192b4547"
+checksum = "a0dd7bd3ee5858dfeddb894ea62ebedc42ed66dfed42320fd060b92841948a66"
 dependencies = [
  "async-stream",
  "brz-metrics",
@@ -434,9 +433,9 @@ dependencies = [
 
 [[package]]
 name = "brz-mysql-derive"
-version = "0.0.14"
+version = "0.0.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7c4c5b637d53db87a7cb4c0f94f5023e4c84b1dca91607be63fa386282f8e6d"
+checksum = "7ec65dea20eba9318319cd94f7f4c796c2a086626da84405d079d589fb8f05ac"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -445,9 +444,9 @@ dependencies = [
 
 [[package]]
 name = "brz-net"
-version = "0.0.5"
+version = "0.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a413b115c5cf455f8de83a0f8fa113206d5a94913ef4bdc218e921d48c549906"
+checksum = "b737faa5dc1cfc22c2b531b4dc937b31ce00156a689da88513ec0e224cf0f95b"
 dependencies = [
  "arc-swap",
  "atomic-waker",
@@ -461,9 +460,9 @@ dependencies = [
 
 [[package]]
 name = "brz-redis"
-version = "0.0.11"
+version = "0.0.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7fdfed5b988b46787b494c798203a43d6feaff7df9d73b6085e51895f16f7df7"
+checksum = "3544b7a6a388c1c49ffc9d4223c57390f3951e4265b44d2a12d4a80ab63e3390"
 dependencies = [
  "arc-swap",
  "brz-metrics",
@@ -3230,6 +3229,7 @@ dependencies = [
  "sha1",
  "sha2",
  "tokio",
+ "tokio-util",
  "toml 0.8.23",
  "tracing",
  "url",

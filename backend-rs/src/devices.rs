@@ -432,6 +432,7 @@ async fn list_cloud_devices(
     state: &AppState,
     user_id: i64,
     kinds: &[DeviceKindRow],
+    request_id: Option<&str>,
 ) -> Result<Vec<DeviceItem>, FastApiError> {
     let cloud: Vec<&DeviceKindRow> = kinds
         .iter()
@@ -458,7 +459,7 @@ async fn list_cloud_devices(
         let executor_version = online_state
             .as_ref()
             .and_then(|info| info.executor_version.clone());
-        let latest_version = latest_executor_version(state).await;
+        let latest_version = latest_executor_version(state, request_id).await;
         let update_available =
             is_update_available(executor_version.as_deref(), latest_version.as_deref());
         let status = online_status(online.as_ref());
@@ -559,6 +560,7 @@ async fn list_mget_devices(
     user_id: i64,
     kinds: &[DeviceKindRow],
     device_type: DeviceType,
+    request_id: Option<&str>,
 ) -> Vec<DeviceItem> {
     let group: Vec<&DeviceKindRow> = kinds
         .iter()
@@ -579,7 +581,7 @@ async fn list_mget_devices(
         .collect();
     let online_map: Vec<Option<JsonProjection<OnlineStateInput>>> =
         cache_manager_mget(state, keys.clone()).await;
-    let latest_version = latest_executor_version(state).await;
+    let latest_version = latest_executor_version(state, request_id).await;
     let mut result = Vec::new();
     for (row, online) in group.iter().zip(online_map.iter()) {
         let spec = spec(row);
@@ -773,9 +775,10 @@ impl DeviceItem {
 #[brz_http_server::get("/api/devices")]
 async fn get_all_devices(
     #[inject(state)] state: &AppState,
+    #[header("x-request-id")] request_id: Option<String>,
     #[auth] user: SessionUser,
 ) -> Result<DeviceListResponse, FastApiError> {
-    let items = list_all_devices(state, user.id).await?;
+    let items = list_all_devices(state, user.id, request_id.as_deref()).await?;
     Ok(DeviceListResponse {
         total: items.len(),
         items,
@@ -789,6 +792,7 @@ async fn get_all_devices(
 pub(crate) async fn list_all_devices(
     state: &AppState,
     user_id: i32,
+    request_id: Option<&str>,
 ) -> Result<Vec<DeviceItem>, FastApiError> {
     // Source queries `kinds` once per provider in registration order:
     // cloud, local, app, remote.
@@ -810,9 +814,10 @@ pub(crate) async fn list_all_devices(
         };
         match device_type {
             DeviceType::Cloud => {
-                items.extend(list_cloud_devices(state, user_id.into(), &kinds).await?)
+                items.extend(list_cloud_devices(state, user_id.into(), &kinds, request_id).await?)
             }
-            other => items.extend(list_mget_devices(state, user_id.into(), &kinds, other).await),
+            other => items
+                .extend(list_mget_devices(state, user_id.into(), &kinds, other, request_id).await),
         }
     }
     Ok(items)

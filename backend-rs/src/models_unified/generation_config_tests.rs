@@ -16,6 +16,43 @@ fn image(raw: Json) -> Json {
     image_config_dump(&raw).expect("image config converts")
 }
 
+fn embedding(raw: Json) -> Json {
+    embedding_config_dump(&raw).expect("embedding config converts")
+}
+
+#[test]
+fn embedding_config_defaults_and_allows_extra_keys() {
+    // `encoding_format` defaults to "float"; `extra="allow"` keeps unknown
+    // keys; every explicit null — declared or extra — is dropped.
+    assert_eq!(
+        embedding(json!({"dimensions": 1024, "encoding_format": "float"})),
+        json!({"dimensions": 1024, "encoding_format": "float"})
+    );
+    assert_eq!(
+        embedding(json!({"dimensions": 1536})),
+        json!({"dimensions": 1536, "encoding_format": "float"})
+    );
+    assert_eq!(
+        embedding(json!({
+            "dimensions": null,
+            "additional_input_modalities": null,
+            "custom": 7,
+            "drop": null,
+        })),
+        json!({"encoding_format": "float", "custom": 7})
+    );
+}
+
+#[test]
+fn embedding_config_rejects_non_mappings_and_bad_types() {
+    assert!(embedding_config_dump(&json!(null)).is_err());
+    assert!(embedding_config_dump(&json!([1])).is_err());
+    assert!(embedding_config_dump(&json!("nope")).is_err());
+    assert!(embedding_config_dump(&json!({"dimensions": "abc"})).is_err());
+    assert!(embedding_config_dump(&json!({"encoding_format": 5})).is_err());
+    assert!(embedding_config_dump(&json!({"additional_input_modalities": [1]})).is_err());
+}
+
 #[test]
 fn video_capabilities_coerce_integers_into_floats() {
     // An `Optional[float]` field keeps its declared type, so the recorded

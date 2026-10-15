@@ -101,6 +101,12 @@ pub(crate) struct AgentView {
     system_prompt: String,
     capability_description: String,
     capability_mode: String,
+    /// `executionPolicy` (`ProjectChatAgentView.execution_policy`):
+    /// `bot_config(row)["execution_policy"]` when it is an object, else `null`.
+    execution_policy: Option<brz_json::RawJson>,
+    /// `modelPolicy` (`ProjectChatAgentView.model_policy`):
+    /// `bot_config(row)["model_policy"]` when it is an object, else `null`.
+    model_policy: Option<brz_json::RawJson>,
     status: &'static str,
     visibility: String,
     execution_environment: String,
@@ -195,6 +201,8 @@ fn agent_view_from_row(
         system_prompt: config.system_prompt(),
         capability_description: row.description.clone().unwrap_or_default(),
         capability_mode: config.capability_mode(),
+        execution_policy: config.execution_policy(),
+        model_policy: config.model_policy(),
         status,
         visibility: config.visibility(),
         execution_environment: config.execution_environment(),
@@ -293,6 +301,10 @@ pub(crate) struct BindingResponse {
     /// `model_selection` object when present, else `null`.
     #[serde(rename = "modelSelection")]
     model_selection: Option<brz_json::RawJson>,
+    /// `executionContext` (`LoopItemTaskBinding.execution_context`): the
+    /// metadata `execution_context` object when present, else `null`.
+    #[serde(rename = "executionContext")]
+    execution_context: Option<brz_json::RawJson>,
     workflow_node_id: Option<String>,
     human_assignment_id: Option<String>,
     dispatch_id: Option<String>,
@@ -324,6 +336,9 @@ pub(crate) fn binding_response(binding: &BindingRow) -> BindingResponse {
         // `modelSelection`: the metadata `model_selection` mapping when it is
         // a JSON object, else `null` (`LoopItemTaskBinding.model_selection`).
         model_selection: binding.model_selection(),
+        // `executionContext`: the metadata `execution_context` mapping when it
+        // is a JSON object, else `null` (`LoopItemTaskBinding.execution_context`).
+        execution_context: binding.execution_context(),
         workflow_node_id: binding.workflow_node_id(),
         // Dispatch/assignment ids: metadata text when a non-empty string,
         // else `null` (`LoopItemTaskBindingResponse`).
@@ -829,6 +844,38 @@ mod tests {
         assert_eq!(value["loop_item_id"], serde_json::Value::Null);
         assert_eq!(value["task_title"], serde_json::Value::Null);
         assert_eq!(value["workflow_node_id"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn binding_response_serializes_the_source_camel_case_aliases() {
+        // `LoopItemTaskBindingResponse` declares the `modelSelection` and
+        // `executionContext` aliases; a missing rename ships a snake_case key
+        // the recorded board-snapshot body does not carry.
+        let binding = BindingRow {
+            id: "1".to_string(),
+            cloud_project_id: "p".to_string(),
+            loop_item_id: Some("item".to_string()),
+            task_user_id: 1,
+            device_id: "d".to_string(),
+            task_id: "t".to_string(),
+            task_title: None,
+            backend_task_id: 0,
+            linked_by_user_id: 1,
+            linked_at: None,
+            unlinked_at: None,
+            metadata: Some(Json(
+                serde_json::from_value(json!({
+                    "model_selection": {"model": "m"},
+                    "execution_context": {"kind": "local"},
+                }))
+                .unwrap(),
+            )),
+        };
+        let value = serde_json::to_value(binding_response(&binding)).unwrap();
+        assert_eq!(value["modelSelection"], json!({"model": "m"}));
+        assert_eq!(value["executionContext"], json!({"kind": "local"}));
+        assert!(value.get("model_selection").is_none());
+        assert!(value.get("execution_context").is_none());
     }
 
     #[test]

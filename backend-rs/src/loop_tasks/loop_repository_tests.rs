@@ -42,6 +42,17 @@ async fn find_external_project_uses_the_labeled_projection() {
     );
 }
 
+/// The full labeled projection must carry every mapped `loop_items` column so
+/// the prepared statement matches the recorded `db.query(...)` exchange.
+/// `start_at` sits between `priority` and `due_at`; dropping it makes the
+/// Replay dependency matcher reject the statement.
+#[test]
+fn cloud_context_projection_carries_start_at() {
+    assert!(CLOUD_CONTEXT_COLUMNS.contains(
+        "loop_items.priority AS loop_items_priority, loop_items.start_at AS loop_items_start_at, loop_items.due_at AS loop_items_due_at"
+    ));
+}
+
 #[test]
 fn role_hierarchy() {
     assert!(has_permission("Owner", "RestrictedAnalyst"));

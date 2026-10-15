@@ -423,9 +423,16 @@ pub async fn build_execution_request(
 
     let (shell_type, base_image) = resolve_shell_type(state, input).await?;
 
+    // The ghost chain reads through the deployment's cached kind reader.
     let ghost_ref = bot_spec.get("ghostRef");
+    let kinds_cache = crate::task_skills::kinds::KindCacheStore {
+        mysql: &state.mysql,
+        redis: state.redis.as_ref(),
+        erp: Some(state.erp.as_ref()),
+        resolvers: Some(&state.entity_resolvers),
+    };
     let chain = load_ghost_chain(
-        &state.mysql,
+        &kinds_cache,
         input.team.user_id,
         ghost_ref
             .and_then(|reference| reference.get("namespace"))

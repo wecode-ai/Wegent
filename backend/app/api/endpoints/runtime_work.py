@@ -500,11 +500,12 @@ async def update_global_im_notification_endpoint(
     )
 
 
-@router.put(
-    "/im-notifications/presence",
-    response_model=RuntimeIMNotificationPresenceResponse,
-    response_model_by_alias=True,
-)
+# MIGRATION-CANDIDATE(api="PUT /api/runtime-work/im-notifications/presence"): remove after final confirmation.
+# @router.put(
+#     "/im-notifications/presence",
+#     response_model=RuntimeIMNotificationPresenceResponse,
+#     response_model_by_alias=True,
+# )
 @trace_async("runtime_work.im_notifications.presence.update", "runtime_work.api")
 async def update_im_notification_presence_endpoint(
     request: RuntimeIMNotificationPresenceUpdateRequest,

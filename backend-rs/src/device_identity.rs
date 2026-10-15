@@ -406,11 +406,17 @@ const UPDATE_DEVICE_ID_QUERY: &str =
 /// reads go through the pooled handle (`mysql`) because
 /// `coalesce_plugin_device_rows` resolves `plugin_device_id` per unique
 /// `(user_id, device_id)` pair, exactly like the source.
+///
+/// Returns the retained rows in `FOR UPDATE` load order. The source session's
+/// identity map keeps exactly these rows in that order, and a later
+/// `db.commit()` flush (e.g. `ensure_pending_for_device`'s pending UPDATEs)
+/// emits its UPDATE statements in this order, not in the caller's iteration
+/// order.
 pub async fn reconcile_plugin_device_rows<T, M, R>(
     transaction: &mut T,
     mysql: &M,
     user_id: i64,
-) -> MysqlResult<()>
+) -> MysqlResult<Vec<R>>
 where
     T: MysqlTransaction,
     M: Mysql,
@@ -434,7 +440,13 @@ where
                 .await?;
         }
     }
-    Ok(())
+    // Identity-map order after the deletes and rewrites: the retained rows in
+    // `FOR UPDATE` load order (primary key ascending).
+    let retained_rows: Vec<R> = rows
+        .into_iter()
+        .filter(|row| retained.contains(&row.id()))
+        .collect();
+    Ok(retained_rows)
 }
 
 #[cfg(test)]

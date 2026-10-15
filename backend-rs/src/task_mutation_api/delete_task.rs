@@ -64,14 +64,16 @@ fn decode_subtask_executor(
     })
 }
 
-/// `task_kinds_service.delete_task` at the route's boundaries.
+/// `task_kinds_service.delete_task` at the route's boundaries. The
+/// `client_origin` is optional: the adapter routes pass their validated
+/// origin, while `DELETE /api/v1/responses/{response_id}` passes none.
 pub(crate) async fn delete_task(
     state: &AppState,
     user_id: i64,
     task_id: i64,
-    client_origin: &str,
+    client_origin: Option<&str>,
 ) -> Result<(), FastApiError> {
-    let origin = Some(client_origin);
+    let origin = client_origin;
     let task = match state
         .task_store
         .get_active_or_archived_task(task_id, origin)
@@ -125,7 +127,7 @@ pub(crate) async fn bulk_delete_tasks(
 ) -> Result<i64, FastApiError> {
     let mut count = 0i64;
     for &task_id in task_ids {
-        match delete_task(state, user_id, task_id, client_origin).await {
+        match delete_task(state, user_id, task_id, Some(client_origin)).await {
             Ok(()) => count += 1,
             Err(error) => {
                 warn!(%task_id, ?error, "bulk_delete_tasks: failed to delete task");

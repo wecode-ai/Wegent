@@ -24,7 +24,7 @@ const CHARSET_MARKER: &[u8] = b"charset=";
 ///
 /// Starlette tests the raw `text/` prefix (case-sensitive) but searches for an
 /// existing charset case-insensitively.
-pub(super) fn content_type_value(mime_type: &str) -> Cow<'_, str> {
+pub(crate) fn content_type_value(mime_type: &str) -> Cow<'_, str> {
     let media_type = if mime_type.is_empty() {
         DEFAULT_MEDIA_TYPE
     } else {

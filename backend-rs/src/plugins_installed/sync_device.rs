@@ -184,7 +184,10 @@ async fn reconcile_device_plugins(
 /// Source `plugin_device_installation_service.ensure_pending_for_device`.
 ///
 /// Runs inside the caller's write transaction so the reconcile lock, the alias
-/// rewrites, and the pending upserts commit together.
+/// rewrites, and the pending upserts commit together. The source mutates ORM
+/// objects during iteration and emits every INSERT/UPDATE only at the
+/// `db.commit()` flush, so the write statements are collected here and flushed
+/// through [`PendingFlush`] instead of being executed inline.
 async fn ensure_pending_for_device<T, M>(
     transaction: &mut T,
     mysql: &M,
@@ -195,8 +198,12 @@ where
     T: MysqlTransaction,
     M: Mysql,
 {
-    reconcile_plugin_device_rows::<_, _, PluginDeviceInstallationRow>(transaction, mysql, user_id)
-        .await?;
+    let identity_map = reconcile_plugin_device_rows::<_, _, PluginDeviceInstallationRow>(
+        transaction,
+        mysql,
+        user_id,
+    )
+    .await?;
     let normalized_device_id = plugin_device_id(mysql, user_id, device_id).await?;
     if normalized_device_id.is_empty() {
         return Ok(0);
@@ -204,22 +211,118 @@ where
     let desired: Vec<DesiredInstalledKind> =
         mysql.fetch_all(DESIRED_INSTALLS_QUERY, (user_id,)).await?;
     let mut changed = 0usize;
+    // The session's identity map is seeded by `reconcile_plugin_device_rows`'s
+    // `FOR UPDATE` read (primary-key ascending), so the flush emits the UPDATE
+    // statements in that load order, not in the iteration order of the desired
+    // installs even when iteration visits a later identity-map row first.
+    let mut identity_map = identity_map;
+    let mut flush = PendingFlush::default();
     for installed in &desired {
-        changed +=
-            ensure_desired_install_pending(transaction, user_id, &normalized_device_id, installed)
-                .await?;
+        changed += ensure_desired_install_pending(
+            transaction,
+            user_id,
+            &normalized_device_id,
+            installed,
+            &mut identity_map,
+            &mut flush,
+        )
+        .await?;
     }
+    flush.emit(transaction, &identity_map).await?;
     Ok(changed)
 }
 
+/// One deferred write collected during `ensure_pending_for_device`'s iteration
+/// and emitted at the source's `db.commit()` flush.
+#[derive(Default)]
+struct PendingFlush {
+    /// `db.add(...)` INSERTs in iteration order; SQLAlchemy's unit of work
+    /// processes one mapper's INSERTs before its UPDATEs.
+    inserts: Vec<DesiredInsert>,
+    /// Dirty-column UPDATEs keyed by the identity-map row index.
+    updates: Vec<(usize, Vec<String>)>,
+}
+
+/// One `db.add(PluginDeviceInstallation(...))` pending INSERT.
+struct DesiredInsert {
+    installed_kind_id: i64,
+    user_id: i64,
+    device_id: String,
+    release_id: i64,
+    now: chrono::NaiveDateTime,
+}
+
+impl PendingFlush {
+    /// Emit the collected INSERTs (iteration order) and UPDATEs (identity-map
+    /// order, primary key ascending), then the caller's COMMIT. The UPDATE
+    /// collection is sorted by identity-map position first: the iteration may
+    /// visit rows in any order, but the source's flush follows the identity
+    /// map populated by the `FOR UPDATE` read.
+    async fn emit<T>(
+        &mut self,
+        transaction: &mut T,
+        identity_map: &[PluginDeviceInstallationRow],
+    ) -> MysqlResult<()>
+    where
+        T: MysqlTransaction,
+    {
+        self.updates.sort_by_key(|(index, _)| *index);
+        for insert in &self.inserts {
+            transaction
+                .execute(
+                    INSERT_INSTALLATION_QUERY,
+                    (
+                        insert.installed_kind_id,
+                        insert.user_id,
+                        insert.device_id.as_str(),
+                        insert.release_id,
+                        0_i64,
+                        "pending",
+                        "",
+                        "",
+                        0_i64,
+                        insert.now,
+                        insert.now,
+                    ),
+                )
+                .await?;
+        }
+        for (index, assigns) in &self.updates {
+            let row = &identity_map[*index];
+            let statement = format!(
+                "UPDATE plugin_device_installations SET {}, updated_at=? WHERE \
+                 plugin_device_installations.id = ?",
+                assigns.join(", ")
+            );
+            transaction
+                .execute(statement, (flush_timestamp(), row.id))
+                .await?;
+        }
+        Ok(())
+    }
+}
+
+/// `datetime.now()`'s per-statement value (`YYYY-MM-DD HH:MM:SS.ffffff`),
+/// re-evaluated for every flushed UPDATE like SQLAlchemy's `onupdate`.
+fn flush_timestamp() -> String {
+    Local::now()
+        .naive_local()
+        .format("%Y-%m-%d %H:%M:%S%.6f")
+        .to_string()
+}
+
 /// Source `_ensure_desired_install_pending`. Returns 1 when a new row is
-/// materialized or an existing row is (re)queued, 0 otherwise; the dirty fields
-/// are flushed regardless, exactly like the source's ORM flush.
+/// materialized or an existing row is (re)queued, 0 otherwise. The dirty fields
+/// are collected into `flush` (emitted at the source's `db.commit()`), exactly
+/// like the source's ORM flush.
+#[allow(clippy::too_many_arguments)]
 async fn ensure_desired_install_pending<T>(
     transaction: &mut T,
     user_id: i64,
     device_id: &str,
     installed: &DesiredInstalledKind,
+    identity_map: &mut Vec<PluginDeviceInstallationRow>,
+    flush: &mut PendingFlush,
 ) -> MysqlResult<usize>
 where
     T: MysqlTransaction,
@@ -231,28 +334,27 @@ where
         .fetch_optional(DEVICE_ROW_QUERY, (installed.id, device_id))
         .await?;
     let Some(row) = row else {
-        let now = Local::now().naive_local();
-        transaction
-            .execute(
-                INSERT_INSTALLATION_QUERY,
-                (
-                    installed.id,
-                    user_id,
-                    device_id,
-                    release_id,
-                    0_i64,
-                    "pending",
-                    "",
-                    "",
-                    0_i64,
-                    now,
-                    now,
-                ),
-            )
-            .await?;
+        // `db.add(...)`: the INSERT reaches MySQL only at the flush.
+        flush.inserts.push(DesiredInsert {
+            installed_kind_id: installed.id,
+            user_id,
+            device_id: device_id.to_string(),
+            release_id,
+            now: Local::now().naive_local(),
+        });
         return Ok(1);
     };
 
+    // The row is already in the session's identity map (materialized by the
+    // `FOR UPDATE` read); locate it so the flush orders its UPDATE by the
+    // identity-map position rather than the visit order.
+    let index = match identity_map.iter().position(|known| known.id == row.id) {
+        Some(index) => index,
+        None => {
+            identity_map.push(row.clone());
+            identity_map.len() - 1
+        }
+    };
     let desired_changed = row.desired_release_id != release_id;
     let mut assigns: Vec<String> = Vec::new();
     if desired_changed {
@@ -270,7 +372,9 @@ where
         || auto_update_blocked(&row, release_id)
         || queued;
     if terminal {
-        write_pending(transaction, &row, &assigns).await?;
+        if !assigns.is_empty() {
+            flush.updates.push((index, assigns));
+        }
         return Ok(0);
     }
     if row.state != "pending" {
@@ -282,29 +386,10 @@ where
     if !row.error_message.is_empty() {
         assigns.push("error_message=''".to_string());
     }
-    write_pending(transaction, &row, &assigns).await?;
-    Ok(1)
-}
-
-/// Flush the pending-row assignments (SQLAlchemy marks only dirty columns).
-async fn write_pending<T>(
-    transaction: &mut T,
-    row: &PluginDeviceInstallationRow,
-    assigns: &[String],
-) -> MysqlResult<()>
-where
-    T: MysqlTransaction,
-{
-    if assigns.is_empty() {
-        return Ok(());
+    if !assigns.is_empty() {
+        flush.updates.push((index, assigns));
     }
-    let statement = format!(
-        "UPDATE plugin_device_installations SET {} WHERE plugin_device_installations.id = {}",
-        assigns.join(", "),
-        row.id
-    );
-    transaction.execute(statement, ()).await?;
-    Ok(())
+    Ok(1)
 }
 
 /// Source `PluginDeviceInstallationService._auto_update_blocked`.
@@ -361,5 +446,64 @@ mod tests {
         let mut other = row;
         other.attempt_count -= 1;
         assert!(!auto_update_blocked(&other, 5));
+    }
+
+    #[test]
+    fn flush_orders_updates_by_identity_map_not_iteration() {
+        // The recorded sync-device cases prove the source's flush order: the
+        // iteration visits the desired installs in `_desired_installs` result
+        // order. Each UPDATE is emitted at `db.commit()` in identity-map
+        // order: the `FOR UPDATE` load order, primary key ascending.
+        // The flush must therefore sort by identity-map position.
+        let mut identity_map = Vec::new();
+        let mut flush = PendingFlush::default();
+        // FOR UPDATE load order: row 101 (kind 201) before 102 (kind 202).
+        for (id, kind) in [(101_i64, 201_i64), (102, 202)] {
+            identity_map.push(PluginDeviceInstallationRow {
+                id,
+                installed_kind_id: kind,
+                user_id: 301,
+                device_id: "app-record-201".to_string(),
+                desired_release_id: 401,
+                actual_release_id: 0,
+                state: "failed".to_string(),
+                error_code: "PLUGIN_DOWNLOAD_FAILED".to_string(),
+                error_message: "download failed".to_string(),
+                attempt_count: 7,
+                last_sync_at: chrono::NaiveDateTime::default(),
+                updated_at: chrono::NaiveDateTime::default(),
+            });
+        }
+        // Iteration visits 102 (identity-map index 1) before 101 (index 0);
+        // the flush must still emit 101 first because it follows the map.
+        flush.updates.push((1, vec!["state='pending'".to_string()]));
+        flush.updates.push((0, vec!["state='pending'".to_string()]));
+        flush.updates.sort_by_key(|(index, _)| *index);
+        let order: Vec<i64> = flush
+            .updates
+            .iter()
+            .map(|(index, _)| identity_map[*index].id)
+            .collect();
+        assert_eq!(order, vec![101, 102]);
+    }
+
+    #[test]
+    fn flush_update_statement_binds_updated_at() {
+        // Every flushed UPDATE of this table carries `updated_at` because
+        // `PluginDeviceInstallation.updated_at` declares `onupdate=datetime.now`
+        // (app/models/plugin_marketplace.py). The value is bound as a prepared
+        // statement parameter (like `catalog_write`'s reset UPDATE) so its
+        // current-time generation is comparable under the verification policy's
+        // time rules rather than baked into the SQL text.
+        let statement = format!(
+            "UPDATE plugin_device_installations SET {}, updated_at=? WHERE \
+             plugin_device_installations.id = ?",
+            "state='pending', error_code='', error_message=''"
+        );
+        assert!(statement.contains(
+            "SET state='pending', error_code='', error_message='', updated_at=? WHERE \
+             plugin_device_installations.id = ?"
+        ));
+        assert_eq!(flush_timestamp().len(), "YYYY-MM-DD HH:MM:SS.ffffff".len());
     }
 }

@@ -146,6 +146,106 @@ where
         .await
 }
 
+/// `context_service.get_context(db, context_id)` for the trusted internal
+/// overwrite (`overwrite_attachment_internal`).
+pub const OVERWRITE_CONTEXT_QUERY: &str = "SELECT subtask_contexts.id AS subtask_contexts_id, \
+     subtask_contexts.subtask_id AS subtask_contexts_subtask_id, \
+     subtask_contexts.user_id AS subtask_contexts_user_id, \
+     subtask_contexts.context_type AS subtask_contexts_context_type, \
+     subtask_contexts.name AS subtask_contexts_name, \
+     subtask_contexts.status AS subtask_contexts_status, \
+     subtask_contexts.error_message AS subtask_contexts_error_message, \
+     subtask_contexts.binary_data AS subtask_contexts_binary_data, \
+     subtask_contexts.image_base64 AS subtask_contexts_image_base64, \
+     subtask_contexts.extracted_text AS subtask_contexts_extracted_text, \
+     subtask_contexts.text_length AS subtask_contexts_text_length, \
+     subtask_contexts.type_data AS subtask_contexts_type_data, \
+     subtask_contexts.created_at AS subtask_contexts_created_at, \
+     subtask_contexts.updated_at AS subtask_contexts_updated_at \n\
+     FROM subtask_contexts \nWHERE subtask_contexts.id = ? \n LIMIT 1";
+
+/// `context_service.get_context(db, context_id, user_id)` — the same
+/// projection with the owner filter (`overwrite_attachment`).
+pub const OVERWRITE_CONTEXT_OWNED_QUERY: &str = "SELECT subtask_contexts.id AS subtask_contexts_id, \
+     subtask_contexts.subtask_id AS subtask_contexts_subtask_id, \
+     subtask_contexts.user_id AS subtask_contexts_user_id, \
+     subtask_contexts.context_type AS subtask_contexts_context_type, \
+     subtask_contexts.name AS subtask_contexts_name, \
+     subtask_contexts.status AS subtask_contexts_status, \
+     subtask_contexts.error_message AS subtask_contexts_error_message, \
+     subtask_contexts.binary_data AS subtask_contexts_binary_data, \
+     subtask_contexts.image_base64 AS subtask_contexts_image_base64, \
+     subtask_contexts.extracted_text AS subtask_contexts_extracted_text, \
+     subtask_contexts.text_length AS subtask_contexts_text_length, \
+     subtask_contexts.type_data AS subtask_contexts_type_data, \
+     subtask_contexts.created_at AS subtask_contexts_created_at, \
+     subtask_contexts.updated_at AS subtask_contexts_updated_at \n\
+     FROM subtask_contexts \n\
+     WHERE subtask_contexts.id = ? AND subtask_contexts.user_id = ? \n LIMIT 1";
+
+/// One `subtask_contexts` row with its `type_data` **unmodified**: the
+/// overwrite stage merges keys in the stored (MySQL-normalized) order and
+/// re-renders it, so a typed projection would lose the key order
+/// (`_reset_attachment_context`).
+#[derive(Debug, FromMysqlRow)]
+pub struct OverwriteContextRow {
+    #[allow(dead_code)]
+    #[mysql(rename = "subtask_contexts_id")]
+    pub id: i64,
+    #[allow(dead_code)]
+    #[mysql(rename = "subtask_contexts_subtask_id")]
+    pub subtask_id: i64,
+    #[mysql(rename = "subtask_contexts_user_id")]
+    pub user_id: i32,
+    #[mysql(rename = "subtask_contexts_context_type")]
+    pub context_type: String,
+    #[mysql(rename = "subtask_contexts_name")]
+    pub name: String,
+    #[mysql(rename = "subtask_contexts_status")]
+    pub status: String,
+    #[mysql(rename = "subtask_contexts_error_message")]
+    pub error_message: Option<String>,
+    #[mysql(rename = "subtask_contexts_binary_data")]
+    pub binary_data: Vec<u8>,
+    #[mysql(rename = "subtask_contexts_image_base64")]
+    pub image_base64: Option<String>,
+    #[mysql(rename = "subtask_contexts_extracted_text")]
+    pub extracted_text: Option<String>,
+    #[mysql(rename = "subtask_contexts_text_length")]
+    pub text_length: i32,
+    #[mysql(rename = "subtask_contexts_type_data")]
+    pub type_data: Option<Json<brz_json::OpaqueJson>>,
+    #[allow(dead_code)]
+    #[mysql(rename = "subtask_contexts_created_at")]
+    pub created_at: Option<NaiveDateTime>,
+    #[allow(dead_code)]
+    #[mysql(rename = "subtask_contexts_updated_at")]
+    pub updated_at: Option<NaiveDateTime>,
+}
+
+impl OverwriteContextRow {
+    /// `SubtaskContext.type_data` as an ordered map (`None` for absent/NULL).
+    pub fn type_data_map(&self) -> Option<serde_json::Map<String, Value>> {
+        let raw = self.type_data.as_ref()?;
+        let text = raw.0.as_raw().get();
+        if text == "null" {
+            return None;
+        }
+        serde_json::from_str(text).ok()
+    }
+
+    /// `SubtaskContext.storage_key` (`type_data.get("storage_key", "")`).
+    pub fn storage_key(&self) -> String {
+        self.type_data_map()
+            .and_then(|map| {
+                map.get("storage_key")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .unwrap_or_default()
+    }
+}
+
 /// `_build_attachment_type_data`: the ordered base `type_data` payload
 /// (`json.dumps` keeps the insertion order SQLAlchemy stores).
 pub fn build_type_data(

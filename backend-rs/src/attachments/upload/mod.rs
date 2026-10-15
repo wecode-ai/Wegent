@@ -27,7 +27,8 @@
 //! (`backend.rs`); `overwrite_attachment_id` overwrites an existing owned row
 //! instead of inserting one.
 pub mod backend;
-mod document;
+pub(crate) mod document;
+mod overwrite;
 mod response;
 mod store;
 
@@ -35,6 +36,7 @@ pub use backend::{
     AttachmentUploadBackend, ImagePid, ImageUploadRequest, MySqlStorageBackend, StoreObjectRequest,
     UploadBackendError,
 };
+pub(crate) use overwrite::{OverwriteError, Param, Preflush, overwrite_attachment_internal};
 use response::AttachmentResponse;
 use store::{
     INSERT_CONTEXT_QUERY, UPDATE_BINARY_DATA_QUERY, UPDATE_PARSING_QUERY, UPDATE_READY_QUERY,
@@ -273,6 +275,11 @@ async fn upload_new_attachment(
 }
 
 /// `ContextService.overwrite_attachment`: reset and replace an owned row.
+///
+/// The reset/store/parse stage is shared with the knowledge content update
+/// (`overwrite::overwrite_attachment_internal`); this wrapper adds the
+/// endpoint's owner check, its image-pid metadata merge, and the parse-failure
+/// rendering the upload endpoint applies.
 async fn overwrite_attachment(
     state: &Arc<AppState>,
     context_id: i64,
@@ -281,66 +288,18 @@ async fn overwrite_attachment(
     binary_data: &[u8],
     extra_type_data: &Map<String, Value>,
 ) -> Result<(i64, Option<Value>), FastApiError> {
-    let (extension, mime_type) = validate_input(filename, binary_data)?;
-    let file_size = binary_data.len() as i64;
-    let backend = Arc::clone(&state.attachment_upload);
-    let backend_type = backend.backend_type().to_string();
-
-    // `get_context(db, id, user_id)`: an owned attachment row or 404.
-    let owned: Option<context_store::SubtaskContextRow> = state
-        .mysql
-        .fetch_optional(
-            &format!(
-                "{query} AND subtask_contexts.user_id = ?",
-                query = context_store::CONTEXT_BY_ID_QUERY
-                    .replace("LIMIT 1", "AND subtask_contexts.user_id = ? LIMIT 1")
-            ),
-            (context_id, user_id),
-        )
-        .await
-        .map_err(dependency_error)?;
-    let Some(owned) = owned else {
-        return Err(attachment_not_found());
-    };
-    if owned.context_type != "attachment" {
-        return Err(attachment_not_found());
-    }
-
-    backend.ensure_ready().await.map_err(|_| internal_error())?;
-
-    let storage_key = owned
-        .metadata()
-        .and_then(|data| data.storage_key.clone())
-        .filter(|key| !key.is_empty())
-        .unwrap_or_else(|| generate_storage_key(context_id, user_id));
-    let mut type_data = build_type_data(
+    overwrite::overwrite_attachment_internal(
+        state,
+        Some(user_id),
+        context_id,
         filename,
-        &extension,
-        file_size,
-        mime_type,
-        &backend_type,
-        &storage_key,
-    );
-    merge_extra_type_data(&mut type_data, extra_type_data);
-
-    state
-        .mysql
-        .with_transaction(async |transaction| {
-            store_and_parse(
-                transaction,
-                &*backend,
-                context_id,
-                user_id,
-                filename,
-                &extension,
-                binary_data,
-                storage_key.clone(),
-                type_data.clone(),
-            )
-            .await
-        })
-        .await
-        .map_err(dependency_error)
+        binary_data,
+        extra_type_data,
+        None,
+    )
+    .await
+    .map_err(OverwriteError::into_upload_error)?;
+    Ok((context_id, None))
 }
 
 /// The shared `_store_attachment_binary` + `_parse_and_update_context` stage.
