@@ -98,6 +98,7 @@ mod cloud_projects_runtime_default;
 pub mod config;
 mod connector_runtime;
 mod crd;
+mod decisions;
 mod delivery_storage;
 mod device_identity;
 mod device_records;

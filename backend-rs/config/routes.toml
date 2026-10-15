@@ -329,6 +329,9 @@ path = "/api/plugins/marketplace"
 [[routes]]
 methods = ["GET"]
 path = "/api/models/unified"
+[[routes]]
+methods = ["GET", "POST"]
+path = "/api/models/decisions"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/models/error-recommendations"

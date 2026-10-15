@@ -62,6 +62,17 @@ Decision execution requires a nonempty key and applies a Python 3.10-compatible
 30-second total deadline including credential lookup and the provider request.
 Credential resolution is bounded to 30 seconds, does not cache user keys and
 never updates the stored Model. Catalog reads do not resolve credentials.
+
+The default hybrid gateway selects the Rust implementations of `GET` and
+`POST /api/models/decisions` through `backend-rs/config/routes.toml`. Rust reuses
+unified model visibility and authorization, reading the catalog and Model
+configuration again for every execution. Deployments register the existing
+`LlmProxyCredentials` implementation through `AppState.llm_proxy_credentials`,
+shared with the Rust LLM proxy. Resolution receives the original template and
+authenticated caller; failures or invalid keys block execution. Rust also
+caches no credentials, follows no redirects, retries no provider requests, and
+limits each request and response to 1 MiB. The Python implementation and tests
+remain the compatibility reference.
 Deployment-specific endpoints, authentication and user-key lookup implementations
 belong to the deployment extension, not the open-source code.
 

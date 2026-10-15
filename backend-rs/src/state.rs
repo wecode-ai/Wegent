@@ -66,6 +66,8 @@ pub struct AppState {
     /// (`app.services.url_metadata.fetch_url_metadata`): a process-lifetime
     /// redirect-following client with the source's 5-second timeout.
     pub url_metadata_http: brz_http::Client,
+    /// Single-attempt decision provider client: no redirects and a 30s budget.
+    pub decision_http: brz_http::Client,
     /// Optional employee directory. The public default returns no external
     /// employee identities or department memberships.
     pub erp: std::sync::Arc<dyn ErpProvider + Send + Sync>,
@@ -97,9 +99,9 @@ pub struct AppState {
     /// startup from `SITES_API_BASE_URL` / `SITES_API_TOKEN`; a missing base
     /// URL is rendered per request as the `503 sites_not_available` body.
     pub sites: crate::sites::SitesClient,
-    /// `resolve_llm_proxy_provider_api_key`: the LLM proxy gateway's provider
-    /// credential resolution. The public default returns the processed Model
-    /// CRD value; an application whose Model CRDs carry user-scoped
+    /// Provider credential resolution shared by the LLM and decision gateways.
+    /// The public default returns the processed Model CRD value; an application
+    /// whose Model CRDs carry user-scoped
     /// placeholders registers its own resolver before route construction.
     pub llm_proxy_credentials: Arc<dyn crate::llm_proxy::LlmProxyCredentials>,
     /// `gitlab_provider_patch._resolve_tokens_for_user`: stored `"***"` GitLab

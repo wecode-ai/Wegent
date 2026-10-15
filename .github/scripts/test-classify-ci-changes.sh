@@ -280,6 +280,7 @@ assert_case() {
 all_false=$(
   cat <<'EOF'
 backend=false
+backend_rs=false
 executor=false
 executor_manager=false
 shared=false
@@ -297,6 +298,7 @@ assert_case "docs only" "$all_false" "docs/zh/index.md"
 collaboration_package=$(
   cat <<'EOF'
 backend=false
+backend_rs=false
 executor=false
 executor_manager=false
 shared=false
@@ -321,6 +323,7 @@ assert_case "wework only" "$wework_expected" "wework/src/App.tsx"
 shared_expected=$(
   cat <<'EOF'
 backend=true
+backend_rs=false
 executor=false
 executor_manager=true
 shared=true
@@ -333,6 +336,12 @@ wework_e2e=false
 EOF
 )
 assert_case "shared dependencies" "$shared_expected" "shared/utils/example.py"
+
+backend_rs_expected="${all_false/backend_rs=false/backend_rs=true}"
+backend_rs_expected="${backend_rs_expected/platform_e2e=false/platform_e2e=true}"
+backend_rs_expected="${backend_rs_expected/wework_e2e=false/wework_e2e=true}"
+assert_case "Rust backend changes run Rust contracts and both E2E suites" \
+  "$backend_rs_expected" "backend-rs/src/decisions/mod.rs"
 
 all_true="${all_false//false/true}"
 assert_case "explicit all modules" "$all_true" --all

@@ -249,8 +249,14 @@ pub fn extract_model_info(model_data: &Json) -> ModelInfo {
     let model_category_type = spec
         .get("modelType")
         .and_then(Json::as_str)
+        .or_else(|| model_config.get("modelType").and_then(Json::as_str))
         .unwrap_or("llm")
         .to_string();
+    if model_category_type == "decision"
+        && crate::decisions::validate_spec(&Json::Object(spec.clone())).is_err()
+    {
+        return default_info();
+    }
 
     let mut config: JsonMap<String, Json> = model_config
         .iter()
@@ -569,11 +575,15 @@ pub fn is_codex_compatible_config(config: &JsonMap<String, Json>) -> bool {
 }
 
 pub fn is_model_compatible_with_shell(
+    category: &str,
     provider: Option<&str>,
     shell_type: &str,
     support_model: &[String],
     config: &JsonMap<String, Json>,
 ) -> bool {
+    if category == "decision" {
+        return false;
+    }
     let provider = provider.unwrap_or_default();
     if !support_model.is_empty() && !support_model.iter().any(|item| item == provider) {
         return false;

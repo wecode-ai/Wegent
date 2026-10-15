@@ -58,6 +58,13 @@ LLM 代理、决策执行和模型连接测试共用此入口。决策执行要�
 目录查询不调用凭证解析器。部署专属的接口、鉴权配置及用户 key 获取逻辑
 应保留在部署扩展中；开源代码不实现特定企业的占位符语义。
 
+默认混合网关通过 `backend-rs/config/routes.toml` 将 `GET`、`POST
+`/api/models/decisions`交给 Rust。Rust 复用统一模型聚合的可见性和授权检查，
+每次执行重新读取目录及 Model 配置。部署侧通过现有`AppState.llm_proxy_credentials`注册`LlmProxyCredentials`，与 Rust LLM 代理
+共用凭证解析器；输入保留原始模板和当前请求用户。解析失败或返回无效 key
+会阻止执行。Rust 同样不缓存凭证、不跟随重定向、不重试上游请求，且对请求
+和响应分别限制 1 MiB。Python 实现及其测试保留为兼容性参照。
+
 公共模型继续遵守 `isVisible`、`allowedUsersEnabled` 和 `allowedUsers`。
 只有启用 `isWeworkAvailable` 的决策模型进入工作台目录。
 决策模型不会进入 Shell 的对话模型列表。

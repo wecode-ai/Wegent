@@ -37,6 +37,7 @@ pub async fn build() -> Result<AppState> {
         }
     }
     let attachment_http = attachments::minio_client::build_client()?;
+    let decision_http = crate::decisions::provider::build_client()?;
     let url_metadata_http =
         crate::url_metadata::build_client().context("failed to build the url-metadata client")?;
     let master_url = database.mysql_url();
@@ -93,6 +94,7 @@ pub async fn build() -> Result<AppState> {
         oidc_callback,
         shutdown: Arc::new(ShutdownState::default()),
         attachment_http,
+        decision_http,
         url_metadata_http,
         erp: Arc::new(NoopErpProvider),
         video_result_urls: Arc::new(crate::video_result_urls::NoVideoResultUrlRefresh),

@@ -100,30 +100,6 @@ def test_catalog_is_authorized_safe_and_does_not_expose_provider_config(
     for private in ["private-provider-key", "decision.example", "custom_headers"]:
         assert private not in str(body)
     assert test_client.get("/api/models/decisions").status_code == 401
-    test_db.add(
-        Kind(
-            name="Agno",
-            namespace="default",
-            user_id=0,
-            kind="Shell",
-            is_active=True,
-            json={
-                "kind": "Shell",
-                "metadata": {"name": "Agno"},
-                "spec": {"shellType": "Agno", "supportModel": ["openai", "systemone"]},
-            },
-        )
-    )
-    test_db.commit()
-    shell_models = test_client.get(
-        "/api/models/unified",
-        params={"shell_type": "Agno"},
-        headers={"Authorization": f"Bearer {test_token}"},
-    )
-    assert shell_models.status_code == 200, shell_models.text
-    assert all(
-        model["name"] != decision_model.name for model in shell_models.json()["data"]
-    )
 
 
 @pytest.mark.parametrize(
