@@ -188,6 +188,14 @@ async function createWorkspaceAndProject(control, request, timeoutMs) {
     timeoutMs
   )
 
+  await control.command(
+    'waitFor',
+    scoped('[data-testid="collaboration-workspace-project-create"]'),
+    {
+      visible: true,
+      timeoutMs,
+    }
+  )
   await control.command('click', scoped('[data-testid="collaboration-workspace-project-create"]'))
   await control.command('click', '[data-testid="collaboration-workspace-project-create-blank"]')
   await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {
@@ -209,6 +217,15 @@ async function createWorkspaceAndProject(control, request, timeoutMs) {
 }
 
 async function addAgent(control, request, projectId, name, prompt, timeoutMs, environmentId) {
+  // Native catalog initialization is a network prerequisite, not a UI step.
+  // Establish it before the form starts its own catalog refresh and 10-second waits.
+  const environments = await request(
+    `/api/v1/resources/execution-environments?project_id=${encodeURIComponent(projectId)}`
+  )
+  assert.ok(
+    environments.some(environment => environment.id === String(environmentId)),
+    'The remote execution environment must be authorized before creating its Agent'
+  )
   await control.command('click', scoped('[data-testid="collaboration-project-settings-agents"]'))
   await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
     timeoutMs,

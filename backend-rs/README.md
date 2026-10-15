@@ -69,6 +69,53 @@ when the Backend `LOG_DIR` is absent; `BREEZE_LOG_DIR` can override it.
 `brz-metrics` is pinned to the process-global-registry release used by the
 registered Rust APIs.
 
+API 响应码与服务器超时统一导出到带 `status_code` 的 `brz_req_total`；每个请求仅计一次，不再输出无状态码的 API 总数或 `brz_api_resp_total`、`brz_api_timeout_total`。错误、慢请求及耗时仍按路由累计，超时仅在达到慢请求阈值时计为慢请求。
+
+`GET /metrics` streams the process registry in Prometheus text format. The
+default route configuration selects this handler for Rust. Request, error,
+slow-request and duration counters are cumulative. API request counts now use
+`brz_req_total{type="API",name="...",status_code="200"}` and
+`status_code="timeout"` for server deadline expiry; each request increments one
+result counter. There is no unlabeled API total or separate `brz_api_resp_total` /
+`brz_api_timeout_total`. Sum across `status_code` for total request rates. Error,
+slow-request and duration sums remain route-level totals; a timeout is always
+an error and is slow only when it reaches the configured threshold.
+Connection metrics expose the current count (`brz_conn`)
+and successful establishments (`brz_conn_total`), from which Prometheus computes
+CPS with `rate(brz_conn_total[1m])`. Scrapes do not reset metrics or write a
+`profile.log`. Durations export seconds with two decimal places.
+
+A binary composing `Application` inherits the handler, and including this
+crate's route configuration activates it on the public gateway.
+
+Redis 指标把业务资源名称与地址分开：`name` 统一读取 `REDIS_RESOURCE_NAME`，默认 `backend`，`endpoint` 保留配置中的 `host:port`（包括 DNS 名称）。请求的 `access` 为 `read` / `write`；读请求回退到 master 时仍计为读，混合 pipeline 按每条命令分别计数。连接使用独立的 `role=read` / `write` 标签，复用和 clone 不增加连接累计值。MySQL 使用 `read` / `write` / `other`（完整事务），不采集连接数。
+
+主 Redis 和 MySQL 服务分别读取 `REDIS_RESOURCE_NAME`、`MYSQL_RESOURCE_NAME`，未设置或留空时均使用 `backend`。支持进程环境变量和已有 `.env` 配置规则，仅在启动时读取；独立缓存客户端、workspace、models 和 runtime check 的 Redis 客户端也使用同一个名称配置。
+
+Set `REDIS_RESOURCE_NAME` and `MYSQL_RESOURCE_NAME` to name the shared Redis
+and MySQL services. Both default to `backend` when unset or blank. Values follow
+the existing process-environment / `.env` configuration rules and are read only
+during startup. All Redis startup clients, including independent caches, workspace, models and
+runtime checks, use the same configured name.
+
+Resource labels separate the business `name` from the configured `endpoint`.
+All Redis startup clients default to `name="backend"` and read
+`REDIS_RESOURCE_NAME`; their endpoints and access labels distinguish resources.
+Redis preserves DNS hostnames in `endpoint="host:port"`. Request `access` is
+`read` or `write`, independent of connection `role`. Reads falling back to the
+master remain reads, and mixed pipelines count each command's direction.
+MySQL uses `access="other"` for whole transactions and exports no connection
+counts. Aggregate directions with `sum by (type, name) (rate(brz_req_total[1m]))`;
+retain `endpoint` or `access` in the grouping to inspect servers or directions.
+
+资源初始化或拓扑重建时注册指标，请求记录使用缓存句柄、计时和原子操作，不拼接标签或查注册表。计时 slot 保持 64 字节，标量 slot 保持 8 字节。SDK 的协议编码和缓冲区仍可能分配内存。
+
+Handles are registered during resource construction or topology rebuilding.
+Metric updates use cached Copy handles, clocks and atomics without label
+allocation or registry lookup, including the first update. Timing slots remain
+64 bytes and scalar slots 8 bytes. Protocol encoding and buffering may still
+allocate independently of metric recording.
+
 ## Library boundary
 
 `Application` owns an `Arc<AppState>` and the public routes exported through

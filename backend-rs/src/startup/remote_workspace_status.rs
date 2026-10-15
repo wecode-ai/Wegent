@@ -55,6 +55,7 @@ async fn build_cache(config: &AppConfig) -> Result<CacheClients<brz_redis::Redis
         config.redis_slave_url.as_deref(),
     )?;
     let options = RedisServiceOptions::default()
+        .with_resource_name(super::redis::resource_name())
         .with_password(redis_config.password.clone())
         .with_timeout(Duration::from_secs(5));
     let master = redis_config.endpoint();

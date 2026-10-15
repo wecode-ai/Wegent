@@ -130,12 +130,8 @@ async fn load_response(
         .map_err(internal)?;
     let model_string = repo::model_string_for(task_kind.as_ref());
 
-    Ok(Some(task_to_response_object(
-        &task,
-        &model_string,
-        &subtasks,
-        None,
-    )))
+    let response = task_to_response_object(&task, &model_string, &subtasks, None, &state.auth)?;
+    Ok(Some(response))
 }
 
 /// The client IP used by the rate-limit fallback key

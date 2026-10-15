@@ -30,6 +30,7 @@ import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import {
   getConversationDiagnosticsSnapshot,
   setConversationFrameProbeEnabled,
+  startConversationDiagnosticCapture,
 } from '@wegent/collaboration/conversation/conversationDiagnostics'
 import { getComposerDiagnosticsSnapshot } from '@/components/chat/composer/composerDiagnostics'
 import { getComposerApps } from '@/components/chat/composer/composerAppsSnapshot'
@@ -1789,6 +1790,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return stripAppBasePath(window.location.pathname)
     case 'getNativeWindowState':
       return JSON.stringify(await invokeDesktopHost('window.getState'))
+    case 'setReducedMotion':
+      await invokeDesktopHost('e2e.setReducedMotion', { preference: command.value })
+      return ''
     case 'getStartupSplashSnapshot':
       return JSON.stringify(await invokeDesktopHost('e2e.getStartupSplashSnapshot'))
     case 'getTraySnapshot':
@@ -2196,6 +2200,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
             0
           ),
           markdownChunkCount: document.querySelectorAll('[data-markdown-window-chunk]').length,
+          markdownChunks: Array.from(
+            document.querySelectorAll<HTMLElement>('[data-markdown-window-chunk]')
+          ).map(element => ({
+            descendantCount: element.getElementsByTagName('*').length,
+            placeholder: Boolean(element.querySelector('[data-markdown-window-placeholder]')),
+            top: element.getBoundingClientRect().top,
+            height: element.getBoundingClientRect().height,
+          })),
         },
         activeRuntimeAssistant: activeAssistantMessage
           ? {
@@ -2775,6 +2787,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return element.textContent?.trim() ?? ''
     }
     case 'clickWhenEnabled': {
+      startConversationDiagnosticCapture()
       await waitForDesktopControlElement({ ...command, enabled: true })
       const element = findDesktopControlElements(command.selector).find(
         desktopControlElementEnabled
@@ -3138,7 +3151,7 @@ async function postDesktopControlStarted(
   }
 }
 
-async function runDesktopControlClient(url: string, windowLabel: string): Promise<void> {
+export async function runDesktopControlClient(url: string, windowLabel: string): Promise<void> {
   const clientId = crypto.randomUUID()
   const pollForCommand = () =>
     fetch(`${url}/commands?clientId=${encodeURIComponent(clientId)}&wait=1`, {
@@ -3168,10 +3181,30 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
       }
       const command = (await response.json()) as DesktopControlCommand
       await postDesktopControlStarted(url, command, clientId)
-      commandRequest = pollForCommand()
+      let result: DesktopControlResult
       try {
         const value = await executeDesktopControlCommand(command)
-        await postDesktopControlResult(url, { id: command.id, clientId, ok: true, value })
+        result = { id: command.id, clientId, ok: true, value }
+      } catch (error) {
+        result = {
+          id: command.id,
+          clientId,
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      }
+      try {
+        await postDesktopControlResult(url, result)
+      } catch (error) {
+        console.error('[Wework] Desktop E2E result acknowledgement failed:', {
+          commandId: command.id,
+          action: command.action,
+          actionSucceeded: result.ok,
+          error: error instanceof Error ? error.message : String(error),
+        })
+        throw error
+      }
+      if (result.ok) {
         if (command.action === 'closeMainWindowToTray') {
           await invokeDesktopHost('e2e.hideMainWindow')
         } else if (command.action === 'requestMainWindowClose') {
@@ -3186,14 +3219,8 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
           window.location.reload()
           return
         }
-      } catch (error) {
-        await postDesktopControlResult(url, {
-          id: command.id,
-          clientId,
-          ok: false,
-          error: error instanceof Error ? error.message : String(error),
-        })
       }
+      commandRequest = pollForCommand()
     } catch (error) {
       console.error('[Wework] Desktop E2E control client failed:', error)
       await waitForDesktopControlTick()

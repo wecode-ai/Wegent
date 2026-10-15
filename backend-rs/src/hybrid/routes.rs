@@ -68,6 +68,7 @@ fn load_rules(
 mod tests {
     use super::*;
     use http::Method;
+    use std::collections::BTreeSet;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct Fixture(PathBuf);
@@ -131,5 +132,115 @@ mod tests {
             std::fs::write(fixture.0.join("child.toml"), source).unwrap();
             assert!(load(&root).is_err());
         }
+    }
+
+    #[test]
+    fn public_route_file_selects_all_configured_methods() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
+        let source = std::fs::read_to_string(&path).unwrap();
+        let file: FileConfig = toml::from_str(&source).unwrap();
+        assert!(file.include.is_empty());
+        assert!(!file.routes.is_empty());
+        assert!(file.routes.iter().all(|rule| !rule.methods.is_empty()));
+        let table = load(&path).unwrap();
+        let selected: BTreeSet<_> = file
+            .routes
+            .iter()
+            .flat_map(|rule| {
+                rule.methods
+                    .iter()
+                    .map(move |method| (method.to_owned(), rule.path.clone()))
+            })
+            .collect();
+        let mut registered = BTreeSet::new();
+        const METHODS: [&str; 7] = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"];
+        macro_rules! collect {
+            ($group:ident) => {
+                for entry in brz_http_server::__private::inventory::iter::<crate::$group::Entry> {
+                    for route in (entry.0.routes)() {
+                        for (bit, method) in METHODS.into_iter().enumerate() {
+                            if route.methods & (1 << bit) != 0 {
+                                registered.insert((method.to_owned(), route.path.to_owned()));
+                            }
+                        }
+                    }
+                }
+            };
+        }
+        collect!(__http_registry_http_apis);
+        collect!(__http_registry_runtime_check);
+        collect!(__http_registry_models_unified);
+        collect!(__http_registry_remote_workspace_status);
+        collect!(__http_registry_remote_workspace_tree);
+        assert!(selected.is_subset(&registered));
+        let custom = Method::from_bytes(b"CUSTOM").unwrap();
+        for (method, path) in &selected {
+            let concrete = path
+                .split('/')
+                .map(|segment| {
+                    if segment.starts_with(':') || segment.starts_with('*') {
+                        "123"
+                    } else {
+                        segment
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("/");
+            let method = Method::from_bytes(method.as_bytes()).unwrap();
+            assert!(table.matches(&method, &concrete), "{method} {path}");
+            assert!(!table.matches(&custom, &concrete));
+            for sibling in METHODS {
+                let expected = selected.contains(&(sibling.to_owned(), path.clone()));
+                let sibling = Method::from_bytes(sibling.as_bytes()).unwrap();
+                assert_eq!(
+                    table.matches(&sibling, &concrete),
+                    expected,
+                    "{sibling} {path}"
+                );
+            }
+        }
+        assert!(!table.matches(&Method::POST, "/api/v1/responses"));
+        assert!(!table.matches(&Method::GET, "/api/groups/engineering/members"));
+        assert!(!table.matches(&Method::PUT, "/api/groups/engineering/members/batch/roles"));
+        assert!(!table.matches(&Method::GET, "/api/tasks/123/unmigrated"));
+    }
+
+    #[test]
+    fn metrics_handler_registration_does_not_enable_cutover() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
+        let table = load(&path).unwrap();
+        assert!(!table.matches(&Method::GET, "/metrics"));
+        assert!(!table.matches(&Method::POST, "/metrics"));
+        let registered =
+            brz_http_server::__private::inventory::iter::<crate::__http_registry_http_apis::Entry>
+                .into_iter()
+                .flat_map(|entry| (entry.0.routes)())
+                .any(|route| route.path == "/metrics" && route.methods & (1 << 1) != 0);
+        assert!(
+            registered,
+            "GET /metrics must be registered in the shared group"
+        );
+    }
+
+    /// Registering the content update handler must not select the lower-volume
+    /// PUT method when only the GET cutover is configured.
+    #[test]
+    fn knowledge_document_content_put_registration_keeps_python_ownership() {
+        const PATH: &str = "/api/knowledge/documents/:document_id/content";
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
+        let table = load(&path).unwrap();
+        let concrete = "/api/knowledge/documents/43199/content";
+        assert!(table.matches(&Method::GET, concrete));
+        assert!(!table.matches(&Method::PUT, concrete));
+        assert!(!table.matches(&Method::POST, concrete));
+
+        // `method_bit`: DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT.
+        const PUT: u16 = 1 << 6;
+        let registered =
+            brz_http_server::__private::inventory::iter::<crate::__http_registry_http_apis::Entry>
+                .into_iter()
+                .flat_map(|entry| (entry.0.routes)())
+                .any(|route| route.path == PATH && route.methods & PUT != 0);
+        assert!(registered, "PUT {PATH} must be registered by the router");
     }
 }

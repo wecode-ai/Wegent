@@ -433,34 +433,27 @@ impl CodexAppServerClient {
         allow_active_turns: bool,
     ) -> Result<bool, String> {
         let runtime_proxy_env = proxy_environment(proxy_url);
-        let process = {
-            let mut state = self.state.lock().await;
-            if runtime_proxy_endpoint_matches(&state.runtime_proxy_env, &runtime_proxy_env) {
-                return Ok(false);
-            }
-            if !allow_active_turns && !state.active_threads.is_empty() {
-                log_codex_environment_change(
-                    "codex runtime proxy update deferred",
-                    "runtime_proxy_update",
-                    &state.runtime_proxy_env,
-                    &runtime_proxy_env,
-                    &state.active_threads,
-                );
-                replace_proxy_environment(&mut state.runtime_proxy_env, runtime_proxy_env);
-                return Ok(true);
-            }
-            replace_proxy_environment(&mut state.runtime_proxy_env, runtime_proxy_env);
-            state.process_environment.clear();
-            state.process.take()
-        };
-        if let Some(process) = process {
-            fail_all_pending(
-                &process.pending,
-                "codex app-server was restarted after its runtime proxy changed".to_owned(),
-            )
-            .await;
-            drop(process);
+        let mut state = self.state.lock().await;
+        if runtime_proxy_endpoint_matches(&state.runtime_proxy_env, &runtime_proxy_env) {
+            return Ok(false);
         }
+        if !allow_active_turns && !state.active_threads.is_empty() {
+            log_codex_environment_change(
+                "codex runtime proxy update deferred",
+                "runtime_proxy_update",
+                &state.runtime_proxy_env,
+                &runtime_proxy_env,
+                &state.active_threads,
+            );
+            replace_proxy_environment(&mut state.runtime_proxy_env, runtime_proxy_env);
+            return Ok(true);
+        }
+        replace_proxy_environment(&mut state.runtime_proxy_env, runtime_proxy_env);
+        stop_codex_app_server_process(
+            &mut state,
+            Some("codex app-server was restarted after its runtime proxy changed"),
+        )
+        .await;
         Ok(true)
     }
 
@@ -503,39 +496,21 @@ impl CodexAppServerClient {
     }
 
     pub async fn restart(&self) {
-        let process = {
-            let mut state = self.state.lock().await;
-            state.process_environment.clear();
-            state.process.take()
-        };
-        let Some(process) = process else {
-            return;
-        };
-        fail_all_pending(
-            &process.pending,
-            "codex app-server was restarted".to_owned(),
-        )
-        .await;
-        drop(process);
+        let mut state = self.state.lock().await;
+        stop_codex_app_server_process(&mut state, Some("codex app-server was restarted")).await;
     }
 
     pub async fn restart_if_idle(&self) -> Result<(), (usize, usize)> {
-        let process = {
-            let mut state = self.state.lock().await;
-            let active_turn_count = state.active_threads.values().sum::<usize>();
-            let pending_request_count = match state.process.as_ref() {
-                Some(process) => process.pending.lock().await.len(),
-                None => 0,
-            };
-            if active_turn_count > 0 || pending_request_count > 0 {
-                return Err((active_turn_count, pending_request_count));
-            }
-            state.process_environment.clear();
-            state.process.take()
+        let mut state = self.state.lock().await;
+        let active_turn_count = state.active_threads.values().sum::<usize>();
+        let pending_request_count = match state.process.as_ref() {
+            Some(process) => process.pending.lock().await.len(),
+            None => 0,
         };
-        if let Some(process) = process {
-            drop(process);
+        if active_turn_count > 0 || pending_request_count > 0 {
+            return Err((active_turn_count, pending_request_count));
         }
+        stop_codex_app_server_process(&mut state, None).await;
         Ok(())
     }
 
@@ -572,33 +547,23 @@ impl CodexAppServerClient {
         if changed {
             state.thread_generations.clear();
             state.idle_thread_generations.clear();
-            state.process_environment.clear();
-            drop(state.process.take());
+            stop_codex_app_server_process(&mut state, None).await;
         }
         Ok(result)
     }
 
     async fn restart_stalled_turn_process(&self, thread_id: &str) -> bool {
-        let process = {
-            let mut state = self.state.lock().await;
-            if state.active_threads.get(thread_id) != Some(&1)
-                || state.active_threads.values().sum::<usize>() != 1
-            {
-                return false;
-            }
-            state.process_environment.clear();
-            state.process.take()
-        };
-        let Some(process) = process else {
+        let mut state = self.state.lock().await;
+        if state.active_threads.get(thread_id) != Some(&1)
+            || state.active_threads.values().sum::<usize>() != 1
+        {
             return false;
-        };
-        fail_all_pending(
-            &process.pending,
-            "codex app-server was restarted after a stalled turn".to_owned(),
+        }
+        stop_codex_app_server_process(
+            &mut state,
+            Some("codex app-server was restarted after a stalled turn"),
         )
-        .await;
-        drop(process);
-        true
+        .await
     }
 
     pub async fn steer_turn(
@@ -703,8 +668,7 @@ impl CodexAppServerClient {
                 pending_request_count,
             )
         {
-            state.process = None;
-            state.process_environment.clear();
+            stop_codex_app_server_process(&mut state, None).await;
         }
         if state.process.is_none() {
             if !start_if_missing {
@@ -1044,8 +1008,7 @@ impl CodexAppServerClient {
                 pending_request_count,
             )
         {
-            state.process = None;
-            state.process_environment.clear();
+            stop_codex_app_server_process(&mut state, None).await;
         }
         if state.process.is_none() {
             let launch_config = CodexLaunchConfig {
@@ -1099,8 +1062,7 @@ impl CodexAppServerClient {
                 pending_request_count,
             )
         {
-            state.process = None;
-            state.process_environment.clear();
+            stop_codex_app_server_process(&mut state, None).await;
         }
         if state.process.is_none() {
             let mut process_launch_config = launch_config.clone();
@@ -1231,7 +1193,7 @@ pub(crate) async fn terminate_shared_codex_app_servers() -> usize {
     for state in states {
         let mut state = state.lock().await;
         state.executor_shutdown_requested = true;
-        if state.process.take().is_some() {
+        if stop_codex_app_server_process(&mut state, None).await {
             terminated += 1;
         }
     }
@@ -1263,6 +1225,23 @@ struct CodexAppServerSharedState {
     thread_lifecycle_gates: HashMap<String, Weak<Mutex<()>>>,
     runtime_proxy_env: BTreeMap<String, String>,
     process_environment: BTreeMap<String, String>,
+}
+
+// The caller holds the admission lock until the old process has exited.
+async fn stop_codex_app_server_process(
+    state: &mut CodexAppServerSharedState,
+    pending_error: Option<&str>,
+) -> bool {
+    state.process_environment.clear();
+    let Some(mut process) = state.process.take() else {
+        return false;
+    };
+    if let Some(error) = pending_error {
+        fail_all_pending(&process.pending, error.to_owned()).await;
+    }
+    process.reader_task.abort();
+    terminate_codex_app_server_child(&mut process.child).await;
+    true
 }
 
 impl Default for CodexAppServerSharedState {
@@ -1402,6 +1381,11 @@ async fn start_persistent_codex_app_server(
 ) -> Result<(CodexAppServerProcess, u64), String> {
     let launch_config = persistent_codex_app_server_launch_config(request_launch_config);
     let mut child = spawn_codex_app_server(binary, &launch_config)?;
+    let process_id = child.id().map(|id| id.to_string()).unwrap_or_default();
+    log_executor_event(
+        "codex shared app-server process starting",
+        &[("process_id", process_id.clone())],
+    );
     let result: Result<(ChildStdin, CodexStdout, u64), String> = async {
         let timeout_seconds = codex_rpc_timeout_seconds();
         let stdin = child
@@ -1431,6 +1415,10 @@ async fn start_persistent_codex_app_server(
     .await;
     match result {
         Ok((stdin, stdout, next_id)) => {
+            log_executor_event(
+                "codex shared app-server process initialized",
+                &[("process_id", process_id)],
+            );
             let pending = Arc::new(Mutex::new(HashMap::new()));
             let notifications = CodexNotificationHub::new();
             let reader_task = tokio::spawn(read_persistent_codex_app_server_stdout(
@@ -1450,6 +1438,14 @@ async fn start_persistent_codex_app_server(
             ))
         }
         Err(error) => {
+            let exit_status = child
+                .try_wait()
+                .map(|status| format!("{status:?}"))
+                .unwrap_or_else(|error| format!("{error:?}"));
+            log_executor_event(
+                "codex shared app-server process initialization failed",
+                &[("process_id", process_id), ("exit_status", exit_status)],
+            );
             terminate_codex_app_server_child(&mut child).await;
             Err(error)
         }

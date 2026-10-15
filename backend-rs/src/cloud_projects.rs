@@ -65,6 +65,9 @@ pub(crate) use access::{
     role_for_priority,
 };
 
+/// `PATCH /api/v1/cloud-projects/{project_id}`: update one cloud project.
+mod update;
+
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]
 pub struct CloudMetadataInput {

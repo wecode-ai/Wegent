@@ -27,6 +27,8 @@ pub mod access;
 pub mod auth;
 pub mod group_membership;
 pub mod reader;
+mod update;
+mod update_store;
 
 use std::sync::Arc;
 
@@ -267,6 +269,9 @@ async fn get_document_content(
 enum KnowledgeError {
     Validation(FastApiValidation),
     Failure(ApiFailure),
+    /// A framework-shaped error the endpoint body raises directly (the
+    /// request-body validation of the content update).
+    Direct(crate::http_compat::FastApiError),
 }
 
 impl From<FastApiValidation> for KnowledgeError {
@@ -281,11 +286,18 @@ impl From<ApiFailure> for KnowledgeError {
     }
 }
 
+impl From<crate::http_compat::FastApiError> for KnowledgeError {
+    fn from(error: crate::http_compat::FastApiError) -> Self {
+        Self::Direct(error)
+    }
+}
+
 impl IntoHttpError for KnowledgeError {
     fn into_http_error(self, arena: &EphemeralBytesArena) -> Response {
         match self {
             Self::Validation(error) => error.into_http_error(arena),
             Self::Failure(error) => error.into_http_error(arena),
+            Self::Direct(error) => error.into_http_error(arena),
         }
     }
 }

@@ -1034,7 +1034,12 @@ async function createCheckpointTaskFixture(
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
-  await sendPrompt(control, composerSelector, CHECKPOINT_TASK_PROMPT)
+  await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    CHECKPOINT_TASK_PROMPT,
+    'checkpoint_task'
+  )
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: CHECKPOINT_TASK_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

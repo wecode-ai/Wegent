@@ -45,55 +45,20 @@ impl std::fmt::Display for GhostChainError {
 
 impl std::error::Error for GhostChainError {}
 
-/// `kindReader.get_by_name_and_namespace(GHOST)` for a non-default namespace.
-pub fn ghost_group_statement() -> String {
-    format!(
-        "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.kind = 'Ghost' \
-         AND kinds.namespace = ? AND kinds.name = ? AND kinds.is_active = true \n LIMIT 1"
-    )
-}
-
-/// `get_personal(GHOST)` in the `default` namespace.
-pub fn ghost_personal_statement() -> String {
-    format!(
-        "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.user_id = ? \
-         AND kinds.kind = 'Ghost' AND kinds.namespace = 'default' \
-         AND kinds.name = ? AND kinds.is_active = true \n LIMIT 1"
-    )
-}
-
-/// `get_public(GHOST)`: the `user_id = 0` Ghost in `default`.
-pub fn ghost_public_statement() -> String {
-    format!(
-        "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.user_id = 0 \
-         AND kinds.kind = 'Ghost' AND kinds.namespace = 'default' \
-         AND kinds.name = ? AND kinds.is_active = true \n LIMIT 1"
-    )
-}
-
 /// `kindReader.get_by_name_and_namespace(GHOST)`: the group Ghost for a
-/// non-default namespace, else the owner's personal Ghost then the public one.
-async fn read_ghost<M: Mysql>(
-    mysql: &M,
+/// non-default namespace, else the owner's personal Ghost then the public one,
+/// through the deployment's cached-reader contract (`kind:v2` documents first,
+/// SQL only on a miss).
+async fn read_ghost<M: Mysql, R: brz_redis::Redis>(
+    cache: &crate::task_skills::kinds::KindCacheStore<'_, M, R>,
     owner_user_id: i64,
     namespace: &str,
     name: &str,
 ) -> MysqlResult<Option<KindRow>> {
-    if namespace != "default" {
-        return mysql
-            .fetch_optional::<_, _, KindRow>(ghost_group_statement(), (namespace, name))
-            .await;
-    }
-    if owner_user_id != 0
-        && let Some(ghost) = mysql
-            .fetch_optional::<_, _, KindRow>(ghost_personal_statement(), (owner_user_id, name))
-            .await?
-    {
-        return Ok(Some(ghost));
-    }
-    mysql
-        .fetch_optional::<_, _, KindRow>(ghost_public_statement(), (name,))
+    cache
+        .get_by_name_and_namespace_row(owner_user_id, "Ghost", namespace, name)
         .await
+        .map(|ghost| ghost.map(super::resolution::kinds_row))
 }
 
 /// The `spec` of a Ghost row.
@@ -110,13 +75,13 @@ fn spec_of(row: &KindRow) -> Value {
 ///
 /// Rejects a self-referential `baseGhostRef`, an unavailable base Ghost, and a
 /// base Ghost that itself declares a `baseGhostRef` (nested inheritance).
-pub async fn load_ghost_chain<M: Mysql>(
-    mysql: &M,
+pub async fn load_ghost_chain<M: Mysql, R: brz_redis::Redis>(
+    cache: &crate::task_skills::kinds::KindCacheStore<'_, M, R>,
     owner_user_id: i64,
     namespace: &str,
     name: &str,
 ) -> Result<Vec<GhostNode>, GhostChainError> {
-    let Some(ghost) = read_ghost(mysql, owner_user_id, namespace, name)
+    let Some(ghost) = read_ghost(cache, owner_user_id, namespace, name)
         .await
         .map_err(GhostChainError::Dependency)?
     else {
@@ -138,7 +103,7 @@ pub async fn load_ghost_chain<M: Mysql>(
         if base_user == owner_user_id && base_namespace == namespace && base_name == name {
             return Err(GhostChainError::SelfInheritance);
         }
-        let Some(base) = read_ghost(mysql, base_user, base_namespace, base_name)
+        let Some(base) = read_ghost(cache, base_user, base_namespace, base_name)
             .await
             .map_err(GhostChainError::Dependency)?
         else {
@@ -169,6 +134,10 @@ pub async fn load_ghost_chain<M: Mysql>(
 /// `get_bot_system_prompt` (via `_build_runtime_system_prompt`): the Ghost's
 /// `spec.systemPrompt`, with the team member prompt appended, wrapped in
 /// `<base_prompt>` tags. A missing Ghost yields an empty prompt.
+///
+/// The source reads this Ghost with a plain `db.query` filter
+/// (`model_resolver.get_bot_system_prompt`), not the cached reader, so this
+/// keeps the direct SQL statement.
 pub async fn bot_system_prompt<M: Mysql>(
     mysql: &M,
     user_id: i64,
@@ -176,7 +145,11 @@ pub async fn bot_system_prompt<M: Mysql>(
     name: &str,
     team_member_prompt: Option<&str>,
 ) -> Result<String, GhostChainError> {
-    let ghost = read_ghost(mysql, user_id, namespace, name)
+    let ghost = mysql
+        .fetch_optional::<_, _, KindRow>(
+            bot_system_prompt_ghost_statement(),
+            (user_id, name, namespace),
+        )
         .await
         .map_err(GhostChainError::Dependency)?;
     let system_prompt = ghost
@@ -192,6 +165,17 @@ pub async fn bot_system_prompt<M: Mysql>(
         &system_prompt,
         team_member_prompt,
     ))
+}
+
+/// `get_bot_system_prompt`'s Ghost read: the plain ORM filter
+/// `user_id == user_id AND kind == 'Ghost' AND name == ... AND namespace == ...`
+/// (`app/services/chat/config/model_resolver.py`).
+fn bot_system_prompt_ghost_statement() -> String {
+    format!(
+        "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.user_id = ? \
+         AND kinds.kind = 'Ghost' AND kinds.name = ? AND kinds.namespace = ? \
+         AND kinds.is_active = true \n LIMIT 1"
+    )
 }
 
 /// One Ghost in the chain: its `namespace` and its parsed `spec`.
@@ -479,18 +463,16 @@ mod tests {
     }
 
     #[test]
-    fn ghost_reads_match_the_kinds_projection() {
+    fn bot_system_prompt_read_matches_the_recorded_statement() {
         let normalize = |sql: &str| sql.split_whitespace().collect::<Vec<_>>().join(" ");
-        let group = normalize(&ghost_group_statement());
-        assert!(
-            group.contains("WHERE kinds.kind = 'Ghost' AND kinds.namespace = ? AND kinds.name = ?")
-        );
-        assert!(group.contains("AND kinds.is_active = true LIMIT 1"));
-        let personal = normalize(&ghost_personal_statement());
-        assert!(personal.contains("WHERE kinds.user_id = ? AND kinds.kind = 'Ghost'"));
-        assert!(personal.contains("AND kinds.namespace = 'default'"));
-        let public = normalize(&ghost_public_statement());
-        assert!(public.contains("WHERE kinds.user_id = 0 AND kinds.kind = 'Ghost'"));
+        // Query shape: WHERE kinds.user_id = ? AND kinds.kind = 'Ghost' AND
+        // kinds.name = ? AND kinds.namespace = ? AND
+        // kinds.is_active = true LIMIT 1.
+        let sql = normalize(&bot_system_prompt_ghost_statement());
+        assert!(sql.contains("WHERE kinds.user_id = ?"));
+        assert!(sql.contains("AND kinds.kind = 'Ghost'"));
+        assert!(sql.contains("AND kinds.name = ? AND kinds.namespace = ?"));
+        assert!(sql.contains("AND kinds.is_active = true LIMIT 1"));
     }
 
     #[test]

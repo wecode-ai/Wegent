@@ -49,7 +49,8 @@ from app.services.wework_transcript_storage import (
 router = APIRouter()
 
 
-@router.get("", response_model=TranscriptListResponse, response_model_by_alias=True)
+# MIGRATION-CANDIDATE(api="GET /api/wework-transcripts"): remove after final confirmation.
+# @router.get("", response_model=TranscriptListResponse, response_model_by_alias=True)
 def list_transcripts_endpoint(
     include_archived: bool = Query(default=True, alias="includeArchived"),
     db: Session = Depends(get_db),
@@ -85,10 +86,11 @@ def get_transcript_endpoint(
     )
 
 
-@router.get(
-    "/{transcript_id}/encryption-key",
-    response_model=TranscriptEncryptionKeyResponse,
-)
+# MIGRATION-CANDIDATE(api="GET /api/wework-transcripts/{transcript_id}/encryption-key"): remove after final confirmation.
+# @router.get(
+#     "/{transcript_id}/encryption-key",
+#     response_model=TranscriptEncryptionKeyResponse,
+# )
 def get_transcript_encryption_key_endpoint(
     transcript_id: str,
     db: Session = Depends(get_db),

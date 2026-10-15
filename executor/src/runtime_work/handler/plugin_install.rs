@@ -79,14 +79,14 @@ impl RuntimeWorkRpcHandler {
             return Ok(json!({"status": "ready", "updated": false}));
         }
         let name = target.plugin_key.clone();
-        // Cover queued/preparing and Claude work as well as active Codex turns.
+        // Completed turns can still own live processes in the app-server.
         let _turn_admission = self.turn_queue_operation.lock().await;
         let active_tasks = self
             .turn_scheduler
             .lock()
             .expect("runtime turn scheduler lock should not be poisoned")
             .active_tasks;
-        if active_tasks > 0 {
+        if active_tasks > 0 || self.background_terminal_count() > 0 {
             return Ok(json!({"status": "deferred", "updated": false}));
         }
         let result = self
@@ -435,6 +435,69 @@ fn plugin_config_enabled(codex_home: &Path, plugin_key: &str) -> Result<bool, St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn background_terminals_defer_plugin_mutation_until_native_exit() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let codex_home = root.path().join("codex");
+        write_plugin_fixture(&source, "new");
+        let target = LocalPluginInstallTarget {
+            plugin_key: "example@wework-personal".to_owned(),
+            source_root: source,
+            cache_root: codex_home.join("plugins/cache/wework-personal/example/1.0.0"),
+            codex_home,
+        };
+        install_local_plugin_files(&target).unwrap();
+        let mut handler = RuntimeWorkRpcHandler::new("background-plugin-test", "/bin/false");
+        handler.store = RuntimeWorkStore::new(root.path().join("index.json"));
+        let mut link =
+            RuntimeTaskLink::new_pending("task-1".into(), "/project".into(), "Task".into());
+        link.thread_id = Some("thread-1".into());
+        handler.upsert_local_task(link);
+        handler.persist_completed_codex_turn_from_notification("task-1", &json!({
+            "method": "turn/completed", "params": {"threadId": "thread-1", "turn": {
+                "id": "turn-1", "status": "completed", "items": [{"id": "command-1", "type": "commandExecution", "command": "node server.js", "status": "inProgress", "processId": "42"}]
+            }}
+        }));
+        assert_eq!(handler.background_terminal_count(), 1);
+        assert_eq!(
+            handler
+                .sync_bundled_plugin_target(target.clone())
+                .await
+                .unwrap(),
+            json!({"status": "ready", "updated": false})
+        );
+        fs::write(target.cache_root.join("skills/example/SKILL.md"), "old").unwrap();
+        assert_eq!(
+            handler
+                .sync_bundled_plugin_target(target.clone())
+                .await
+                .unwrap(),
+            json!({"status": "deferred", "updated": false})
+        );
+        assert_eq!(
+            fs::read_to_string(target.cache_root.join("skills/example/SKILL.md")).unwrap(),
+            "old"
+        );
+        handler.record_background_terminal_notification("task-1", &json!({
+            "method": "item/completed", "params": {"threadId": "thread-1", "turnId": "turn-1", "item": {
+                "id": "command-1", "type": "commandExecution", "command": "node server.js", "status": "completed", "exitCode": 0
+            }}
+        }));
+        assert_eq!(handler.background_terminal_count(), 0);
+        assert_eq!(
+            handler
+                .sync_bundled_plugin_target(target.clone())
+                .await
+                .unwrap(),
+            json!({"status": "ready", "updated": true})
+        );
+        assert_eq!(
+            fs::read_to_string(target.cache_root.join("skills/example/SKILL.md")).unwrap(),
+            "new"
+        );
+    }
 
     fn write_plugin_fixture(root: &Path, content: &str) {
         fs::create_dir_all(root.join(".codex-plugin")).unwrap();

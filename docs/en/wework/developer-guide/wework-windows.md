@@ -94,11 +94,33 @@ macOS package is not an equivalent substitute.
 
 `.github/workflows/wework-e2e.yml` builds this native application on
 `windows-latest` and runs Windows Desktop Core E2E with the same Core shard
-matrix used by Linux. A complete regression runs all 17 Core shards. When path
+matrix used by Linux. A complete regression runs all 18 Core shards. When path
 classification selects only specific checkpoints, both platforms still run the
 same selected shards. Windows path, drive-letter, UNC, named-pipe, and `.exe`
 sidecar behavior must be verified by this Windows job and cannot be inferred
 from another platform passing.
+
+Windows CI caches the pnpm store and rebuilds dependency links on every install
+instead of restoring archived `node_modules` links. E2E uses the Socket.IO client
+bundled with the build artifact. Remote HOME queries convert Git Bash paths to
+native Windows paths; preview assertions use normalized UI paths. Windows skill
+directories use junctions with absolute targets; Unix uses relative symbolic links.
+Generated image workspace references remove the Windows extended path prefix
+returned by Rust canonicalize so the renderer does not parse it as a POSIX path.
+Windows workspace clones enable and persist `core.longpaths=true` for Git
+template files and subsequent operations. Core DSH and Smart app plugin installs
+use a `pnpm-store` inside their own DSH Home, avoiding cross-drive default stores
+whose SQLite cache was created by an administrator.
+
+Standard-user CI processes forward stdout/stderr live and keep separate logs in
+`.ci-artifacts/windows-standard-user/`, preserving process output when other
+runtime files remain locked. New desktop window readiness handshakes use the
+existing 180-second startup budget. Missing readiness events fail explicitly
+and save diagnostics instead of waiting for the entire CI job to be terminated.
+Drawer E2E uses Electron media preferences to verify both normal animation and
+reduced motion, then restores the system preference. Docked environment panel
+scenarios explicitly establish a wide window rather than exercising the narrow
+window's floating popover.
 
 `.github/workflows/wework-app.yml` creates the signed installer and Electron
 YAML update manifest on `windows-latest`.

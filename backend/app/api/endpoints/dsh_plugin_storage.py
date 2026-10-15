@@ -22,7 +22,8 @@ from app.services.dsh_plugin_storage import dsh_plugin_storage_service
 router = APIRouter()
 
 
-@router.post("/units/{unit}/load", response_model=DshStorageSnapshot)
+# MIGRATION-CANDIDATE(api="POST /api/v1/dsh-plugin-storage/units/{unit}/load"): remove after final confirmation.
+# @router.post("/units/{unit}/load", response_model=DshStorageSnapshot)
 def load_unit(
     unit: str,
     descriptor: DshStorageDescriptor,

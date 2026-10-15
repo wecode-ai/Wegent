@@ -1632,9 +1632,9 @@ impl LocalTaskStore {
         )
     }
 
-    pub fn has_queued_routed_executions(&self) -> Result<bool, TaskRuntimeError> {
+    pub fn has_queued_executions(&self) -> Result<bool, TaskRuntimeError> {
         Ok(self.connection()?.query_row(
-            "SELECT EXISTS(SELECT 1 FROM loop_item_executions WHERE status='queued' AND (json_extract(execution_payload, '$.runnerRouting') IS NOT NULL OR json_extract(execution_payload, '$.runnerPolicy') IS NOT NULL))",
+            "SELECT EXISTS(SELECT 1 FROM loop_item_executions WHERE execution_environment='local' AND status='queued')",
             [], |row| row.get(0),
         )?)
     }

@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
 
 const PROCESS_STOP_TIMEOUT_MS = 10_000
@@ -108,6 +108,55 @@ export function processIsAlive(processId) {
   return true
 }
 
+export function processInstanceMatches(expected, actual) {
+  const validate = identity => {
+    if (
+      !identity ||
+      !Number.isInteger(identity.Id) ||
+      identity.Id <= 0 ||
+      typeof identity.ProcessName !== 'string' ||
+      !identity.ProcessName ||
+      typeof identity.StartedAt !== 'string' ||
+      !Number.isFinite(Date.parse(identity.StartedAt))
+    ) {
+      throw new Error('Process identity requires a PID, process name and creation time')
+    }
+  }
+  validate(expected)
+  if (actual === null) return false
+  validate(actual)
+  return (
+    expected.Id === actual.Id &&
+    expected.ProcessName === actual.ProcessName &&
+    expected.StartedAt === actual.StartedAt
+  )
+}
+
+export function collectWindowsProcessIdentity(processId) {
+  if (process.platform !== 'win32') return null
+  if (!Number.isInteger(processId) || processId <= 0) {
+    throw new Error('Process identity diagnostics require a positive process ID')
+  }
+  const result = spawnSync(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      `$ErrorActionPreference = 'Stop'; @(Get-Process -Id ${processId} -ErrorAction SilentlyContinue | Select-Object Id, ProcessName, @{Name='StartedAt'; Expression={$_.StartTime.ToUniversalTime().ToString('o')}}) | ConvertTo-Json -Compress`,
+    ],
+    { encoding: 'utf8', timeout: 10_000, maxBuffer: 16 * 1024, windowsHide: true }
+  )
+  if (result.status !== 0) {
+    throw new Error(
+      `Windows process identity query failed: status=${result.status}, error=${result.error?.code ?? 'none'}`
+    )
+  }
+  const identity = result.stdout.trim() ? JSON.parse(result.stdout) : null
+  if (identity !== null) processInstanceMatches(identity, identity)
+  return identity
+}
+
 export function processGroupIsAlive(processGroupId) {
   try {
     process.kill(-processGroupId, 0)
@@ -180,12 +229,25 @@ export function windowsTaskkillArguments(processId) {
 async function stopWindowsProcessTree(child) {
   if (child.exitCode !== null || child.signalCode !== null || !Number.isInteger(child.pid)) return
   const killer = spawn('taskkill', windowsTaskkillArguments(child.pid), {
-    stdio: 'ignore',
+    stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   })
+  let output = ''
+  for (const stream of [killer.stdout, killer.stderr]) {
+    stream.on('data', chunk => {
+      output = `${output}${chunk}`.slice(-16 * 1024)
+    })
+  }
   await new Promise((resolvePromise, reject) => {
     killer.once('error', reject)
-    killer.once('close', resolvePromise)
+    killer.once('close', code => {
+      console.log('[desktop-e2e] Windows process tree termination', {
+        processId: child.pid,
+        code,
+        output: output.trim(),
+      })
+      resolvePromise()
+    })
   })
   await waitForProcessExit(child, PROCESS_STOP_TIMEOUT_MS)
 }

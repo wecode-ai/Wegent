@@ -110,3 +110,24 @@ test('query supports spaced paths, carries the legacy version guard and strips c
     assertExecutorWorkbenchCompatibility({ WEWORK_EXECUTOR_PATH: binary })
   ).rejects.toThrow('schema query failed')
 }, 20_000)
+
+test('failed schema probes record exit metadata without child output or environment', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'workbench schema failure '))
+  directories.push(directory)
+  const script = join(directory, 'failure.cjs')
+  await writeFile(script, "process.stderr.write('private-child-diagnostics'); process.exit(7)\n")
+  const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+  try {
+    await expect(
+      assertExecutorWorkbenchCompatibility({ WEWORK_EXECUTOR_PATH: script })
+    ).rejects.toThrow('schema query failed')
+    expect(diagnostic).toHaveBeenCalledWith(
+      '[executor-schema] query failed',
+      expect.objectContaining({ code: 7, signal: null, killed: false })
+    )
+    expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('private-child-diagnostics')
+    expect(JSON.stringify(diagnostic.mock.calls)).not.toContain(script)
+  } finally {
+    diagnostic.mockRestore()
+  }
+})

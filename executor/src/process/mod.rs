@@ -802,11 +802,16 @@ pub(crate) fn kill_windows_process_tree(pid: u32) {
         .stderr(Stdio::null())
         .creation_flags(CREATE_NO_WINDOW)
         .status();
-    if let Err(error) = status {
-        log_executor_event(
+    match status {
+        Ok(status) if !status.success() => log_executor_event(
+            "windows process tree termination failed",
+            &[("pid", pid), ("exit_status", status.to_string())],
+        ),
+        Err(error) => log_executor_event(
             "windows process tree termination failed",
             &[("pid", pid), ("error", error.to_string())],
-        );
+        ),
+        Ok(_) => {}
     }
 }
 

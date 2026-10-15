@@ -1175,6 +1175,7 @@ async function waitForRecoveringExecutorGoal(control, taskIds) {
       return (
         taskIds.includes(taskId) &&
         candidate.running === false &&
+        observedTasks.some(other => other.taskId !== taskId && other.running === true) &&
         (goalExecutionStatus === 'recovering' ||
           (goalStatus === 'active' && candidate.status === 'queued'))
       )

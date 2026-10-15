@@ -1,5 +1,9 @@
 import { FileTree, useFileTree } from '@pierre/trees/react'
-import type { FileTreeDirectoryHandle, FileTreeItemHandle } from '@pierre/trees'
+import type {
+  FileTree as FileTreeModel,
+  FileTreeDirectoryHandle,
+  FileTreeItemHandle,
+} from '@pierre/trees'
 import { RefreshCw, Search } from 'lucide-react'
 import type { DragEvent as ReactDragEvent } from 'react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -41,15 +45,26 @@ function isDirectoryHandle(item: FileTreeItemHandle | null): item is FileTreeDir
   return typeof candidate.expand === 'function'
 }
 
+function getExpandedTreePaths(model: FileTreeModel, paths: string[]): string[] {
+  const directories = new Set(
+    paths.flatMap(path => {
+      const segments = path.split('/')
+      return segments.slice(1).map((_, index) => `${segments.slice(0, index + 1).join('/')}/`)
+    })
+  )
+  return Array.from(directories).filter(path => {
+    const item = model.getItem(path)
+    return isDirectoryHandle(item) && item.isExpanded()
+  })
+}
+
 function WorkspacePierreFileTree({
-  modelKey,
   treeModel,
   query,
   visible,
   onOpenDirectory,
   onOpenFile,
 }: {
-  modelKey: string
   treeModel: WorkspaceTreeModel
   query: string
   visible: boolean
@@ -58,6 +73,8 @@ function WorkspacePierreFileTree({
 }) {
   const current = useRef({ treeModel, onOpenDirectory, onOpenFile })
   const syncingSelection = useRef(false)
+  const previousTreeModel = useRef(treeModel)
+  const revealedPath = useRef<string | null>(null)
   useLayoutEffect(() => {
     current.current = { treeModel, onOpenDirectory, onOpenFile }
   }, [treeModel, onOpenDirectory, onOpenFile])
@@ -104,17 +121,39 @@ function WorkspacePierreFileTree({
   }, [model, query])
 
   useEffect(() => {
-    treeModel.expandedTreePaths.forEach(path => {
-      const item = model.getItem(path)
-      if (isDirectoryHandle(item)) {
-        item.expand()
+    const previous = previousTreeModel.current
+    const requestedExpansions = treeModel.expandedTreePaths.filter(
+      path => !previous.expandedTreePaths.includes(path) || !model.getItem(path)
+    )
+    const pathsChanged =
+      previous.paths.length !== treeModel.paths.length ||
+      previous.paths.some((path, index) => path !== treeModel.paths[index])
+    syncingSelection.current = true
+    try {
+      if (pathsChanged) {
+        // resetPaths preserves selection, but search matches need to be recomputed.
+        model.setSearch(null)
+        const expanded = getExpandedTreePaths(model, previous.paths)
+        model.resetPaths(treeModel.paths, { initialExpandedPaths: expanded })
+        model.setSearch(query.trim() || null)
       }
-    })
-  }, [model, treeModel.expandedTreePaths])
+      requestedExpansions.forEach(path => {
+        const item = model.getItem(path)
+        if (isDirectoryHandle(item)) item.expand()
+      })
+      previousTreeModel.current = treeModel
+    } finally {
+      syncingSelection.current = false
+    }
+  }, [model, query, treeModel])
 
   useEffect(() => {
     const path = treeModel.selectedTreePath
-    if (!visible || !path || !model.getItem(path)) return
+    if (!visible || !path || !model.getItem(path)) {
+      revealedPath.current = null
+      return
+    }
+    if (revealedPath.current === path) return
     syncingSelection.current = true
     try {
       const segments = path.split('/')
@@ -127,10 +166,11 @@ function WorkspacePierreFileTree({
       }
       model.getItem(path)?.select()
       model.scrollToPath(path, { offset: 'center', focus: false })
+      revealedPath.current = path
     } finally {
       syncingSelection.current = false
     }
-  }, [model, treeModel.selectedTreePath, visible])
+  }, [model, treeModel.paths, treeModel.selectedTreePath, visible])
 
   const handleDragStart = (event: ReactDragEvent<HTMLDivElement>) => {
     const row = event.nativeEvent
@@ -156,7 +196,6 @@ function WorkspacePierreFileTree({
   return (
     <div className="h-full min-h-0 w-full" onDragStart={handleDragStart}>
       <FileTree
-        key={modelKey}
         data-testid="workspace-file-tree-pierre"
         model={model}
         className="block h-full min-h-0 w-full"
@@ -193,10 +232,6 @@ export function WorkspaceFileTree({
     [activeDirectoryPath, entriesByPath, expandedPaths, rootPath, selectedPath]
   )
   const loadingRoot = loadingPaths.has(rootPath)
-  const modelKey = useMemo(
-    () => `${treeModel.paths.join('\n')}::${treeModel.expandedTreePaths.join('\n')}`,
-    [treeModel.expandedTreePaths, treeModel.paths]
-  )
   return (
     <aside
       data-testid="workspace-file-tree"
@@ -245,8 +280,7 @@ export function WorkspaceFileTree({
           </div>
         ) : treeModel.paths.length > 0 ? (
           <WorkspacePierreFileTree
-            key={modelKey}
-            modelKey={modelKey}
+            key={rootPath}
             treeModel={treeModel}
             query={query}
             visible={visible}

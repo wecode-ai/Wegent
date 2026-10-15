@@ -268,6 +268,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, workspacePath })
       cancelling = true
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER, { timeoutMs: uiTimeoutMs })
+      await selectE2EModel(control, undefined, 'GPT-5.6 Luna', WORKBENCH)
       await control.command('fill', COMPOSER, { value: CANCEL_PROMPT })
       await control.command('press', COMPOSER, { key: 'Enter' })
       await waitUntil(

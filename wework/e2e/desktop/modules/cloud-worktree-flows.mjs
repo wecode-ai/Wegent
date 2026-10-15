@@ -590,7 +590,7 @@ async function verifyFilePanel(control, task, markerName, markerText) {
   })
   await control.command('click', fileSelector)
   await control.command('waitFor', '[data-testid="workspace-file-path"]', {
-    text: join(task.workspacePath, markerName),
+    text: join(task.workspacePath, markerName).replaceAll('\\', '/'),
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {

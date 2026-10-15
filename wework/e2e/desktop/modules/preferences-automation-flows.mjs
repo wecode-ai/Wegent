@@ -267,9 +267,13 @@ async function setExperimentalFeaturesEnabled(control, enabled) {
   const toggleSelector = '[data-testid="general-experimental-features-toggle"]'
   await control.command('click', '[data-testid="settings-button"]', { visible: true })
   await control.command('click', '[data-testid="settings-menu-button"]')
-  await control.command('waitFor', toggleSelector, {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  await waitForSnapshot(
+    control,
+    snapshot => snapshot.testIds.includes('general-experimental-features-toggle'),
+    'The experimental features control did not mount'
+  )
+  await control.command('scrollIntoView', toggleSelector, { visible: false })
+  await control.command('waitFor', toggleSelector, { visible: true })
   if (
     (await control.command('getAttribute', toggleSelector, { value: 'aria-checked' })) !==
     String(enabled)

@@ -93,6 +93,13 @@ export function createDesktopScenario({ modelResponseTimeoutMs, workbenchReadyTi
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await selectCollaborationDomain(control, CONTENT, 'cloud')
       await control.command(
+        'waitFor',
+        scoped(
+          `[data-testid="collaboration-workspace-tree-${workspace.id}"] .collaboration-workspace-identity`
+        ),
+        { visible: true, timeoutMs: workbenchReadyTimeoutMs }
+      )
+      await control.command(
         'click',
         scoped(
           `[data-testid="collaboration-workspace-tree-${workspace.id}"] .collaboration-workspace-identity`

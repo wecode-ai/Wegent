@@ -2,6 +2,8 @@ const MAX_EVENTS = 500;
 const MAX_STRING_LENGTH = 80;
 
 const SAFE_DETAIL_KEYS = new Set([
+  "acknowledgesPublishedDraft",
+  "acknowledgedPublicationRevision",
   "altKey",
   "code",
   "composerId",
@@ -23,6 +25,7 @@ const SAFE_DETAIL_KEYS = new Set([
   "selectionStart",
   "shiftKey",
   "shouldSetComposer",
+  "scopeKey",
   "sourceValueLength",
   "transactionMs",
   "valueLength",

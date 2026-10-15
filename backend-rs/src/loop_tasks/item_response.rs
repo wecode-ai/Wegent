@@ -58,6 +58,7 @@ pub struct LoopItemResponse {
     assignment_history: Vec<Value>,
     status_history: Vec<Value>,
     approval: Option<Value>,
+    human_work: Option<Value>,
     queued_at: Option<String>,
     execution_note: Option<String>,
     execution_error: Option<String>,
@@ -65,6 +66,7 @@ pub struct LoopItemResponse {
     workflow: Option<Value>,
     execution_config: Option<Value>,
     priority: String,
+    start_at: Option<String>,
     due_at: Option<String>,
     sort_order: i64,
     tags: Vec<String>,
@@ -196,7 +198,8 @@ pub async fn response_values(
 
     // `issue_permissions(access, issue_creator_user_id=item.created_by_user_id,
     // user_id=user_id)`.
-    let permissions = issue_permissions(role);
+    let is_creator = item.created_by_user_id == Some(current_user.id);
+    let permissions = issue_permissions(role, is_creator);
 
     // `db.get(User, item.assignee_user_id)`: the source identity map already
     // holds the session user, so the session name is used without a query.
@@ -274,6 +277,10 @@ pub async fn response_values(
         String::new()
     };
 
+    // `human_work = human_issue_work_service.view(db, item, user_id)`.
+    let human_work =
+        super::human_work::human_work_view(state, item, current_user.id, project).await?;
+
     Ok(LoopItemResponse {
         id: item.id.clone(),
         cloud_project_id: item.cloud_project_id.clone(),
@@ -306,6 +313,7 @@ pub async fn response_values(
         approval: overlay
             .approval
             .or_else(|| json_object(metadata.approval.as_ref())),
+        human_work,
         queued_at: overlay
             .queued_at
             .or_else(|| json_string(metadata.queued_at.as_ref())),
@@ -319,6 +327,7 @@ pub async fn response_values(
         workflow: json_object(metadata.workflow.as_ref()).map(|workflow| workflow_view(&workflow)),
         execution_config: execution_config_view(metadata.execution_config.as_ref()),
         priority: item.priority.clone().unwrap_or_default(),
+        start_at: isoformat_unset(item.start_at),
         due_at: isoformat_unset(item.due_at),
         sort_order: item.sort_order,
         tags: normalize_tags(metadata.tags.as_ref()),
@@ -334,20 +343,22 @@ pub async fn response_values(
         is_unread,
         current_delivery_id: normalize_empty_id(item.current_delivery_id.as_deref()),
         version: item.version,
-        created_at: isoformat_required(item.created_at),
-        updated_at: isoformat_required(item.updated_at),
+        created_at: utc_datetime_string(item.created_at).unwrap_or_default(),
+        updated_at: utc_datetime_string(item.updated_at).unwrap_or_default(),
         completed_at: isoformat_unset(item.completed_at),
     })
 }
 
-/// `issue_permissions(access, ...)`: role-based action permissions, ignoring
-/// the issue creator and caller identity (`app.services.cloud_projects.access`).
-fn issue_permissions(role: &str) -> Permissions {
+/// `issue_permissions(access, issue_creator_user_id, user_id)`
+/// (`app.services.cloud_projects.access`): the role gates every action, but
+/// the issue creator always keeps control of their own assignee.
+fn issue_permissions(role: &str, is_creator: bool) -> Permissions {
+    let developer = has_permission(role, "Developer");
     Permissions {
-        edit_content: has_permission(role, "Developer"),
-        comment: has_permission(role, "Developer"),
-        assign: has_permission(role, "Maintainer"),
-        execute: has_permission(role, "Developer"),
+        edit_content: developer,
+        comment: developer,
+        assign: developer || is_creator,
+        execute: developer,
     }
 }
 
@@ -854,6 +865,32 @@ fn optional_string(value: Option<String>) -> Value {
     value.map_or(Value::Null, Value::String)
 }
 
+/// `database_datetime_as_utc(db, value).isoformat()` (`app.db.timezone`,
+/// used for `created_at`/`updated_at` in `response_values`): the stored naive
+/// database datetime is session-local UTC+8, so it is reinterpreted in that
+/// offset, converted to UTC, and rendered as pydantic's aware datetime
+/// (`...Z`, with six fractional digits only when nonzero).
+fn utc_datetime_string(value: Option<NaiveDateTime>) -> Option<String> {
+    /// `MYSQL_SESSION_TIMEZONE` offset (`settings.DATABASE_TIMEZONE`).
+    const DB_SESSION_OFFSET_SECONDS: i32 = 8 * 3600;
+    value.map(|value| {
+        use chrono::TimeZone as _;
+        let utc = chrono::FixedOffset::east_opt(DB_SESSION_OFFSET_SECONDS)
+            .expect("valid fixed offset")
+            .from_local_datetime(&value)
+            .single()
+            .expect("database datetime is representable")
+            .with_timezone(&chrono::Utc)
+            .naive_utc();
+        let base = utc.format("%Y-%m-%dT%H:%M:%S").to_string();
+        if utc.and_utc().timestamp_subsec_nanos() == 0 {
+            format!("{base}Z")
+        } else {
+            format!("{base}.{:06}Z", utc.and_utc().timestamp_subsec_micros())
+        }
+    })
+}
+
 /// pydantic naive-datetime serialization (`isoformat()`): `YYYY-MM-DDTHH:MM:SS`
 /// plus six fractional digits when the value has sub-second precision.
 fn isoformat(value: Option<NaiveDateTime>) -> Option<String> {
@@ -865,11 +902,6 @@ fn isoformat(value: Option<NaiveDateTime>) -> Option<String> {
             format!("{base}.{:06}", value.and_utc().timestamp_subsec_micros())
         }
     })
-}
-
-/// A required pydantic datetime field: an absent value renders as `""`.
-fn isoformat_required(value: Option<NaiveDateTime>) -> String {
-    isoformat(value).unwrap_or_default()
 }
 
 /// `normalize_unset_datetime`: the `1970-01-01 00:00:01` sentinel and NULL

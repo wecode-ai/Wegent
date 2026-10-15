@@ -11,7 +11,7 @@ fn metadata(value: serde_json::Value) -> ItemMetadata {
 
 #[test]
 fn owner_permissions_match_the_source_hierarchy() {
-    let permissions = issue_permissions("Owner");
+    let permissions = issue_permissions("Owner", false);
     assert!(permissions.edit_content);
     assert!(permissions.comment);
     assert!(permissions.assign);
@@ -19,17 +19,17 @@ fn owner_permissions_match_the_source_hierarchy() {
 }
 
 #[test]
-fn restricted_analyst_permissions_follow_the_role_only_source() {
-    // `issue_permissions` ignores the caller identity at this source revision:
-    // every action is role-based, so a RestrictedAnalyst holds none.
-    let permissions = issue_permissions("RestrictedAnalyst");
+fn restricted_analyst_permissions_follow_the_role_and_creator() {
+    // The role gates every action; with no creator override a RestrictedAnalyst
+    // holds none.
+    let permissions = issue_permissions("RestrictedAnalyst", false);
     assert!(!permissions.edit_content && !permissions.comment && !permissions.execute);
     assert!(!permissions.assign);
 }
 
 #[test]
 fn reporter_cannot_edit_or_comment() {
-    let permissions = issue_permissions("Reporter");
+    let permissions = issue_permissions("Reporter", false);
     assert!(!permissions.edit_content);
     assert!(!permissions.comment);
     assert!(!permissions.execute);
@@ -37,10 +37,14 @@ fn reporter_cannot_edit_or_comment() {
 }
 
 #[test]
-fn developer_holds_every_action_but_assign() {
-    let permissions = issue_permissions("Developer");
-    assert!(permissions.edit_content && permissions.comment && permissions.execute);
-    assert!(!permissions.assign);
+fn only_the_creator_grants_assign_to_a_non_developer() {
+    // `assign = is_developer or is_creator`: a Reporter keeps assign only when
+    // they created the issue.
+    assert!(issue_permissions("Reporter", true).assign);
+    assert!(!issue_permissions("Reporter", false).assign);
+    let developer = issue_permissions("Developer", false);
+    assert!(developer.edit_content && developer.comment && developer.execute);
+    assert!(developer.assign);
 }
 
 #[test]
@@ -86,7 +90,11 @@ fn normalize_tags_trims_dedupes_and_caps() {
 fn isoformat_matches_pydantic_serialization() {
     let value = NaiveDateTime::parse_from_str("2026-08-13 16:23:38", "%Y-%m-%d %H:%M:%S").ok();
     assert_eq!(isoformat(value), Some("2026-08-13T16:23:38".to_string()));
-    assert_eq!(isoformat_required(value), "2026-08-13T16:23:38");
+    assert_eq!(
+        utc_datetime_string(value),
+        Some("2026-08-13T08:23:38Z".to_string())
+    );
+    assert_eq!(utc_datetime_string(None), None);
     assert_eq!(
         isoformat_unset(
             NaiveDateTime::parse_from_str("1970-01-01 00:00:01", "%Y-%m-%d %H:%M:%S").ok()
@@ -193,6 +201,7 @@ fn response_serializes_all_fields_with_nulls() {
         assignment_history: Vec::new(),
         status_history: Vec::new(),
         approval: None,
+        human_work: None,
         queued_at: None,
         execution_note: None,
         execution_error: None,
@@ -200,6 +209,7 @@ fn response_serializes_all_fields_with_nulls() {
         workflow: None,
         execution_config: None,
         priority: "none".to_string(),
+        start_at: None,
         due_at: None,
         sort_order: 0,
         tags: Vec::new(),
@@ -229,8 +239,8 @@ fn response_serializes_all_fields_with_nulls() {
     assert_eq!(value["assignee_name"], "xiaozhou5");
     assert_eq!(value["detail_loaded"], true);
     assert_eq!(value["permissions"]["assign"], true);
-    // 52 declared fields, matching the recorded source schema.
-    assert_eq!(value.as_object().expect("object").len(), 52);
+    // 54 declared fields, matching the recorded source schema.
+    assert_eq!(value.as_object().expect("object").len(), 54);
 }
 
 #[test]

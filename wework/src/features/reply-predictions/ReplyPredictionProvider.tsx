@@ -49,16 +49,14 @@ export function ReplyPredictionProvider({
   const api = enabled ? workbench?.services.replyPredictionApi : undefined
   const service = useMemo(() => (api ? replyPredictionService(api) : null), [api])
   useSyncExternalStore(service?.subscribe ?? noSubscription, service?.getSnapshot ?? emptySnapshot)
-  const runtimeRevision = `${lifecycle?.turn.id ?? ''}:${lifecycle?.task?.updatedAt ?? ''}`
   const runtimeBusy = lifecycle?.derived.isBusy || Boolean(lifecycle?.interactionStatus)
   const deviceId = address?.deviceId
   const taskId = address?.taskId
   const workspacePath = address?.workspacePath
-  // The lifecycle turn ID tracks active work and is cleared on completion.
-  const lastTurnId = lifecycle?.task?.runtimeHandle?.lastTurnId
-  const latestTurnId = typeof lastTurnId === 'string' ? lastTurnId : undefined
+  const latestTurnId = lifecycle?.turn.latestId ?? undefined
+  const runtimeRevision = latestTurnId ?? ''
   const runtimeSource = useMemo<ReplyPredictionSource | null>(() => {
-    if (!deviceId || !taskId) return null
+    if (!deviceId || !taskId || !latestTurnId) return null
     return {
       scope: JSON.stringify([deviceId, taskId, workspacePath]),
       revision: runtimeRevision,

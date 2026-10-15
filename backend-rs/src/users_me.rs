@@ -161,6 +161,8 @@ struct EchoedPreferences {
     #[serde(default)]
     tool_output_guard_enabled: Option<bool>,
     #[serde(default)]
+    mcp_provider_keys: Option<McpProviderKeys>,
+    #[serde(default)]
     quick_access: Option<QuickAccessPreference>,
     #[serde(default)]
     composer_quick_phrases: Option<Vec<ComposerQuickPhrase>>,
@@ -174,6 +176,23 @@ struct EchoedPreferences {
     wework_project_work_preferences: Option<brz_json::RawJson>,
     #[serde(default)]
     runtime_configs: Option<brz_json::RawJson>,
+}
+
+/// `MCPProviderKeys` (`extra="allow"`): the three legacy provider-key fields
+/// plus every extension provider key. The source model always materializes
+/// `bailian`, `modelscope` and `mcp_router` (schema default `None`), so an
+/// absent key renders `null`; because extensions are allowed, a stored key the
+/// model does not declare echoes verbatim rather than being dropped.
+#[derive(Debug, Default, Deserialize, serde::Serialize)]
+struct McpProviderKeys {
+    #[serde(default)]
+    bailian: Option<String>,
+    #[serde(default)]
+    modelscope: Option<String>,
+    #[serde(default)]
+    mcp_router: Option<String>,
+    #[serde(flatten)]
+    extra: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 /// `QuickAccessPreference`: both fields re-materialize their schema default
@@ -294,7 +313,7 @@ struct PreferencesResponse {
     memory_enabled: bool,
     chat_status_items: Option<Vec<String>>,
     tool_output_guard_enabled: bool,
-    mcp_provider_keys: Option<brz_json::RawJson>,
+    mcp_provider_keys: Option<McpProviderKeys>,
     quick_access: Option<QuickAccessResponse>,
     composer_quick_phrases: Option<Vec<ComposerQuickPhraseResponse>>,
     default_execution_target: Option<String>,
@@ -348,7 +367,7 @@ fn preferences_view(
         memory_enabled: source.memory_enabled.unwrap_or(false),
         chat_status_items: source.chat_status_items,
         tool_output_guard_enabled: source.tool_output_guard_enabled.unwrap_or(false),
-        mcp_provider_keys: None,
+        mcp_provider_keys: source.mcp_provider_keys,
         quick_access: source.quick_access.map(QuickAccessResponse::from),
         composer_quick_phrases,
         default_execution_target: source.default_execution_target,
@@ -639,6 +658,41 @@ mod tests {
         row.git_info = brz_mysql::Json(json!({"git_domain": "x"}).into());
         let body = serde_json::to_value(user_in_db_response(&row)).unwrap();
         assert!(body["git_info"].is_null());
+    }
+
+    #[test]
+    fn mcp_provider_keys_echo_the_stored_document() {
+        // `UserPreferences.mcp_provider_keys` is `Optional[MCPProviderKeys]`;
+        // the recorded document keeps the three legacy fields, all echoed.
+        let preferences = r#"{"mcp_provider_keys": {"bailian": "key-a", "modelscope": "key-b", "mcp_router": "key-c"}}"#;
+        let body = serde_json::to_value(user_in_db_response(&user_row(preferences))).unwrap();
+        assert_eq!(
+            body["preferences"]["mcp_provider_keys"],
+            json!({"bailian": "key-a", "modelscope": "key-b", "mcp_router": "key-c"})
+        );
+    }
+
+    #[test]
+    fn absent_mcp_provider_keys_renders_null() {
+        let body = serde_json::to_value(user_in_db_response(&user_row("{}"))).unwrap();
+        assert!(body["preferences"].is_null());
+        let body = serde_json::to_value(user_in_db_response(&user_row(r#"{"send_key":"enter"}"#)))
+            .unwrap();
+        assert!(body["preferences"]["mcp_provider_keys"].is_null());
+    }
+
+    #[test]
+    fn mcp_provider_keys_materialize_declared_fields_and_echo_extensions() {
+        // `MCPProviderKeys` declares `bailian`/`modelscope`/`mcp_router` with
+        // `None` defaults and `extra="allow"`, so a stored document with one
+        // legacy key and an extension key materializes all three declared
+        // fields and echoes the extension.
+        let preferences = r#"{"mcp_provider_keys": {"bailian": "k", "acme": {"token": "t"}}}"#;
+        let body = serde_json::to_value(user_in_db_response(&user_row(preferences))).unwrap();
+        assert_eq!(
+            body["preferences"]["mcp_provider_keys"],
+            json!({"bailian": "k", "modelscope": null, "mcp_router": null, "acme": {"token": "t"}})
+        );
     }
 
     #[test]
