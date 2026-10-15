@@ -106,6 +106,46 @@ def test_request_builder_extracts_latest_persisted_executor_sessions_first():
     ]
 
 
+def test_request_builder_extracts_latest_session_per_bot_and_engine():
+    subtasks = [
+        SimpleNamespace(
+            status="COMPLETED",
+            result={
+                "executor_session": {
+                    "agent": "ClaudeCode",
+                    "botId": 654,
+                    "sessionId": "claude-session-old",
+                }
+            },
+        ),
+        SimpleNamespace(
+            status="COMPLETED",
+            result={
+                "executor_session": {
+                    "agent": "Codex",
+                    "botId": 655,
+                    "threadId": "codex-session-new",
+                }
+            },
+        ),
+    ]
+
+    sessions = TaskRequestBuilder._extract_persisted_sessions(subtasks)
+
+    assert sessions == [
+        {
+            "agent": "Codex",
+            "botId": 655,
+            "threadId": "codex-session-new",
+        },
+        {
+            "agent": "ClaudeCode",
+            "botId": 654,
+            "sessionId": "claude-session-old",
+        },
+    ]
+
+
 def test_request_builder_merges_fork_and_persisted_sessions_without_duplicates():
     session = {
         "agent": "ClaudeCode",

@@ -155,6 +155,7 @@ async def trigger_ai_response_unified(
         user_subtask_id=user_subtask_id,
         history_limit=history_limit,
         is_subscription=is_subscription,
+        new_session=new_session,
         enable_tools=enable_tools,
         enable_deep_thinking=enable_deep_thinking,
         previous_bot_id=previous_bot_id,
