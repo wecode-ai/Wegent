@@ -70,12 +70,12 @@ async function replyToActivity(control, cardTestId, text) {
   await control.command('clickWhenEnabled', `${composer} [data-testid="send-message-button"]`)
 }
 
-async function replyToManager(control, cardTestId, text, timeoutMs) {
+async function replyToManagerConclusion(control, cardTestId, text, timeoutMs) {
   const messageId = cardTestId.slice('cloud-task-activity-card-'.length)
   await control.command('scrollIntoView', scoped(`[data-testid="${cardTestId}"]`))
   await control.command(
     'click',
-    scoped(`[data-testid="cloud-task-manager-execution-${messageId}"]`)
+    scoped(`[data-testid="cloud-task-activity-open-task-${messageId}"]`)
   )
   const panel = scoped('[data-testid="work-item-task-chat-panel"]')
   const composer = `${panel} [data-testid="chat-message-input"]`
@@ -853,7 +853,7 @@ export async function createDesktopScenario({
         'body'
       )
 
-      const assignmentCard = await waitForTestIdByText(
+      const managerConclusionCard = await waitForTestIdByText(
         control,
         CONTENT,
         'cloud-task-activity-card-',
@@ -866,7 +866,12 @@ export async function createDesktopScenario({
         bindingsBeforeReply.some(binding => binding.task_id === managerTaskId),
         '负责人评估动态没有绑定新的负责人会话'
       )
-      await replyToManager(control, assignmentCard, MANAGER_REPLY, modelResponseTimeoutMs)
+      await replyToManagerConclusion(
+        control,
+        managerConclusionCard,
+        MANAGER_REPLY,
+        modelResponseTimeoutMs
+      )
       const continuedTranscript = await request('/api/runtime-work/transcript', {
         method: 'POST',
         body: JSON.stringify({
