@@ -98,8 +98,12 @@ export async function verifyConversationQrAuthorization({
   const baseline = { ...qrRequests }
   const sendOrdinary = async () => {
     const before = getOrdinaryRequests()
+    const newMessageSelector = await newConversationMessageSelector(control)
     await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: ordinaryPrompt })
     await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+    await control.command('waitFor', newMessageSelector, {
+      text: `${ordinaryPrompt} completed`,
+    })
     await control.command('waitFor', 'body', {
       text: ordinaryPrompt + ' completed',
       // Observe beyond the real provider's one-second polling interval.
@@ -219,4 +223,23 @@ export async function verifyConversationQrAuthorization({
       }),
     })
   }
+}
+
+async function newConversationMessageSelector(control) {
+  const selector = '[data-testid="message-assistant"][data-message-id]'
+  const { location } = JSON.parse(await control.command('snapshot', 'body'))
+  const { searchParams } = new URL(location)
+  const deviceId = searchParams.get('deviceId')
+  const taskId = searchParams.get('taskId')
+  if (!deviceId || !taskId) return selector
+  const messages = JSON.parse(
+    await control.command('getRuntimeConversationMessages', 'body', {
+      value: JSON.stringify({ deviceId, taskId }),
+    })
+  )
+  // Prior turns can contain the same completion text as the next request.
+  return messages.reduce(
+    (current, message) => `${current}:not([data-message-id=${JSON.stringify(message.id)}])`,
+    selector
+  )
 }
