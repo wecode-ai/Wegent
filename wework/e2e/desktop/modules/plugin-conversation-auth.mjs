@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { ACTIVE_COMPOSER_SELECTOR } from './shared.mjs'
+import { ACTIVE_COMPOSER_SELECTOR, ACTIVE_WORKBENCH_SELECTOR } from './shared.mjs'
 import { testId } from './plugin-regression-fixture.mjs'
 
 export async function verifyConversationQrAuthorization({
@@ -226,7 +226,10 @@ export async function verifyConversationQrAuthorization({
 }
 
 async function newConversationMessageSelector(control) {
-  const selector = '[data-testid="message-assistant"][data-message-id]'
+  const selector =
+    '[data-workspace-tab-content][aria-hidden="false"] ' +
+    `${ACTIVE_WORKBENCH_SELECTOR}[data-active-workbench-pane="true"] ` +
+    '[data-testid="message-assistant"][data-message-id]'
   const { location } = JSON.parse(await control.command('snapshot', 'body'))
   const { searchParams } = new URL(location)
   const deviceId = searchParams.get('deviceId')
