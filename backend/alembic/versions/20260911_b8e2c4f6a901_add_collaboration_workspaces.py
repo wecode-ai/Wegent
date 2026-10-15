@@ -99,21 +99,16 @@ def _create_workspaces(
         workspace_id = workspace_by_owner.get(owner_id)
         if workspace_id is None:
             public_id = str(uuid.uuid4())
-            # Timestamps are written explicitly: Core inserts bypass the ORM
-            # defaults, and a NULL updated_at breaks workspace ordering.
-            values = {
-                "user_id": owner_id,
-                "kind": "CollaborationWorkspace",
-                "name": "默认协作空间",
-                "namespace": "default",
-                "json": _workspace_payload("默认协作空间", public_id),
-                "is_active": True,
-            }
-            if "created_at" in kinds.c:
-                values["created_at"] = sa.func.now()
-            if "updated_at" in kinds.c:
-                values["updated_at"] = sa.func.now()
-            result = connection.execute(kinds.insert().values(**values))
+            result = connection.execute(
+                kinds.insert().values(
+                    user_id=owner_id,
+                    kind="CollaborationWorkspace",
+                    name="默认协作空间",
+                    namespace="default",
+                    json=_workspace_payload("默认协作空间", public_id),
+                    is_active=True,
+                )
+            )
             workspace_id = int(result.inserted_primary_key[0])
             workspace_by_owner[owner_id] = workspace_id
             if owner_id:
