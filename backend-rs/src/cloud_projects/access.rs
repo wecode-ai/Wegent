@@ -33,6 +33,7 @@ pub(crate) const LOOP_ITEMS_COLUMNS: &str = "loop_items.id AS loop_items_id, \
      loop_items.source AS loop_items_source, \
      loop_items.status AS loop_items_status, \
      loop_items.priority AS loop_items_priority, \
+     loop_items.start_at AS loop_items_start_at, \
      loop_items.due_at AS loop_items_due_at, \
      loop_items.sort_order AS loop_items_sort_order, \
      loop_items.current_delivery_id AS loop_items_current_delivery_id, \

@@ -14,6 +14,7 @@ pub mod app;
 mod entry_routes;
 pub mod models_unified;
 pub mod mysql;
+pub mod prometheus;
 pub mod redis;
 pub mod remote_workspace_status;
 pub mod remote_workspace_tree;

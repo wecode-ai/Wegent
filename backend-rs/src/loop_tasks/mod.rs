@@ -10,6 +10,7 @@ pub mod auth;
 pub mod auth_error;
 pub mod cloud_context;
 pub mod http_error;
+pub mod human_work;
 pub mod item_response;
 pub mod loop_repository;
 

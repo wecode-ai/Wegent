@@ -134,6 +134,10 @@ pub struct ExternalMediaRequest<'a> {
     pub user_id: i64,
     /// `context.original_filename`, the relayed `Content-Disposition` name.
     pub original_filename: &'a str,
+    /// `_stream_remote_media`'s `request_headers = {"Range": range_header} if
+    /// range_header else {}`: the caller's `Range` header, forwarded verbatim
+    /// to the resolved media URL.
+    pub range_header: Option<&'a str>,
     /// The `type_data` projection the resolvers read.
     pub reference: ExternalMediaReference,
 }
@@ -264,6 +268,7 @@ mod tests {
                 attachment_id: 1,
                 user_id: 2,
                 original_filename: "clip.mp4",
+                range_header: None,
                 reference: ExternalMediaReference::default(),
             })
             .await

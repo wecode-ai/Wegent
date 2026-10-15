@@ -14,13 +14,30 @@ const EXPOSED_HEADERS: [&str; 2] = ["Content-Disposition", "X-Request-ID"];
 /// The Python source this gateway replaces is served by `uvicorn app.main:app`
 /// (`backend/start.sh`), which sets no per-request handler deadline and no
 /// worker timeout, so a source handler runs to completion however long it
-/// takes. Its database horizon is `DB_POOL_TIMEOUT` (30s), which the MySQL pool
-/// already mirrors (`backend-rs/src/startup/mysql.rs`). The framework default
-/// (`brz_http_server::ServerConfig::default()`, 15s) is not source-derived and
-/// closes the connection on a legitimate long-running handler, answering an
-/// empty 408 that the source never produces. Keep the deadline on the source's
-/// 30s request horizon instead.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// takes. `DB_POOL_TIMEOUT` (30s) only bounds SQLAlchemy pool acquisition,
+/// not request duration. Legitimate requests make hundreds of sequential
+/// MySQL round trips (`GET /api/plugins/installed` resolves one query per
+/// coalesced device row), so any horizon near the pool timeout kills requests
+/// the deadline-free source serves. The framework default
+/// (`brz_http_server::ServerConfig::default()`, 15s) and a previous 30s
+/// horizon both did exactly that, answering an empty 408 the source never
+/// produces. Keep a finite bound for connection hygiene, but size it on the
+/// source's own shutdown horizon: `GRACEFUL_SHUTDOWN_TIMEOUT`
+/// (`app/core/config.py`, 600s, `--timeout-graceful-shutdown 600` in
+/// `backend/start.sh`) is the longest a source request is allowed to run
+/// while still draining cleanly.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// Maximum fixed `Content-Length` request body the origin accepts.
+///
+/// The Python source's application-level upload cap is
+/// `settings.MAX_UPLOAD_FILE_SIZE_MB` (default 100, `app/core/config.py`), and
+/// its `uvicorn` server sets no body-size limit of its own; an oversized
+/// upload is rejected by the handler with 400, not by the listener. The SDK
+/// default (`brz_http_server::ServerConfig::default()`, 8 MiB) is not
+/// source-derived and refuses a legitimate ≤100 MB upload with 413 before the
+/// handler runs, so keep the listener cap on the source's 100 MB horizon.
+const MAX_REQUEST_BODY_BYTES: usize = 100 * 1024 * 1024;
 
 pub(crate) fn gateway_cors() -> brz_http_gateway::Cors {
     let mut cors = brz_http_gateway::Cors::permissive();
@@ -44,6 +61,8 @@ pub(crate) fn gateway_cors() -> brz_http_gateway::Cors {
 pub(crate) fn server_config() -> brz_http_server::ServerConfig {
     brz_http_server::ServerConfig {
         request_timeout: REQUEST_TIMEOUT,
+        max_request_body_bytes: MAX_REQUEST_BODY_BYTES,
+        max_in_flight_request_body_bytes: MAX_REQUEST_BODY_BYTES,
         // This loopback-only listener exports decisions to the public gateway.
         export_cors_policy: true,
         ..Default::default()
@@ -239,16 +258,30 @@ mod tests {
     fn request_deadline_uses_the_source_request_horizon() {
         // The framework default closes a legitimate long-running handler that
         // the deadline-free source would serve; the configured deadline must
-        // stay above it.
+        // stay above it and above the pool-acquisition horizon.
         assert_eq!(server_config().request_timeout, REQUEST_TIMEOUT);
         assert!(server_config().export_cors_policy);
+        assert_eq!(
+            server_config().max_request_body_bytes,
+            MAX_REQUEST_BODY_BYTES
+        );
+        let configured = server_config();
+        assert!(
+            configured.max_in_flight_request_body_bytes >= configured.max_request_body_bytes,
+            "the in-flight budget must admit at least one maximum-size upload"
+        );
         assert!(
             server_config().cors.is_none(),
             "the public gateway owns CORS"
         );
         assert!(
-            REQUEST_TIMEOUT > Duration::from_secs(15),
-            "the configured deadline must exceed the framework default"
+            REQUEST_TIMEOUT > Duration::from_secs(30),
+            "the configured deadline must exceed the source pool timeout"
+        );
+        assert_eq!(
+            REQUEST_TIMEOUT,
+            Duration::from_secs(600),
+            "the horizon mirrors the source graceful-shutdown timeout"
         );
     }
 

@@ -1148,7 +1148,8 @@ async def get_attachment_by_subtask(
     return AttachmentDetailResponse.from_context(context)
 
 
-@router.get("/task/{task_id}/all", response_model=List[AttachmentDetailResponse])
+# MIGRATION-CANDIDATE(api="GET /api/attachments/task/{task_id}/all"): remove after final confirmation.
+# @router.get("/task/{task_id}/all", response_model=List[AttachmentDetailResponse])
 async def get_all_task_attachments(
     task_id: int,
     db: Session = Depends(get_db),

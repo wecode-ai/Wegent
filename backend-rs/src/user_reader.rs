@@ -82,6 +82,16 @@ pub trait UserByIdReader: Send + Sync {
     /// agent projections use, and its statement shape must match the
     /// recorded exchange for replay.
     async fn get_entity_by_id(&self, user_id: i64) -> anyhow::Result<Option<UserRecord>>;
+
+    /// Drop any cached copy of the committed `users` row
+    /// (`CachedUserReader.on_change`, driven by the source's SQLAlchemy
+    /// `after_update` event on the `User` model). The public SQL reader keeps
+    /// no cache, so the default is a no-op; a deployment whose reader is a
+    /// read-through cache deletes `user:v2:data:{user_id}` and
+    /// `user:v2:idx:name:{user_name}` here.
+    async fn invalidate_user_cache(&self, _user_id: i64, _user_name: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 /// The public direct-SQL reader (`UserReader.get_by_id` / `get_by_name`).

@@ -42,6 +42,16 @@
 //! post-rule re-verification with a fresh focused replay. The ported handler
 //! is unchanged and faithful; this note only refreshes the target fingerprint
 //! for the new attempt and carries no behaviour change.
+//!
+//! Reopen note (2026-10-14, round 4): the 2026-10-14 failure for
+//! `PUT /api/runtime-work/im-notifications/presence` was Replay lane ordering.
+//! The handler's first `ZREM` on `channel:user_im_notification_presence:<user_id>`
+//! was refused as `lane_blocked` behind a foreign detached-response
+//! `chat:streaming:*` command recorded earlier on the same connection, and
+//! `presence_dependency_error` rendered that Replay error as the source's
+//! unhandled 500. traffic-e2e `7af2f73` fixed the foreign-API Redis ordering.
+//! This note carries no behaviour change; it only refreshes the code fingerprint
+//! so the engine re-runs acceptance for this route.
 use brz_redis::{Redis, RedisBytes};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

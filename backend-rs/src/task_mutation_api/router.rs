@@ -45,7 +45,7 @@ async fn delete_task_route(
     #[auth] current_user: SessionUser,
 ) -> Result<TaskDeleted, FastApiError> {
     let origin = validated_origin(client_origin.as_deref())?;
-    delete_task::delete_task(state, i64::from(current_user.id), task_id, &origin).await?;
+    delete_task::delete_task(state, i64::from(current_user.id), task_id, Some(&origin)).await?;
     Ok(TaskDeleted::new())
 }
 

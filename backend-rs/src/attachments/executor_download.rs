@@ -152,6 +152,9 @@ pub(super) async fn executor_download(
             attachment_id,
             user_id: user.id,
             original_filename: &context.original_filename(),
+            // `executor_download_attachment` passes no `range_header`, so
+            // `_stream_remote_media` sends the media request without `Range`.
+            range_header: None,
             reference: ExternalMediaReference::from_context(&context),
         })
         .await?
