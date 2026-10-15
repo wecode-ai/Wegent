@@ -2737,6 +2737,11 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await control.command('selectText', PROCESS_TEXT_SELECTOR, { value: MARKER })
+      assert.notEqual(
+        await control.command('getActiveElementTestId', 'body'),
+        'chat-message-input',
+        'Selecting response text must release the previous composer focus'
+      )
       await control.command('waitFor', '[data-testid="message-selection-actions"]', {
         timeoutMs: uiTimeoutMs,
       })

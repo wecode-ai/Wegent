@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ScrollableMessageAreaProps } from '@wegent/collaboration/conversation'
+import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
 import { resolveAsyncRequestUserInputReplies } from '@wegent/chat-core/runtime-user-input'
 import {
   isConversationDiagnosticsEnabled,
@@ -20,6 +21,16 @@ const EMPTY_RESULT: SearchSnapshot['result'] = {
   isCapped: false,
 }
 
+const searchTextByMessage = new WeakMap<WorkbenchMessage, string>()
+
+function cachedSearchText(message: WorkbenchMessage): string {
+  const cached = searchTextByMessage.get(message)
+  if (cached !== undefined) return cached
+  const text = conversationSearchText(message)
+  searchTextByMessage.set(message, text)
+  return text
+}
+
 function sameSearchResult(left: SearchSnapshot['result'], right: SearchSnapshot['result']) {
   return (
     left.totalMatches === right.totalMatches &&
@@ -36,6 +47,7 @@ function sameSearchResult(left: SearchSnapshot['result'], right: SearchSnapshot[
 export function useConversationFind(
   props: Pick<
     ScrollableMessageAreaProps,
+    | 'conversationKey'
     | 'messages'
     | 'loading'
     | 'loadingMoreBefore'
@@ -46,6 +58,7 @@ export function useConversationFind(
   > & { transcriptError?: string | null },
   active: boolean
 ) {
+  const [conversationKey, setConversationKey] = useState(props.conversationKey)
   const [open, setOpen] = useState(false)
   const [searchRequest, setSearchRequest] = useState({ query: '' })
   const [completedRequest, setCompletedRequest] = useState(searchRequest)
@@ -61,13 +74,28 @@ export function useConversationFind(
   const [retryRequest, setRetryRequest] = useState(0)
   const previousFocus = useRef<HTMLElement | null>(null)
   const attempted = useRef(new Set<string>())
-  const mounted = useRef(false)
-  useEffect(() => {
-    mounted.current = true
+  const historyGeneration = useRef(0)
+  useLayoutEffect(() => {
+    historyGeneration.current += 1
+    previousFocus.current = null
+    attempted.current.clear()
     return () => {
-      mounted.current = false
+      historyGeneration.current += 1
     }
-  }, [])
+  }, [props.conversationKey])
+  if (conversationKey !== props.conversationKey) {
+    const request = { query: '' }
+    setConversationKey(props.conversationKey)
+    setOpen(false)
+    setSearchRequest(request)
+    setCompletedRequest(request)
+    setPublishedSnapshot({ request, result: EMPTY_RESULT })
+    setFocusRequest(0)
+    setSelected({ index: 0 })
+    setPending(false)
+    setFailed(false)
+    setRetryRequest(0)
+  }
   const hasQuery = Boolean(query.trim())
   const queryPending = hasQuery && searchRequest !== completedRequest
   const { onLoadMoreBefore, onLoadTranscriptGap } = props
@@ -115,10 +143,16 @@ export function useConversationFind(
     if (!indexReady) return []
     return measureSearch('search-index', { messageCount: props.messages.length }, () => {
       const replies = resolveAsyncRequestUserInputReplies(props.messages)
-      return props.messages.map(message => ({
-        messageId: message.id,
-        text: conversationSearchText(message, replies.get(message.id)),
-      }))
+      return props.messages.map(message => {
+        const replyQuestions = replies.get(message.id)
+        return {
+          messageId: message.id,
+          // Reply text also depends on questions in preceding messages.
+          text: replyQuestions?.length
+            ? conversationSearchText(message, replyQuestions)
+            : cachedSearchText(message),
+        }
+      })
     })
   }, [indexReady, props.messages])
   useEffect(() => {
@@ -248,15 +282,18 @@ export function useConversationFind(
       return
     }
     attempted.current.add(attemptKey)
+    const generation = historyGeneration.current
     setPending(true)
     setFailed(false)
     Promise.resolve()
-      .then(request.load)
+      .then(() => {
+        if (historyGeneration.current === generation) return request.load()
+      })
       .catch(() => {
-        if (mounted.current) setFailed(true)
+        if (historyGeneration.current === generation) setFailed(true)
       })
       .finally(() => {
-        if (mounted.current) setPending(false)
+        if (historyGeneration.current === generation) setPending(false)
       })
   }, [
     active,

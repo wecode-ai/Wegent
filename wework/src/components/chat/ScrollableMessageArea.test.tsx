@@ -3860,8 +3860,10 @@ describe('ScrollableMessageArea', () => {
 
     fireEvent.scroll(scroller)
     rerender(<ScrollableMessageArea conversationKey="conversation-b" messages={[messageB]} />)
+    expect(screen.getByTestId('chat-message-scroll-area')).toBe(scroller)
     ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
     rerender(<ScrollableMessageArea conversationKey="conversation-a" messages={[messageA]} />)
+    expect(screen.getByTestId('chat-message-scroll-area')).toBe(scroller)
 
     act(() => {
       vi.advanceTimersByTime(0)

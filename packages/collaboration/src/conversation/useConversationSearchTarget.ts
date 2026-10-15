@@ -28,7 +28,7 @@ export function conversationSearchRanges(
     const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, {
       acceptNode: node =>
         node.parentElement?.closest(
-          'button, [aria-hidden="true"], [data-testid="markdown-code-block-language"], [data-testid="user-message-goal-badge"], [data-testid="message-code-comment-context-badge"], .wework-diagram-preview .drawing-viewer, script, style, textarea, [contenteditable="true"]'
+          'button:not([data-testid="assistant-markdown-link"]), [data-testid="assistant-markdown-link-line"], [aria-hidden="true"], [data-testid="markdown-code-block-language"], [data-testid="user-message-goal-badge"], [data-testid="message-code-comment-context-badge"], .wework-diagram-preview .drawing-viewer, script, style, textarea, [contenteditable="true"]'
         )
           ? NodeFilter.FILTER_REJECT
           : NodeFilter.FILTER_ACCEPT,

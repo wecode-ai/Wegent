@@ -2,6 +2,7 @@ import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-li
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
+import { AssistantMarkdown } from '@wegent/collaboration/markdown'
 import {
   getConversationDiagnosticsSnapshot,
   resetConversationDiagnosticsForTest,
@@ -162,6 +163,38 @@ describe('conversation find', () => {
       conversationSearchRanges(container, 'OUTPUT', 250).map(range => range.toString())
     ).toEqual(['output'])
     expect(conversationSearchRanges(container, 'foobar', 250)).toEqual([])
+  })
+
+  test('matches rendered Markdown link labels in index order without generated line suffixes or controls', () => {
+    const source =
+      '输出 [**输出** report.ts](src/report.ts:18) [输出 internal](/projects/search/settings/environment-variables) [输出 external](https://example.invalid/report)'
+    const index = [{ messageId: 'links', text: conversationSearchText(message('links', source)) }]
+    const { container } = render(
+      <article>
+        <div data-testid="assistant-message-content">
+          <AssistantMarkdown content={source} />
+          <button type="button">输出</button>
+          <span aria-hidden="true">输出</span>
+        </div>
+      </article>
+    )
+    const links = screen.getAllByTestId('assistant-markdown-link')
+    expect(links.map(link => link.tagName)).toEqual(['BUTTON', 'BUTTON', 'A'])
+    expect(screen.getByTestId('assistant-markdown-link-line')).toHaveTextContent('(line 18)')
+    const indexed = findConversationMatches(index, '输出')
+    const ranges = conversationSearchRanges(container, '输出', 250)
+    expect(indexed.matches.map(match => match.occurrence)).toEqual([0, 1, 2, 3])
+    expect(ranges.map(range => range.toString())).toEqual(Array(indexed.totalMatches).fill('输出'))
+    for (let linkIndex = 0; linkIndex < links.length; linkIndex += 1) {
+      expect(links[linkIndex].contains(ranges[linkIndex + 1].startContainer)).toBe(true)
+    }
+    expect(
+      conversationSearchRanges(container, '输出 report.ts', 250).map(range => range.toString())
+    ).toEqual(['输出 report.ts'])
+    for (const query of ['line 18', 'src/report.ts', 'example.invalid']) {
+      expect(findConversationMatches(index, query).totalMatches).toBe(0)
+      expect(conversationSearchRanges(container, query, 250)).toEqual([])
+    }
   })
 
   test('jumps to an offscreen diagram source and keeps that position while the viewer loads', async () => {
@@ -524,6 +557,96 @@ describe('conversation find', () => {
     expect(screen.getByTestId('conversation-find-input')).toHaveValue('')
     expect(screen.getByTestId('conversation-find-count')).toBeEmptyDOMElement()
     expect(screen.queryByTestId('conversation-find-loading-icon')).not.toBeInTheDocument()
+  })
+
+  test('resets results and pending query when switching conversations without remounting the hook', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const props = {
+      conversationKey: 'find-a',
+      messages: [message('first', '灰度 灰度 输出')],
+    }
+    const { result, rerender } = renderHook(props => useConversationFind(props, true), {
+      initialProps: props,
+    })
+    act(() => {
+      fireEvent.keyDown(window, { key: 'f', metaKey: true })
+      result.current.changeQuery('灰度')
+    })
+    act(() => vi.advanceTimersByTime(150))
+    act(() => result.current.step(1))
+    expect(result.current.result.active).toBe(2)
+    act(() => result.current.changeQuery('输出'))
+    expect(result.current.isLoading).toBe(true)
+
+    rerender({ conversationKey: 'find-b', messages: [message('second', '输出')] })
+    expect(result.current.open).toBe(false)
+    expect(result.current.query).toBe('')
+    expect(result.current.searchTarget).toBeNull()
+    expect(result.current.isLoading).toBe(false)
+    act(() => vi.advanceTimersByTime(150))
+    act(() => {
+      fireEvent.keyDown(window, { key: 'f', metaKey: true })
+      result.current.changeQuery('输出')
+    })
+    act(() => vi.advanceTimersByTime(150))
+    expect(result.current.result).toEqual({ matches: 1, active: 1, isCapped: false })
+    expect(result.current.searchTarget?.messageId).toBe('second')
+  })
+
+  test('ignores the old conversation history completion while the next conversation is loading', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    let rejectOld!: (reason: Error) => void
+    let finishNew!: () => void
+    const loadBefore = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            rejectOld = reject
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>(resolve => {
+            finishNew = resolve
+          })
+      )
+    const props = {
+      conversationKey: 'history-a',
+      messages: [message('latest', 'latest')],
+      hasMoreBefore: true,
+      onLoadMoreBefore: loadBefore,
+    }
+    const { result, rerender } = renderHook(props => useConversationFind(props, true), {
+      initialProps: props,
+    })
+    const startSearch = async () => {
+      act(() => {
+        fireEvent.keyDown(window, { key: 'f', metaKey: true })
+        result.current.changeQuery('old')
+      })
+      await act(async () => {
+        vi.advanceTimersByTime(150)
+      })
+    }
+    await startSearch()
+    expect(loadBefore).toHaveBeenCalledTimes(1)
+    rerender({ ...props, conversationKey: 'history-b' })
+    await startSearch()
+    expect(loadBefore).toHaveBeenCalledTimes(2)
+
+    await act(async () => rejectOld(new Error('previous history unavailable')))
+    expect(result.current.historyFailed).toBe(false)
+    expect(result.current.isLoading).toBe(true)
+    rerender({
+      ...props,
+      conversationKey: 'history-b',
+      hasMoreBefore: false,
+      messages: [message('history-b-old', 'old'), ...props.messages],
+    })
+    await act(async () => finishNew())
+    expect(result.current.isLoading).toBe(false)
+    expect(result.current.searchTarget?.messageId).toBe('history-b-old')
   })
 
   test('clears completed targets and cancels pending search when the pane becomes inactive', () => {

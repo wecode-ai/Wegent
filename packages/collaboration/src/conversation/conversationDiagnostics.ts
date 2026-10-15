@@ -8,6 +8,7 @@ export { setConversationFrameProbeEnabled } from './conversationFrameProbe'
 // Capture only the layout window around reader input; idle rendering does no diagnostic DOM reads.
 const CAPTURE_WINDOW_MS = 10_000
 const MAX_EVENTS = 400
+// These keys must carry only measurements or flags, never user text.
 const SAFE_DETAIL_KEYS = new Set([
   'scrollerId',
   'rowIndex',

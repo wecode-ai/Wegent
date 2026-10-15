@@ -154,27 +154,52 @@ test('correlates diagram remounts and waits for final SVG readiness without diag
 })
 
 test('search expansion does not start offscreen diagrams, and visibility never remounts a viewer', () => {
+  let nextFrameId = 1
+  const frames = new Map<number, FrameRequestCallback>()
+  vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => {
+    const id = nextFrameId++
+    frames.set(id, callback)
+    return id
+  })
+  vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(id => {
+    frames.delete(id)
+  })
+  const frame = () => {
+    const pending = [...frames.values()]
+    frames.clear()
+    act(() => pending.forEach(callback => callback(performance.now())))
+  }
   const observations: Array<{
     callback: IntersectionObserverCallback
     options?: IntersectionObserverInit
     disconnect: ReturnType<typeof vi.fn>
+    observe: ReturnType<typeof vi.fn>
+    unobserve: ReturnType<typeof vi.fn>
   }> = []
   vi.stubGlobal(
     'IntersectionObserver',
     class {
       disconnect = vi.fn()
       observe = vi.fn()
+      unobserve = vi.fn()
       constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
-        observations.push({ callback, options, disconnect: this.disconnect })
+        observations.push({
+          callback,
+          options,
+          disconnect: this.disconnect,
+          observe: this.observe,
+          unobserve: this.unobserve,
+        })
       }
     }
   )
   let diagramTop = 4_000
+  let diagramHeight = 384
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
     this: HTMLElement
   ) {
     return this.dataset.testid === 'assistant-diagram-preview'
-      ? new DOMRect(0, diagramTop, 600, 384)
+      ? new DOMRect(0, diagramTop, 600, diagramHeight)
       : new DOMRect(0, 0, 600, 800)
   })
   const { unmount } = render(
@@ -203,9 +228,25 @@ test('search expansion does not start offscreen diagrams, and visibility never r
   ).toHaveAttribute('hidden')
   expect(fileViewerMocks.render).not.toHaveBeenCalled()
   notify(false)
+  expect(frames.size).toBe(0)
+  diagramTop = 160
+  diagramHeight = 0
+  notify(true)
+  expect(frames.size).toBe(0)
+  expect(fileViewerMocks.render).not.toHaveBeenCalled()
+  diagramTop = 4_000
+  diagramHeight = 384
   notify(true) // A stale entry from before a search jump must not start rendering.
+  notify(true)
+  expect(frames.size).toBe(1)
   expect(fileViewerMocks.render).not.toHaveBeenCalled()
   diagramTop = 160
+  frame()
+  expect(observation.unobserve).toHaveBeenCalledWith(
+    screen.getByTestId('assistant-diagram-preview')
+  )
+  expect(observation.observe).toHaveBeenCalledTimes(2)
+  // Re-observing delivers a fresh entry even if the intersection threshold did not change.
   notify(true)
   const viewer = screen.getByTestId('file-viewer')
   expect(
@@ -221,6 +262,55 @@ test('search expansion does not start offscreen diagrams, and visibility never r
   unmount()
   notify(true)
   expect(fileViewerMocks.render).toHaveBeenCalledTimes(1)
+
+  const pending = render(<MarkdownDiagramPreview code={'graph LR\nA --> B'} language="mermaid" />)
+  const pendingObservation = observations[1]
+  act(() => {
+    pendingObservation.callback(
+      [{ isIntersecting: true } as IntersectionObserverEntry],
+      {} as IntersectionObserver
+    )
+  })
+  const pendingFrames = [...frames.values()]
+  expect(pendingFrames).toHaveLength(1)
+  pending.unmount()
+  expect(frames.size).toBe(0)
+  // A frame already dispatched by the browser must also respect cleanup.
+  act(() => pendingFrames.forEach(callback => callback(performance.now())))
+  expect(pendingObservation.observe).toHaveBeenCalledTimes(1)
+  expect(fileViewerMocks.render).toHaveBeenCalledTimes(1)
+})
+
+test.each([
+  ['bottom', 0, window.innerHeight],
+  ['top', 0, -384],
+  ['right', window.innerWidth, 0],
+  ['left', -600, 0],
+])('activates a diagram touching the %s viewport edge without re-observing', (_, left, top) => {
+  let notify!: IntersectionObserverCallback
+  vi.stubGlobal(
+    'IntersectionObserver',
+    class {
+      disconnect = vi.fn()
+      observe = vi.fn()
+      unobserve = vi.fn()
+      constructor(callback: IntersectionObserverCallback) {
+        notify = callback
+      }
+    }
+  )
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
+    new DOMRect(Number(left), Number(top), 600, 384)
+  )
+  const requestFrame = vi.spyOn(window, 'requestAnimationFrame')
+  render(<MarkdownDiagramPreview code={'graph LR\nA --> B'} language="mermaid" />)
+
+  act(() => {
+    notify([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver)
+  })
+
+  expect(fileViewerMocks.render).toHaveBeenCalledTimes(1)
+  expect(requestFrame).not.toHaveBeenCalled()
 })
 
 test('renders PlantUML source through the drawing file viewer', () => {

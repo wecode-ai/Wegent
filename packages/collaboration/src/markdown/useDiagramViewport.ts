@@ -14,6 +14,7 @@ export function useDiagramViewport(elementRef: RefObject<HTMLElement | null>): b
     if (!element || enteredViewport || typeof IntersectionObserver === 'undefined') return
     const root = scope?.scrollElementRef?.current ?? getScrollViewportElement(element)
     let active = true
+    let reobserveFrame: number | undefined
     const observer = new IntersectionObserver(
       entries => {
         if (!active || !entries.some(entry => entry.isIntersecting)) return
@@ -25,15 +26,25 @@ export function useDiagramViewport(elementRef: RefObject<HTMLElement | null>): b
           left: 0,
           right: window.innerWidth,
         }
+        if (rect.width <= 0 || rect.height <= 0) return
+        // IntersectionObserver also reports edge-adjacent rectangles as intersecting.
         if (
-          rect.width <= 0 ||
-          rect.height <= 0 ||
-          rect.bottom <= viewport.top ||
-          rect.top >= viewport.bottom ||
-          rect.right <= viewport.left ||
-          rect.left >= viewport.right
-        )
+          rect.bottom < viewport.top ||
+          rect.top > viewport.bottom ||
+          rect.right < viewport.left ||
+          rect.left > viewport.right
+        ) {
+          // Refresh the observer's threshold state after a stale intersecting entry.
+          if (reobserveFrame === undefined) {
+            reobserveFrame = window.requestAnimationFrame(() => {
+              reobserveFrame = undefined
+              if (!active) return
+              observer.unobserve(element)
+              observer.observe(element)
+            })
+          }
           return
+        }
         active = false
         observer.disconnect()
         setEnteredViewport(true)
@@ -43,6 +54,7 @@ export function useDiagramViewport(elementRef: RefObject<HTMLElement | null>): b
     observer.observe(element)
     return () => {
       active = false
+      if (reobserveFrame !== undefined) window.cancelAnimationFrame(reobserveFrame)
       observer.disconnect()
     }
   }, [elementRef, enteredViewport, scope])

@@ -25,11 +25,7 @@ type SearchableMessageAreaProps = Omit<
   searchActive?: boolean
 }
 
-export function ScrollableMessageArea(props: SearchableMessageAreaProps) {
-  return <SearchableMessageArea key={props.conversationKey ?? 'conversation'} {...props} />
-}
-
-function SearchableMessageArea({
+export function ScrollableMessageArea({
   workspacePath,
   imageTarget,
   virtualize,
