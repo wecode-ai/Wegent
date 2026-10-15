@@ -604,12 +604,12 @@ describe('DesktopSidebar', () => {
       onReorderRuntimeProjects,
     })
 
-    const remoteSortable = document.querySelector(
-      '[data-sidebar-sortable-id="local-device:remote-project-id"]'
-    ) as HTMLElement
-    const localSortable = document.querySelector(
-      '[data-sidebar-sortable-id="local-device:/repo/local"]'
-    ) as HTMLElement
+    const remoteSortable = screen
+      .getByTestId('project-row-8')
+      .closest('[data-sidebar-sortable-id]') as HTMLElement
+    const localSortable = screen
+      .getByTestId('project-row-7')
+      .closest('[data-sidebar-sortable-id]') as HTMLElement
     const remoteActivator = screen.getByTestId('project-drag-activator-8')
     const remoteButton = remoteActivator.closest('button') as HTMLButtonElement
     const remoteMetadata = screen.getByTestId('project-device-status-8')

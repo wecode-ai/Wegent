@@ -4534,9 +4534,7 @@ export function DesktopSidebar({
                         testId="pinned-runtime-project-sortable-list"
                         className="mt-1 space-y-1"
                         items={pinnedProjects}
-                        getId={({ runtimeProjectWork }) =>
-                          `${sidebarStateDeviceId || runtimeProjectWork?.project.stateDeviceId || 'device'}:${runtimeProjectWork ? getRuntimeProjectSidebarStateKey(runtimeProjectWork.project) : 'project'}`
-                        }
+                        getId={({ project }) => `project:${project.id}`}
                         getLabel={({ project }) => project.name}
                         canDrag={({ runtimeProjectWork }) =>
                           Boolean(runtimeProjectWork?.project.key && onSetRuntimeProjectPinned)
@@ -4842,11 +4840,7 @@ export function DesktopSidebar({
                           testId="runtime-project-sortable-list"
                           className="space-y-1"
                           items={regularSortableProjects}
-                          getId={({ project, runtimeProjectWork }) =>
-                            runtimeProjectWork
-                              ? `${sidebarStateDeviceId || runtimeProjectWork.project.stateDeviceId || 'device'}:${getRuntimeProjectSidebarStateKey(runtimeProjectWork.project)}`
-                              : `project:${project.id}`
-                          }
+                          getId={({ project }) => `project:${project.id}`}
                           getLabel={({ project }) => project.name}
                           canDrag={({ runtimeProjectWork }) =>
                             Boolean(runtimeProjectWork?.project.key && onReorderRuntimeProjects)
