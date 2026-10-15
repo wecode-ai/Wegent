@@ -4,6 +4,7 @@ from itertools import product
 from pathlib import Path
 
 import sqlalchemy as sa
+from pymysql.constants import FLAG
 from sqlalchemy.orm import Session
 
 from app.db.base import Base
@@ -81,10 +82,23 @@ def test_cp02_cp03_cp04_cp05_cp06_cp07_cp18_rust_catalog_mysql_policy(mysql_url)
                     project_filter="",
                     workspace_filter="",
                 )
-                actual = {
-                    str(row.project_id): row.anon_1_priority
-                    for row in db.execute(sa.text(query))
-                }
+                result = db.execute(sa.text(query))
+                # PyMySQL also decodes binary JSON expressions to Python str.
+                # Rust's driver requires a text column on the wire, so values
+                # alone do not protect the HTTP catalog from decode failures.
+                fields = result.cursor._result.fields
+                public_id_field = next(
+                    field for field in fields if field.name == "workspace_public_id"
+                )
+                assert (
+                    not public_id_field.flags & FLAG.BINARY
+                ), "Parent public ID must be SQL text for Rust decoding"
+                rows = result.all()
+                expected_public_id = space.json.get("metadata", {}).get("publicId")
+                assert all(
+                    row.workspace_public_id == expected_public_id for row in rows
+                )
+                actual = {str(row.project_id): row.anon_1_priority for row in rows}
                 assert actual == source
                 return actual
 
@@ -92,6 +106,10 @@ def test_cp02_cp03_cp04_cp05_cp06_cp07_cp18_rust_catalog_mysql_policy(mysql_url)
             assert priorities(member.id) == {}
             # Space ownership supplies project governance without a member row.
             assert priorities(owner.id) == {"1001": 1}
+            for metadata in ({"publicId": "空间-public"}, {"publicId": None}, {}):
+                space.json = {"metadata": metadata}
+                assert priorities(owner.id) == {"1001": 1}
+            space.json = {"metadata": {"publicId": "parent-public"}}
             for mode, space_role, direct_role in product(
                 ("inherit", "restricted"),
                 (None, "Owner", "Maintainer", "Developer", "Reporter", "Viewer"),

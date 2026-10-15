@@ -14,7 +14,7 @@ WITH parents AS (
 ), access AS (
     SELECT loop_items.id AS project_id, parents.workspace_id,
            kinds.name AS workspace_name,
-           NULLIF(JSON_UNQUOTE(JSON_EXTRACT(kinds.json, '$.metadata.publicId')), 'null') AS workspace_public_id,
+           CAST(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(kinds.json, '$.metadata.publicId')), 'null') AS CHAR CHARACTER SET utf8mb4) AS workspace_public_id,
            CASE WHEN kinds.user_id = {user_id} THEN 0 ELSE space_member.priority END AS workspace_priority,
            direct.priority AS direct_priority,
            CASE WHEN kinds.user_id = {user_id} THEN 1
