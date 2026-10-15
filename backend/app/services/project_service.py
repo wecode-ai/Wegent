@@ -47,6 +47,13 @@ from app.services.device.command_service import (
     execute_configured_device_command,
 )
 from app.services.device_service import device_service
+from app.services.project_task_queries import (
+    _get_project_tasks,
+    _task_status,
+    _task_title,
+    project_task_response,
+    readable_projects_query,
+)
 from app.services.task_execution_workspace import (
     task_execution_workspace_path,
     task_execution_workspace_source,
@@ -1227,32 +1234,6 @@ def _find_worktree_tasks(
     return [task]
 
 
-def _task_json(task: TaskResource) -> dict[str, Any]:
-    task_json = task.json or {}
-    if not isinstance(task_json, dict):
-        return {}
-    return task_json
-
-
-def _task_spec(task: TaskResource) -> dict[str, Any]:
-    spec = _task_json(task).get("spec")
-    if not isinstance(spec, dict):
-        return {}
-    return spec
-
-
-def _task_title(task: TaskResource) -> str:
-    spec = _task_spec(task)
-    return str(spec.get("title") or task.name or f"Task #{task.id}")
-
-
-def _task_status(task: TaskResource) -> str:
-    status = _task_json(task).get("status")
-    if not isinstance(status, dict):
-        return "PENDING"
-    return str(status.get("phase") or "PENDING")
-
-
 def _build_git_clone_args(
     git_url: str,
     branch: Optional[str],
@@ -1375,25 +1356,17 @@ def list_projects(
     Returns:
         List of projects with optional tasks
     """
-    from sqlalchemy import exists, or_
-
-    from app.models.resource_member import MemberStatus, ResourceMember
-    from app.models.share_link import ResourceType
-
-    shared_project = exists().where(
-        ResourceMember.resource_type == ResourceType.PROJECT.value,
-        ResourceMember.resource_id == Project.id,
-        ResourceMember.entity_type == "user",
-        ResourceMember.entity_id == str(user_id),
-        ResourceMember.status == MemberStatus.APPROVED.value,
-    )
-    query = db.query(Project).filter(
-        or_(Project.user_id == user_id, shared_project),
-        Project.is_active == True,
-    )
-    if client_origin:
-        query = query.filter(Project.client_origin == client_origin)
+    query = readable_projects_query(db, user_id=user_id, client_origin=client_origin)
     projects = query.order_by(Project.sort_order.asc()).all()
+    task_counts = (
+        {}
+        if include_tasks
+        else task_store.count_active_tasks_by_project(
+            db,
+            project_owners={project.id: project.user_id for project in projects},
+            client_origin=client_origin,
+        )
+    )
 
     items = []
     for project in projects:
@@ -1407,18 +1380,7 @@ def list_projects(
         else:
             tasks = []
 
-        task_count = (
-            len(tasks)
-            if include_tasks
-            else (
-                task_store.count_active_project_tasks(
-                    db,
-                    project_id=project.id,
-                    owner_user_id=project.user_id,
-                    client_origin=client_origin,
-                )
-            )
-        )
+        task_count = len(tasks) if include_tasks else task_counts.get(project.id, 0)
 
         # Build response manually to avoid auto-validation of tasks relationship
         response = ProjectWithTasksResponse(
@@ -1488,14 +1450,7 @@ def update_project(
     db.commit()
     db.refresh(project)
 
-    response = ProjectResponse.model_validate(project)
-    response.task_count = task_store.count_active_project_tasks(
-        db,
-        project_id=project_id,
-        owner_user_id=project.user_id,
-        client_origin=client_origin,
-    )
-    return response
+    return _project_response(db=db, project=project, client_origin=client_origin)
 
 
 def create_project_conversation(
@@ -1650,21 +1605,7 @@ def add_task_to_project(
     db.commit()
     db.refresh(task)
 
-    # Get task details for response
-    spec = _task_spec(task)
-    is_group_chat = spec.get("is_group_chat", False)
-
-    return ProjectTaskResponse(
-        task_id=task_id,
-        task_title=_task_title(task),
-        task_status=_task_status(task),
-        device_id=spec.get("device_id"),
-        execution_workspace_source=task_execution_workspace_source(task),
-        execution_workspace_path=task_execution_workspace_path(task),
-        is_group_chat=is_group_chat,
-        project_id=project_id,
-        updated_at=task.updated_at,
-    )
+    return project_task_response(task)
 
 
 def remove_task_from_project(
@@ -1708,52 +1649,6 @@ def remove_task_from_project(
         payload=_with_task_project_label(task, None),
     )
     db.commit()
-
-
-def _get_project_tasks(
-    db: Session,
-    project_id: int,
-    *,
-    owner_user_id: int,
-    client_origin: Optional[str] = None,
-) -> list[ProjectTaskResponse]:
-    """
-    Get all tasks in a project with their details.
-
-    Args:
-        db: Database session
-        project_id: Project ID
-
-    Returns:
-        List of project tasks with details
-    """
-    tasks = task_store.list_active_project_tasks(
-        db,
-        project_id=project_id,
-        owner_user_id=owner_user_id,
-        client_origin=client_origin,
-    )
-
-    result = []
-    for task in tasks:
-        spec = _task_spec(task)
-        is_group_chat = spec.get("is_group_chat", False)
-
-        result.append(
-            ProjectTaskResponse(
-                task_id=task.id,
-                task_title=_task_title(task),
-                task_status=_task_status(task),
-                device_id=spec.get("device_id"),
-                execution_workspace_source=task_execution_workspace_source(task),
-                execution_workspace_path=task_execution_workspace_path(task),
-                is_group_chat=is_group_chat,
-                project_id=project_id,
-                updated_at=task.updated_at,
-            )
-        )
-
-    return result
 
 
 def _get_active_project(
