@@ -8,7 +8,12 @@ from fastapi import HTTPException
 from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session
 
-from app.models.delivery import LoopItem
+from app.models.delivery import (
+    CloudProject,
+    LoopItem,
+    ProjectChatAgent,
+    loop_datetime_is_unset,
+)
 from app.models.kind import Kind
 from app.models.resource_member import ResourceMember
 from app.models.user import User
@@ -21,6 +26,7 @@ from app.schemas.runner_routing import (
     RunnerModel,
     RunnerSelection,
 )
+from app.services.cloud_project_visibility import readable_workspace_ids
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.device.identity import resolve_owned_device_alias
 from app.services.device.runtime_route import runtime_device_route_id
@@ -44,16 +50,18 @@ def active_device(db: Session, environment_id: str) -> Kind | None:
 def device_grants(db: Session, entity_type: str, entity_id: str) -> set[int]:
     return {
         int(row.resource_id)
-        for row in db.query(ResourceMember).filter_by(
+        for row in db.query(ResourceMember)
+        .filter_by(
             resource_type="Device",
             entity_type=entity_type,
             entity_id=entity_id,
             status="approved",
         )
+        .filter(ResourceMember.role.in_(("Owner", "Maintainer", "Developer")))
     }
 
 
-def project_environment_ids(db: Session, project_id: str) -> set[int]:
+def explicit_project_environment_ids(db: Session, project_id: str) -> set[int]:
     """A project grant cannot outlive the parent space's device grant."""
     workspace_id = workspace_id_for_project(db, project_id)
     if workspace_id is None:
@@ -61,6 +69,84 @@ def project_environment_ids(db: Session, project_id: str) -> set[int]:
     return device_grants(db, "workspace", str(workspace_id)) & device_grants(
         db, "project", project_id
     )
+
+
+def project_environment_ids(db: Session, project_id: str) -> set[int]:
+    """Catalog all project devices without granting cross-binding execution."""
+    return explicit_project_environment_ids(
+        db, project_id
+    ) | legacy_project_environment_ids(db, project_id)
+
+
+def execution_environment_ids(
+    db: Session, project_id: str, agent_id: str | None
+) -> set[int]:
+    explicit = explicit_project_environment_ids(db, project_id)
+    if not agent_id:
+        return explicit
+    return explicit | legacy_project_environment_ids(db, project_id, agent_id=agent_id)
+
+
+def legacy_project_environment_ids(
+    db: Session, project_id: str, *, agent_id: str | None = None
+) -> set[int]:
+    """V1 owner-installed fixed device references are scoped resource consent."""
+    project = db.get(CloudProject, str(project_id))
+    if project is None or project.status != "active" or not project.workspace_id:
+        return set()
+    revoked = set((project.metadata_json or {}).get("legacy_device_revocations", []))
+    ids = set()
+    agents = db.query(ProjectChatAgent).filter(
+        ProjectChatAgent.cloud_project_id == str(project_id),
+        ProjectChatAgent.status == "active",
+        loop_datetime_is_unset(ProjectChatAgent.deleted_at),
+    )
+    if agent_id is not None:
+        agents = agents.filter(ProjectChatAgent.id == agent_id)
+    for agent in agents:
+        if (
+            (agent.metadata_json or {}).get("authorization_version")
+            or not agent.device_id
+            or not agent.created_by_user_id
+        ):
+            continue
+        device = resolve_owned_device_alias(
+            db, user_id=agent.created_by_user_id, device_id=agent.device_id
+        )
+        if not device or not device.is_active or device.id in revoked:
+            continue
+        grants = db.query(ResourceMember).filter(
+            ResourceMember.resource_type == "Device",
+            ResourceMember.resource_id == device.id,
+            or_(
+                (ResourceMember.entity_type == "workspace")
+                & (ResourceMember.entity_id == str(project.workspace_id)),
+                (ResourceMember.entity_type == "project")
+                & (ResourceMember.entity_id == str(project.id)),
+            ),
+        )
+        if any(
+            grant.status != "approved"
+            or grant.role not in ("Owner", "Maintainer", "Developer")
+            for grant in grants
+        ):
+            continue
+        ids.add(device.id)
+    return ids
+
+
+def revoke_legacy_environment_bindings(
+    db: Session, workspace_id: int, device_id: int
+) -> None:
+    projects = db.query(CloudProject).filter(CloudProject.workspace_id == workspace_id)
+    for project in projects:
+        if device_id in legacy_project_environment_ids(db, project.id):
+            metadata = dict(project.metadata_json or {})
+            metadata["legacy_device_revocations"] = sorted(
+                set(metadata.get("legacy_device_revocations", [])) | {device_id}
+            )
+            project.metadata_json = metadata
+            project.version += 1
 
 
 def visible_environment_ids(
@@ -72,15 +158,7 @@ def visible_environment_ids(
             user_id=user_id, namespace="default", kind="Device", is_active=True
         )
     }
-    workspace_ids = {
-        row.resource_id
-        for row in db.query(ResourceMember).filter_by(
-            resource_type="Workspace",
-            entity_type="user",
-            entity_id=str(user_id),
-            status="approved",
-        )
-    }
+    workspace_ids = {row.id for row in db.execute(readable_workspace_ids(user_id))}
     shared: set[int] = set()
     for workspace_id in workspace_ids:
         shared |= device_grants(db, "workspace", str(workspace_id))
@@ -178,7 +256,9 @@ def resolve_routing(db: Session, **kwargs) -> ResolvedRouting:
         }:
             config = kwargs["config"]
             ids = visible_environment_ids(db, kwargs["user_id"], kwargs["project_id"])
-            allowed = project_environment_ids(db, kwargs["project_id"])
+            allowed = execution_environment_ids(
+                db, kwargs["project_id"], kwargs.get("agent_id")
+            )
             devices = (
                 db.query(Kind)
                 .filter(
@@ -239,6 +319,7 @@ def _resolve_routing(
     user_id: int,
     selection: dict | None,
     automatic: bool = False,
+    agent_id: str | None = None,
 ) -> ResolvedRouting:
     if not config.get("model_policy"):
         raise routing_error(
@@ -254,7 +335,7 @@ def _resolve_routing(
         policy, source = _user_policy(db, user_id, selected, bound_id, automatic)
     elif selected.execution_policy and selected.execution_policy != policy:
         raise routing_error("RUNNER_POLICY_FIXED", "The agent's runner policy is fixed")
-    candidates = _candidates(db, policy, project_id, user_id)
+    candidates = _candidates(db, policy, project_id, user_id, agent_id)
     if bound_id:
         candidates = [item for item in candidates if str(item.id) == bound_id]
         if not candidates:
@@ -333,6 +414,7 @@ def _candidates(
     policy: ExecutionPolicy,
     project_id: str,
     user_id: int,
+    agent_id: str | None = None,
 ) -> list[Kind]:
     try:
         require_cloud_project_role(db, project_id, user_id, BaseRole.Developer)
@@ -341,11 +423,9 @@ def _candidates(
             "RUNNER_PROJECT_ACCESS_REVOKED",
             "The triggering user no longer has permission to execute in the project",
         ) from error
-    ids = project_environment_ids(db, project_id)
+    ids = execution_environment_ids(db, project_id, agent_id)
     if policy.mode == "fixed":
-        ids = {int(policy.environment_id)} & visible_environment_ids(
-            db, user_id, project_id
-        )
+        ids &= {int(policy.environment_id)}
     devices = (
         db.query(Kind)
         .filter(
@@ -410,6 +490,10 @@ def _resolve_model(
 
 
 def eligible_runner(db: Session, execution: Any, device: Kind) -> bool:
+    from app.services.collaboration_revocation import execution_authorized
+
+    if not execution_authorized(db, execution):
+        return False
     snapshot = execution.runtime_selection["runner_routing"]
     try:
         bound_id = issue_binding(db, execution.loop_item_id)
@@ -418,16 +502,17 @@ def eligible_runner(db: Session, execution: Any, device: Kind) -> bool:
     if bound_id and bound_id != str(device.id):
         return False
     routes = [
-        snapshot,
-        *execution.runtime_selection.get("group_runner_requirements", {}).values(),
+        (execution.agent_id, snapshot),
+        *execution.runtime_selection.get("group_runner_requirements", {}).items(),
     ]
-    for route in routes:
+    for agent_id, route in routes:
         try:
             members = _candidates(
                 db,
                 ExecutionPolicy.model_validate(route["execution_policy"]),
                 execution.cloud_project_id,
                 execution.assigner_user_id,
+                agent_id,
             )
             model = ModelIdentity.model_validate(route["model"])
             if model.source == "cloud":
@@ -596,11 +681,15 @@ def validate_agent_policies(
         raise routing_error(
             "RUNNER_RUNTIME_MISMATCH", "Runner policies require a native executor"
         )
-    ids = visible_environment_ids(db, user_id, project_id)
+    ids = (
+        explicit_project_environment_ids(db, project_id)
+        if project_id
+        else visible_environment_ids(db, user_id)
+    )
     if policy.mode == "fixed":
         ids &= {int(policy.environment_id)}
     elif policy.mode == "project_pool" and project_id:
-        ids &= project_environment_ids(db, project_id)
+        ids &= explicit_project_environment_ids(db, project_id)
     candidates = (
         db.query(Kind)
         .filter(
@@ -693,6 +782,7 @@ def resolve_group_routing(
         route = resolve_routing(
             db,
             config=config,
+            agent_id=agent.id,
             project_id=project_id,
             issue_id=issue_id,
             user_id=user_id,

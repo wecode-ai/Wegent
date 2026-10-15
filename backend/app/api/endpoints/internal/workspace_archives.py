@@ -58,7 +58,7 @@ def _get_active_task(db: Session, task_id: int) -> TaskResource:
     task = task_store.get_task_by_states(
         db,
         task_id=task_id,
-        states=[TaskResource.STATE_ACTIVE],
+        states=TaskResource.is_active_query(),
     )
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")

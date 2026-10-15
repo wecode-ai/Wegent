@@ -6,6 +6,7 @@ import { selectE2EModel } from '../modules/shared.mjs'
 
 const ACTIVE_SURFACE = '[data-workspace-tab-content][aria-hidden="false"]'
 const MAIN_COMPOSER = `${ACTIVE_SURFACE} [data-testid="desktop-empty-composer-frame"] [data-testid="chat-message-input"]`
+const ACTIVE_COMPOSER = `${ACTIVE_SURFACE} [data-testid="desktop-workbench-main"][data-active-workbench-pane="true"] [data-testid="chat-message-input"][contenteditable="true"]`
 const SIDE_CHAT = `${ACTIVE_SURFACE} [data-testid="right-workspace-chat-panel"]`
 const SIDE_SCROLL = `${SIDE_CHAT} [data-testid="right-workspace-chat-scroll-area"]`
 const SIDE_COMPOSER = `${SIDE_CHAT} [data-testid="chat-message-input"]`
@@ -510,8 +511,9 @@ export function createDesktopScenario({
       })
       await waitForRuntimeSource(control, sourceTaskId, taskTimeoutMs)
 
-      await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
-      await control.command('click', '[data-testid="right-workspace-chat-option"]')
+      const primary = process.platform === 'darwin' ? 'Meta' : 'Control'
+      await control.command('waitFor', ACTIVE_COMPOSER, { visible: true, timeoutMs: uiTimeoutMs })
+      await control.command('nativePress', ACTIVE_COMPOSER, { key: `${primary}+Alt+S` })
       await control.command('waitFor', SIDE_COMPOSER, { timeoutMs: uiTimeoutMs })
       const executorLogPath = join(resultDir, 'executor.log')
       const executorLogOffset = (await readFile(executorLogPath, 'utf8').catch(() => '')).length

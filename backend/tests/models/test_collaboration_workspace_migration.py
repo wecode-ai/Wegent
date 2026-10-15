@@ -31,8 +31,8 @@ def _load_migration() -> ModuleType:
     return module
 
 
-def _legacy_engine() -> Engine:
-    engine = sa.create_engine("sqlite://")
+def _legacy_engine(url: str = "sqlite://") -> Engine:
+    engine = sa.create_engine(url)
     metadata = sa.MetaData()
     sa.Table(
         "loop_items",

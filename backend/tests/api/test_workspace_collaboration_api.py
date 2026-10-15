@@ -27,6 +27,7 @@ from app.services.workspaces.execution_environments import (
     WorkspaceExecutionEnvironmentService,
 )
 from tests.utils.agent_resources import create_runnable_wegent_team
+from tests.utils.collaboration import authorize_project_agent
 
 
 @pytest.fixture(autouse=True)
@@ -350,7 +351,7 @@ def _workspace_project_with_maintainer(
     return workspace, project, maintainer, maintainer_token
 
 
-def _wegent_team(test_db: Session, owner: User) -> Kind:
+def _wegent_team(test_db: Session, owner: User, *, public_model: bool = False) -> Kind:
     suffix = uuid.uuid4().hex[:8]
     ghost_name = f"assignment-ghost-{suffix}"
     shell_name = f"assignment-shell-{suffix}"
@@ -388,7 +389,7 @@ def _wegent_team(test_db: Session, owner: User) -> Kind:
         kind="Model",
         name=model_name,
         namespace="default",
-        user_id=owner.id,
+        user_id=0 if public_model else owner.id,
         is_active=True,
         json={
             "apiVersion": "agent.wecode.io/v1",
@@ -631,6 +632,7 @@ def test_workspace_collaboration_group_supports_human_or_agent_leader(
             "capability_description": "负责实现与验收",
         },
     )
+    authorize_project_agent(test_db, codex_agent)
     test_db.add(codex_agent)
     test_db.commit()
     project_codex_group_response = test_client.post(
@@ -859,6 +861,7 @@ def _project_agent(
             "visibility": "public",
         },
     )
+    authorize_project_agent(test_db, agent)
     test_db.add(agent)
     test_db.commit()
     test_db.refresh(agent)
@@ -1411,7 +1414,7 @@ def test_invalid_workspace_member_role_cannot_read_navigation_context(
     member_response = test_client.post(
         f"/api/v1/workspaces/{workspace['id']}/members",
         headers=_auth(test_token),
-        json={"user_id": target.id, "role": "Reporter"},
+        json={"user_id": target.id, "role": "Viewer"},
     )
     assert member_response.status_code == 201
     membership = test_db.get(ResourceMember, member_response.json()["id"])
@@ -1428,7 +1431,7 @@ def test_invalid_workspace_member_role_cannot_read_navigation_context(
         headers=_auth(target_token),
     )
 
-    assert workspace_read_response.status_code == 403
+    assert workspace_read_response.status_code == 404
     assert navigation_response.status_code == 404
 
 
@@ -1617,7 +1620,7 @@ def test_maintainer_assigns_workflow_step_to_authorized_workspace_agent(
     workspace, project, maintainer, maintainer_token = (
         _workspace_project_with_maintainer(test_client, test_db, test_token)
     )
-    team = _wegent_team(test_db, test_user)
+    team = _wegent_team(test_db, test_user, public_model=True)
     authorization = test_client.post(
         f"/api/v1/workspaces/{workspace['id']}/agents",
         headers=_auth(test_token),
@@ -1709,7 +1712,7 @@ def test_internal_agent_assignment_commits_comment_projection_and_run_once(
     workspace, project, _, maintainer_token = _workspace_project_with_maintainer(
         test_client, test_db, test_token
     )
-    team = _wegent_team(test_db, test_user)
+    team = _wegent_team(test_db, test_user, public_model=True)
     authorization = test_client.post(
         f"/api/v1/workspaces/{workspace['id']}/agents",
         headers=_auth(test_token),
@@ -1792,7 +1795,7 @@ def test_internal_assignment_failure_rolls_back_comment_assignment_and_notificat
     member_response = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/members",
         headers=_auth(test_token),
-        json={"user_id": target.id, "role": "Viewer"},
+        json={"user_id": target.id, "role": "Developer"},
     )
     assert member_response.status_code == 201
     issue = test_client.post(
@@ -1849,7 +1852,7 @@ def test_internal_assignment_failure_rolls_back_comment_assignment_and_notificat
     )
 
 
-def test_agent_assignment_uses_project_agent_without_workspace_authorization(
+def test_agent_assignment_rejects_project_binding_without_space_authorization(
     test_client: TestClient,
     test_db: Session,
     test_user: User,
@@ -1884,15 +1887,15 @@ def test_agent_assignment_uses_project_agent_without_workspace_authorization(
         },
     )
 
-    assert response.status_code == 201
+    assert response.status_code == 422
     assert {
         comment.id for comment in _assignment_comments(test_db, issue["id"])
-    } != original_assignment_ids
+    } == original_assignment_ids
     assert (
         test_db.query(LoopItemExecution)
         .filter(LoopItemExecution.loop_item_id == issue["id"])
         .count()
-        == 1
+        == 0
     )
 
 

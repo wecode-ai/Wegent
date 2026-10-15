@@ -12,6 +12,8 @@ import {
 } from '../modules/response-protocol.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
+  openDirectProjectCreation,
+  openProjectAgentCreator,
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
   selectCloudAgentModel,
@@ -188,16 +190,7 @@ async function createWorkspaceAndProject(control, request, timeoutMs) {
     timeoutMs
   )
 
-  await control.command(
-    'waitFor',
-    scoped('[data-testid="collaboration-workspace-project-create"]'),
-    {
-      visible: true,
-      timeoutMs,
-    }
-  )
-  await control.command('click', scoped('[data-testid="collaboration-workspace-project-create"]'))
-  await control.command('click', '[data-testid="collaboration-workspace-project-create-blank"]')
+  await openDirectProjectCreation(control, CONTENT)
   await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {
     value: PROJECT,
   })
@@ -227,12 +220,12 @@ async function addAgent(control, request, projectId, name, prompt, timeoutMs, en
     'The remote execution environment must be authorized before creating its Agent'
   )
   await control.command('click', scoped('[data-testid="collaboration-project-settings-agents"]'))
-  await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
+  await openProjectAgentCreator(
+    control,
+    scoped('[data-testid="project-agent-add"]'),
     timeoutMs,
-  })
-  await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
-    timeoutMs,
-  })
+    'wework-agent-resource-creator'
+  )
   await control.command('fill', '[data-testid="wework-agent-display-name"]', {
     value: name,
   })

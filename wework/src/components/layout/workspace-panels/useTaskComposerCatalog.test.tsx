@@ -68,7 +68,6 @@ describe('side task composer catalog', () => {
     expect(api.deviceApi.readWorkspaceFileChunk).toHaveBeenCalledTimes(1)
     expect(apps[0].logoUrl).toBe('data:image/svg+xml;base64,PHN2Zy8+')
     expect(skills[0].name).toBe('one')
-    expect(result.current.prefetchLocalAuth).toBe(false)
   })
 
   it('isolates late responses and stores across tasks and does not re-read on ordinary renders', async () => {

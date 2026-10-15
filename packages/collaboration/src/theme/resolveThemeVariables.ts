@@ -58,6 +58,7 @@ export function resolveThemeVariables(
     "--color-focus-ring": "51 156 255",
     "--color-link": "51 156 255",
     "--color-success": resolvedMode === "dark" ? "64 201 119" : "0 162 64",
+    "--color-warning": resolvedMode === "dark" ? "251 191 36" : "180 83 9",
     "--color-destructive": destructive,
     "--color-error": destructive,
     "--color-text-inverted": palette.bgBase,

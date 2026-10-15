@@ -74,7 +74,7 @@ export function IssueArchiveDialog({
           </p>
           {error ? (
             <p
-              className="mt-3 text-xs leading-5 text-red-600"
+              className="mt-3 text-xs leading-5 text-destructive"
               data-testid={collaborationTestIds.issueArchiveError}
               role="alert"
             >

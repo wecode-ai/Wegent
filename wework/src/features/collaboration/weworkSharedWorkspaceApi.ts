@@ -406,6 +406,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
               description: input.description,
               task_provider: input.taskProvider,
               visibility: input.visibility,
+              membership_mode: input.membershipMode,
               public_access: input.publicAccess,
               default_issue_security: input.defaultIssueSecurity,
               provider_config: input.providerConfig as Parameters<
@@ -425,6 +426,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
               description: input.description,
               tags: input.tags,
               visibility: input.visibility,
+              membership_mode: input.membershipMode,
               public_access: input.publicAccess,
               default_issue_security: input.defaultIssueSecurity,
               provider_config: input.providerConfig as Parameters<
@@ -874,6 +876,7 @@ export function createWeworkSharedWorkspaceApi<
               description: projectInput.description,
               task_provider: projectInput.taskProvider,
               visibility: projectInput.visibility,
+              membership_mode: projectInput.membershipMode,
               public_access: projectInput.publicAccess,
               default_issue_security: projectInput.defaultIssueSecurity,
               provider_config: projectInput.providerConfig,

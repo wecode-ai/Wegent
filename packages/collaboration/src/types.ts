@@ -9,10 +9,7 @@ import type { ProjectCreateHostAdapter } from "./project-create/types";
 export type CollaborationProjectId = string;
 
 export type CollaborationRole = "Owner" | "Maintainer" | "Developer" | "Viewer";
-export type CollaborationWorkspaceRole =
-  | CollaborationRole
-  | "Reporter"
-  | "RestrictedAnalyst";
+export type CollaborationWorkspaceRole = CollaborationRole;
 
 export type CollaborationProjectVisibility = "private" | "public";
 
@@ -60,6 +57,9 @@ export interface CollaborationScheduleViewConfig {
 
 export interface CollaborationProject {
   id: CollaborationProjectId;
+  workspace_access_role?: CollaborationWorkspaceRole | null;
+  membership_mode?: "inherit" | "restricted";
+  permission_sources?: CollaborationPermissionSource[];
   workspace_id?: string | null;
   workspace_context?: Omit<
     CollaborationWorkspaceNavigationContext,
@@ -91,7 +91,7 @@ export interface CollaborationProject {
   current_user_id?: number;
   current_user_name?: string;
   access_role?: CollaborationRole;
-  public_access?: { role: "Developer" | "Viewer" } | null;
+  public_access?: { role: "Viewer" } | null;
   default_issue_security?: "open" | "related";
   visibility?: CollaborationProjectVisibility;
   status: string;
@@ -204,12 +204,13 @@ export interface CollaborationAssignment {
 }
 
 export interface CollaborationWorkspace {
+  owner_user_id?: number;
   id: string;
   location: "local" | "cloud";
   name: string;
   description: string;
   namespace: string;
-  access_role: CollaborationWorkspaceRole | "Member";
+  access_role: CollaborationWorkspaceRole;
   member_count: number;
   agent_count: number;
   execution_environment_count: number;
@@ -260,6 +261,8 @@ export interface CollaborationWorkspaceNavigationContext {
 }
 
 export interface CollaborationExecutionEnvironment {
+  can_use?: boolean;
+  unavailable_reason?: string | null;
   id: string;
   device_id?: number;
   device_key?: string;
@@ -276,6 +279,7 @@ export interface CollaborationExecutionEnvironment {
 }
 
 export interface CollaborationOwnedAgent extends CollaborationAgent {
+  can_edit?: boolean;
   location?: "local" | "cloud";
   version?: number;
   owner_type: "user" | "workspace";
@@ -354,7 +358,18 @@ export interface SharedIssueStatusHistoryEntry {
   at: string;
 }
 
+export interface CollaborationPermissionSource {
+  type: "workspace" | "direct" | "ownership" | "public";
+  role?: CollaborationRole;
+  workspace_id?: string;
+}
+
 export interface CollaborationMember {
+  direct_role?: Exclude<CollaborationRole, "Owner"> | null;
+  inherited_role?: Exclude<CollaborationRole, "Owner"> | null;
+  inherited_from_workspace_id?: string | null;
+  permission_sources?: CollaborationPermissionSource[];
+  can_be_assignee?: boolean;
   id: number;
   user_id: number;
   user_name: string;

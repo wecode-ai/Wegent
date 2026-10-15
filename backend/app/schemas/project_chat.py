@@ -15,7 +15,7 @@ def _to_camel(value: str) -> str:
     return head + "".join(part.capitalize() for part in tail)
 
 
-BotVisibility = Literal["private", "creator_admin", "public"]
+BotVisibility = Literal["public", "creator_admin", "private"]
 BotExecutionEnvironment = Literal["local", "cloud"]
 BotExecutionMode = Literal["auto", "manual_approval"]
 BotCapabilityMode = Literal["follow_device", "manual"]
@@ -122,7 +122,8 @@ class ProjectChatAgentCreate(ProjectChatSchema):
     execution_policy: ExecutionPolicy | None = None
     model_policy: ModelPolicy | None = None
 
-    visibility: BotVisibility = "creator_admin"
+    visibility: BotVisibility = "public"
+    share_with_workspace: bool = False
     execution_environment: BotExecutionEnvironment = "local"
     execution_mode: BotExecutionMode = "auto"
     execution_device_id: str | None = Field(default=None, max_length=100)
@@ -156,6 +157,7 @@ class ProjectChatAgentUpdate(ProjectChatSchema):
 
     status: Literal["active", "archived"] | None = None
     visibility: BotVisibility | None = None
+    share_with_workspace: bool = False
     execution_environment: BotExecutionEnvironment | None = None
     execution_mode: BotExecutionMode | None = None
     execution_device_id: str | None = Field(default=None, max_length=100)
@@ -202,6 +204,9 @@ class ProjectChatAgentView(ProjectChatSchema):
     mcp_servers: dict[str, Any]
     created_by_user_id: int | None
     created_by_user_name: str | None = None
+    can_edit: bool = False
+    can_use: bool = False
+    unavailable_reason: str | None = None
     version: int
     created_at: str
     updated_at: str

@@ -34,24 +34,23 @@ def activity(
 
 
 @pytest.mark.parametrize(
-    "other_status,human,reassigned,newer_round,expected",
+    "other_status,human,reassigned,newer_round",
     [
-        ("completed", False, False, False, "in_review"),
-        ("running", False, False, False, "in_progress"),
-        ("failed", False, False, False, "in_progress"),
-        ("completed", True, False, False, "in_progress"),
-        ("completed", False, True, False, "in_progress"),
-        ("completed", False, False, True, "in_progress"),
+        ("completed", False, False, False),
+        ("running", False, False, False),
+        ("failed", False, False, False),
+        ("completed", True, False, False),
+        ("completed", False, True, False),
+        ("completed", False, False, True),
     ],
 )
-def test_agent_handoff_finishes_without_a_manager_summary(
+def test_member_results_wait_for_explicit_manager_decision(
     test_db: Session,
     test_user: User,
     other_status: str,
     human: bool,
     reassigned: bool,
     newer_round: bool,
-    expected: str,
 ) -> None:
     identity = uuid4().hex
     project = CloudProject(
@@ -122,7 +121,7 @@ def test_agent_handoff_finishes_without_a_manager_summary(
     project_chat_service._advance_task_to_review(test_db, member)
     test_db.commit()
 
-    assert item.status == expected
+    assert item.status == "in_progress"
     assert item.assignee_agent_id == ("another-owner" if reassigned else "worker-1")
     assert test_db.query(ProjectChatMessage).filter_by(
         task_id=item.id

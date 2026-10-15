@@ -566,11 +566,6 @@ struct PullRequestAutomation {
     statuses: RawJson,
     prompt: String,
 }
-#[derive(serde::Serialize)]
-pub(crate) struct ProjectListResponse {
-    pub(crate) items: Vec<CloudProjectBody>,
-}
-
 impl CloudProjectBody {
     /// Render one project without a parent-space navigation context
     /// (`cloud_project_service.access` callers such as the runtime-task

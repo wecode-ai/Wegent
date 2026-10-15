@@ -207,10 +207,6 @@ def _new_execution(
         access = require_cloud_project_role(
             db, request.project_id, user_id, BaseRole.Developer
         )
-        if not project_chat_service._agent_visible_to_user(agent, user_id, access.role):
-            raise HTTPException(
-                403, "The mentioned agent is not available to this member"
-            )
     config = bot_config(agent)
     execution = loop_item_execution_service.create_for_assignment(
         db,
@@ -449,6 +445,7 @@ def _queue_reply(
             else {}
         ),
         "runner_selection": selection,
+        "runtime_subject_user_id": bound.user_id,
         "comment_continue_task_id": original.runtime_task_id,
         "comment_trigger_message_id": trigger.message_id,
         "comment_prompt": trigger.content,
@@ -477,6 +474,7 @@ def _queue_reply(
         priority=None,
         automation_context=context,
     )
+    execution.executor_owner_user_id = bound.user_id
     execution.runtime_device_id = original.runtime_device_id
     runtime_selection = execution.runtime_selection
     if context.get("dispatch_role") == "manager":
@@ -569,6 +567,24 @@ async def execute_comment(
         response = _new_execution(db, user_id, request, trigger, attachments)
         return [project_chat_service.to_view(response, db=db)] if response else []
     execution = _execution(db, request, target)
+    from app.services.collaboration_revocation import execution_authorized
+
+    authority = LoopItemExecution(
+        cloud_project_id=request.project_id,
+        loop_item_id=request.task_id,
+        assigner_user_id=user_id,
+        executor_owner_user_id=execution.executor_owner_user_id,
+        agent_id=execution.agent_id,
+        team_id=None,
+        execution_environment="local",
+        execution_device_id=execution.runtime_device_id,
+        runtime_device_id=execution.runtime_device_id,
+        execution_payload=loop_item_execution_service._serialize_execution_intent(
+            runtime_selection={}, origin_context=execution.runtime_origin_context
+        ),
+    )
+    if not execution_authorized(db, authority):
+        raise HTTPException(403, "Comment execution authorization is revoked")
     if execution.agent_id:
         project_chat_service._agent_row(
             db,

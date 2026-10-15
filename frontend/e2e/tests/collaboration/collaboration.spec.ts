@@ -3,7 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect, test, type APIRequestContext, type Page, type TestInfo } from '@playwright/test'
-import { writeSharedComposer } from '../../utils/collaboration-test-support'
+import {
+  openBlankProjectCreation,
+  writeSharedComposer,
+} from '../../utils/collaboration-test-support'
 import { initializeProjectExecutionEnvironment } from '../../utils/issue-dispatch-test-support'
 
 const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000'
@@ -147,8 +150,7 @@ test.describe('Collaboration module', () => {
       new RegExp(`/collaboration/workspaces/${escaped(encodeURIComponent(workspaceId))}$`)
     )
 
-    await page.getByTestId('collaboration-workspace-project-create').click()
-    await page.getByTestId('collaboration-workspace-project-create-blank').click()
+    await openBlankProjectCreation(page)
     await page.getByTestId('collaboration-project-name-input').fill(projectName)
     await page.getByTestId('collaboration-project-create-advanced').click()
     await page

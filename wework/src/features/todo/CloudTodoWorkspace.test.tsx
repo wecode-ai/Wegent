@@ -675,6 +675,11 @@ function services(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices
   workbenchServices.sharedWorkspaceApi = createWeworkSharedWorkspaceApi({
     client: {
       get: vi.fn(async (url: string) => {
+        if (url.endsWith('/v1/workspaces')) {
+          return { items: [{ id: project.workspace_id, name: 'Shared workspace' }] }
+        }
+        if (url.endsWith('/v1/resources')) return { agents: [], execution_environments: [] }
+        if (url.endsWith(`/v1/workspaces/${project.workspace_id}/agents`)) return { items: [] }
         if (url.endsWith('/chat-agents')) return []
         if (url.endsWith('/comments')) return []
         if (url.endsWith('/assignments')) return { items: [] }
@@ -928,6 +933,9 @@ describe('CloudTodoWorkspace', () => {
       'aria-current',
       'page'
     )
+    if (values.targetTestId === 'wework-agent-resource-creator') {
+      await userEvent.click(await screen.findByTestId('project-agent-mode-create'))
+    }
     const target = await screen.findByTestId(values.targetTestId)
     expect(target).toBeVisible()
     if (values.targetTestId === 'cloud-member-search') expect(target).toHaveFocus()
@@ -2431,6 +2439,7 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click(screen.getByTestId('cloud-project-settings-agents'))
     expect(await screen.findByTestId('project-agent-config')).toBeInTheDocument()
     await userEvent.click(await screen.findByTestId('project-agent-add'))
+    await userEvent.click(await screen.findByTestId('project-agent-mode-create'))
     expect(await screen.findByTestId('cloud-project-chat-agent-editor')).toBeInTheDocument()
     expect(screen.queryByTestId('wework-agent-resource-creator')).not.toBeInTheDocument()
     expect(screen.queryByTestId('project-agent-dialog')).not.toBeInTheDocument()
@@ -4370,11 +4379,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('cloud-project-member-capability-heading')).toHaveTextContent(
       '职责与能力'
     )
-    expect(
-      screen.getByText(
-        '管理成员访问和项目角色。填写职责与能力后会自动保存，AI 托管会据此选择合适的负责人。'
-      )
-    ).toBeInTheDocument()
+    expect(screen.getByText('管理项目访问权限与成员职责。')).toBeInTheDocument()
     const capabilityInput = screen.getByTestId('cloud-project-member-capability-2')
     expect(capabilityInput).toHaveAttribute('placeholder', '例如：前端开发、产品验收')
     fireEvent.change(capabilityInput, { target: { value: '前端实现与交互验收' } })

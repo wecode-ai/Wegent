@@ -24,6 +24,14 @@ const tab: WorkspaceTab = {
   fixed: false,
 }
 
+function workspaceReturnStorageKey(): string {
+  for (let index = 0; index < localStorage.length; index += 1) {
+    const key = localStorage.key(index)
+    if (key?.startsWith(WORKSPACE_TAB_RETURN_PREFIX)) return key
+  }
+  throw new Error('Workspace return request was not staged')
+}
+
 describe('openWorkspaceTabWindow', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -86,7 +94,7 @@ describe('openWorkspaceTabWindow', () => {
     publishWorkspaceTabTransferState(tab.id, { draftInputByScope: { blank: 'draft' } })
     const returning = returnWorkspaceTabToMain(tab)
     await vi.waitFor(() => expect(localStorage.length).toBe(2))
-    const key = Object.keys(localStorage).find(key => key.startsWith(WORKSPACE_TAB_RETURN_PREFIX))!
+    const key = workspaceReturnStorageKey()
     expect(JSON.parse(localStorage.getItem(key)!)).toEqual(tab)
     expect(consumeWorkspaceTabTransfer(tab.id)).toEqual({ draftInputByScope: { blank: 'draft' } })
     localStorage.removeItem(key)
@@ -113,7 +121,7 @@ describe('openWorkspaceTabWindow', () => {
     const returning = returnWorkspaceTabToMain(tab)
     const rejected = expect(returning).rejects.toThrow('Preferences failed')
     await vi.waitFor(() => expect(localStorage.length).toBe(2))
-    const key = Object.keys(localStorage).find(key => key.startsWith(WORKSPACE_TAB_RETURN_PREFIX))!
+    const key = workspaceReturnStorageKey()
     window.dispatchEvent(
       new StorageEvent('storage', {
         key,

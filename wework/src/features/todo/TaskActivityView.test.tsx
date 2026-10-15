@@ -78,6 +78,12 @@ vi.mock('@/lib/external-links', async importOriginal => ({
 
 const workbenchServices = {
   attachmentApi: { uploadLocalAttachmentToCloud },
+  projectSpaceApis: undefined as
+    | undefined
+    | {
+        local: { markLoopItemRead: typeof markLoopItemRead }
+        cloud: { markLoopItemRead: typeof markLoopItemRead }
+      },
   deliveryApi: {
     bindTask,
     updateLoopItem,
@@ -265,6 +271,7 @@ describe('TaskActivityView', () => {
     updateLoopItem.mockReset()
     getLoopItem.mockReset()
     markLoopItemRead.mockReset()
+    workbenchServices.projectSpaceApis = undefined
     approveLoopItemRun.mockReset()
     rejectLoopItemRun.mockReset()
     importLoopItemAttachments.mockReset()
@@ -298,6 +305,169 @@ describe('TaskActivityView', () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
+  })
+
+  it.each(['cloud', 'local'] as const)(
+    'persists read state for a %s Issue with only a creation record',
+    async location => {
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+        top: 0,
+        bottom: 400,
+        height: 400,
+      } as DOMRect)
+      const project = { id: '11', name: 'Wework', location } as never
+      const task = {
+        id: 'WEG-1',
+        title: 'Inspect changes',
+        status: 'inbox',
+        version: 1,
+        is_unread: true,
+        content_revision: 1,
+        activity_read_sequence: 0,
+      } as never
+      const updated = { ...task, is_unread: false }
+      const localRead = vi.fn().mockResolvedValue(updated)
+      const cloudRead = vi.fn().mockResolvedValue(updated)
+      workbenchServices.projectSpaceApis = {
+        local: { markLoopItemRead: localRead },
+        cloud: { markLoopItemRead: cloudRead },
+      }
+      const expectedRead = location === 'local' ? localRead : cloudRead
+      const client = {
+        subscribe: vi.fn().mockResolvedValue({
+          snapshot: { messages: [], latestSequence: 0, currentUserId: '1' },
+          unsubscribe: vi.fn(),
+        }),
+      } as unknown as ProjectChatClient
+      const onTaskUpdated = vi.fn()
+      const { rerender } = render(
+        <TaskActivityView
+          client={client}
+          project={project}
+          task={task}
+          onTaskUpdated={onTaskUpdated}
+          issueTimeline
+          linear
+        />
+      )
+
+      await waitFor(() => expect(expectedRead).toHaveBeenCalledExactlyOnceWith(task.id, 0))
+      expect(onTaskUpdated).toHaveBeenCalledExactlyOnceWith(updated)
+      rerender(
+        <TaskActivityView
+          client={client}
+          project={project}
+          task={updated}
+          onTaskUpdated={onTaskUpdated}
+          issueTimeline
+          linear
+        />
+      )
+      expect(expectedRead).toHaveBeenCalledOnce()
+      expect(location === 'local' ? cloudRead : localRead).not.toHaveBeenCalled()
+      expect(markLoopItemRead).not.toHaveBeenCalled()
+    }
+  )
+
+  it('waits for activity to load before reading and leaves subscription failures unread', async () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      top: 0,
+      bottom: 400,
+      height: 400,
+    } as DOMRect)
+    let rejectSubscription!: (cause: Error) => void
+    const client = {
+      subscribe: vi.fn(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectSubscription = reject
+          })
+      ),
+    } as unknown as ProjectChatClient
+    render(
+      <TaskActivityView
+        client={client}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={{ id: 'WEG-1', version: 1, is_unread: true, content_revision: 1 } as never}
+        issueTimeline
+        linear
+      />
+    )
+    await waitFor(() => expect(client.subscribe).toHaveBeenCalledOnce())
+    expect(markLoopItemRead).not.toHaveBeenCalled()
+    await act(async () => rejectSubscription(new Error('subscription unavailable')))
+    expect(await screen.findByRole('alert')).toHaveTextContent('subscription unavailable')
+    expect(markLoopItemRead).not.toHaveBeenCalled()
+  })
+
+  it('persists the highest visible message sequence through the desktop adapter', async () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      top: 0,
+      bottom: 400,
+      height: 400,
+    } as DOMRect)
+    const client = {
+      subscribe: vi.fn().mockResolvedValue({
+        snapshot: {
+          messages: [userMessage, { ...agentMessage, status: 'completed', content: 'Done' }],
+          latestSequence: 2,
+        },
+        unsubscribe: vi.fn(),
+      }),
+    } as unknown as ProjectChatClient
+    const task = {
+      id: 'WEG-1',
+      version: 1,
+      is_unread: true,
+      content_revision: 2,
+      activity_read_sequence: 0,
+    } as never
+    markLoopItemRead.mockResolvedValue({ ...task, is_unread: false, activity_read_sequence: 2 })
+    render(
+      <TaskActivityView
+        client={client}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={task}
+        issueTimeline
+        linear
+      />
+    )
+    await waitFor(() => expect(markLoopItemRead).toHaveBeenCalledExactlyOnceWith(task.id, 2))
+  })
+
+  it('keeps failed reads retryable and clears the read error after a successful scroll retry', async () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      top: 0,
+      bottom: 400,
+      height: 400,
+    } as DOMRect)
+    const task = { id: 'WEG-1', version: 1, is_unread: true, content_revision: 1 } as never
+    markLoopItemRead
+      .mockRejectedValueOnce(new Error('read persistence failed'))
+      .mockResolvedValue({ ...task, is_unread: false })
+    const client = {
+      subscribe: vi.fn().mockResolvedValue({ snapshot: { messages: [] }, unsubscribe: vi.fn() }),
+    } as unknown as ProjectChatClient
+    const onTaskUpdated = vi.fn()
+    render(
+      <TaskActivityView
+        client={client}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={task}
+        onTaskUpdated={onTaskUpdated}
+        issueTimeline
+        linear
+      />
+    )
+    expect(await screen.findByRole('alert')).toHaveTextContent('read persistence failed')
+    expect(onTaskUpdated).not.toHaveBeenCalled()
+    fireEvent.scroll(screen.getByTestId('cloud-task-activity-list'))
+    await waitFor(() => expect(onTaskUpdated).toHaveBeenCalledOnce())
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(markLoopItemRead.mock.calls).toEqual([
+      [task.id, 0],
+      [task.id, 0],
+    ])
   })
 
   it('reloads project activity after the Issue version changes', async () => {
@@ -366,6 +536,80 @@ describe('TaskActivityView', () => {
     ).not.toBeInTheDocument()
     expect(client.subscribe).toHaveBeenCalledTimes(2)
     expect(unsubscribeFirst).toHaveBeenCalledOnce()
+  })
+
+  it('preserves a live agent result when a same-second empty snapshot arrives later', async () => {
+    const liveAgentMessage: ProjectChatMessage = {
+      ...agentMessage,
+      content: 'Continuation result',
+    }
+    type Subscription = Awaited<ReturnType<ProjectChatClient['subscribe']>>
+    let resolveSnapshot!: (subscription: Subscription) => void
+    const pendingSnapshot = new Promise<Subscription>(resolve => {
+      resolveSnapshot = resolve
+    })
+    const client = {
+      subscribe: vi
+        .fn<ProjectChatClient['subscribe']>()
+        .mockResolvedValueOnce({
+          snapshot: {
+            messages: [agentMessage],
+            latestSequence: 2,
+            currentUserId: '1',
+          },
+          unsubscribe: vi.fn(),
+        })
+        .mockImplementationOnce(async (_projectId, _taskId, _afterSequence, onMessage) => {
+          onMessage(liveAgentMessage)
+          return pendingSnapshot
+        }),
+      send: vi.fn(async () => userMessage),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+    const project = { id: '11', name: 'Wework' } as never
+    const task = {
+      id: 'WEG-1',
+      title: 'Inspect changes',
+      description: 'Review the current diff',
+      status: 'in_progress',
+      version: 1,
+    }
+
+    const { rerender } = render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={project}
+        task={task as never}
+        linear
+      />
+    )
+
+    await screen.findByTestId('cloud-task-activity-message-message-2')
+    rerender(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={project}
+        task={{ ...task, version: 2 } as never}
+        linear
+      />
+    )
+    expect(await screen.findByText(liveAgentMessage.content)).toBeInTheDocument()
+
+    await act(async () => {
+      resolveSnapshot({
+        snapshot: { messages: [agentMessage], latestSequence: 2, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })
+      await pendingSnapshot
+    })
+
+    expect(screen.getByTestId('cloud-task-activity-message-message-2')).toHaveTextContent(
+      liveAgentMessage.content
+    )
   })
 
   it('starts the assigned AI when a task comment is added without an @ mention', async () => {
@@ -1757,6 +2001,12 @@ describe('TaskActivityView', () => {
   ] as const)(
     'starts human work without continuing the manager session (address=%s, store=%s, chatUser=%s)',
     async (hasManagerAddress, location, chatUserId) => {
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+        top: 0,
+        bottom: 400,
+        height: 400,
+      } as DOMRect)
+      markLoopItemRead.mockResolvedValue({ id: 'WEG-1', is_unread: false })
       const user = userEvent.setup()
       const onStartHumanTaskFromReply = vi.fn()
       const messages = humanAssignmentMessages(1)
@@ -1770,7 +2020,17 @@ describe('TaskActivityView', () => {
           client={client}
           currentUserId={1}
           project={{ id: '11', name: 'Wework', location } as never}
-          task={{ id: 'WEG-1', title: '干啥呢', status: 'in_progress', version: 1 } as never}
+          task={
+            {
+              id: 'WEG-1',
+              title: '干啥呢',
+              status: 'in_progress',
+              version: 1,
+              is_unread: true,
+              content_revision: 2,
+              activity_read_sequence: 0,
+            } as never
+          }
           issueTimeline
           linear
           onStartHumanTaskFromReply={onStartHumanTaskFromReply}
@@ -1778,6 +2038,7 @@ describe('TaskActivityView', () => {
       )
 
       const card = await screen.findByTestId('cloud-task-activity-card-manager-assignment')
+      await waitFor(() => expect(markLoopItemRead).toHaveBeenCalledWith('WEG-1', 2))
       await user.click(
         within(card).getByTestId('cloud-task-activity-reply-toggle-manager-assignment')
       )

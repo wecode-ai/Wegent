@@ -184,9 +184,11 @@ describe('workspace Issue assignee', () => {
     expect(screen.getByTestId('cloud-todo-detail-assignee')).not.toBeDisabled()
   })
 
-  it('lets the Issue creator change the owner without a Developer role', () => {
-    setup({ created_by_user_id: 1 }, 'Viewer')
+  it('keeps a Viewer Issue creator read-only under CP06 and CP07', () => {
+    const api = setup({ created_by_user_id: 1 }, 'Viewer')
     expect(screen.getByTestId('cloud-todo-state-assignee')).toHaveTextContent('Codex 工程师')
-    expect(screen.getByTestId('cloud-todo-detail-assignee')).not.toBeDisabled()
+    expect(screen.getByTestId('cloud-todo-detail-assignee')).toBeDisabled()
+    expect(api.assignLoopItem).not.toHaveBeenCalled()
+    expect(api.updateLoopItem).not.toHaveBeenCalled()
   })
 })

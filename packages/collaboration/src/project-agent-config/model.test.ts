@@ -47,6 +47,9 @@ describe("project agent configuration model", () => {
       wegentTeamId: null,
       capabilityDescription: "实现需求",
       deletable: true,
+      canEdit: false,
+      canUse: true,
+      unavailableReason: null,
       executionEnvironment: "cloud",
       executionDeviceId: "cloud-1",
       model: null,
@@ -61,6 +64,7 @@ describe("project agent configuration model", () => {
       name: "研发团队",
       runtime: "wegent",
       wegentTeamId: 12,
+      shareWithWorkspace: true,
     });
   });
 

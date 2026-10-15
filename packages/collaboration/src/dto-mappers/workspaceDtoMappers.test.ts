@@ -9,12 +9,22 @@ import {
   mapCollaborationExecutionEnvironmentDto,
   mapCollaborationExecutionDto,
   mapCollaborationOwnedAgentDto,
+  mapCollaborationWorkspaceDto,
   mapWorkspaceDeliveryDto,
   mapWorkspaceIssueCollaboratorDto,
   mapWorkspaceTaskBindingDto,
 } from "./workspaceDtoMappers";
 
 describe("workspace DTO mappers", () => {
+  it("maps v1 read-only roles without manufacturing ownership capabilities", () => {
+    const workspace = mapCollaborationWorkspaceDto({
+      id: "old-space",
+      access_role: "Reporter",
+      created_by_user_id: 1,
+    });
+    expect(workspace.access_role).toBe("Viewer");
+    expect(workspace.owner_user_id).toBeUndefined();
+  });
   it("uses resource identifiers instead of authorization binding identifiers", () => {
     expect(
       mapCollaborationOwnedAgentDto({

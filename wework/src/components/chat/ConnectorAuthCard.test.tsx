@@ -114,6 +114,21 @@ describe('ConnectorAuthCard browser oauth', () => {
     expect(screen.queryByText(/does not support local authentication/i)).not.toBeInTheDocument()
   })
 
+  test('uses native browser session status without fetching plugin details', async () => {
+    authMocks.start.mockResolvedValue({
+      status: 'waiting_browser',
+      sessionId: 'identity-only-browser-session',
+    })
+    authMocks.poll.mockImplementation(() => new Promise(() => undefined))
+
+    render(<ConnectorAuthCard target={executorTarget} onSuccess={vi.fn()} onCancel={vi.fn()} />)
+
+    expect(await screen.findByTestId('connector-auth-browser')).toBeInTheDocument()
+    expect(authMocks.start).toHaveBeenCalledExactlyOnceWith(executorTarget)
+    expect(screen.queryByTestId('connector-auth-qr')).not.toBeInTheDocument()
+    expect(screen.getByText('在浏览器中授权')).toBeInTheDocument()
+  })
+
   test('GitHub CLI waits for consent, displays a device code, and opens GitHub in the system browser', async () => {
     authMocks.start.mockResolvedValue({
       status: 'waiting_browser',

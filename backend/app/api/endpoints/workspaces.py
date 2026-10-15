@@ -35,6 +35,7 @@ from app.schemas.workspace import (
     WorkspaceMemberResponse,
     WorkspaceMemberUpdate,
     WorkspaceNavigationContextResponse,
+    WorkspaceOwnershipTransfer,
     WorkspaceResponse,
     WorkspaceUpdate,
 )
@@ -48,6 +49,19 @@ from app.services.workspaces.responses import list_workspace_responses
 
 router = APIRouter()
 resources_router = APIRouter()
+
+
+@router.post("/{workspace_id}/transfer-ownership", response_model=WorkspaceResponse)
+def transfer_workspace_ownership(
+    workspace_id: int,
+    values: WorkspaceOwnershipTransfer,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+):
+    workspace = workspace_service.transfer_ownership(
+        db, workspace_id, current_user.id, values
+    )
+    return _response(db, workspace, current_user)
 
 
 def _response(

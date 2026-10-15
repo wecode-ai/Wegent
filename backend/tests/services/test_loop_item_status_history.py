@@ -21,6 +21,7 @@ from app.services.loop_item_status_history import (
     project_status_transition,
 )
 from app.services.loop_items.service import loop_item_service
+from tests.utils.collaboration import authorize_project
 
 
 def _make_project(db, user: User) -> CloudProject:
@@ -34,6 +35,7 @@ def _make_project(db, user: User) -> CloudProject:
         storage_prefix=f"projects/{public_id}",
         metadata_json={},
     )
+    authorize_project(db, project)
     db.add(project)
     db.commit()
     db.refresh(project)

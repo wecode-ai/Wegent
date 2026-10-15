@@ -54,7 +54,7 @@ export function IssueAssignmentHistoryList({
         : (entry.to_name ?? memberName(Number(entry.to_id)));
     return (
       <div key={`${entry.at}-${index}`} className="rounded-md px-1.5 py-1.5">
-        <div className="flex items-center gap-1.5 text-xs text-text-primary">
+        <div className="issue-assignment-history-route flex items-center gap-1.5 text-xs text-text-primary">
           <span className="truncate font-medium">
             {byName ?? `#${entry.by_user_id}`}
           </span>

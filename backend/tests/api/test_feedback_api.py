@@ -20,6 +20,7 @@ from app.core.config import settings
 from app.models.delivery import CloudProject, LoopItem
 from app.models.user import User
 from app.services.loop_items.external_provider import external_loop_item_provider
+from tests.utils.collaboration import authorize_project
 
 
 class FeedbackStorage:
@@ -55,6 +56,7 @@ def feedback_project(test_db: Session, test_user: User) -> CloudProject:
         created_by_user_id=test_user.id,
         storage_prefix=f"projects/{public_id}",
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.commit()
     test_db.refresh(project)
@@ -251,6 +253,7 @@ def test_submit_feedback_uses_gitlab_issue_provider_and_uploads_bundle(
         storage_prefix=f"projects/{public_id}",
         metadata_json={"task_provider": "gitlab", "provider_config": {}},
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.commit()
     test_db.refresh(project)
@@ -319,6 +322,7 @@ def test_submit_feedback_uses_github_issue_without_persisting_bundle(
         storage_prefix=f"projects/{public_id}",
         metadata_json={"task_provider": "github", "provider_config": {}},
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.commit()
     test_db.refresh(project)
@@ -368,6 +372,7 @@ def test_submit_feedback_retries_after_provider_failure(
         storage_prefix=f"projects/{public_id}",
         metadata_json={"task_provider": "github", "provider_config": {}},
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.commit()
     test_db.refresh(project)

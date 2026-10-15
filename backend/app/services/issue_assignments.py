@@ -21,7 +21,7 @@ from app.models.delivery import (
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.base_role import BaseRole
-from app.services.cloud_project_visibility import explicit_project_member_ids
+from app.services.cloud_project_visibility import project_participant_ids
 from app.services.cloud_projects.access import (
     IssueAction,
     require_cloud_project_role,
@@ -273,7 +273,9 @@ class IssueAssignmentService:
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "Human member id must be numeric",
                 ) from exc
-            if user_id not in explicit_project_member_ids(db, project):
+            if user_id not in project_participant_ids(
+                db, project, required_role=BaseRole.Developer
+            ):
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "Assignee is not a member of this Project",

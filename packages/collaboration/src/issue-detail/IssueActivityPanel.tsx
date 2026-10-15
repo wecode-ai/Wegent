@@ -1,42 +1,36 @@
-import { BrowserIssueExecution } from "./BrowserIssueExecution";
-import { BrowserIssueActivityTools } from "./BrowserIssueActivityTools";
-import { useIssueActivityScroll } from "./useIssueActivityScroll";
-import { BrowserIssueReplies } from "./BrowserIssueReplies";
-import { BrowserIssueCommentComposer } from "./BrowserIssueCommentComposer";
-import { issueTaskSummaryForMessage } from "./issueTaskSummary";
-import type { SharedIssueDetailTaskBinding } from "./createSharedIssueDetailPort";
+import { BrowserIssueExecution } from './BrowserIssueExecution'
+import { BrowserIssueActivityTools } from './BrowserIssueActivityTools'
+import { useIssueActivityScroll } from './useIssueActivityScroll'
+import { BrowserIssueReplies } from './BrowserIssueReplies'
+import { BrowserIssueCommentComposer } from './BrowserIssueCommentComposer'
+import { issueTaskSummaryForMessage } from './issueTaskSummary'
+import type { SharedIssueDetailTaskBinding } from './createSharedIssueDetailPort'
 import {
   executionRuntimeAddress,
   messageRuntimeExecutionTarget,
   type RuntimeExecutionTarget,
-} from "./runtimeExecutionTarget";
-import { isSingleActivityExecution } from "@wegent/chat-core/activity-execution-turn";
-import { IssueActivityFeed } from "./IssueActivityFeed";
-import { IssueMarkdownProvider } from "./IssueMarkdownProvider";
-import { IssueWebCommentComposer } from "./IssueWebCommentComposer";
-import { groupIssueTimelineThreads } from "./IssueActivityThread";
-import { IssueActivityContent } from "./IssueActivityContent";
-import {
-  compareIssueTimestamps,
-  issueThreadActivityTimestamp,
-} from "./issueTimestamp";
-import { IssueActivityMarkdown } from "./IssueActivityMarkdown";
-import { IssueProjectChatThread } from "./IssueProjectChatThread";
-import { useIssueProjectChat } from "./useIssueProjectChat";
-import { useIssueExecutionCancellation } from "./useIssueExecutionCancellation";
-import type { RuntimeTaskAddress } from "@wegent/chat-core/runtime";
+} from './runtimeExecutionTarget'
+import { isSingleActivityExecution } from '@wegent/chat-core/activity-execution-turn'
+import { IssueActivityFeed } from './IssueActivityFeed'
+import { IssueMarkdownProvider } from './IssueMarkdownProvider'
+import { IssueWebCommentComposer } from './IssueWebCommentComposer'
+import { groupIssueTimelineThreads } from './IssueActivityThread'
+import { IssueActivityContent } from './IssueActivityContent'
+import { compareIssueTimestamps, issueThreadActivityTimestamp } from './issueTimestamp'
+import { IssueActivityMarkdown } from './IssueActivityMarkdown'
+import { IssueProjectChatThread } from './IssueProjectChatThread'
+import { useIssueProjectChat } from './useIssueProjectChat'
+import { useIssueExecutionCancellation } from './useIssueExecutionCancellation'
+import type { RuntimeTaskAddress } from '@wegent/chat-core/runtime'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  IssueActivityCard,
-  IssueActivityMessage,
-} from "./IssueActivityPresentation";
-import { useCallback, useMemo } from "react";
+import { IssueActivityCard, IssueActivityMessage } from './IssueActivityPresentation'
+import { useCallback, useMemo } from 'react'
 
-import { executionStatusLabel } from "./executionStatusLabel";
-import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
+import { executionStatusLabel } from './executionStatusLabel'
+import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type {
   CollaborationAgent,
   CollaborationAssignment,
@@ -45,10 +39,10 @@ import type {
   CollaborationIssue,
   CollaborationProject,
   CollaborationMember,
-} from "../types";
+} from '../types'
 
-import { issueActivityEntries } from "./issueActivityEntries";
-import { activityDisplayBody } from "./activityDisplayBody";
+import { issueActivityEntries } from './issueActivityEntries'
+import { activityDisplayBody } from './activityDisplayBody'
 
 export function IssueActivityPanel({
   api,
@@ -70,102 +64,80 @@ export function IssueActivityPanel({
   taskBindings = [],
   onOpenTaskConversation,
 }: {
-  api: Pick<SharedWorkspaceApi, "assignments" | "comments" | "activity"> &
-    Partial<
-      Pick<
-        SharedWorkspaceApi,
-        "attachments" | "runtime" | "taskBindings" | "issues"
-      >
-    >;
-  issue: CollaborationIssue;
-  project?: CollaborationProject;
-  onTaskUpdated?(issue: CollaborationIssue): void;
-  members: CollaborationMember[];
-  agents: CollaborationAgent[];
-  assignments: CollaborationAssignment[];
-  comments: CollaborationComment[];
-  executions: CollaborationExecution[];
-  canComment: boolean;
-  canAttach?: boolean;
-  translate(
-    key: string,
-    fallback?: string,
-    options?: Record<string, string | number>,
-  ): string;
-  onCommentsChange(comments: CollaborationComment[]): void;
-  onError(): void;
-  taskBindings?: SharedIssueDetailTaskBinding[];
-  onOpenTaskConversation?(binding: SharedIssueDetailTaskBinding): void;
-  onOpenAttachment?(id: string, filename: string): void;
-  onOpenExecution?(target: RuntimeExecutionTarget): void;
+  api: Pick<SharedWorkspaceApi, 'assignments' | 'comments' | 'activity'> &
+    Partial<Pick<SharedWorkspaceApi, 'attachments' | 'runtime' | 'taskBindings' | 'issues'>>
+  issue: CollaborationIssue
+  project?: CollaborationProject
+  onTaskUpdated?(issue: CollaborationIssue): void
+  members: CollaborationMember[]
+  agents: CollaborationAgent[]
+  assignments: CollaborationAssignment[]
+  comments: CollaborationComment[]
+  executions: CollaborationExecution[]
+  canComment: boolean
+  canAttach?: boolean
+  translate(key: string, fallback?: string, options?: Record<string, string | number>): string
+  onCommentsChange(comments: CollaborationComment[]): void
+  onError(): void
+  taskBindings?: SharedIssueDetailTaskBinding[]
+  onOpenTaskConversation?(binding: SharedIssueDetailTaskBinding): void
+  onOpenAttachment?(id: string, filename: string): void
+  onOpenExecution?(target: RuntimeExecutionTarget): void
 }) {
-  const chat = useIssueProjectChat(
-    api.activity,
-    issue.cloud_project_id,
-    issue.id,
-    issue.version,
-  );
+  const chat = useIssueProjectChat(api.activity, issue.cloud_project_id, issue.id, issue.version)
   const cancel = useCallback(
     (address: RuntimeTaskAddress) => {
-      if (!api.runtime)
-        throw new Error("Runtime execution service is unavailable");
-      return api.runtime.cancel(address);
+      if (!api.runtime) throw new Error('Runtime execution service is unavailable')
+      return api.runtime.cancel(address)
     },
-    [api.runtime],
-  );
+    [api.runtime]
+  )
   const cancellation = useIssueExecutionCancellation(
     issue.id,
     cancel,
-    translate("activity.task_activity_stop_failed"),
-  );
+    translate('activity.task_activity_stop_failed')
+  )
   const markActivityRead = useCallback(
     async (sequence: number) => {
-      if (!api.issues) return;
+      if (!api.issues) return
       try {
-        const updated = await api.issues.markRead(issue.id, sequence);
-        onTaskUpdated?.(updated);
+        const updated = await api.issues.markRead(issue.id, sequence)
+        onTaskUpdated?.(updated)
       } catch (cause) {
-        onError();
-        throw cause;
+        onError()
+        throw cause
       }
     },
-    [api.issues, issue.id, onError, onTaskUpdated],
-  );
+    [api.issues, issue.id, onError, onTaskUpdated]
+  )
   const scroll = useIssueActivityScroll({
     messages: chat.messages,
-    loading: chat.loading,
+    loading: chat.loading || Boolean(chat.error),
     issueId: issue.id,
     readSequence: issue.activity_read_sequence ?? 0,
     unread: Boolean(issue.is_unread),
+    unreadRevision: issue.is_unread ? (issue.content_revision ?? issue.version) : undefined,
     onReadSequence: api.issues ? markActivityRead : undefined,
-    cardTestIdPrefix: "collaboration-chat-card-",
-  });
-  const threads = useMemo(
-    () => groupIssueTimelineThreads(chat.messages),
-    [chat.messages],
-  );
+    cardTestIdPrefix: 'collaboration-chat-card-',
+  })
+  const threads = useMemo(() => groupIssueTimelineThreads(chat.messages), [chat.messages])
   const addressedMessages = useMemo(
     () =>
       chat.messages.map(
-        (message) =>
+        message =>
           messageRuntimeExecutionTarget(
             message,
-            executions.find(
-              (run) => run.id === Number(message.metadata.execution_id),
-            ),
-          )?.activityMessage ?? message,
+            executions.find(run => run.id === Number(message.metadata.execution_id))
+          )?.activityMessage ?? message
       ),
-    [chat.messages, executions],
-  );
+    [chat.messages, executions]
+  )
   // Project chat is the canonical PC activity stream. REST records describe
   // the same work and belong only to hosts without a project-chat transport.
   const entries = useMemo(
-    () =>
-      api.activity
-        ? []
-        : issueActivityEntries(assignments, comments, executions),
-    [api.activity, assignments, comments, executions],
-  );
+    () => (api.activity ? [] : issueActivityEntries(assignments, comments, executions)),
+    [api.activity, assignments, comments, executions]
+  )
   const content = (
     <IssueMarkdownProvider attachments={api.attachments}>
       <IssueActivityFeed
@@ -178,11 +150,10 @@ export function IssueActivityPanel({
         error={chat.error ?? cancellation.error}
         emptyDescription={
           issue.assignee_agent_name || issue.assignee_team_name
-            ? translate("activity.task_activity_empty_with_ai", undefined, {
-                name:
-                  issue.assignee_agent_name || issue.assignee_team_name || "",
+            ? translate('activity.task_activity_empty_with_ai', undefined, {
+                name: issue.assignee_agent_name || issue.assignee_team_name || '',
               })
-            : translate("activity.task_activity_empty_without_ai")
+            : translate('activity.task_activity_empty_without_ai')
         }
         tools={
           <div className="flex items-center gap-2">
@@ -228,9 +199,9 @@ export function IssueActivityPanel({
               loading={chat.loading}
               translate={translate}
               onMessages={chat.merge}
-              onCommentPersisted={(message) => {
-                scroll.followCard(message.messageId);
-                scroll.scrollTaskCommentsToBottom();
+              onCommentPersisted={message => {
+                scroll.followCard(message.messageId)
+                scroll.scrollTaskCommentsToBottom()
               }}
               onTaskUpdated={onTaskUpdated}
             />
@@ -247,12 +218,12 @@ export function IssueActivityPanel({
               translate={translate}
               send={async (body, mentions) => {
                 if (api.activity) {
-                  await chat.send(body, undefined, mentions);
-                  return;
+                  await chat.send(body, undefined, mentions)
+                  return
                 }
-                return api.comments.create(issue.id, body);
+                return api.comments.create(issue.id, body)
               }}
-              onSent={(comment) => onCommentsChange([...comments, comment])}
+              onSent={comment => onCommentsChange([...comments, comment])}
               onError={onError}
             />
           )
@@ -260,8 +231,8 @@ export function IssueActivityPanel({
       >
         <div className="flex flex-col">
           {[
-            ...threads.map((thread) => ({
-              kind: "thread" as const,
+            ...threads.map(thread => ({
+              kind: 'thread' as const,
               at: issueThreadActivityTimestamp(thread),
               thread,
             })),
@@ -270,11 +241,10 @@ export function IssueActivityPanel({
             .sort(
               (left, right) =>
                 compareIssueTimestamps(left.at, right.at) ||
-                Number(left.kind === "thread") -
-                  Number(right.kind === "thread"),
+                Number(left.kind === 'thread') - Number(right.kind === 'thread')
             )
-            .map((entry) => {
-              if (entry.kind === "thread")
+            .map(entry => {
+              if (entry.kind === 'thread')
                 return (
                   <IssueProjectChatThread
                     key={`thread:${entry.thread.root.messageId}`}
@@ -285,80 +255,73 @@ export function IssueActivityPanel({
                     agents={agents}
                     upload={
                       canAttach && api.attachments
-                        ? (file) => api.attachments!.upload(issue.id, file)
+                        ? file => api.attachments!.upload(issue.id, file)
                         : undefined
                     }
-                    remove={
-                      api.attachments
-                        ? (id) => api.attachments!.remove(id)
-                        : undefined
-                    }
+                    remove={api.attachments ? id => api.attachments!.remove(id) : undefined}
                     translate={translate}
                     executions={executions}
-                    singleExecutionForMessage={(message) =>
+                    singleExecutionForMessage={message =>
                       isSingleActivityExecution(addressedMessages, message)
                     }
-                    taskSummaryForMessage={(message) =>
+                    taskSummaryForMessage={message =>
                       issueTaskSummaryForMessage(
                         message,
                         taskBindings,
                         issue.title,
-                        onOpenTaskConversation,
+                        onOpenTaskConversation
                       )
                     }
                     onOpenExecution={onOpenExecution}
-                    onStopExecution={
-                      api.runtime ? cancellation.stop : undefined
-                    }
+                    onStopExecution={api.runtime ? cancellation.stop : undefined}
                     stoppingMessageId={cancellation.stoppingMessageId}
                     onOpenAttachment={onOpenAttachment}
                   />
-                );
+                )
               const id =
-                entry.kind === "comment"
+                entry.kind === 'comment'
                   ? entry.comment.id
-                  : entry.kind === "assignment"
+                  : entry.kind === 'assignment'
                     ? entry.assignment.id
-                    : String(entry.run.id);
+                    : String(entry.run.id)
               const author =
-                entry.kind === "comment"
+                entry.kind === 'comment'
                   ? entry.comment.author
-                  : entry.kind === "assignment"
-                    ? entry.assignment.created_by_user_name ||
-                      translate("todo.someone", "项目成员")
-                    : translate("todo.execution_run", "执行任务");
+                  : entry.kind === 'assignment'
+                    ? entry.assignment.created_by_user_name || translate('todo.someone', '项目成员')
+                    : translate('todo.execution_run', '执行任务')
               const content =
-                entry.kind === "comment"
-                  ? activityDisplayBody(entry.comment.body, "")
-                  : entry.kind === "assignment"
+                entry.kind === 'comment'
+                  ? activityDisplayBody(entry.comment.body, '')
+                  : entry.kind === 'assignment'
                     ? activityDisplayBody(
                         entry.assignment.body,
-                        `${translate("todo.assigned_to", "分配给")} @${entry.assignment.target_name}`,
+                        `${translate('todo.assigned_to', '分配给')} @${entry.assignment.target_name}`
                       )
-                    : null;
+                    : null
               const boundTask =
-                entry.kind === "run"
+                entry.kind === 'run'
                   ? taskBindings.find(
-                      (binding) =>
+                      binding =>
                         binding.device_id === entry.run.runtime_device_id &&
-                        binding.task_id === entry.run.runtime_task_id,
+                        binding.task_id === entry.run.runtime_task_id
                     )
-                  : undefined;
+                  : undefined
               return (
                 <IssueActivityCard key={`${entry.kind}:${id}`}>
                   <IssueActivityMessage
                     data-testid={
-                      entry.kind === "assignment"
+                      entry.kind === 'assignment'
                         ? `collaboration-assignment-${id}`
-                        : entry.kind === "run"
+                        : entry.kind === 'run'
                           ? `collaboration-run-${id}`
                           : `collaboration-comment-${id}`
                     }
                     author={author}
                     createdAt={entry.at}
-                    agent={entry.kind === "run"}
+                    agent={entry.kind === 'run'}
                   >
-                    {entry.kind === "run" ? (
+                    {entry.kind === 'run' ? (
                       <>
                         <div className="task-detail-thread-task-link">
                           <button
@@ -366,8 +329,7 @@ export function IssueActivityPanel({
                             className="task-detail-ai-run-open-task"
                             data-testid={`collaboration-open-task-${entry.run.id}`}
                             onClick={() => {
-                              if (boundTask)
-                                onOpenTaskConversation?.(boundTask);
+                              if (boundTask) onOpenTaskConversation?.(boundTask)
                             }}
                             disabled={!boundTask || !onOpenTaskConversation}
                           >
@@ -377,14 +339,9 @@ export function IssueActivityPanel({
                             type="button"
                             className="task-detail-ai-run-open-task"
                             data-testid={`collaboration-open-execution-${entry.run.id}`}
-                            disabled={
-                              !onOpenExecution ||
-                              !executionRuntimeAddress(entry.run)
-                            }
+                            disabled={!onOpenExecution || !executionRuntimeAddress(entry.run)}
                             onClick={() => {
-                              const address = executionRuntimeAddress(
-                                entry.run,
-                              );
+                              const address = executionRuntimeAddress(entry.run)
                               if (address)
                                 onOpenExecution?.({
                                   address,
@@ -392,13 +349,10 @@ export function IssueActivityPanel({
                                   senderName: author,
                                   runId: String(entry.run.id),
                                   runStatus: entry.run.display_state,
-                                });
+                                })
                             }}
                           >
-                            {executionStatusLabel(
-                              entry.run.display_state,
-                              translate,
-                            )}
+                            {executionStatusLabel(entry.run.display_state, translate)}
                           </button>
                         </div>
                         {entry.run.error_message ? (
@@ -413,24 +367,24 @@ export function IssueActivityPanel({
                     ) : (
                       <IssueActivityContent
                         messageId={id}
-                        expandLabel={translate("todo.expand_content")}
-                        collapseLabel={translate("todo.collapse_content")}
+                        expandLabel={translate('todo.expand_content')}
+                        collapseLabel={translate('todo.collapse_content')}
                       >
                         <IssueActivityMarkdown
                           translate={translate}
-                          content={content ?? ""}
+                          content={content ?? ''}
                           onOpenAttachment={onOpenAttachment}
                         />
                       </IssueActivityContent>
                     )}
                   </IssueActivityMessage>
                 </IssueActivityCard>
-              );
+              )
             })}
         </div>
       </IssueActivityFeed>
     </IssueMarkdownProvider>
-  );
+  )
   return api.runtime &&
     api.activity &&
     api.attachments &&
@@ -453,9 +407,9 @@ export function IssueActivityPanel({
         messages={chat.messages}
         onMessages={chat.merge}
         onTaskUpdated={onTaskUpdated}
-        onReplyPersisted={(rootId) => {
-          scroll.followCard(rootId);
-          scroll.revealCardBottom(rootId);
+        onReplyPersisted={rootId => {
+          scroll.followCard(rootId)
+          scroll.revealCardBottom(rootId)
         }}
         canComment={canComment}
         translate={translate}
@@ -465,5 +419,5 @@ export function IssueActivityPanel({
     </BrowserIssueExecution>
   ) : (
     content
-  );
+  )
 }

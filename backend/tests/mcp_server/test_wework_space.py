@@ -25,6 +25,7 @@ from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
 from app.services import collaboration_manager_decisions
+from tests.utils.collaboration import authorize_project, authorize_project_agent
 
 
 class _SessionContext:
@@ -50,6 +51,7 @@ def _project(db: Session, user: User, *, provider: str) -> CloudProject:
         storage_prefix=f"projects/{public_id}",
         metadata_json={"task_provider": provider},
     )
+    authorize_project(db, project)
     db.add(project)
     db.commit()
     db.refresh(project)
@@ -83,6 +85,7 @@ def test_update_issue_status_is_scoped_to_manager_board_task(
         created_by_user_id=test_user.id,
         metadata_json={"runtime": "codex"},
     )
+    authorize_project_agent(test_db, manager)
     item = LoopItem(
         id=f"{project.project_key}-1",
         cloud_project_id=project.id,
@@ -324,7 +327,7 @@ def test_project_details_expose_assignable_members(
         {
             "id": test_user.id,
             "name": test_user.user_name,
-            "role": "Owner",
+            "role": "Maintainer",
             "capability": "Owns product decisions",
         }
     ]
@@ -459,6 +462,7 @@ async def test_board_robot_task_can_assign_item_to_another_project_robot(
         created_by_user_id=test_user.id,
         metadata_json={"runtime": "codex"},
     )
+    authorize_project_agent(test_db, robot)
     item = LoopItem(
         id=f"{project.project_key}-2",
         cloud_project_id=str(project.id),

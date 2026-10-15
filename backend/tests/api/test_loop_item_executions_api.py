@@ -32,6 +32,7 @@ from app.schemas.project_chat import (
     LoopItemExecutionBatchItem,
     LoopItemExecutionStatusQuery,
 )
+from tests.utils.collaboration import authorize_project, authorize_project_agent
 
 
 def test_runtime_write_back_authorizes_execution_owner(
@@ -96,6 +97,7 @@ def collaboration_dispatch(
         metadata_json={},
         next_item_number=2,
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.flush()
     manager = ProjectChatAgent(
@@ -107,6 +109,7 @@ def collaboration_dispatch(
         created_by_user_id=test_user.id,
         metadata_json={"wegent_team_id": 1001},
     )
+    authorize_project_agent(test_db, manager)
     worker = ProjectChatAgent(
         id=f"worker-{uuid4().hex}",
         cloud_project_id=project.id,
@@ -116,6 +119,7 @@ def collaboration_dispatch(
         created_by_user_id=test_user.id,
         metadata_json={"wegent_team_id": 1002},
     )
+    authorize_project_agent(test_db, worker)
     reviewer = ProjectChatAgent(
         id=f"reviewer-{uuid4().hex}",
         cloud_project_id=project.id,
@@ -125,6 +129,7 @@ def collaboration_dispatch(
         created_by_user_id=test_user.id,
         metadata_json={"wegent_team_id": 1003},
     )
+    authorize_project_agent(test_db, reviewer)
     group = {
         "id": "group-1",
         "leader": {"kind": "agent", "id": "1001"},
@@ -588,6 +593,7 @@ def test_collaboration_round_owner_records_assignment_without_new_execution(
         storage_prefix=f"projects/{public_id}",
         metadata_json={},
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.flush()
     agent = ProjectChatAgent(
@@ -598,6 +604,7 @@ def test_collaboration_round_owner_records_assignment_without_new_execution(
         status="active",
         created_by_user_id=test_user.id,
     )
+    authorize_project_agent(test_db, agent)
     item = LoopItem(
         id=f"{project.project_key}-1",
         cloud_project_id=project.id,

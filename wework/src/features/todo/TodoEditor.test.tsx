@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import '@/i18n'
 import type { CloudLoopItem, CloudProject, LoopItemTaskBinding } from '@/api/deliveries'
@@ -312,6 +312,71 @@ describe('TodoEditor external item sync', () => {
 
     await user.click(screen.getByTestId('cloud-todo-detail-delete'))
     expect(onDelete).toHaveBeenCalledOnce()
+  })
+
+  it('retains an uncommitted tag draft when Escape closes the properties popover', async () => {
+    const user = userEvent.setup()
+    const updateLoopItem = vi.fn(async (_id: string, values: Record<string, unknown>) => ({
+      ...baseItem,
+      ...values,
+      version: 2,
+    }))
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={baseItem}
+        project={project}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={{ ...api, updateLoopItem } as never}
+        currentUserId={1}
+      />
+    )
+
+    const trigger = screen.getByTestId('cloud-todo-more-properties')
+    await user.click(trigger)
+    await user.type(screen.getByTestId('cloud-todo-detail-tag-input'), 'draft-tag')
+    await user.keyboard('{Escape}')
+
+    expect(screen.queryByTestId('cloud-todo-more-properties-popover')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+    await user.click(trigger)
+    expect(screen.getByTestId('cloud-todo-detail-tag-tag-draft-tag')).toBeInTheDocument()
+    await user.click(screen.getByTestId('cloud-todo-save'))
+    await vi.waitFor(() =>
+      expect(updateLoopItem).toHaveBeenCalledWith(
+        baseItem.id,
+        expect.objectContaining({ tags: ['draft-tag'] })
+      )
+    )
+  })
+
+  it('exposes metadata without editable controls for a read-only Issue', async () => {
+    const user = userEvent.setup()
+    const item = { ...baseItem, can_edit: false, project_store: 'backend' } as CloudLoopItem
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={item}
+        project={project}
+        allItems={[item]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        onDelete={vi.fn()}
+        api={api}
+        currentUserId={1}
+      />
+    )
+
+    await user.click(screen.getByTestId('cloud-todo-more-properties'))
+    expect(screen.getByRole('dialog', { name: '更多信息' })).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-detail-priority')).toBeDisabled()
+    expect(screen.getByTestId('cloud-todo-add-collaborator')).toBeDisabled()
+    expect(screen.queryByTestId('cloud-todo-detail-tag-input')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-detail-delete')).not.toBeInTheDocument()
   })
 
   it('uses collaboration translations for runtime configuration notices', async () => {
@@ -1326,6 +1391,13 @@ describe('TodoEditor external item sync', () => {
         onClose={vi.fn()}
         api={assignApi}
         teamApi={teamApi}
+        projectChatAgentApi={
+          {
+            list: vi.fn(async () => [
+              { id: 'enabled-42', name: 'Project binding', status: 'active', wegentTeamId: 42 },
+            ]),
+          } as never
+        }
         currentUserId={1}
       />
     )
@@ -1345,6 +1417,134 @@ describe('TodoEditor external item sync', () => {
 })
 
 describe('TodoEditor assignment chain', () => {
+  async function openWorkspaceHistory(canEdit = true) {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    const item = {
+      ...baseItem,
+      can_edit: canEdit,
+      project_store: 'backend',
+      assignment_history: [
+        {
+          by_user_id: 1,
+          to_type: 'user',
+          to_id: '2',
+          to_name: '李四',
+          action: 'assign',
+          at: '2026-08-01T10:00:00Z',
+        },
+        {
+          by_user_id: 2,
+          to_type: 'agent',
+          to_id: 'agent-1',
+          to_name: '智能体A',
+          action: 'reassign',
+          at: '2026-08-02T11:30:00Z',
+        },
+      ],
+    } as CloudLoopItem
+    const updateLoopItem = vi.fn(async (_id: string, values: Record<string, unknown>) => ({
+      ...item,
+      ...values,
+      version: 2,
+    }))
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={item}
+        project={project}
+        allItems={[item]}
+        onUpdated={vi.fn()}
+        onClose={onClose}
+        currentUserId={1}
+        api={
+          {
+            ...api,
+            updateLoopItem,
+            listCloudProjectMembers: vi.fn(async () => [
+              { user_id: 1, user_name: '张三', role: 'Developer' },
+              { user_id: 2, user_name: '李四', role: 'Developer' },
+            ]),
+          } as never
+        }
+      />
+    )
+    const moreTrigger = screen.getByTestId('cloud-todo-more-properties')
+    await user.click(moreTrigger)
+    const properties = screen.getByTestId('cloud-todo-more-properties-popover')
+    const historyTrigger = within(properties).getByTestId('cloud-todo-assignment-chain-trigger')
+    return { user, item, properties, moreTrigger, historyTrigger, onClose, updateLoopItem }
+  }
+
+  it.each([true, false])(
+    'expands history inside the same properties surface with can_edit=%s',
+    async canEdit => {
+      const { user, properties, moreTrigger, historyTrigger, onClose } =
+        await openWorkspaceHistory(canEdit)
+      const details = historyTrigger.closest('details')!
+      const history = within(properties).getByTestId('cloud-todo-assignment-chain-popover')
+      expect(details).not.toHaveAttribute('open')
+      expect(history).not.toBeVisible()
+
+      await user.click(historyTrigger)
+
+      expect(details).toHaveAttribute('open')
+      expect(history).toBeVisible()
+      expect(screen.getByTestId('cloud-todo-more-properties-popover')).toBe(properties)
+      expect(moreTrigger).toHaveAttribute('aria-expanded', 'true')
+      expect(screen.getAllByRole('dialog')).toHaveLength(1)
+      expect(history).toHaveAttribute('role', 'region')
+      expect(await within(history).findByText('张三')).toBeVisible()
+      expect(history).toHaveTextContent('李四')
+      expect(history).toHaveTextContent('智能体A')
+      expect(history).toHaveTextContent('转派')
+      expect(historyTrigger).toHaveTextContent('收起指派详情')
+
+      await user.click(within(history).getByText('智能体A'))
+      expect(moreTrigger).toHaveAttribute('aria-expanded', 'true')
+      await user.click(historyTrigger)
+      expect(details).not.toHaveAttribute('open')
+      expect(history).not.toBeVisible()
+      expect(properties).toBeVisible()
+      expect(onClose).not.toHaveBeenCalled()
+    }
+  )
+
+  it('preserves tag drafts while expanding and collapsing assignment history', async () => {
+    const { user, item, properties, historyTrigger, updateLoopItem } = await openWorkspaceHistory()
+    await user.type(within(properties).getByTestId('cloud-todo-detail-tag-input'), '保留草稿')
+    await user.click(historyTrigger)
+    await user.click(historyTrigger)
+    expect(within(properties).getByTestId('cloud-todo-detail-tag-tag-保留草稿')).toBeVisible()
+
+    await user.click(screen.getByTestId('cloud-todo-save'))
+    await vi.waitFor(() =>
+      expect(updateLoopItem).toHaveBeenCalledWith(
+        item.id,
+        expect.objectContaining({ tags: ['保留草稿'] })
+      )
+    )
+  })
+
+  it('dismisses the properties surface on Escape or outside click without closing the Issue', async () => {
+    const { user, historyTrigger, moreTrigger, onClose } = await openWorkspaceHistory()
+    await user.click(historyTrigger)
+    await user.keyboard('{Escape}')
+    expect(screen.queryByTestId('cloud-todo-more-properties-popover')).not.toBeInTheDocument()
+    expect(moreTrigger).toHaveFocus()
+    expect(screen.getByTestId('cloud-todo-detail')).toBeVisible()
+    expect(onClose).not.toHaveBeenCalled()
+
+    await user.click(moreTrigger)
+    const nextTrigger = screen.getByTestId('cloud-todo-assignment-chain-trigger')
+    expect(nextTrigger.closest('details')).not.toHaveAttribute('open')
+    await user.click(nextTrigger)
+    await user.click(screen.getByTestId('cloud-todo-detail-title'))
+    expect(screen.queryByTestId('cloud-todo-more-properties-popover')).not.toBeInTheDocument()
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
   it('shows the assignment details in a popover triggered next to the assignee', async () => {
     const user = userEvent.setup()
     const chainApi = {
@@ -1413,10 +1613,28 @@ describe('TodoEditor assignment chain', () => {
     expect(onClose).not.toHaveBeenCalled()
   })
 
-  it('does not render the trigger when the item has no assignment history', () => {
-    render(editorElement(baseItem))
-    expect(screen.queryByTestId('cloud-todo-assignment-chain-trigger')).not.toBeInTheDocument()
-  })
+  it.each(['modal', 'workspace-panel'] as const)(
+    'does not render the trigger without assignment history in %s',
+    async presentation => {
+      const user = userEvent.setup()
+      render(
+        <TodoEditor
+          mode="edit"
+          presentation={presentation}
+          item={baseItem}
+          project={project}
+          allItems={[baseItem]}
+          onUpdated={vi.fn()}
+          onClose={vi.fn()}
+          api={api}
+        />
+      )
+      if (presentation === 'workspace-panel') {
+        await user.click(screen.getByTestId('cloud-todo-more-properties'))
+      }
+      expect(screen.queryByTestId('cloud-todo-assignment-chain-trigger')).not.toBeInTheDocument()
+    }
+  )
 })
 
 describe('TodoEditor status history', () => {
@@ -2059,6 +2277,13 @@ describe('TodoEditor create parent resolution', () => {
         onClose={vi.fn()}
         api={createApi}
         teamApi={teamApi}
+        projectChatAgentApi={
+          {
+            list: vi.fn(async () => [
+              { id: 'enabled-42', name: 'Project binding', status: 'active', wegentTeamId: 42 },
+            ]),
+          } as never
+        }
         currentUserId={1}
       />
     )

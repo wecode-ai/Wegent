@@ -318,6 +318,9 @@ export interface ProjectTaskAttachment extends CloudLoopItemAttachment {
 export interface CloudProject {
   id: CloudProjectId
   workspace_id?: string | null
+  workspace_access_role?: 'Owner' | 'Maintainer' | 'Developer' | 'Viewer' | null
+  membership_mode?: 'inherit' | 'restricted'
+  permission_sources?: import('@wegent/collaboration').CollaborationProject['permission_sources']
   workspace_context?: { id: string; public_id: string; name: string } | null
   public_id: string
   project_key: string
@@ -376,7 +379,7 @@ export interface CloudProject {
   current_user_name?: string
   access_role?: 'Owner' | 'Maintainer' | 'Developer' | 'Viewer'
   visibility?: 'private' | 'public'
-  public_access?: { role: 'Developer' | 'Viewer' } | null
+  public_access?: { role: 'Viewer' } | null
   default_issue_security?: 'open' | 'related'
   status: string
   tags: string[]
@@ -543,6 +546,11 @@ export interface CloudProjectMember {
   user_name: string
   email: string | null
   role: 'Owner' | 'Maintainer' | 'Developer' | 'Viewer'
+  direct_role?: 'Maintainer' | 'Developer' | 'Viewer' | null
+  inherited_role?: 'Maintainer' | 'Developer' | 'Viewer' | null
+  permission_sources?: import('@wegent/collaboration').CollaborationMember['permission_sources']
+  inherited_from_workspace_id?: string | null
+  can_be_assignee?: boolean
   capability_description?: string
 }
 
@@ -684,7 +692,8 @@ export function createDeliveryApi(client: HttpClient) {
       description?: string
       task_provider?: 'local' | 'github' | 'gitlab' | 'dingtalk_aitable'
       visibility?: 'private' | 'public'
-      public_access?: { role: 'Developer' | 'Viewer' }
+      membership_mode?: 'inherit' | 'restricted'
+      public_access?: { role: 'Viewer' }
       provider_config?: {
         repository?: string
         domain?: string
@@ -710,7 +719,8 @@ export function createDeliveryApi(client: HttpClient) {
         description?: string
         tags?: string[]
         visibility?: 'private' | 'public'
-        public_access?: { role: 'Developer' | 'Viewer' }
+        membership_mode?: 'inherit' | 'restricted'
+        public_access?: { role: 'Viewer' }
         default_issue_security?: 'open' | 'related'
         card_display?: CloudProject['card_display']
         board_config?: CloudProject['board_config']
@@ -1143,7 +1153,7 @@ export function createDeliveryApi(client: HttpClient) {
     addCloudProjectMember(
       projectId: CloudProjectIdInput,
       userId: number,
-      role: CloudProjectMember['role'] = 'Developer'
+      role: Exclude<CloudProjectMember['role'], 'Owner'> = 'Developer'
     ): Promise<CloudProjectMember> {
       return client.post(`/v1/cloud-projects/${projectId}/members`, {
         user_id: userId,

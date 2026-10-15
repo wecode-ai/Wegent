@@ -41,6 +41,7 @@ from app.services.delivery.storage import (
 from app.services.loop_items.service import loop_item_service
 from app.services.project_automations import project_automation_execution
 from app.services.project_incoming_hooks import project_incoming_hook_service
+from tests.utils.collaboration import authorize_project
 
 
 class FakeDeliveryStorage:
@@ -156,6 +157,7 @@ def delivery_project(test_db: Session, test_user: User) -> CloudProject:
         created_by_user_id=test_user.id,
         storage_prefix=f"projects/{public_id}",
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.commit()
     test_db.refresh(project)
@@ -264,6 +266,7 @@ def test_external_loop_items_forward_assignee_filters(
             "provider_config": {"repository": "octo/example"},
         },
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.commit()
     test_db.refresh(project)
@@ -311,6 +314,7 @@ def test_external_loop_items_reject_unsupported_schedule_changes(
             "provider_config": {"repository": "octo/example"},
         },
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.commit()
 
@@ -354,6 +358,7 @@ def test_external_loop_item_update_allows_unchanged_null_schedule_fields(
             "provider_config": {"repository": "octo/example"},
         },
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.commit()
 
@@ -416,6 +421,7 @@ def test_external_loop_item_comments_reject_unauthorized_private_project_access(
             "provider_config": {"repository": "octo/private"},
         },
     )
+    authorize_project(test_db, project)
     unauthorized_user = User(
         user_name="external-comments-outsider",
         password_hash=get_password_hash("outsider-password"),
@@ -462,6 +468,7 @@ def test_external_loop_item_comments_return_empty_list_for_authorized_user(
             "provider_config": {"repository": "octo/empty"},
         },
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.commit()
 
@@ -581,7 +588,7 @@ def test_board_snapshot_returns_first_screen_dependencies(
     assert [entry["id"] for entry in snapshot["items"]] == [item["id"]]
     assert snapshot["task_bindings"] == [binding.json()]
     assert snapshot["members"][0]["user_id"] == test_user.id
-    assert snapshot["members"][0]["role"] == "Owner"
+    assert snapshot["members"][0]["role"] == "Maintainer"
     assert snapshot["agents"] == []
 
 
@@ -671,18 +678,9 @@ def test_loop_item_parent_must_be_in_same_project(
         created_by_user_id=test_user.id,
         storage_prefix=f"projects/{public_id}",
     )
+    authorize_project(test_db, other)
     test_db.add(other)
     test_db.flush()
-    test_db.add(
-        ResourceMember(
-            resource_type=ResourceType.CLOUD_PROJECT.value,
-            resource_id=other.id,
-            entity_id=str(test_user.id),
-            user_id=test_user.id,
-            role="Owner",
-            status=MemberStatus.APPROVED.value,
-        )
-    )
     test_db.commit()
 
     response = test_client.post(

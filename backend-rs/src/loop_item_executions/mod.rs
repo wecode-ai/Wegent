@@ -14,6 +14,6 @@
 //! response is JSON `null`, which is the contract the recorded traffic pins.
 mod capacity;
 mod claim;
-mod device;
+pub(crate) mod device;
 mod handler;
 mod lock;

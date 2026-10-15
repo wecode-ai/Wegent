@@ -33,6 +33,14 @@ async function requestJson(cloud, path, options = {}) {
 }
 
 async function verifyMemberReply(cloud, issue, rootId) {
+  const privateAgent = await requestJson(
+    cloud,
+    `/api/v1/cloud-projects/${cloud.projectId}/chat-agents`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ name: `board-private-${process.pid}`, visibility: 'private' }),
+    }
+  )
   const userName = `board-member-${process.pid}`
   const password = 'board-member-e2e-password'
   const member = await requestJson(cloud, '/api/admin/users', {
@@ -57,9 +65,28 @@ async function verifyMemberReply(cloud, issue, rootId) {
     `/api/v1/cloud-projects/${cloud.projectId}/chat-agents`
   )
   assert.ok(
-    !agents.some(agent => agent.id === cloud.agentId),
+    !agents.some(agent => agent.id === privateAgent.id),
     'The regression member must not see the admin-only agent'
   )
+  assert.ok(
+    agents.some(agent => agent.id === cloud.agentId),
+    'The regression member must see the shared project agent'
+  )
+  const privateAssignment = await fetch(
+    `${cloud.backendUrl}/api/v1/cloud-projects/${cloud.projectId}/loop-items`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${login.access_token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        title: 'Private Agent assignment must be denied',
+        assignee_agent_id: privateAgent.id,
+      }),
+    }
+  )
+  assert.equal(privateAssignment.status, 403, 'A member must not use the private agent')
   const { io } = createRequire(
     new URL('../../../../packages/chat-core/package.json', import.meta.url)
   )(process.env.WEWORK_E2E_SOCKET_IO_CLIENT || 'socket.io-client')
