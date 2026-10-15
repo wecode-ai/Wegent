@@ -486,7 +486,7 @@ def test_collaboration_batch_records_activity_and_persists_human_fact(
 
 
 @pytest.mark.parametrize("outcome", ["completed", "failed", "cancelled"])
-def test_agent_only_batch_releases_dispatch_without_a_manager_decision(
+def test_agent_only_batch_waits_for_explicit_manager_decision(
     test_db: Session,
     test_user: User,
     collaboration_dispatch: SimpleNamespace,
@@ -559,12 +559,8 @@ def test_agent_only_batch_releases_dispatch_without_a_manager_decision(
     )
     test_db.refresh(execution)
     test_db.refresh(fixture.parent)
-    assert execution.status == outcome
-    assert execution.sync_state == "in_sync"
-    assert execution.error_message == ("Member failed" if outcome == "failed" else "")
-    assert fixture.parent.status == (
-        "in_review" if outcome == "completed" else "in_progress"
-    )
+    assert execution.status == "claimed"
+    assert fixture.parent.status == "in_progress"
     assert fixture.parent.assignee_agent_id == fixture.worker.id
     assert test_db.query(LoopItemExecution).count() == 1
     version = execution.version

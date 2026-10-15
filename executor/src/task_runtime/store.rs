@@ -6636,7 +6636,7 @@ mod tests {
     }
 
     #[test]
-    fn agent_only_collaboration_round_keeps_owner_without_manager_summary() {
+    fn agent_only_collaboration_round_restarts_manager_for_review() {
         assert_collaboration_round_completion(false, false, false);
     }
 
@@ -7189,68 +7189,54 @@ mod tests {
                 Some("Evidence independently reviewed."),
             )
             .unwrap();
-        assert!(store
-            .claim_next_local_execution(&LocalExecutionClaim {
-                execution_device_id: Some("local-device".to_owned()),
-                runtime_instance_id: "runtime-1".to_owned(),
-                device_capacity: 1,
-                runtime_active: 0,
-                runtime_active_task_ids: Vec::new(),
-                lease_seconds: 300,
-            })
-            .unwrap()
-            .is_none());
+        if has_human {
+            assert!(store
+                .claim_next_local_execution(&LocalExecutionClaim {
+                    execution_device_id: Some("local-device".to_owned()),
+                    runtime_instance_id: "runtime-1".to_owned(),
+                    device_capacity: 1,
+                    runtime_active: 0,
+                    runtime_active_task_ids: Vec::new(),
+                    lease_seconds: 300,
+                })
+                .unwrap()
+                .is_none());
 
-        if !has_human {
-            let finished = store.get_task(&project.id, &issue.id).unwrap();
-            assert_eq!(finished.status.as_deref(), Some("in_review"));
-            assert_eq!(
-                finished.assignee_agent_id.as_deref(),
-                Some(member.id.as_str())
-            );
-            let connection = store.connection().unwrap();
-            let manager_count: i64 = connection
-                .query_row(
-                    "SELECT COUNT(*) FROM loop_item_executions WHERE loop_item_id = ?1
-                 AND json_extract(execution_payload, '$.dispatch_role') = 'manager'",
-                    [&issue.id],
-                    |row| row.get(0),
+            let human_task_id = human_task_id.unwrap();
+            let delivery = store
+                .create_delivery(
+                    &project.id,
+                    &human_task_id,
+                    true,
+                    DeliveryCreate {
+                        markdown: "Human review confirms the evidence.".to_owned(),
+                        chat: None,
+                        source_task: None,
+                    },
                 )
                 .unwrap();
-            assert_eq!(manager_count, 1);
-            return;
+            store
+                .finalize_delivery(
+                    &human_task_id,
+                    &delivery.id,
+                    crate::task_runtime::DeliveryFinalize::default(),
+                )
+                .unwrap();
+            let delivered_human_task = store.get_task(&project.id, &human_task_id).unwrap();
+            assert_eq!(delivered_human_task.status.as_deref(), Some("completed"));
+            assert_eq!(
+                delivered_human_task.current_delivery_id.as_deref(),
+                Some(delivery.id.as_str())
+            );
         }
-        let human_task_id = human_task_id.unwrap();
-        let delivery = store
-            .create_delivery(
-                &project.id,
-                &human_task_id,
-                true,
-                DeliveryCreate {
-                    markdown: "Human review confirms the evidence.".to_owned(),
-                    chat: None,
-                    source_task: None,
-                },
-            )
-            .unwrap();
-        store
-            .finalize_delivery(
-                &human_task_id,
-                &delivery.id,
-                crate::task_runtime::DeliveryFinalize::default(),
-            )
-            .unwrap();
-        let delivered_human_task = store.get_task(&project.id, &human_task_id).unwrap();
-        assert_eq!(delivered_human_task.status.as_deref(), Some("completed"));
-        assert_eq!(
-            delivered_human_task.current_delivery_id.as_deref(),
-            Some(delivery.id.as_str())
-        );
 
         let comments = store.list_comments(&project.id, &issue.id, 0).unwrap();
         let member_activity = comments
             .iter()
-            .find(|comment| comment.metadata["dispatch_role"] == "member")
+            .find(|comment| {
+                comment.metadata["dispatch_role"] == "member"
+                    && comment.content == "Evidence collected."
+            })
             .expect("member activity must remain present");
         assert_eq!(member_activity.status, "completed");
         assert_eq!(member_activity.content, "Evidence collected.");
@@ -7281,12 +7267,14 @@ mod tests {
                 .unwrap()
                 .contains("Evidence collected.")
         );
-        assert!(
-            resumed_manager.execution_payload.as_ref().unwrap()["message"]
-                .as_str()
-                .unwrap()
-                .contains("Human review confirms the evidence.")
-        );
+        if has_human {
+            assert!(
+                resumed_manager.execution_payload.as_ref().unwrap()["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Human review confirms the evidence.")
+            );
+        }
         assert!(
             resumed_manager.execution_payload.as_ref().unwrap()["message"]
                 .as_str()

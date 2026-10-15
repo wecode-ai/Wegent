@@ -132,8 +132,8 @@ For a collaboration-group assignment, the Executor still claims only one root Is
 1. The Executor starts a fresh manager session. Project collaboration rules and the optional workflow are visible in that turn, and the manager reads the Issue and eligible members through board MCP tools.
 2. The manager can update the root Issue state with an optional comment through MCP, or submit one round of assignments. Every assignment contains a task title, an assignee, and a workflow stage when the project defines a workflow.
 3. Dispatch updates the root Issue owner. The Executor starts isolated member Runtime sessions concurrently and notifies human members, waiting for their linked personal-task Delivery.
-4. An AI-only batch hands ownership to its workers. It never starts another coordinator session. The latest batch enters `in_review` after all members succeed while the Issue remains assigned to a batch member. Failures and cancellations record their real outcomes without an automatic summary.
-5. A batch containing human work retains the Executor-local barrier. After all required Agent outcomes and human Deliveries arrive, a fresh coordinator session receives the complete results and decides whether to assign more work or update the Issue through MCP. Members that cannot start must have a recorded failed outcome.
+4. The Executor waits for every required Agent outcome and human Delivery. A member that cannot start must have a recorded failed outcome.
+5. Once all outcomes arrive, the Executor starts a fresh manager session with the complete round results. The manager evaluates them, assigns another round, or explicitly updates the Issue through MCP. AI-only, human-only, and mixed batches use the same flow; delivery itself does not mean acceptance.
 
 Every manager turn is a fresh Runtime session, and member sessions are isolated. A later round receives only structured assignments, results, and deliveries. It never reuses a member conversation, and Backend never guesses the manager's next action.
 
@@ -154,8 +154,7 @@ flowchart LR
     MANAGER --> PLAN{Manager decision}
     PLAN -->|Assign one round| BATCH[Concurrent Agents + human notifications]
     BATCH --> BARRIER[Executor-local barrier]
-    BARRIER -->|Human work in batch| MANAGER
-    BARRIER -->|AI-only success| REVIEW
+    BARRIER -->|All round outcomes arrive| MANAGER
     PLAN -->|Explicit MCP update| STATUS[State + optional comment]
     STATUS --> ROOT
 ```
@@ -189,12 +188,8 @@ sequenceDiagram
         B-->>E: Delivery event releases barrier
     end
     E->>E: Wait for required round outcomes
-    alt AI-only batch
-        E->>B: Retain worker ownership and enter review
-    else Batch contains human work
-        E->>M: Start a fresh coordinator with round outcomes
-        M->>B: Update state or assign another round through MCP
-    end
+    E->>M: Start a fresh manager session with round outcomes
+    M->>B: Explicitly update state or assign another round through MCP
 ```
 
 Implementation and review must preserve these invariants:
@@ -203,7 +198,7 @@ Implementation and review must preserve these invariants:
 2. Local and cloud execution use the same claim protocol. A device is selected by a successful Executor pull, never by Backend push or reported-capacity scheduling.
 3. The Executor that claims the root Issue creates every collaboration-group manager and member session. Backend provides only MCP domain operations and persistence.
 4. Agent assignments in a round may run concurrently in separate Runtime sessions. A round containing human work waits for every required outcome and Delivery before resuming its coordinator.
-5. A coordinator assigns one round at a time. An AI-only handoff retains worker ownership and enters review after all members succeed, without resuming the coordinator. Human or mixed rounds return to the coordinator after their required outcomes arrive.
+5. A manager assigns one round at a time. Every completed round returns to a fresh manager session; Backend never submits an Issue for review just because its members finished. Native Runtime defaults can resume a manager without a nonempty model configuration.
 6. Human Delivery is a first-class round result. A collaboration-group human delivery wakes the manager without asking Backend to start or maintain a manager loop.
 7. Activity records show real events: who assigned which task to which Agent or member, execution results, Deliveries, and manager state changes. UI copy must not replace a child-task title with the root Issue title.
 8. Backend board MCP and Wework's local Space MCP share domain semantics but keep separate authentication and transport boundaries. Remote MCP never accepts a Runtime-local file path.

@@ -36,9 +36,18 @@ const MANAGER_REPLY_RESULT = '负责人已收到你的回复，并沿用原协�
 const MEMBER_REPLY = `${MARKER} 请采集成员继续检查 CPU。`
 const MEMBER_REPLY_RESULT = '采集成员已收到你的回复，并沿用原成员会话继续回答 CPU 情况。'
 const MANAGER_REQUEST_CONTEXT = 'You are the manager for one project Issue.'
-const GROUP_RULES = `${MARKER} 协作规则：每轮任务必须独立可验收，派发后由执行成员负责，全部完成后交由人验收，不要再次调度总结。`
+const GROUP_RULES = `${MARKER} 协作规则：每轮任务必须独立可验收，全部返回后由负责人评估并显式提交待确认。`
 const CALLS = {
   firstPlan: `${MARKER}-plan-1`,
+  updateStatus: `${MARKER}-update-status`,
+}
+
+function updateStatusArguments() {
+  return {
+    status: 'in_review',
+    reason: '本轮两项成员任务均已完成，负责人已综合核验。',
+    comment: '负责人已核验本轮两项任务的执行证据，提交 Issue 待确认。',
+  }
 }
 
 function scoped(selector) {
@@ -582,13 +591,15 @@ export async function createDesktopScenario({
       }
 
       assert.equal(requestRole, 'manager', '非成员请求没有携带负责人请求上下文')
-      if (
-        ['first-round-dispatched', 'replied'].includes(parentStage) &&
-        requestText.includes(MANAGER_REPLY)
-      ) {
+      if (['complete', 'replied'].includes(parentStage) && requestText.includes(MANAGER_REPLY)) {
         managerReplyRequests += 1
         parentStage = 'replied'
         writeEvents(response, responseId, [assistantMessage(MANAGER_REPLY_RESULT)])
+        return true
+      }
+      if (requestContainsToolOutput(body, CALLS.updateStatus)) {
+        parentStage = 'complete'
+        writeEvents(response, responseId, [assistantMessage(updateStatusArguments().comment)])
         return true
       }
       if (requestContainsToolOutput(body, CALLS.firstPlan)) {
@@ -622,9 +633,30 @@ export async function createDesktopScenario({
         return true
       }
 
-      assert.fail(
-        `Pure AI work must return to human review without another manager run: ${parentStage}`
-      )
+      if (parentStage === 'first-round-dispatched') {
+        assert.equal(requestContainsToolOutput(body, CALLS.firstPlan), false)
+        assert.equal(
+          requestText.includes(CALLS.firstPlan),
+          false,
+          '负责人必须使用新会话，不能复用上一轮工具历史'
+        )
+        assert.ok(requestText.includes(`${FIRST_TASK} 已完成：证据完整。`))
+        assert.ok(requestText.includes(`${SECOND_TASK} 已完成：复核通过。`))
+        const selection = managerToolEvents(
+          body,
+          'update_issue_status',
+          CALLS.updateStatus,
+          updateStatusArguments()
+        )
+        if (selection.mode === 'direct') {
+          managerRuns += 1
+          parentStage = 'updating-status'
+        }
+        writeEvents(response, responseId, selection.events)
+        return true
+      }
+
+      assert.fail(`Unexpected manager stage: ${parentStage}`)
       return true
     },
 
@@ -656,7 +688,7 @@ export async function createDesktopScenario({
         request,
         project.id,
         LEADER,
-        `${MARKER}。你是负责人，通过 wework_space.submit_workflow_plan 一次分配独立任务，派发后由执行成员负责，全部完成后交由人验收，不要再次调度总结。`,
+        `${MARKER}。你是负责人，通过 wework_space.submit_workflow_plan 分配独立任务，Executor 在本轮结果到齐后启动新的负责人运行，最终由你显式调用 update_issue_status。`,
         uiTimeoutMs,
         remoteDevice.id
       )
@@ -765,8 +797,13 @@ export async function createDesktopScenario({
       await waitForCompletedMemberTasks(control, 2, modelResponseTimeoutMs)
       await waitForIssueStatus(control, 'in_review', modelResponseTimeoutMs)
       await waitForActivityText(control, '待确认', modelResponseTimeoutMs)
-      assert.equal(parentStage, 'first-round-dispatched', '纯 AI 派发后不应恢复调度机器人')
-      assert.equal(managerRuns, 1, '成员完成后不应再启动调度总结')
+      await waitForCondition(
+        () => parentStage,
+        value => value === 'complete',
+        modelResponseTimeoutMs,
+        '本轮结果到齐后负责人没有恢复并显式提交待确认'
+      )
+      assert.equal(managerRuns, 2, '本轮 barrier 后应恰好启动一次新的负责人运行')
       assert.equal(childRequests, 2, '应仅启动最初派发的两个成员任务')
       assert.equal(childCompletions, 2, '两个成员任务都应完成')
       await captureScreenshot(
@@ -827,14 +864,14 @@ export async function createDesktopScenario({
         control,
         CONTENT,
         'cloud-task-activity-card-',
-        `${LEADER} 负责人 · 分配任务：`,
+        updateStatusArguments().comment,
         uiTimeoutMs
       )
-      const managerTaskId = initialManagerTaskId
+      const managerTaskId = `${initialManagerTaskId}-manager-after-${MARKER}-round-1`
       const bindingsBeforeReply = await request(`/api/v1/loop-items/${rootIssue.id}/tasks`)
       assert.ok(
         bindingsBeforeReply.some(binding => binding.task_id === managerTaskId),
-        '负责人分配动态没有绑定原负责人会话'
+        '负责人评估动态没有绑定新的负责人会话'
       )
       await replyToManager(control, assignmentCard, MANAGER_REPLY, modelResponseTimeoutMs)
       const continuedTranscript = await request('/api/runtime-work/transcript', {
@@ -846,9 +883,7 @@ export async function createDesktopScenario({
       })
       assert.equal(continuedTranscript.taskId, managerTaskId)
       assert.ok(
-        JSON.stringify(continuedTranscript.turns).includes(
-          '第一轮两个任务已交给 Executor 并发执行，等待全部结果。'
-        ),
+        JSON.stringify(continuedTranscript.turns).includes(updateStatusArguments().comment),
         'The continued manager session must retain its original conversation'
       )
       assert.ok(JSON.stringify(continuedTranscript.turns).includes(MANAGER_REPLY))
@@ -898,7 +933,7 @@ export async function createDesktopScenario({
       assert.equal(runtimeDeviceId(memberContinuation), REMOTE_DOCKER_DEVICE_ID)
       assert.equal(memberReplyRequests, 1, '成员回复被重复执行')
       assert.equal(childRequests, 2, '成员回复创建了新的协作分配任务')
-      assert.equal(managerRuns, 1, '显式续聊不应重新运行协作调度')
+      assert.equal(managerRuns, 2, '显式续聊不应重新运行协作调度')
       const bindingsAfterMemberReply = await request(`/api/v1/loop-items/${rootIssue.id}/tasks`)
       assert.deepEqual(
         bindingsAfterMemberReply.map(binding => [binding.device_id, binding.task_id]).sort(),

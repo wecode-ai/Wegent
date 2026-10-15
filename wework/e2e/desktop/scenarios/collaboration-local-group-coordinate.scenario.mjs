@@ -38,9 +38,10 @@ const SECOND_INSTRUCTIONS = '独立复核第一项工作的目标和证据，不
 const MARKER = `LOCAL_COORDINATE_${process.pid}`
 const COLLECTOR_ROLE_MARKER = `${MARKER}_COLLECTOR_ROLE`
 const REVIEWER_ROLE_MARKER = `${MARKER}_REVIEWER_ROLE`
-const GROUP_RULES = `${MARKER} 协作规则：每轮任务必须独立可验收，派发后由执行成员负责，全部完成后交由人验收，不要再次调度总结。`
+const GROUP_RULES = `${MARKER} 协作规则：每轮任务必须独立可验收，全部返回后由负责人评估并显式提交待确认。`
 const CALLS = {
   firstPlan: `${MARKER}-plan-1`,
+  updateStatus: `${MARKER}-update-status`,
   humanPlan: `${MARKER}-human-plan`,
 }
 
@@ -85,6 +86,14 @@ function firstRoundPlan(collectorAgentId, reviewerAgentId) {
         },
       ],
     },
+  }
+}
+
+function updateStatusArguments() {
+  return {
+    status: 'in_review',
+    reason: '本轮两项成员任务均已完成，负责人已综合核验。',
+    comment: '负责人已核验本轮两项任务的执行证据，提交 Issue 待确认。',
   }
 }
 
@@ -477,6 +486,11 @@ export async function createDesktopScenario({
         requestText.includes(GROUP_RULES),
         '协作调度请求既不是负责人运行，也不是执行成员运行'
       )
+      if (requestContainsToolOutput(body, CALLS.updateStatus)) {
+        parentStage = 'complete'
+        writeEvents(response, responseId, [assistantMessage(updateStatusArguments().comment)])
+        return true
+      }
       if (requestContainsToolOutput(body, CALLS.firstPlan)) {
         parentStage = 'first-round-dispatched'
         writeEvents(response, responseId, [
@@ -499,6 +513,29 @@ export async function createDesktopScenario({
         if (selection.mode === 'direct') {
           managerRuns += 1
           parentStage = 'first-round-dispatched'
+        }
+        writeEvents(response, responseId, selection.events)
+        return true
+      }
+
+      if (parentStage === 'first-round-dispatched') {
+        assert.equal(requestContainsToolOutput(body, CALLS.firstPlan), false)
+        assert.equal(
+          requestText.includes(CALLS.firstPlan),
+          false,
+          '负责人必须使用新会话，不能复用上一轮工具历史'
+        )
+        assert.ok(requestText.includes(`${FIRST_TASK} 已完成：证据完整。`))
+        assert.ok(requestText.includes(`${SECOND_TASK} 已完成：复核通过。`))
+        const selection = managerToolEvents(
+          body,
+          'update_issue_status',
+          CALLS.updateStatus,
+          updateStatusArguments()
+        )
+        if (selection.mode === 'direct') {
+          managerRuns += 1
+          parentStage = 'updating-status'
         }
         writeEvents(response, responseId, selection.events)
         return true
@@ -590,8 +627,13 @@ export async function createDesktopScenario({
       releaseSecondChild()
       await waitForCompletedMemberTasks(control, 2, modelResponseTimeoutMs)
       await waitForIssueStatus(control, 'in_review', modelResponseTimeoutMs)
-      assert.equal(parentStage, 'first-round-dispatched', '纯 AI 派发后不应恢复调度机器人')
-      assert.equal(managerRuns, 1, '成员完成后不应再启动调度总结')
+      await waitForCondition(
+        () => parentStage,
+        value => value === 'complete',
+        modelResponseTimeoutMs,
+        '本轮结果到齐后负责人没有恢复并显式提交待确认'
+      )
+      assert.equal(managerRuns, 2, '本轮 barrier 后应恰好启动一次新的负责人运行')
       assert.equal(childRequests, 2, '应仅启动最初派发的两个成员任务')
       assert.equal(childCompletions, 2, '两个成员任务都应完成')
       await captureScreenshot(

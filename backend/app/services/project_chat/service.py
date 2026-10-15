@@ -1965,6 +1965,8 @@ class ProjectChatService:
         message_metadata = (
             row.metadata_json if isinstance(row.metadata_json, dict) else {}
         )
+        if message_metadata.get("dispatch_role") in {"manager", "member"}:
+            return
         task = db.get(LoopItem, row.task_id)
         if (
             task is None
@@ -1972,19 +1974,7 @@ class ProjectChatService:
             or not loop_datetime_value_is_unset(task.deleted_at)
         ):
             return
-        from app.services.collaboration_round_assignment import agent_round_is_complete
-
-        dispatch_role = message_metadata.get("dispatch_role")
-        member_round_complete = dispatch_role == "member" and agent_round_is_complete(
-            db, row, task.assignee_agent_id
-        )
-        if dispatch_role == "manager" or (
-            dispatch_role == "member" and not member_round_complete
-        ):
-            return
-        if not row.agent_id or (
-            task.assignee_agent_id != row.agent_id and not member_round_complete
-        ):
+        if not row.agent_id or task.assignee_agent_id != row.agent_id:
             return
         task_metadata = (
             dict(task.metadata_json) if isinstance(task.metadata_json, dict) else {}
@@ -2005,10 +1995,7 @@ class ProjectChatService:
             task_metadata.get("external_index") is True
             or task_metadata.get("external_shadow") is True
             or task_metadata.get("dispatch_child") is True
-            or (
-                isinstance(task_metadata.get("workflow_plan"), dict)
-                and not member_round_complete
-            )
+            or isinstance(task_metadata.get("workflow_plan"), dict)
         ):
             return
         project = db.get(CloudProject, task.cloud_project_id)

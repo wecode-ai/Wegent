@@ -16,8 +16,6 @@ from app.schemas.project_chat import (
     LoopItemExecutionAssignmentStatus,
     ProjectChatCommentExecution,
 )
-from app.services.collaboration_round_assignment import finish_agent_round
-from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.project_chat.service import project_chat_service
 
 
@@ -203,11 +201,6 @@ def project_collaboration_member_activity(
             **manager_metadata,
             "dispatch_assignments": assignments,
         }
-        if values.status == "completed":
-            project_chat_service._advance_task_to_review(db, message)
-        finished = finish_agent_round(db, dispatch, message)
         db.commit()
         db.refresh(message)
-        if finished:
-            loop_item_execution_service.publish_terminal_projection(db, dispatch)
     return message, changed

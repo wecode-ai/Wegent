@@ -36,14 +36,13 @@ async fn assignment_report_backend_with_status(
 }
 
 fn round_handler(root: &std::path::Path, backend_url: &str) -> RuntimeWorkRpcHandler {
-    let mut handler = RuntimeWorkRpcHandler::new("device-1", "unused-runner")
-        .with_backend_connection(Arc::new(Mutex::new(Some(ConnectionConfig {
-            backend_url: backend_url.to_owned(),
-            auth_token: "test-session".to_owned(),
-            ..ConnectionConfig::default()
-        }))));
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "unused-runner");
     handler.store = RuntimeWorkStore::new(root.join("index.json"));
-    handler
+    handler.with_backend_connection(Arc::new(Mutex::new(Some(ConnectionConfig {
+        backend_url: backend_url.to_owned(),
+        auth_token: "test-session".to_owned(),
+        ..ConnectionConfig::default()
+    }))))
 }
 
 fn store_completed_member(
@@ -61,6 +60,17 @@ fn store_completed_member(
     });
 }
 
+fn store_started_manager(
+    handler: &RuntimeWorkRpcHandler,
+    command: &CloudCollaborationRoundCommand,
+) {
+    handler.store.upsert_task(RuntimeTaskLink {
+        local_task_id: fresh_cloud_manager_task_id(command),
+        thread_id: Some("accepted-manager-thread".to_owned()),
+        ..RuntimeTaskLink::default()
+    });
+}
+
 #[tokio::test]
 async fn terminal_report_failure_keeps_round_until_backend_acknowledges_it() {
     let root = tempfile::tempdir().unwrap();
@@ -71,6 +81,7 @@ async fn terminal_report_failure_keeps_round_until_backend_acknowledges_it() {
     handler.store.upsert_task(source_link());
     store_completed_member(&handler, &command);
     handler.persist_cloud_collaboration_round(&command).unwrap();
+    store_started_manager(&handler, &command);
 
     let mut monitor = tokio::spawn({
         let handler = handler.clone();
@@ -137,6 +148,7 @@ async fn persisted_round_retries_unacknowledged_terminal_report_after_restart() 
     assert_eq!(reports.load(Ordering::SeqCst), 1);
 
     let restarted = round_handler(root.path(), &backend_url);
+    store_started_manager(&restarted, &command);
     let restored = restarted
         .local_task_link(&command.manager_runtime_task_id)
         .unwrap()
@@ -264,30 +276,81 @@ async fn terminal_report_classifies_http_rejections_and_recoverable_failures() {
 }
 
 #[tokio::test]
-async fn agent_only_round_finishes_without_starting_another_manager() {
+async fn agent_only_round_keeps_results_until_its_manager_can_start() {
     let root = tempfile::tempdir().unwrap();
-    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(root.path().join("index.json"));
+    let (backend_url, _, server) = assignment_report_backend_with_status(StatusCode::OK).await;
+    let handler = round_handler(root.path(), &backend_url);
     let mut command = command();
     command.human_assignment_ids.clear();
-    handler.store.upsert_task(source_link());
+    let mut source = source_link();
+    source.runtime_handle["executionRequest"]["model_config"] = json!({"model_id": "cloud-model"});
+    handler.store.upsert_task(source);
+    store_completed_member(&handler, &command);
     handler.persist_cloud_collaboration_round(&command).unwrap();
 
-    handler
-        .finish_cloud_collaboration_round(&command, vec![])
-        .await
-        .unwrap();
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        handler.monitor_cloud_collaboration_round(command.clone()),
+    )
+    .await
+    .unwrap();
 
     assert!(handler
         .local_task_link(&command.manager_runtime_task_id)
         .unwrap()
         .runtime_handle
         .get(CLOUD_COLLABORATION_ROUND_KEY)
-        .is_none());
+        .is_some());
     assert!(handler
         .local_task_link(&fresh_cloud_manager_task_id(&command))
         .is_none());
-    assert_eq!(handler.store.list_task_summaries(true).len(), 1);
+    server.abort();
+}
+
+#[test]
+fn native_default_manager_resumes_after_human_delivery_without_model_credentials() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "unused-runner");
+    let mut source = source_link();
+    source
+        .runtime_handle
+        .as_object_mut()
+        .unwrap()
+        .remove("modelSelection");
+    source.runtime_handle["executionRequest"]["model_config"] = json!({});
+    let mut command = command();
+    command.assignments.clear();
+    let outcomes = vec![
+        json!({"assignee_type": "human", "human_assignment_id": "human-assignment-1", "status": "completed", "result": "CPU evidence delivered"}),
+    ];
+    assert!(cloud_collaboration_round_is_complete(&command, &outcomes));
+    assert!(handler
+        .runtime_model_config(&source.local_task_id)
+        .is_none());
+
+    let payload = handler
+        .prepare_fresh_cloud_manager(&source, &command, &outcomes)
+        .unwrap();
+
+    assert_eq!(payload["taskId"], fresh_cloud_manager_task_id(&command));
+    assert_eq!(payload["executionRequest"]["new_session"], true);
+    assert_eq!(payload["executionRequest"]["model_config"], json!({}));
+    assert!(payload["message"]
+        .as_str()
+        .unwrap()
+        .contains("CPU evidence delivered"));
+}
+
+#[test]
+fn configured_manager_requires_credentials_after_restart() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "unused-runner");
+    let mut source = source_link();
+    source.runtime_handle["executionRequest"]["model_config"] = json!({"model_id": "cloud-model"});
+    assert_eq!(
+        handler
+            .prepare_fresh_cloud_manager(&source, &command(), &[])
+            .unwrap_err(),
+        "Collaboration manager model configuration is unavailable"
+    );
 }
 
 #[tokio::test]
@@ -586,12 +649,11 @@ fn fresh_cloud_manager_reuses_the_in_memory_runtime_model_config() {
     });
     handler.retain_runtime_model_config(&source.local_task_id, &model_config);
 
-    let (mut request, _) = fresh_cloud_manager_payload(&source, &command, &[]).unwrap();
-    request.model_config = handler
-        .runtime_model_config(&source.local_task_id)
-        .expect("source Runtime model config should stay available in memory");
+    let payload = handler
+        .prepare_fresh_cloud_manager(&source, &command, &[])
+        .unwrap();
 
-    assert_eq!(request.model_config, model_config);
+    assert_eq!(payload["executionRequest"]["model_config"], model_config);
     assert!(source.runtime_handle["executionRequest"]["model_config"].is_null());
 }
 

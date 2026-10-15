@@ -2,9 +2,9 @@
 //!
 //! A manager submits one batch through the project-space MCP. Every agent
 //! assignment becomes an independent Runtime execution so each member keeps
-//! its configured shell, model, device policy, and capabilities. Once the
-//! agent-only batch finishes, ownership stays with the executing agent. Human
-//! deliveries resume the manager to evaluate the submitted results.
+//! its configured shell, model, device policy, and capabilities. Once every
+//! required outcome and human delivery arrives, a fresh manager evaluates the
+//! results and explicitly decides the next Issue state or round.
 
 use super::*;
 
@@ -238,33 +238,6 @@ impl LocalTaskStore {
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         if !collaboration_round_is_ready(&transaction, item_id, round_id)? {
             transaction.rollback()?;
-            return Ok(());
-        }
-        let has_human_assignment: bool = transaction.query_row(
-            "SELECT EXISTS(SELECT 1 FROM loop_items
-             WHERE parent_id = ?1 AND resource_type = 'task' AND deleted_at IS NULL
-               AND json_extract(metadata, '$.collaboration_assignment.assignee_type') = 'human'
-               AND json_extract(metadata, '$.collaboration_assignment.round_id') = ?2)",
-            params![item_id, round_id],
-            |row| row.get(0),
-        )?;
-        if !has_human_assignment {
-            transaction.execute(
-                "UPDATE loop_items SET status = 'in_review', version = version + 1, updated_at = ?1
-                 WHERE id = ?2 AND status = 'in_progress'
-                   AND assignee_agent_id IN (SELECT agent_id FROM loop_item_executions
-                     WHERE loop_item_id = ?2
-                       AND json_extract(execution_payload, '$.coordination_round_id') = ?3)
-                   AND NOT EXISTS(SELECT 1 FROM loop_item_executions attempt
-                     WHERE loop_item_id = ?2 AND status != 'completed'
-                       AND json_extract(execution_payload, '$.coordination_round_id') = ?3
-                       AND NOT EXISTS(SELECT 1 FROM loop_item_executions retry
-                         WHERE retry.previous_execution_id = attempt.id))
-                   AND NOT EXISTS(SELECT 1 FROM loop_item_executions
-                     WHERE loop_item_id = ?2 AND status IN ('queued','pending_approval','claimed','running','cancel_requested'))",
-                params![now(), item_id, round_id],
-            )?;
-            transaction.commit()?;
             return Ok(());
         }
         if manager_resume_exists(&transaction, item_id, round_id)? {
