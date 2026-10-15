@@ -117,10 +117,10 @@ Regression entry points:
 - Claims, assignment, comments and queues: execution, runner routing, assignment and comment service tests.
 - Existing-schema compatibility: `test_collaboration_permission_compatibility.py`; CI's `integration_checks/test_collaboration_permission_mysql.py` covers populated old databases and unused interrupted-DDL leftovers.
 - Startup failure: `test_startup_migration_failure.py`.
-- Contract protection: `test_collaboration_permission_guard.py` verifies the approved CP fingerprint and per-rule coverage. The original fingerprint is archived at `.live-architecture/contracts/collaboration-permissions-A00000002.md`. CP09 and CP11 reflect the user's added compatibility requirement, preserving private choices and existing project installations.
+- Contract protection: `test_collaboration_permission_guard.py` verifies the approved CP fingerprint and per-rule coverage. CP09 and CP11 reflect the user's added compatibility requirement, preserving private choices and existing project installations.
 - Shared UI: inherited sources, guests, membership mode, ownership transfer, absent old-backend capabilities, binding reactivation and chat recovery.
 
-Permission changes must update the corresponding rule, architecture transaction and tests. Semantic changes require user authorization. Never weaken assertions, skip cases or add administrator exceptions to conceal a violation. Tests use isolated databases, deterministic encryption and mocked external services; passing them does not claim deployment or live Runtime execution.
+Permission changes must update the corresponding rule, local architecture record and tests. Semantic changes require user authorization. Never weaken assertions, skip cases or add administrator exceptions to conceal a violation. Tests use isolated databases, deterministic encryption and mocked external services; passing them does not claim deployment or live Runtime execution.
 
 ## Verification record
 
@@ -131,21 +131,3 @@ Final verification is rerun against the no-DDL implementation. Counts from the w
 Reproduce the backend suite with `cd backend && uv run pytest tests/ -n 4 -q --assert=plain --tb=line --show-capture=no`. The dedicated permission step is in `.github/workflows/test.yml`; shared tests use `pnpm --filter @wegent/collaboration test`. MySQL checks use an isolated temporary container.
 
 E2E and `ai:verify` were not run. No deployment was performed. The real development database was affected by automatic migration as documented above.
-
-## Architecture ledger
-
-Initial transaction `tx-7bdab78637cc` is at revision `A00000002`. Recovery transaction `tx-b6334c5994c6` preserves that history and records the added compatibility constraint, automatic migration incident, no-DDL storage design, chat recovery and new verification evidence. `projections/` contains generated JSON and Mermaid views.
-
-| Entity | Stable ID |
-| --- | --- |
-| Space | `arch://wegent/domain/6d0bb441` |
-| Project | `arch://wegent/domain/2f391a06` |
-| Agent, device and group resources | `arch://wegent/domain/9e54c378` |
-| Permission service | `arch://wegent/service/04839d2f` |
-| Revocation service | `arch://wegent/service/ccd5381b` |
-| Shared UI | `arch://wegent/ui/287398da` |
-| Withdrawn migration (historical) | `arch://wegent/data/f0244dd2` |
-| Existing relationships and JSON | `arch://wegent/data/compat-storage-e27a` |
-| Chat recovery | `arch://wegent/service/project-chat-socket-e27a` |
-| CP contract | `arch://wegent/contract/c635908b` |
-| Regression guard | `arch://wegent/test/94f7802d` |

@@ -76,7 +76,7 @@ classify_path() {
       changed[wegent_cli]=true
       changed[platform_e2e]=true
       ;;
-    docs/*/wegent/developer-guide/collaboration-permissions.md | .live-architecture/*)
+    docs/*/wegent/developer-guide/collaboration-permissions.md)
       changed[backend]=true
       ;;
     backend-rs/*)

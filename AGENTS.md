@@ -135,6 +135,8 @@ pnpm --dir frontend test
 
 ## Security
 
+- Architecture ledgers and evidence are local-only. Never commit `.live-architecture/` or include it in build, container, or deployment artifacts.
+
 - Never commit credentials or session files. Use environment configuration for secrets.
 - Only expose client-safe frontend settings through the appropriate public environment variable convention.
 - Do not log tokens, API keys, or the contents of local authentication files.

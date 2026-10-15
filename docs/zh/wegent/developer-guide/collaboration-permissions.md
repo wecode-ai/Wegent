@@ -135,7 +135,7 @@ sequenceDiagram
 - 领取、指派、评论与队列：`test_loop_item_executions.py`、`test_runner_routing.py`、`test_loop_item_assignment.py`、`test_project_comment_execution.py`。
 - 原表兼容与数据保持：`test_collaboration_permission_compatibility.py`；CI 的 `integration_checks/test_collaboration_permission_mysql.py` 验证已填充旧数据库及迁移中断留下的未使用结构。
 - 启动失败保护：`test_startup_migration_failure.py`。
-- 规则保护：`test_collaboration_permission_guard.py` 校验批准的 CP 指纹与逐条覆盖；原指纹保存在 `.live-architecture/contracts/collaboration-permissions-A00000002.md`。CP09、CP11 随用户新增的旧版本兼容要求调整，保留私有选择与原项目内的安装授权。
+- 规则保护：`test_collaboration_permission_guard.py` 校验批准的 CP 指纹与逐条覆盖。CP09、CP11 随用户新增的旧版本兼容要求调整，保留私有选择与原项目内的安装授权。
 - 共享界面覆盖继承来源、项目访客、成员模式、所有权转交、旧后端能力缺省、失效绑定恢复和讨论重订阅。
 
 测试使用独立数据库和测试加密配置，外部服务由单元测试 mock 隔离。测试不代表已部署或获得真实 Runtime 执行确认。
@@ -144,7 +144,7 @@ sequenceDiagram
 
 `backend/tests/api/test_collaboration_permission_contract.py` 是 CP 规则的 API 契约；角色矩阵、来源、资源判定和迁移另有针对性测试。测试必须包含正例、拒绝、角色组合、权限单调性、撤权、跨项目隔离、所有权转交以及创建/修改/指派等入口的一致性。
 
-权限相关改动必须更新本文对应规则、架构事务和契约测试。改变规则需要明确的用户授权；不得删除测试、放宽断言、跳过场景或加入管理员特判来掩盖违反契约的实现。CI 运行这些测试，桌面核心流程沿现有 CI 场景覆盖；本地 E2E 与 ai:verify 仅在用户明确要求时运行。
+权限相关改动必须更新本文对应规则、本地架构记录和契约测试。改变规则需要明确的用户授权；不得删除测试、放宽断言、跳过场景或加入管理员特判来掩盖违反契约的实现。CI 运行这些测试，桌面核心流程沿现有 CI 场景覆盖；本地 E2E 与 ai:verify 仅在用户明确要求时运行。
 
 ## 本次实现的验证记录
 
@@ -155,21 +155,3 @@ sequenceDiagram
 复现后端全量：`cd backend && uv run pytest tests/ -n 4 -q --assert=plain --tb=line --show-capture=no`。权限专项见 `.github/workflows/test.yml`；共享组件使用 `pnpm --filter @wegent/collaboration test`。MySQL 用例仅连接独立临时测试容器。
 
 本次未运行 E2E 或 `ai:verify`，未部署。真实开发库曾受自动迁移影响，事实及恢复边界见上文。
-
-## 架构账本
-
-初始事务 `tx-7bdab78637cc` 位于 `A00000002`。后续恢复事务 `tx-b6334c5994c6` 保留原历史，记录用户新增兼容要求、自动迁移事故、无 DDL 存储方案、实时连接恢复与重新验证证据。账本路径为 `.live-architecture/`，`projections/` 保存从账本生成的 JSON 和 Mermaid 视图。
-
-| 要素 | 稳定 ID |
-| --- | --- |
-| 空间 | `arch://wegent/domain/6d0bb441` |
-| 项目 | `arch://wegent/domain/2f391a06` |
-| 智能体、设备与小组资源 | `arch://wegent/domain/9e54c378` |
-| 权限服务 | `arch://wegent/service/04839d2f` |
-| 撤权服务 | `arch://wegent/service/ccd5381b` |
-| 共享界面 | `arch://wegent/ui/287398da` |
-| 已撤回的数据迁移（历史） | `arch://wegent/data/f0244dd2` |
-| 既有关系和 JSON 存储 | `arch://wegent/data/compat-storage-e27a` |
-| 实时讨论恢复 | `arch://wegent/service/project-chat-socket-e27a` |
-| 权限契约 | `arch://wegent/contract/c635908b` |
-| 回归保护 | `arch://wegent/test/94f7802d` |

@@ -299,8 +299,6 @@ assert_case "Chinese permission contract runs backend guards" "$permission_contr
   "docs/zh/wegent/developer-guide/collaboration-permissions.md"
 assert_case "English permission contract runs backend guards" "$permission_contract_expected" \
   "docs/en/wegent/developer-guide/collaboration-permissions.md"
-assert_case "architecture transaction runs backend guards" "$permission_contract_expected" \
-  ".live-architecture/transactions/tx-permission-contract.json"
 
 collaboration_package=$(
   cat <<'EOF'
