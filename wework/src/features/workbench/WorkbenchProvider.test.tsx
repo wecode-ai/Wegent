@@ -9967,6 +9967,64 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('pane-message-roles')).toHaveTextContent('user:修复 CI')
   })
 
+  test.each(['creation', 'refresh'] as const)(
+    'preserves the next blank draft when the previous task finishes delayed %s',
+    async phase => {
+      const initialWork = createRuntimeWork({ projects: [], chats: [], totalTasks: 0 })
+      const creation =
+        deferred<
+          Awaited<ReturnType<NonNullable<WorkbenchServices['runtimeWorkApi']>['createRuntimeTask']>>
+        >()
+      const refresh = deferred<RuntimeWorkListResponse>()
+      let taskStarted = false
+      const runtimeWorkApi = createRuntimeWorkApiMock({
+        listRuntimeWork: vi.fn(() =>
+          taskStarted && phase === 'refresh' ? refresh.promise : Promise.resolve(initialWork)
+        ),
+        createRuntimeTask: vi.fn(() => {
+          taskStarted = true
+          return creation.promise
+        }),
+      })
+      const services = createWorkbenchServices({
+        deviceApi: {
+          listDevices: vi.fn().mockResolvedValue([createDevice({ device_type: 'local' })]),
+        } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+        runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      })
+      renderWorkbench(<ProjectSendProbe />, services)
+      await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(1))
+      await userEvent.click(screen.getByText('select standalone device'))
+      await userEvent.click(screen.getByText('set input'))
+      await userEvent.click(screen.getByText('send'))
+      await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+      const request = runtimeWorkApi.createRuntimeTask.mock.calls[0][0]
+      const accepted = {
+        accepted: true,
+        deviceId: 'device-1',
+        taskId: request.taskId,
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'claude_code',
+      }
+      if (phase === 'refresh') {
+        await act(async () => creation.resolve(accepted))
+        await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(2))
+      }
+      await userEvent.click(screen.getByText('start new chat'))
+      await userEvent.click(screen.getByText('set input'))
+      const nextDraftKey = screen.getByTestId('standalone-chat-key').textContent
+      expect(screen.getByTestId('composer-input')).toHaveTextContent('修复 CI')
+      await act(async () => {
+        creation.resolve(accepted)
+        refresh.resolve(initialWork)
+      })
+      await waitFor(() => expect(screen.getByTestId('sending-state')).toHaveTextContent('idle'))
+      expect(screen.getByTestId('standalone-chat-key').textContent).toBe(nextDraftKey)
+      expect(screen.getByTestId('composer-input')).toHaveTextContent('修复 CI')
+      expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent('none')
+    }
+  )
+
   test('returns to the committed project pane after creating a runtime task', async () => {
     const initialRuntimeWork = createRuntimeWork({
       projects: [

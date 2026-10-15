@@ -1542,7 +1542,11 @@ export function useWorkbenchRuntimeMessaging({
             })
           }
         }
-        if (options?.openInMainPane !== false && sourceBlankChatKey !== null) {
+        if (
+          options?.openInMainPane !== false &&
+          sourceBlankChatKey !== null &&
+          runtimeTasks.isCurrentRuntimeTask(address)
+        ) {
           dispatch({
             type: 'blank_chat_committed',
             standaloneChatKey: sourceBlankChatKey,
