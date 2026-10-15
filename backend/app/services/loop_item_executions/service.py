@@ -397,45 +397,6 @@ def _owned_execution_device_ids(
     return device_identity_ids(device) if device is not None else [submitted_device_id]
 
 
-def _project_allows_device(
-    db: Session,
-    *,
-    cloud_project_id: str,
-    owner_user_id: int,
-    submitted_device_id: str,
-) -> bool:
-    """Apply the optional Device-to-project allowlist for an owned device."""
-
-    from app.models.resource_member import MemberStatus, ResourceMember
-    from app.models.share_link import ResourceType
-    from app.services.device.identity import resolve_owned_device_alias
-
-    device = resolve_owned_device_alias(
-        db,
-        user_id=owner_user_id,
-        device_id=submitted_device_id,
-    )
-    if device is None:
-        return False
-    grants = (
-        db.query(ResourceMember.resource_id)
-        .join(Kind, Kind.id == ResourceMember.resource_id)
-        .filter(
-            ResourceMember.resource_type == ResourceType.DEVICE.value,
-            ResourceMember.entity_type == "project",
-            ResourceMember.entity_id == str(cloud_project_id),
-            ResourceMember.status == MemberStatus.APPROVED.value,
-            Kind.kind == "Device",
-            Kind.user_id == owner_user_id,
-            Kind.is_active.is_(True),
-        )
-        .all()
-    )
-    return not grants or int(device.id) in {
-        int(resource_id) for (resource_id,) in grants
-    }
-
-
 def _issue_runtime_device(
     db: Session,
     *,
@@ -498,8 +459,24 @@ def _execution_is_claimable_by_device(
     owner_user_id: int,
     submitted_device_id: str,
 ) -> bool:
-    """Apply default-owner access, optional project allowlist, and affinity."""
+    """Check current execution authority, resource grants, and Issue affinity."""
 
+    from app.services.collaboration_revocation import execution_authorized
+    from app.services.device.identity import resolve_owned_device_alias
+    from app.services.runner_routing import execution_environment_ids
+
+    runner = resolve_owned_device_alias(
+        db, user_id=owner_user_id, device_id=submitted_device_id
+    )
+    if (
+        not execution_authorized(db, execution)
+        or runner is None
+        or runner.id
+        not in execution_environment_ids(
+            db, execution.cloud_project_id, execution.agent_id
+        )
+    ):
+        return False
     if execution.uses_runner_routing:
         from app.services.device.identity import resolve_owned_device_alias
         from app.services.runner_routing import eligible_runner
@@ -508,13 +485,6 @@ def _execution_is_claimable_by_device(
             db, user_id=owner_user_id, device_id=submitted_device_id
         )
         return runner is not None and eligible_runner(db, execution, runner)
-    if not execution.execution_device_id and not _project_allows_device(
-        db,
-        cloud_project_id=execution.cloud_project_id,
-        owner_user_id=owner_user_id,
-        submitted_device_id=submitted_device_id,
-    ):
-        return False
     return _matches_issue_device_affinity(
         db,
         execution=execution,
@@ -659,6 +629,23 @@ class LoopItemExecutionService:
             or (task.created_by_user_id if task else 0)
             or assigner_user_id
         )
+        from app.services.collaboration_permissions import (
+            collaboration_permission_service,
+        )
+
+        if not collaboration_permission_service.check(
+            db, assigner_user_id, "execute", cloud_project_id
+        ).allowed:
+            raise HTTPException(
+                403, "Insufficient permission to execute in this project"
+            )
+        bound_team_id = persisted_config.get("wegent_team_id")
+        if bound_team_id:
+            from app.services.project_automation_domain import runnable_wegent_team
+
+            runnable_wegent_team(
+                db, assigner_user_id, int(bound_team_id), project_id=cloud_project_id
+            )
         config = compiled_bot_config(
             db,
             agent,
@@ -752,6 +739,7 @@ class LoopItemExecutionService:
             routing = resolve_routing(
                 db,
                 config=config,
+                agent_id=agent.id,
                 project_id=cloud_project_id,
                 issue_id=loop_item_id,
                 user_id=assigner_user_id,
@@ -1050,6 +1038,12 @@ class LoopItemExecutionService:
             observed_state=OBSERVED_UNCONFIRMED,
             sync_state=SYNC_PENDING,
         )
+        from app.services.collaboration_revocation import execution_authorized
+
+        if not execution_authorized(db, row):
+            raise HTTPException(
+                403, "Execution authorization is revoked or unavailable"
+            )
         db.add(row)
         db.flush()
         row.runtime_task_id = execution_runtime_task_id(row)
@@ -1718,11 +1712,37 @@ class LoopItemExecutionService:
 
         if not execution_ids:
             return 0
+        from app.services.collaboration_revocation import execution_authorized
+        from app.services.loop_item_executions.cancellation import (
+            request_execution_cancellations,
+        )
+
+        pending = []
+        authorized_ids = []
+        for execution in (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.id.in_(execution_ids),
+                LoopItemExecution.status == STATUS_CLAIMED,
+            )
+            .populate_existing()
+        ):
+            if execution_authorized(db, execution):
+                authorized_ids.append(execution.id)
+            else:
+                cancelled = self.cancel(
+                    db,
+                    execution_id=execution.id,
+                    note="Collaboration authorization revoked before Runtime start",
+                    commit=False,
+                )
+                if cancelled.status == STATUS_CANCEL_REQUESTED:
+                    pending.append(cancelled)
         now = utcnow()
         updated = (
             db.query(LoopItemExecution)
             .filter(
-                LoopItemExecution.id.in_(execution_ids),
+                LoopItemExecution.id.in_(authorized_ids),
                 LoopItemExecution.status == STATUS_CLAIMED,
                 loop_datetime_is_unset(LoopItemExecution.start_requested_at),
             )
@@ -1750,6 +1770,7 @@ class LoopItemExecutionService:
             for execution in executions:
                 self._bind_issue_execution_task(db, execution=execution)
         db.commit()
+        request_execution_cancellations(pending)
         return updated
 
     def _bind_issue_execution_task(

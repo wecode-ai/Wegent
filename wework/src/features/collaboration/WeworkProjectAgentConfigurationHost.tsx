@@ -154,8 +154,7 @@ export function createWeworkProjectAgentConfigurationHost(
     ...weworkProjectAgentConfigurationHost,
     ...(agentResourceApi
       ? {
-          supportsExistingAgentSelection: false,
-          supportsCrossLocationAgentSelection: true,
+          supportsExistingAgentSelection: true,
           renderAgentCreator({
             projectId,
             namespace,

@@ -8,7 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.schemas.base_role import BaseRole
+from app.schemas.base_role import COLLABORATION_ROLE_ALIASES, BaseRole
 from app.schemas.types import SnowflakeId
 
 ResourceOwnerType = Literal["user", "workspace"]
@@ -157,7 +157,8 @@ class WorkspaceResponse(BaseModel):
     description: str
     namespace: str
     created_by_user_id: int
-    access_role: BaseRole = BaseRole.Reporter
+    owner_user_id: int
+    access_role: BaseRole = BaseRole.Viewer
     member_count: int = 0
     project_count: int = 0
     agent_count: int = 0
@@ -190,9 +191,17 @@ class WorkspaceMemberCreate(BaseModel):
 
     @model_validator(mode="after")
     def reject_owner(self) -> "WorkspaceMemberCreate":
-        if self.role == BaseRole.Owner:
-            raise ValueError("Owner cannot be assigned")
+        self.role = BaseRole(
+            COLLABORATION_ROLE_ALIASES.get(self.role.value, self.role.value)
+        )
+        if self.role not in {BaseRole.Maintainer, BaseRole.Developer, BaseRole.Viewer}:
+            raise ValueError("Only collaboration member roles may be assigned")
         return self
+
+
+class WorkspaceOwnershipTransfer(BaseModel):
+    user_id: int = Field(ge=1)
+    version: int = Field(ge=1)
 
 
 class WorkspaceMemberUpdate(BaseModel):
@@ -200,8 +209,11 @@ class WorkspaceMemberUpdate(BaseModel):
 
     @model_validator(mode="after")
     def reject_owner(self) -> "WorkspaceMemberUpdate":
-        if self.role == BaseRole.Owner:
-            raise ValueError("Owner cannot be assigned")
+        self.role = BaseRole(
+            COLLABORATION_ROLE_ALIASES.get(self.role.value, self.role.value)
+        )
+        if self.role not in {BaseRole.Maintainer, BaseRole.Developer, BaseRole.Viewer}:
+            raise ValueError("Only collaboration member roles may be assigned")
         return self
 
 
@@ -234,6 +246,7 @@ class WorkspaceAgentResponse(BaseModel):
     execution_environment_ids: list[str] = Field(default_factory=list)
     owner_user_id: int | None
     added_by_user_id: int
+    can_edit: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -332,6 +345,8 @@ class WorkspaceExecutionEnvironmentCreate(BaseModel):
 
 
 class WorkspaceExecutionEnvironmentResponse(BaseModel):
+    can_use: bool = True
+    unavailable_reason: str | None = None
     id: SnowflakeId
     workspace_id: SnowflakeId
     device_id: int

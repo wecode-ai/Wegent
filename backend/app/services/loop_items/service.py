@@ -53,7 +53,7 @@ from app.schemas.issue_workflow import (
     instantiate_workflow,
 )
 from app.schemas.project_chat import LoopItemApproval, LoopItemAssign
-from app.services.cloud_project_visibility import explicit_project_member_ids
+from app.services.cloud_project_visibility import project_participant_ids
 from app.services.cloud_projects.access import (
     CloudProjectAccess,
     IssueAction,
@@ -635,6 +635,13 @@ class LoopItemService:
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "AI assignee is not active in this project",
                 )
+            from app.services.collaboration_permissions import (
+                collaboration_permission_service,
+            )
+
+            collaboration_permission_service.require_project_agent(
+                db, project.id, agent.id
+            )
             payload["assignee_user_id"] = None
             payload["assignee_team_id"] = None
             self._write_assignment_change(
@@ -659,7 +666,7 @@ class LoopItemService:
                     runtime_subject_user_id=int(agent.created_by_user_id or user_id),
                 )
         elif team_id:
-            team = runnable_wegent_team(db, user_id, team_id)
+            team = runnable_wegent_team(db, user_id, team_id, project_id=project.id)
             payload["assignee_user_id"] = None
             payload["assignee_agent_id"] = ""
             self._write_assignment_change(
@@ -1498,7 +1505,9 @@ class LoopItemService:
         if "assignee_team_id" in values.model_fields_set:
             team_id = values.assignee_team_id
             if team_id:
-                runnable_wegent_team(db, user_id, team_id)
+                runnable_wegent_team(
+                    db, user_id, team_id, project_id=item.cloud_project_id
+                )
                 updates["assignee_user_id"] = None
                 updates["assignee_agent_id"] = ""
         elif "assignee_agent_id" in values.model_fields_set:
@@ -1515,6 +1524,13 @@ class LoopItemService:
                         status.HTTP_422_UNPROCESSABLE_ENTITY,
                         "AI assignee is not active in this project",
                     )
+                from app.services.collaboration_permissions import (
+                    collaboration_permission_service,
+                )
+
+                collaboration_permission_service.require_project_agent(
+                    db, item.cloud_project_id, agent.id
+                )
                 updates["assignee_user_id"] = None
                 updates["assignee_team_id"] = None
         elif "assignee_user_id" in values.model_fields_set and values.assignee_user_id:
@@ -1908,7 +1924,10 @@ class LoopItemService:
         project = db.get(CloudProject, project_id)
         if project is None or (
             not is_implicit_creator_assignment
-            and target_user_id not in explicit_project_member_ids(db, project)
+            and target_user_id
+            not in project_participant_ids(
+                db, project, required_role=BaseRole.Developer
+            )
         ):
             raise HTTPException(422, "Assignee is not a member of this project")
         if not notify:
@@ -1978,11 +1997,6 @@ class LoopItemService:
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "Robot is not active in this project",
-                )
-            if not self._agent_visible_to_user(agent, user_id, access.role):
-                raise HTTPException(
-                    status.HTTP_403_FORBIDDEN,
-                    "Robot is not visible to you",
                 )
             from app.services.issue_assignments import issue_assignment_service
 
@@ -2067,7 +2081,9 @@ class LoopItemService:
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "User assignee id must be numeric",
                 ) from exc
-            member_ids = explicit_project_member_ids(db, project)
+            member_ids = project_participant_ids(
+                db, project, required_role=BaseRole.Developer
+            )
             if target_user_id not in member_ids:
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -2127,7 +2143,9 @@ class LoopItemService:
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "Team assignee id must be numeric",
                 ) from exc
-            team = runnable_wegent_team(db, user_id, target_team_id)
+            team = runnable_wegent_team(
+                db, user_id, target_team_id, project_id=project.id
+            )
             from app.services.issue_assignments import issue_assignment_service
 
             _, assignment_created = issue_assignment_service.record(
@@ -3105,14 +3123,6 @@ class LoopItemService:
             return False
         agent = db.get(ProjectChatAgent, item.assignee_agent_id)
         return agent is not None and agent.created_by_user_id == user_id
-
-    @staticmethod
-    def _agent_visible_to_user(
-        agent: ProjectChatAgent, user_id: int, role: BaseRole
-    ) -> bool:
-        """Robots are project assets that follow their creator's environment."""
-
-        return ProjectChatService._agent_visible_to_user(agent, user_id, role)
 
     def _require_bot_creator_scope(
         self, db: Session, project_id: int, item: LoopItem, user_id: int

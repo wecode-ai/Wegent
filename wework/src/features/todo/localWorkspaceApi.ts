@@ -297,6 +297,7 @@ export function createLocalWorkspaceApi(
       ...agent,
       agent_id: agent.name,
       deletable: !isDefaultLocalAgent(agent),
+      can_edit: true,
       name: agent.displayName || agent.name,
     })) ?? []
   const projectChatClient = detailServices?.projectChatClient
@@ -336,6 +337,7 @@ export function createLocalWorkspaceApi(
       owner_id: LOCAL_WORKSPACE_ID,
       owner_name: ownerName,
       deletable: !isDefaultLocalAgent(agent),
+      can_edit: true,
       status: agent.status === 'active' ? ('available' as const) : ('unavailable' as const),
       execution_environment_ids: agent.executionDeviceId
         ? [`device:${agent.executionDeviceId}`]
@@ -345,6 +347,8 @@ export function createLocalWorkspaceApi(
         displayName: agent.displayName,
         namespace: agent.namespace,
         runtime: agent.runtime,
+        executionPolicy: agent.executionPolicy,
+        modelPolicy: agent.modelPolicy,
         model: agent.model,
         modelType: agent.modelType,
         modelNamespace: agent.modelNamespace,

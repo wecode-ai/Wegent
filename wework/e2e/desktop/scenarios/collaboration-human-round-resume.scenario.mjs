@@ -15,6 +15,8 @@ import {
 } from '../modules/response-protocol.mjs'
 import { selectE2EModel } from '../modules/shared.mjs'
 import {
+  openDirectProjectCreation,
+  openProjectAgentCreator,
   selectCloudAgentModel,
   selectCollaborationDomain,
   waitForTestIdByText,
@@ -179,8 +181,7 @@ async function createWorkspaceAndProject(control, request, uiTimeoutMs) {
     '端上创建 Workspace 未持久化',
     uiTimeoutMs
   )
-  await control.command('click', scoped('[data-testid="collaboration-workspace-project-create"]'))
-  await control.command('click', '[data-testid="collaboration-workspace-project-create-blank"]')
+  await openDirectProjectCreation(control, CONTENT)
   await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {
     value: PROJECT,
   })
@@ -205,12 +206,12 @@ async function createWorkspaceAndProject(control, request, uiTimeoutMs) {
 }
 
 async function createAgent(control, request, projectId, name, prompt, uiTimeoutMs) {
-  await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
-    timeoutMs: uiTimeoutMs,
-  })
-  await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
-    timeoutMs: uiTimeoutMs,
-  })
+  await openProjectAgentCreator(
+    control,
+    scoped('[data-testid="project-agent-add"]'),
+    uiTimeoutMs,
+    'wework-agent-resource-creator'
+  )
   await control.command('fill', '[data-testid="wework-agent-display-name"]', { value: name })
   await selectCloudAgentModel(control, request, MODEL, uiTimeoutMs)
   await control.command('fill', '[data-testid="wework-agent-system-prompt"]', { value: prompt })

@@ -4174,7 +4174,9 @@ def _build_team_runtime_execution_request(
     from app.services.project_automation_domain import runnable_wegent_team
 
     user = _get_user(db, user_id)
-    team = runnable_wegent_team(db, user_id, team_id)
+    team = runnable_wegent_team(
+        db, user_id, team_id, project_id=request.cloud_project_id
+    )
     task_id, subtask_id = _runtime_execution_ids()
     title = _runtime_task_title(request)
     message = _message_with_application_context(

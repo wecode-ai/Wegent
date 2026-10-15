@@ -25,6 +25,11 @@ from app.schemas.project_chat import LoopItemApproval, LoopItemAssign
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.loop_items.service import loop_item_service
 from tests.utils.agent_resources import create_runnable_wegent_team
+from tests.utils.collaboration import (
+    authorize_project,
+    authorize_project_agent,
+    authorize_resource,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -44,6 +49,7 @@ def _make_project(db: Session, user: User) -> CloudProject:
         storage_prefix=f"projects/{public_id}",
         metadata_json={},
     )
+    authorize_project(db, project)
     db.add(project)
     db.commit()
     db.refresh(project)
@@ -98,7 +104,17 @@ def _make_bot(
             "visibility": visibility,
         },
     )
+    authorize_project_agent(db, bot)
     db.add(bot)
+    db.flush()
+    device = (
+        db.query(Kind)
+        .filter_by(kind="Device", name=device_id, namespace="default", user_id=user.id)
+        .one()
+    )
+    authorize_resource(db, project, device)
+    if wegent_team_id:
+        authorize_resource(db, project, db.get(Kind, wegent_team_id))
     db.commit()
     db.refresh(bot)
     return bot
@@ -204,46 +220,76 @@ def _collaboration_group(
     )
     member.title = "Executor"
     db.commit()
-    return (
-        {
-            "id": group_id,
-            "name": "Delivery team",
-            "description": "Coordinate delivery.",
-            "instructions": "Assign verifiable tasks and review their evidence.",
-            "leader": {"kind": "agent", "id": leader.id},
-            "members": [
-                {
-                    "kind": "agent",
-                    "id": leader.id,
-                    "responsibility": "Plan and review.",
-                },
-                {
-                    "kind": "agent",
-                    "id": member.id,
-                    "name": "Executor",
-                    "responsibility": "Execute assigned work.",
-                },
-                {
-                    "kind": "human",
-                    "id": str(user.id),
-                    "name": user.user_name,
-                    "responsibility": "Provide the final business evidence.",
-                },
-            ],
-            "coordination_mode": "manager",
-            "stages": [
-                {
-                    "id": "implementation",
-                    "name": "Implementation",
-                    "description": "Produce the implementation evidence.",
-                }
-            ],
-            "created_at": datetime.now(),
-            "version": 1,
+    group = {
+        "id": group_id,
+        "name": "Delivery team",
+        "description": "Coordinate delivery.",
+        "instructions": "Assign verifiable tasks and review their evidence.",
+        "leader": {"kind": "agent", "id": leader.id},
+        "members": [
+            {
+                "kind": "agent",
+                "id": leader.id,
+                "responsibility": "Plan and review.",
+            },
+            {
+                "kind": "agent",
+                "id": member.id,
+                "name": "Executor",
+                "responsibility": "Execute assigned work.",
+            },
+            {
+                "kind": "human",
+                "id": str(user.id),
+                "name": user.user_name,
+                "responsibility": "Provide the final business evidence.",
+            },
+        ],
+        "coordination_mode": "manager",
+        "stages": [
+            {
+                "id": "implementation",
+                "name": "Implementation",
+                "description": "Produce the implementation evidence.",
+            }
+        ],
+        "created_at": datetime.now(),
+        "version": 1,
+    }
+    record = Kind(
+        kind="CollaborationGroup",
+        name=f"Delivery {group_id}",
+        namespace=f"projects/{project.id}",
+        user_id=user.id,
+        is_active=True,
+        json={
+            "spec": {
+                key: group[key]
+                for key in (
+                    "leader",
+                    "members",
+                    "stages",
+                    "instructions",
+                    "description",
+                )
+            }
         },
-        leader,
-        member,
     )
+    db.add(record)
+    db.flush()
+    group["id"] = str(record.id)
+    db.add(
+        ResourceMember.create(
+            resource_type="CollaborationGroup",
+            resource_id=record.id,
+            entity_type="project",
+            entity_id=str(project.id),
+            role="Developer",
+            status="approved",
+        )
+    )
+    db.commit()
+    return group, leader, member
 
 
 def _human_led_collaboration_group(
@@ -308,7 +354,7 @@ def test_collaboration_group_owner_is_project_scoped_and_persisted(
             db,
             item.id,
             test_user.id,
-            LoopItemUpdate(version=item.version, assignee_group_id="group-1"),
+            LoopItemUpdate(version=item.version, assignee_group_id=str(group["id"])),
         )
         assigned = loop_item_service.assign(
             db,
@@ -318,11 +364,11 @@ def test_collaboration_group_owner_is_project_scoped_and_persisted(
             values=LoopItemAssign(
                 version=updated.version,
                 assignee_type="group",
-                assignee_id="group-1",
+                assignee_id=str(group["id"]),
             ),
         )
     db.refresh(assigned)
-    assert assigned.metadata_json["collaboration_group"]["id"] == "group-1"
+    assert assigned.metadata_json["collaboration_group"]["id"] == str(group["id"])
     assert assigned.assignee_user_id is None
     values = loop_item_service.response_values(db, assigned, test_user.id)
     assert values["assignee_group_name"] == "Delivery team"
@@ -366,7 +412,7 @@ def test_create_with_collaboration_group_preserves_group_as_owner(
             test_user.id,
             LoopItemCreate(
                 title="Group-owned task",
-                assignee_group_id="group-1",
+                assignee_group_id=str(group["id"]),
             ),
         )
 
@@ -375,11 +421,11 @@ def test_create_with_collaboration_group_preserves_group_as_owner(
     assert item.assignee_team_id is None
     assert item.status == "in_progress"
     assert item.metadata_json["collaboration_group"] == {
-        "id": "group-1",
+        "id": str(group["id"]),
         "name": "Delivery team",
     }
     values = loop_item_service.response_values(test_db, item, test_user.id)
-    assert values["assignee_group_id"] == "group-1"
+    assert values["assignee_group_id"] == str(group["id"])
     assert values["assignee_group_name"] == "Delivery team"
 
 
@@ -639,6 +685,19 @@ def test_unbound_collaboration_dispatch_uses_claiming_executor_device(
             json={"spec": {"deviceType": "local"}},
         )
     )
+    test_db.flush()
+    authorize_resource(
+        test_db,
+        project,
+        test_db.query(Kind)
+        .filter_by(
+            kind="Device",
+            name=claim_device_id,
+            namespace="default",
+            user_id=test_user.id,
+        )
+        .one(),
+    )
     test_db.commit()
 
     with patch(
@@ -701,6 +760,7 @@ def test_collaboration_group_rejects_non_executor_runtime(
         user_id=test_user.id,
         name_prefix="group-leader",
     )
+    authorize_resource(test_db, project, leader_team)
     leader.device_id = None
     leader.metadata_json = {
         **dict(leader.metadata_json or {}),
@@ -1184,13 +1244,13 @@ def test_reject_with_stale_version_has_no_side_effects(
     assert execution.approval_status == "pending"
 
 
-def test_assign_ignores_member_role_but_respects_bot_visibility(
+def test_assignment_requires_member_role_and_enabled_agent(
     test_db: Session, test_user: User
 ) -> None:
     """Only the creator or Developer+ may assign; the robot must stay visible."""
 
     project = _make_project(test_db, test_user)
-    private_bot = _make_bot(test_db, project, test_user, visibility="private")
+    private_bot = _make_bot(test_db, project, test_user)
     viewer = _make_member(test_db, project, "viewer", BaseRole.Viewer)
     developer = _make_member(test_db, project, "dev", BaseRole.Developer)
     maintainer = _make_member(test_db, project, "admin", BaseRole.Maintainer)
@@ -1210,18 +1270,16 @@ def test_assign_ignores_member_role_but_respects_bot_visibility(
         )
 
     for assigner in (developer, maintainer):
-        with pytest.raises(HTTPException, match="not visible"):
-            loop_item_service.assign(
-                test_db,
-                project_id=int(project.id),
-                item_id=item.id,
-                user_id=assigner.id,
-                values=LoopItemAssign(
-                    version=item.version,
-                    assignee_type="agent",
-                    assignee_id=private_bot.id,
-                ),
-            )
+        updated = loop_item_service.assign(
+            test_db,
+            project_id=int(project.id),
+            item_id=item.id,
+            user_id=assigner.id,
+            values=LoopItemAssign(
+                version=item.version, assignee_type="agent", assignee_id=private_bot.id
+            ),
+        )
+        assert updated.assignee_agent_id == private_bot.id
 
 
 def test_developer_can_assign_issue_to_member(
@@ -1249,7 +1307,7 @@ def test_developer_can_assign_issue_to_member(
     assert metadata["assignment_history"][-1]["by_user_id"] == developer.id
 
 
-def test_issue_creator_can_assign_regardless_of_role(
+def test_viewer_creator_cannot_assign_outside_role(
     test_db: Session, test_user: User
 ) -> None:
     project = _make_project(test_db, test_user)
@@ -1257,19 +1315,20 @@ def test_issue_creator_can_assign_regardless_of_role(
     creator = _make_member(test_db, project, "creator", BaseRole.Viewer)
     item = _make_item(test_db, project, creator)
 
-    updated = loop_item_service.assign(
-        test_db,
-        project_id=int(project.id),
-        item_id=item.id,
-        user_id=creator.id,
-        values=LoopItemAssign(
-            version=item.version,
-            assignee_type="agent",
-            assignee_id=bot.id,
-        ),
-    )
+    with pytest.raises(HTTPException, match="Insufficient permission"):
+        updated = loop_item_service.assign(
+            test_db,
+            project_id=int(project.id),
+            item_id=item.id,
+            user_id=creator.id,
+            values=LoopItemAssign(
+                version=item.version,
+                assignee_type="agent",
+                assignee_id=bot.id,
+            ),
+        )
 
-    assert updated.assignee_agent_id == bot.id
+    assert item.assignee_agent_id == ""
 
 
 def test_queue_listing_is_a_projection_of_assigned_tasks(
@@ -1459,14 +1518,15 @@ def test_update_requires_content_permission_for_mixed_change(
     test_db.refresh(item)
     assert item.title == original_title
 
-    updated = loop_item_service.update(
-        test_db,
-        item.id,
-        creator.id,
-        LoopItemUpdate(version=item.version, assignee_user_id=test_user.id),
-    )
+    with pytest.raises(HTTPException, match="Insufficient permission"):
+        updated = loop_item_service.update(
+            test_db,
+            item.id,
+            creator.id,
+            LoopItemUpdate(version=item.version, assignee_user_id=test_user.id),
+        )
 
-    assert updated.assignee_user_id == test_user.id
+    assert item.assignee_user_id is None
     test_db.refresh(item)
     assert item.title == original_title
 
@@ -1551,7 +1611,7 @@ def test_external_assign_preserves_creator_label(
     assert f"wegent:assignee:user:{assignee.id}" in labels
 
 
-def test_external_update_lets_creator_reroute_assignee_only(
+def test_external_update_denies_read_only_creator_for_all_writes(
     test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The creator can save an assignee-only change but not a content change."""
@@ -1578,22 +1638,19 @@ def test_external_update_lets_creator_reroute_assignee_only(
         external_loop_item_provider, "_apply_assignee_executions", MagicMock()
     )
 
-    external_loop_item_provider.update(
-        test_db,
-        f"{project.project_key}-7",
-        creator.id,
-        LoopItemUpdate(
-            version=1,
-            assignee_user_id=assignee.id,
-            notify_assignee=False,
-        ),
-    )
+    with pytest.raises(HTTPException, match="Insufficient permission"):
+        external_loop_item_provider.update(
+            test_db,
+            f"{project.project_key}-7",
+            creator.id,
+            LoopItemUpdate(
+                version=1,
+                assignee_user_id=assignee.id,
+                notify_assignee=False,
+            ),
+        )
 
-    assert update_issue.called
-    assert (
-        f"wegent:assignee:user:{assignee.id}"
-        in update_issue.call_args.args[2]["labels"]
-    )
+    update_issue.assert_not_called()
 
     with pytest.raises(HTTPException) as excinfo:
         external_loop_item_provider.update(

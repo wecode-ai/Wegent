@@ -839,7 +839,7 @@ export function useCollaborationPlatformController({
           projectKey?: string;
           taskProvider?: "local" | "github" | "gitlab" | "dingtalk_aitable";
           visibility?: "private" | "public";
-          publicAccess?: { role: "Developer" | "Viewer" };
+          publicAccess?: { role: "Viewer" };
           defaultIssueSecurity?: "open" | "related";
           providerConfig?: Record<string, unknown>;
         },
@@ -858,6 +858,20 @@ export function useCollaborationPlatformController({
       registerProject,
       async searchUsers(query: string): Promise<CollaborationUser[]> {
         return api.members.searchUsers(query);
+      },
+      async transferOwnership(userId: number, version: number) {
+        if (!api.workspaces?.transferOwnership || !location.workspaceId)
+          throw new Error("Ownership transfer is unavailable");
+        const workspace = await api.workspaces.transferOwnership(
+          location.workspaceId,
+          { userId, version },
+        );
+        const members = await api.workspaces.listMembers(location.workspaceId);
+        setState((current) => ({
+          ...current,
+          members,
+          ...updateCurrentWorkspace(current, () => workspace),
+        }));
       },
       async addMember(
         userId: number,

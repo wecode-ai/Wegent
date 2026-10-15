@@ -3,6 +3,16 @@
 
 import { expect, type Locator, type Page } from '@playwright/test'
 
+export async function openBlankProjectCreation(page: Page): Promise<void> {
+  const testId = 'collaboration-workspace-project-create'
+  const trigger = page.getByTestId(testId)
+  await expect(trigger).toBeVisible()
+  await expect(page.locator(`[data-testid="${testId}"][aria-haspopup]`)).toHaveCount(0)
+  await trigger.click()
+  await expect(page.getByTestId('collaboration-project-create-dialog')).toBeVisible()
+  await expect(page.getByTestId(`${testId}-menu`)).toHaveCount(0)
+}
+
 /**
  * The Issue comment boxes are the shared ProseMirror composer, which refuses
  * input while its host still loads. `fill` reports a non-editable editor

@@ -120,7 +120,9 @@ function mapWorkspaceMemberDto(input: unknown): CollaborationWorkspaceMember {
     user_id: Number(row.user_id ?? row.userId),
     user_name: String(row.user_name ?? row.userName ?? ""),
     email: row.email == null ? null : String(row.email),
-    role: (row.role ?? "Developer") as CollaborationWorkspaceMember["role"],
+    role: (row.role === "Reporter"
+      ? "Viewer"
+      : (row.role ?? "Developer")) as CollaborationWorkspaceMember["role"],
     ...((row.capability_description ?? row.capabilityDescription) == null
       ? {}
       : {
@@ -216,6 +218,14 @@ export function createSharedWorkspaceHttpApi(
 ): SharedWorkspaceHttpApi {
   return {
     workspaces: {
+      async transferOwnership(workspaceId, input) {
+        return mapCollaborationWorkspaceDto(
+          await transport.post(
+            `/v1/workspaces/${encoded(workspaceId)}/transfer-ownership`,
+            workspaceHttpRequestBody(input),
+          ),
+        );
+      },
       registerRunner(workspaceId, name) {
         return transport.post(
           `/v1/workspaces/${encoded(workspaceId)}/runners`,
@@ -519,9 +529,9 @@ export function createSharedWorkspaceHttpApi(
       },
     },
     agents: {
-      async list(projectId) {
+      async list(projectId, options) {
         const response = await transport.get<unknown[]>(
-          `/v1/cloud-projects/${encoded(projectId)}/chat-agents`,
+          `/v1/cloud-projects/${encoded(projectId)}/chat-agents${options?.includeArchived ? "?include_archived=true" : ""}`,
         );
         return response.map(mapProjectAgentDto);
       },

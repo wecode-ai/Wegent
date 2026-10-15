@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.user import User
 from app.models.wework_notification import WeworkNotification
+from app.schemas.base_role import BaseRole
 from app.schemas.wework_notification import NotificationCreate
 from app.services.notification_copy import (
     WEB_LINK_LABEL,
@@ -328,13 +329,15 @@ def send_wework_notification(
 def _validate_project_source(
     db: Session, user_id: int, recipient_id: int, values: NotificationCreate
 ) -> None:
-    from app.services.cloud_project_visibility import explicit_project_member_ids
+    from app.services.cloud_project_visibility import project_participant_ids
     from app.services.cloud_projects import cloud_project_service
     from app.services.loop_items.external_provider import external_loop_item_provider
     from app.services.loop_items.service import loop_item_service
 
     access = cloud_project_service.access(db, values.project_id, user_id)
-    member_ids = explicit_project_member_ids(db, access.project)
+    member_ids = project_participant_ids(
+        db, access.project, required_role=BaseRole.Developer
+    )
     if access.is_viewer or user_id not in member_ids:
         raise HTTPException(403, "Project membership required")
     recipient = cloud_project_service.access(db, values.project_id, recipient_id)

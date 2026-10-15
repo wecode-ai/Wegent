@@ -85,6 +85,8 @@ class WorkspaceAgentService:
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "Agent is not available to this user",
             )
+        if team.user_id != 0:
+            team_share_service._ensure_can_manage_members(db, team_id, user_id)
         return ensure_resource_grant(
             db,
             workspace_id=workspace_id,
@@ -115,6 +117,8 @@ class WorkspaceAgentService:
                 status.HTTP_409_CONFLICT,
                 "Agent is already available in this Workspace",
             )
+        if team.user_id != 0:
+            team_share_service._ensure_can_manage_members(db, team.id, user_id)
         grant = ensure_resource_grant(
             db,
             workspace_id=workspace_id,
@@ -142,8 +146,39 @@ class WorkspaceAgentService:
             BaseRole.Maintainer,
         }:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
+        from app.models.delivery import CloudProject, ProjectChatAgent
+
+        project_ids = db.query(CloudProject.id).filter(
+            CloudProject.workspace_id == workspace_id
+        )
+        for binding in db.query(ProjectChatAgent).filter(
+            ProjectChatAgent.cloud_project_id.in_(project_ids)
+        ):
+            if (binding.metadata_json or {}).get("wegent_team_id") == team_id and not (
+                binding.metadata_json or {}
+            ).get("authorization_version"):
+                binding.metadata_json = {
+                    **(binding.metadata_json or {}),
+                    "authorization_version": 2,
+                }
+                binding.version += 1
         db.delete(grant)
+        db.flush()
+        from app.services.collaboration_revocation import (
+            revoke_unauthorized_project_work,
+        )
+        from app.services.loop_item_executions.cancellation import (
+            request_execution_cancellations,
+        )
+        from app.services.workspaces.storage import project_ids_for_workspace
+
+        pending = [
+            run
+            for pid in project_ids_for_workspace(db, workspace_id)
+            for run in revoke_unauthorized_project_work(db, pid)
+        ]
         db.commit()
+        request_execution_cancellations(pending)
 
 
 def _get_agent_grant(

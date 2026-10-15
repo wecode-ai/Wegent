@@ -52,7 +52,7 @@ describe('workspace resource configuration adapter', () => {
       user_id: 8,
       user_name: '王芳',
       email: 'wangfang@example.com',
-      role: 'Reporter',
+      role: 'Viewer',
     })
     client.delete.mockResolvedValue(undefined)
     const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
@@ -62,7 +62,7 @@ describe('workspace resource configuration adapter', () => {
       role: 'Developer',
     })
     await api.workspaces!.updateMember('workspace/1', 8, {
-      role: 'Reporter',
+      role: 'Viewer',
     })
     await api.workspaces!.removeMember('workspace/1', 8)
     await api.workspaces!.addAgent('workspace/1', { teamId: 12 })
@@ -79,7 +79,7 @@ describe('workspace resource configuration adapter', () => {
       role: 'Developer',
     })
     expect(client.patch).toHaveBeenNthCalledWith(1, '/v1/workspaces/workspace%2F1/members/8', {
-      role: 'Reporter',
+      role: 'Viewer',
     })
     expect(client.delete).toHaveBeenNthCalledWith(1, '/v1/workspaces/workspace%2F1/members/8')
     expect(client.post).toHaveBeenNthCalledWith(2, '/v1/workspaces/workspace%2F1/agents', {

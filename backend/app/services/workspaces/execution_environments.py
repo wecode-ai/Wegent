@@ -168,12 +168,30 @@ class WorkspaceExecutionEnvironmentService:
             BaseRole.Maintainer,
         }:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
+        from app.services.runner_routing import revoke_legacy_environment_bindings
+
+        revoke_legacy_environment_bindings(db, workspace_id, device_id)
         if (device.json or {}).get("spec", {}).get("workspaceOwnerId"):
             from app.services.workspaces.runner_registration import revoke_runner
 
-            revoke_runner(db, workspace_id, user_id, device_id)
+            revoke_runner(db, workspace_id, user_id, device_id, commit=False)
         db.delete(grant)
+        db.flush()
+        from app.services.collaboration_revocation import (
+            revoke_unauthorized_project_work,
+        )
+        from app.services.loop_item_executions.cancellation import (
+            request_execution_cancellations,
+        )
+        from app.services.workspaces.storage import project_ids_for_workspace
+
+        pending = [
+            run
+            for pid in project_ids_for_workspace(db, workspace_id)
+            for run in revoke_unauthorized_project_work(db, pid)
+        ]
         db.commit()
+        request_execution_cancellations(pending)
 
     async def initialize_execution_environment(
         self,
@@ -216,6 +234,7 @@ class WorkspaceExecutionEnvironmentService:
             # Recording a preparation result is not a configuration change, so the
             # client keeps a usable version token and can retry after a failure.
             version=current.version,
+            created_by_user_id=current.created_by_user_id,
         )
         db.commit()
         db.refresh(kind)

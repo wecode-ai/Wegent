@@ -39,6 +39,8 @@ export function useIssueProjectChat(
     if (!client) return
     let active = true
     let unsubscribe: (() => void) | undefined
+    let subscribing = false
+    let reconnectDuringAttempt = false
     const receive = (message: ProjectChatMessage) => {
       if (!active) return
       setSnapshot(previous => {
@@ -49,54 +51,69 @@ export function useIssueProjectChat(
         }
       })
     }
-    void client
-      .subscribe(projectId, issueId, 0, receive, chunk => {
-        if (!active) return
-        setSnapshot(previous => {
-          const state = previous.owner === owner ? previous : empty
-          const message = state.messages.find(message => message.messageId === chunk.messageId)
-          if (message && message.updatedAt > chunk.updatedAt) return previous
-          return {
-            ...state,
-            messages: mergeIssueChatMessages(state.messages, [
-              {
-                ...chunk,
-                content:
-                  chunk.metadata.contentMode === 'snapshot'
-                    ? chunk.content
-                    : `${message?.content ?? ''}${chunk.content}`,
-              },
-            ]),
-          }
+    const subscribe = () => {
+      if (!active || subscribing || unsubscribe) return
+      subscribing = true
+      reconnectDuringAttempt = false
+      void client
+        .subscribe(projectId, issueId, 0, receive, chunk => {
+          if (!active) return
+          setSnapshot(previous => {
+            const state = previous.owner === owner ? previous : empty
+            const message = state.messages.find(message => message.messageId === chunk.messageId)
+            if (message && message.updatedAt > chunk.updatedAt) return previous
+            return {
+              ...state,
+              messages: mergeIssueChatMessages(state.messages, [
+                {
+                  ...chunk,
+                  content:
+                    chunk.metadata.contentMode === 'snapshot'
+                      ? chunk.content
+                      : `${message?.content ?? ''}${chunk.content}`,
+                },
+              ]),
+            }
+          })
         })
-      })
-      .then(subscription => {
-        if (!active) {
-          subscription.unsubscribe()
-          return
-        }
-        unsubscribe = subscription.unsubscribe
-        setSnapshot(previous => {
-          const state = previous.owner === owner ? previous : empty
-          return {
-            ...state,
-            loading: false,
-            error: null,
-            currentUserId: subscription.snapshot.currentUserId,
-            messages: mergeIssueChatMessages(state.messages, subscription.snapshot.messages),
+        .then(subscription => {
+          if (!active) {
+            subscription.unsubscribe()
+            return
           }
+          unsubscribe = subscription.unsubscribe
+          setSnapshot(previous => {
+            const state = previous.owner === owner ? previous : empty
+            return {
+              ...state,
+              loading: false,
+              error: null,
+              currentUserId: subscription.snapshot.currentUserId,
+              messages: mergeIssueChatMessages(state.messages, subscription.snapshot.messages),
+            }
+          })
         })
-      })
-      .catch(cause => {
-        if (active)
-          setSnapshot(previous => ({
-            ...(previous.owner === owner ? previous : empty),
-            loading: false,
-            error: cause instanceof Error ? cause.message : String(cause),
-          }))
-      })
+        .catch(cause => {
+          if (active)
+            setSnapshot(previous => ({
+              ...(previous.owner === owner ? previous : empty),
+              loading: false,
+              error: cause instanceof Error ? cause.message : String(cause),
+            }))
+        })
+        .finally(() => {
+          subscribing = false
+          if (reconnectDuringAttempt && !unsubscribe) subscribe()
+        })
+    }
+    const stopReconnect = client.onReconnect?.(() => {
+      if (subscribing) reconnectDuringAttempt = true
+      else subscribe()
+    })
+    subscribe()
     return () => {
       active = false
+      stopReconnect?.()
       unsubscribe?.()
     }
   }, [client, projectId, issueId, revision, owner, empty])
