@@ -67,8 +67,11 @@ function fixture(
               selectTask: () =>
                 context
                   ? {
-                      task: { updatedAt: context.revision },
-                      turn: { id: context.latestTurnId },
+                      task: {
+                        updatedAt: context.revision,
+                        runtimeHandle: { lastTurnId: context.latestTurnId },
+                      },
+                      turn: { id: null },
                       derived: { isBusy: context.busy },
                       interactionStatus: null,
                     }
@@ -157,6 +160,54 @@ describe('reply prediction provider', () => {
     expect(predict.mock.calls[0][0].signal?.aborted).toBe(false)
     rerender(fixture(predict, source, { enabled: false }))
     expect(predict.mock.calls[0][0].signal?.aborted).toBe(true)
+  })
+
+  it('preserves a pending prediction when completed task metadata refreshes', async () => {
+    let resolve!: (result: { suggestion: string }) => void
+    const predict = vi.fn<Predict>(
+      () =>
+        new Promise(done => {
+          resolve = done
+        })
+    )
+    const { rerender } = render(fixture(predict))
+    await waitFor(() => expect(predict).toHaveBeenCalledTimes(1))
+
+    rerender(fixture(predict, { ...source, revision: 'refreshed-metadata' }))
+
+    expect(predict.mock.calls[0][0].signal?.aborted).toBe(false)
+    expect(predict).toHaveBeenCalledTimes(1)
+    resolve({ suggestion: '请继续' })
+    await waitFor(() => expect(screen.getByRole('button')).toHaveTextContent('请继续'))
+    expect(predict).toHaveBeenCalledWith(expect.objectContaining({ latestTurnId: 'turn-1' }))
+  })
+
+  it('does not regenerate an accepted suggestion after a metadata refresh', async () => {
+    const predict = vi.fn(async () => ({ suggestion: '请继续' }))
+    const { rerender } = render(fixture(predict))
+    await waitFor(() => expect(screen.getByRole('button')).toHaveTextContent('请继续'))
+    fireEvent.click(screen.getByRole('button'))
+
+    rerender(fixture(predict, { ...source, revision: 'refreshed-metadata' }))
+
+    expect(screen.getByText('empty')).toBeVisible()
+    expect(predict).toHaveBeenCalledTimes(1)
+  })
+
+  it('generates a new suggestion for the next completed turn', async () => {
+    const predict = vi.fn(async () => ({ suggestion: '请继续' }))
+    const { rerender } = render(fixture(predict))
+    await waitFor(() => expect(screen.getByRole('button')).toHaveTextContent('请继续'))
+    fireEvent.click(screen.getByRole('button'))
+
+    rerender(fixture(predict, { ...source, latestTurnId: 'turn-2', busy: true }))
+    expect(screen.queryByRole('button')).toBeNull()
+    expect(predict).toHaveBeenCalledTimes(1)
+    rerender(fixture(predict, { ...source, latestTurnId: 'turn-2' }))
+
+    await waitFor(() => expect(screen.getByRole('button')).toHaveTextContent('请继续'))
+    expect(predict).toHaveBeenCalledTimes(2)
+    expect(predict).toHaveBeenLastCalledWith(expect.objectContaining({ latestTurnId: 'turn-2' }))
   })
 
   it('does not predict an unbound project comment', () => {

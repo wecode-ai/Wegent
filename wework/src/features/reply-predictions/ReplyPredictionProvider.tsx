@@ -54,7 +54,9 @@ export function ReplyPredictionProvider({
   const deviceId = address?.deviceId
   const taskId = address?.taskId
   const workspacePath = address?.workspacePath
-  const latestTurnId = lifecycle?.turn.id
+  // The lifecycle turn ID tracks active work and is cleared on completion.
+  const lastTurnId = lifecycle?.task?.runtimeHandle?.lastTurnId
+  const latestTurnId = typeof lastTurnId === 'string' ? lastTurnId : undefined
   const runtimeSource = useMemo<ReplyPredictionSource | null>(() => {
     if (!deviceId || !taskId) return null
     return {
