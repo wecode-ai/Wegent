@@ -91,7 +91,7 @@ import {
 import { assertStartupRecoverySender, StartupRecoveryService } from './host/startup-recovery.js'
 import { clearStartupRuntimeFiles, clearStartupUserFiles } from './host/startup-recovery-files.js'
 import { ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
-import { createTrayIcon } from './host/tray-icon.js'
+import { createTrayIcon, trayIconFilename } from './host/tray-icon.js'
 import { trayGuidForApplicationId } from './host/tray-guid.js'
 import { TrayNativeStatusController } from './host/tray-native-status.js'
 import { WindowClosePolicy, type WindowCloseDecision } from './host/window-close-policy.js'
@@ -1373,7 +1373,7 @@ function dispatchTrayAction(action: TrayAction): void {
 
 function createTrayManager(): ElectronTrayManager<Electron.Menu | null, Tray> {
   const resourcesRoot = packagedApplication ? process.resourcesPath : developmentResourcesRoot
-  const iconPath = join(resourcesRoot, 'icons', '128x128.png')
+  const iconPath = join(resourcesRoot, 'icons', trayIconFilename())
   const trayGuid = trayGuidForApplicationId(applicationId)
   return new ElectronTrayManager({
     createTray: () => new Tray(createTrayIcon(nativeImage, iconPath), trayGuid),
