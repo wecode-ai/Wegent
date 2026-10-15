@@ -386,6 +386,8 @@ Work-list refreshes preserve the device owning an opened workspace so an earlier
 cannot replace a newly selected cloud workspace. Diagnostics record project-selection
 reducer actions and IDs, draft scopes and parent acknowledgement revisions, Codex app-server
 process IDs and initialization exit states, and failed Windows process-tree termination states.
+Configuration normalization and replacement record file size and the presence of model and built-in OpenAI URL fields; replacements also record their call site, without configuration contents.
+`codex-invalid-launch-cwd` records isolated configuration fingerprints and fixture-field matches before launch, around executor restart, and before sending. It also reads native configuration-layer sources and field presence to distinguish disk changes from runtime loading failures.
 Codex app-server restarts and configuration changes hold the admission lock until the old process exits before admitting a new process.
 Failure artifacts include `codex-sqlite-diagnostics.json` with isolated database file sizes,
 read-only integrity results, and SQLite error codes; conversation tables are never queried.
