@@ -12,11 +12,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.services.subscription.unified_executor import (
+    STALE_SESSION_ERROR,
     SubscriptionExecutionData,
     _build_subscription_execution_request,
     _execute_http_callback,
+    _execute_sse_sync,
     execute_subscription_unified,
 )
+from shared.models import EventType
 
 
 class _FakeEmitter:
@@ -28,6 +31,18 @@ class _FakeEmitter:
 
     async def collect(self):
         return "", None
+
+
+class _FakeStaleEventEmitter:
+    """Emitter stub returning an error terminal event."""
+
+    def __init__(self, task_id: int, subtask_id: int):
+        self.task_id = task_id
+        self.subtask_id = subtask_id
+
+    async def collect(self):
+        event = SimpleNamespace(type=EventType.ERROR.value, error=STALE_SESSION_ERROR)
+        return "", event
 
 
 @pytest.mark.asyncio
@@ -183,6 +198,50 @@ async def test_preserved_history_stale_session_retries_with_new_session():
         await execute_subscription_unified(execution_data)
 
     assert len(build_calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_sse_error_event_propagates_stale_session():
+    """A stale-session terminal event must reach the subscription retry wrapper."""
+    execution_data = SubscriptionExecutionData(
+        subscription_id=88,
+        execution_id=2,
+        task_id=544,
+        subtask_id=670,
+        user_id=2,
+        team_id=73,
+        user_subtask_id=669,
+        device_id=None,
+        prompt="hello",
+        model_override_name=None,
+        preserve_history=True,
+        history_message_count=10,
+        subscription_name="echo",
+        subscription_display_name="Echo",
+        team_display_name="Team",
+        trigger_type="cron",
+        trigger_reason="Scheduled",
+    )
+
+    async def dispatch(request, **kwargs):
+        return None
+
+    fake_execution_module = SimpleNamespace(
+        execution_dispatcher=SimpleNamespace(dispatch=dispatch)
+    )
+    fake_emitters_module = SimpleNamespace(SSEResultEmitter=_FakeStaleEventEmitter)
+
+    with (
+        patch.dict(
+            sys.modules,
+            {
+                "app.services.execution": fake_execution_module,
+                "app.services.execution.emitters": fake_emitters_module,
+            },
+        ),
+        pytest.raises(RuntimeError, match=STALE_SESSION_ERROR),
+    ):
+        await _execute_sse_sync(request=object(), execution_data=execution_data)
 
 
 @pytest.mark.asyncio

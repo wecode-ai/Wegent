@@ -310,6 +310,7 @@ async def _execute_sse_sync(
 
     from app.services.execution import execution_dispatcher
     from app.services.execution.emitters import SSEResultEmitter
+    from shared.models import EventType
 
     logger.info(
         f"[_execute_sse_sync] Starting SSE sync execution: "
@@ -342,11 +343,20 @@ async def _execute_sse_sync(
 
         # Collect all content from emitter
         accumulated_content, final_event = await emitter.collect()
+        final_error = (
+            final_event.error
+            if final_event is not None and final_event.type == EventType.ERROR.value
+            else None
+        )
+        if final_error and STALE_SESSION_ERROR in final_error:
+            raise RuntimeError(final_error)
 
         # Wait for dispatch task to complete
         try:
             await dispatch_task
-        except Exception:
+        except Exception as exc:
+            if STALE_SESSION_ERROR in str(exc):
+                raise
             pass  # Error already handled via emitter
 
         logger.info(
@@ -363,6 +373,8 @@ async def _execute_sse_sync(
             f"execution_id={execution_data.execution_id}, error={e}",
             exc_info=True,
         )
+        if STALE_SESSION_ERROR in str(e):
+            raise
         # TaskCompletedEvent with FAILED status is published by StatusUpdatingEmitter
 
 
@@ -387,6 +399,7 @@ async def _execute_http_callback(
 
     from app.services.execution import execution_dispatcher
     from app.services.execution.emitters import SSEResultEmitter
+    from shared.models import EventType
 
     logger.info(
         f"[_execute_http_callback] Starting HTTP+Callback execution: "
@@ -414,11 +427,20 @@ async def _execute_http_callback(
 
         # Wait for completion and collect results
         accumulated_content, final_event = await emitter.collect()
+        final_error = (
+            final_event.error
+            if final_event is not None and final_event.type == EventType.ERROR.value
+            else None
+        )
+        if final_error and STALE_SESSION_ERROR in final_error:
+            raise RuntimeError(final_error)
 
         # Wait for dispatch task to complete
         try:
             await dispatch_task
-        except Exception:
+        except Exception as exc:
+            if STALE_SESSION_ERROR in str(exc):
+                raise
             pass  # Error already handled via emitter
 
         logger.info(
@@ -441,6 +463,8 @@ async def _execute_http_callback(
             f"execution_id={execution_data.execution_id}, error={e}",
             exc_info=True,
         )
+        if STALE_SESSION_ERROR in str(e):
+            raise
         # TaskCompletedEvent with FAILED status is published by StatusUpdatingEmitter
 
 
