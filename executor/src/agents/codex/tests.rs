@@ -3846,6 +3846,7 @@ fn thread_launch_params_include_execution_system_prompt_as_developer_instruction
         assert!(instructions.contains("Wework 内置浏览器 routing:"));
         assert!(instructions.contains("browser_open"));
         assert!(instructions.contains("Wework 项目空间 routing:"));
+        assert!(instructions.contains(local_connector_auth::INSTRUCTIONS));
     }
 }
 

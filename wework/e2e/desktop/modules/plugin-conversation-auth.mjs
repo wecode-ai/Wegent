@@ -3,160 +3,156 @@ import { readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ACTIVE_COMPOSER_SELECTOR } from './shared.mjs'
 import { testId } from './plugin-regression-fixture.mjs'
+import { assistantMessage, latestModelInputText } from './response-protocol.mjs'
+
+const CONTINUATIONS = [
+  '插件授权已完成。请从刚才因授权中断的位置继续任务，不要重复已经完成的操作。',
+  'Plugin authorization is complete. Continue the task from the step blocked by authorization without repeating completed actions.',
+]
+
+export function createConversationAuthModelFixture({ slug, qrPrompt, ghResumePrompt }) {
+  const cases = new Map()
+  let githubRequests = 0
+  return {
+    cases,
+    getGithubRequests: () => githubRequests,
+    begin(name, connectorSlug = 'conversation-qr') {
+      assert.ok(!cases.has(name), `Duplicate conversation auth case: ${name}`)
+      let release
+      const responseReady = new Promise(resolve => {
+        release = resolve
+      })
+      const state = {
+        prompt: `${qrPrompt} ${name}`,
+        connectorSlug,
+        requests: 0,
+        continuations: [],
+        responseReady,
+        release,
+      }
+      cases.set(name, state)
+      return state
+    },
+    async respond(body) {
+      const latest = latestModelInputText(body)
+      if (latest.includes(ghResumePrompt)) {
+        githubRequests += 1
+        return [
+          assistantMessage(
+            'connector_auth_required\n\n- `pluginKey`: `github`\n- `connectorSlug`: `wework-github-cli`\n\nGitHub CLI login is required.'
+          ),
+        ]
+      }
+      const continuation = CONTINUATIONS.find(text => latest.includes(text))
+      const requestText = JSON.stringify(body)
+      const state = [...cases.values()]
+        .reverse()
+        .find(item => (continuation ? requestText : latest).includes(item.prompt))
+      if (!state) return null
+      if (continuation) {
+        state.continuations.push(continuation)
+        return [assistantMessage(`${state.prompt} completed`)]
+      }
+      state.requests += 1
+      await state.responseReady
+      return [
+        assistantMessage(
+          `connector_auth_required\npluginKey=${slug}\nconnectorSlug=${state.connectorSlug}`
+        ),
+      ]
+    },
+  }
+}
 
 export async function verifyConversationQrAuthorization({
   control,
   slug,
-  qrPrompt,
   ordinaryPrompt,
-  qrRequests,
+  authModel,
   getOrdinaryRequests,
   qrApproval,
   captureScreenshot,
   homePath,
   pluginRoots,
+  waitForValue,
 }) {
-  // Use the real installed membership, manifest reader, packaged auth CLI,
-  // and native QR session. Only the model response is controlled here.
-  for (const action of ['cancel', 'ordinary', 'preflight', 'resume']) {
-    const mode = action === 'resume' ? 'resume' : 'preflight'
-    await control.command('localConnectorAuth', 'body', {
+  const eventsPath = join(homePath, 'conversation-qr-events.jsonl')
+  const readEvents = async () =>
+    (await readFile(eventsPath, 'utf8'))
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map(line => JSON.parse(line))
+  const logout = () =>
+    control.command('localConnectorAuth', 'body', {
       value: JSON.stringify({
         pluginKey: slug,
         connectorSlug: 'conversation-qr',
         action: 'logout',
       }),
     })
-    await control.command('click', '[data-testid="new-chat-button"]')
-    await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR)
-    await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: `${qrPrompt} ${mode}` })
-    if (mode === 'preflight') {
-      await control.command('click', '[data-testid="composer-plugin-picker-button"]')
-      await control.command('fill', '[data-testid="composer-plugin-picker-search"]', {
-        value: slug,
-      })
-      await control.command('click', `[data-testid="composer-plugin-picker-item-plugin:${slug}"]`)
-      // getValue returns display labels, not serialized references. Preserve
-      // the real picker chip instead of filling its plain-text label back in.
-      await control.command('waitFor', testId('composer-plugin-chip-' + slug))
-    }
-    const pendingDraft = await control.command('getValue', ACTIVE_COMPOSER_SELECTOR)
-    await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
-    await control.command('waitFor', '[data-testid="connector-auth-qr"]')
-    if (mode === 'preflight') {
-      const emptyDock = JSON.parse(
-        await control.command('snapshot', '[data-testid="desktop-empty-composer-dock"]')
-      )
-      assert.ok(
-        emptyDock.testIds.includes('connector-auth-card'),
-        'New conversation did not mount its authorization card'
-      )
-    }
-    assert.equal(
-      qrRequests[mode],
-      mode === 'preflight' ? 0 : 1,
-      'Conversation continued before QR authorization'
-    )
-    await captureScreenshot(control, `plugin-auth-conversation-${mode}-qr.png`, 'body')
-    if (action === 'cancel' || action === 'ordinary') {
-      if (action === 'cancel') {
-        await control.command('click', '[data-testid="connector-auth-cancel"]')
-        assert.equal(
-          await control.command('getValue', ACTIVE_COMPOSER_SELECTOR),
-          pendingDraft,
-          'Cancelling login discarded the unsent draft'
-        )
-      }
-      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: ordinaryPrompt })
-      await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
-      await control.command('waitFor', 'body', { text: `${ordinaryPrompt} completed` })
-      assert.equal(getOrdinaryRequests(), action === 'cancel' ? 1 : 2)
-      assert.equal(qrRequests.preflight, 0, 'Discarded plugin draft was sent')
-      const recovered = JSON.parse(await control.command('snapshot', 'body'))
-      assert.ok(!recovered.testIds.includes('connector-auth-card'))
-      continue
-    }
-    await writeFile(qrApproval, 'approved')
-    await control.command('waitFor', 'body', { text: `${qrPrompt} ${mode} completed` })
-    assert.equal(
-      qrRequests[mode],
-      mode === 'preflight' ? 1 : 2,
-      'QR completion did not resume the conversation exactly once'
-    )
-    const authorized = JSON.parse(await control.command('snapshot', 'body'))
-    assert.ok(!authorized.testIds.includes('connector-auth-card'), 'QR card remained after login')
+  const assertNoCard = async message => {
+    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    assert.ok(!snapshot.testIds.includes('connector-auth-card'), message)
   }
-  await control.command('localConnectorAuth', 'body', {
-    value: JSON.stringify({
-      pluginKey: slug,
-      connectorSlug: 'conversation-qr',
-      action: 'logout',
-    }),
-  })
-
-  const failurePath = join(homePath, 'conversation-qr-fail')
-  const baseline = { ...qrRequests }
+  const assertNoContinuation = () => {
+    for (const state of authModel.cases.values()) {
+      assert.equal(state.requests, 1, 'Authorization replayed an original plugin prompt')
+      assert.equal(
+        state.continuations.length,
+        state.completed ? 1 : 0,
+        `An obsolete authorization continued ${state.prompt}`
+      )
+    }
+  }
   const sendOrdinary = async () => {
     const before = getOrdinaryRequests()
     await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: ordinaryPrompt })
     await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
     await control.command('waitFor', 'body', {
-      text: ordinaryPrompt + ' completed',
+      text: `${ordinaryPrompt} completed`,
       // Observe beyond the real provider's one-second polling interval.
       stableMs: 1500,
     })
     assert.equal(getOrdinaryRequests(), before + 1, 'Ordinary chat was blocked or sent twice')
-    assert.deepEqual(qrRequests, baseline, 'A cancelled draft resumed in another conversation')
-    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
-    assert.ok(!snapshot.testIds.includes('connector-auth-card'), 'Stale login card blocks chat')
+    assertNoContinuation()
+    await assertNoCard('Stale authorization blocked ordinary chat')
   }
-  const beginPreflight = async () => {
+  const beginOnUse = async (name, connectorSlug) => {
+    await logout()
+    const state = authModel.begin(name, connectorSlug)
     await control.command('click', testId('new-chat-button'))
     await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR)
-    await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: qrPrompt })
+    await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: state.prompt })
+    const beforeSelection = await readEvents()
     await control.command('click', testId('composer-plugin-picker-button'))
     await control.command('fill', testId('composer-plugin-picker-search'), { value: slug })
     await control.command('click', testId('composer-plugin-picker-item-plugin:' + slug))
     await control.command('waitFor', testId('composer-plugin-chip-' + slug))
-    const draft = await control.command('getValue', ACTIVE_COMPOSER_SELECTOR)
+    await assertNoCard('Selecting a plugin opened authorization before a tool required it')
     await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
-    return draft
+    await waitForValue(
+      () => state.requests,
+      count => count === 1,
+      10_000,
+      'The first plugin message waited for authorization before reaching the model'
+    )
+    assert.equal(await control.command('getValue', ACTIVE_COMPOSER_SELECTOR), '')
+    await assertNoCard('Plugin message was checked before the model returned an auth error')
+    assert.deepEqual(await readEvents(), beforeSelection, 'Plugin selection or send probed auth')
+    return state
   }
-  try {
-    // Fail inside the actual packaged provider, not by replacing IPC or fetch.
-    await writeFile(failurePath, 'fail')
-    const draft = await beginPreflight()
-    await control.command('waitFor', testId('connector-auth-error'), {
-      text: 'E2E_QR_START_FAILED',
-    })
-    assert.deepEqual(qrRequests, baseline, 'Failed authorization sent the pending draft')
-    await rm(failurePath)
-    await control.command('clickWhenEnabled', testId('connector-auth-retry'))
-    await control.command('waitFor', testId('connector-auth-qr'))
-    await control.command('click', testId('connector-auth-cancel'))
-    assert.equal(await control.command('getValue', ACTIVE_COMPOSER_SELECTOR), draft)
-    await sendOrdinary()
-    // Navigating away must dispose the pending session. Late provider success
-    // must not submit the old draft or attach its card to the new conversation.
-    await beginPreflight()
-    await control.command('waitFor', testId('connector-auth-qr'))
-    await control.command('click', testId('new-chat-button'))
+  const approve = async state => {
     await writeFile(qrApproval, 'approved')
-    await sendOrdinary()
-    await captureScreenshot(control, 'plugin-auth-failure-navigation-recovery.png', 'body')
-  } finally {
-    await rm(failurePath, { force: true })
-    await control.command('localConnectorAuth', 'body', {
-      value: JSON.stringify({
-        pluginKey: slug,
-        connectorSlug: 'conversation-qr',
-        action: 'logout',
-      }),
-    })
+    await control.command('waitFor', 'body', { text: `${state.prompt} completed` })
+    state.completed = true
+    assert.equal(state.requests, 1, 'Authorization resent the original plugin message')
+    assert.equal(state.continuations.length, 1, 'Authorization did not continue exactly once')
+    assert.ok(CONTINUATIONS.includes(state.continuations[0]), 'Unexpected continuation prompt')
+    await assertNoCard('QR card remained after authorization')
   }
 
-  // Replace connector metadata in the real isolated package, while the same
-  // composer retains its draft. Never replace the IPC/provider response.
+  const failurePath = join(homePath, 'conversation-qr-fail')
   const healthFailure = join(homePath, 'conversation-qr-health-fail')
   const manifests = []
   for (const root of new Set(pluginRoots)) {
@@ -164,59 +160,109 @@ export async function verifyConversationQrAuthorization({
     manifests.push({ path, original: await readFile(path, 'utf8') })
   }
   try {
-    await writeFile(healthFailure, 'fail')
-    const draft = await beginPreflight()
-    await control.command('waitFor', testId('chat-input-error'), {
-      text: '检查插件连接失败',
+    // Use the real installed package, manifest reader, packaged auth CLI and QR
+    // session. Only the model response is held until the first send is verified.
+    for (const action of ['cancel', 'ordinary', 'switch', 'resume']) {
+      const state = await beginOnUse(action)
+      state.release()
+      await control.command('waitFor', testId('connector-auth-qr'))
+      assert.equal(state.requests, 1)
+      assert.equal(state.continuations.length, 0)
+      await captureScreenshot(control, `plugin-auth-conversation-${action}-qr.png`, 'body')
+      if (action === 'resume') {
+        const unsentDraft = 'Unsent follow-up while plugin authorization is pending'
+        await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: unsentDraft })
+        await approve(state)
+        assert.equal(
+          await control.command('getValue', ACTIVE_COMPOSER_SELECTOR),
+          unsentDraft,
+          'Authorization continuation discarded an unsent composer draft'
+        )
+        continue
+      }
+      if (action === 'cancel') {
+        await control.command('click', testId('connector-auth-cancel'))
+        assert.equal(
+          await control.command('getValue', ACTIVE_COMPOSER_SELECTOR),
+          '',
+          'Cancelling authorization restored a message that was already sent'
+        )
+        await writeFile(qrApproval, 'approved')
+      }
+      if (action === 'switch') {
+        await control.command('click', testId('new-chat-button'))
+        await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR)
+        await writeFile(qrApproval, 'approved')
+      }
+      await sendOrdinary()
+      if (action === 'ordinary') {
+        // Late approval of the replaced authorization must not resume old work.
+        await writeFile(qrApproval, 'approved')
+        await sendOrdinary()
+      }
+    }
+    // Failure comes from the actual packaged provider, never from mocked IPC.
+    await writeFile(failurePath, 'fail')
+    const failedStart = await beginOnUse('start-failure')
+    failedStart.release()
+    await control.command('waitFor', testId('connector-auth-error'), {
+      text: 'E2E_QR_START_FAILED',
     })
-    assert.equal(await control.command('getValue', ACTIVE_COMPOSER_SELECTOR), draft)
-    const failed = JSON.parse(await control.command('snapshot', 'body'))
-    assert.ok(
-      !failed.testIds.includes('connector-auth-card'),
-      'Health errors were treated as logout'
-    )
-    assert.deepEqual(qrRequests, baseline, 'Failed health sent the draft')
+    assert.equal(failedStart.requests, 1)
+    assert.equal(failedStart.continuations.length, 0)
+    await rm(failurePath)
+    await control.command('clickWhenEnabled', testId('connector-auth-retry'))
+    await control.command('waitFor', testId('connector-auth-qr'))
+    await control.command('click', testId('connector-auth-cancel'))
+    await sendOrdinary()
+
+    await writeFile(healthFailure, 'fail')
+    const failedHealth = await beginOnUse('health-failure')
+    failedHealth.release()
+    await control.command('waitFor', testId('chat-input-error'), {
+      text: '无法确认插件登录状态',
+    })
+    assert.equal(await control.command('getValue', ACTIVE_COMPOSER_SELECTOR), '')
+    await assertNoCard('Health errors were treated as logout')
+    assertNoContinuation()
+    await rm(healthFailure)
+    await sendOrdinary()
+    await captureScreenshot(control, 'plugin-auth-failure-navigation-recovery.png', 'body')
+
+    // Upgrade the isolated package after selection. The runtime error names
+    // the new connector, so real health/start must resolve its current metadata.
+    const replacement = await beginOnUse('metadata-replacement', 'conversation-qr-local')
     for (const { path, original } of manifests) {
       const manifest = JSON.parse(original)
       const connector = manifest.connectors.find(item => item.slug === 'conversation-qr')
       assert.ok(connector, 'Expected the original local connector')
+      manifest.version = '2.0.0'
       connector.slug = 'conversation-qr-local'
+      connector.displayName = 'Conversation QR upgraded'
+      for (const action of ['health', 'start', 'poll', 'logout']) {
+        connector.localAuth[action].push('replacement-v2')
+      }
       await writeFile(path, JSON.stringify(manifest))
     }
-    await rm(healthFailure)
-    await writeFile(qrApproval, 'approved')
-    const connected = JSON.parse(
-      await control.command('localConnectorAuth', 'body', {
-        value: JSON.stringify({
-          pluginKey: slug,
-          connectorSlug: 'conversation-qr-local',
-          action: 'health',
-        }),
-      })
-    )
-    assert.equal(connected.status, 'ok', 'Replacement connector is not connected')
-    await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
-    await control.command('waitFor', 'body', { text: `${qrPrompt} preflight completed` })
-    assert.equal(
-      qrRequests.preflight,
-      baseline.preflight + 1,
-      'Replacement connector did not send exactly once'
-    )
-    const connectedPage = JSON.parse(await control.command('snapshot', 'body'))
-    assert.ok(
-      !connectedPage.testIds.includes('connector-auth-card'),
-      'Connected replacement reopened login'
-    )
+    replacement.release()
+    await control.command('waitFor', testId('connector-auth-qr'))
+    const replacementEvents = await readEvents()
+    for (const action of ['health', 'start']) {
+      assert.ok(
+        replacementEvents.some(
+          event => event.action === action && event.revision === 'replacement-v2'
+        ),
+        `Authorization used stale ${action} metadata after the package upgrade`
+      )
+    }
+    await approve(replacement)
+    assertNoContinuation()
     await captureScreenshot(control, 'plugin-auth-replaced-connector-connected.png', 'body')
   } finally {
+    for (const state of authModel.cases.values()) state.release()
     for (const { path, original } of manifests) await writeFile(path, original)
+    await rm(failurePath, { force: true })
     await rm(healthFailure, { force: true })
-    await control.command('localConnectorAuth', 'body', {
-      value: JSON.stringify({
-        pluginKey: slug,
-        connectorSlug: 'conversation-qr',
-        action: 'logout',
-      }),
-    })
+    await logout()
   }
 }

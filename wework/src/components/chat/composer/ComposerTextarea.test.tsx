@@ -1000,7 +1000,6 @@ describe('ComposerTextarea', () => {
           catalogEvents: {},
           listApps,
           listSkills,
-          prefetchLocalAuth: false,
         }}
       >
         <ComposerTextarea

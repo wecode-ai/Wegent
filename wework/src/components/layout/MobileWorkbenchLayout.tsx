@@ -4,7 +4,7 @@ import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
 import { PluginWorkspaceConversationResult } from '@/components/plugins/PluginWorkspaceConversationResult'
-import { useLocalConnectorAuthGate } from '@/features/plugins/useLocalConnectorAuthGate'
+import { useLocalConnectorAuthRecovery } from '@/features/plugins/useLocalConnectorAuthRecovery'
 import { executeDshAction, type WeworkDshAction } from '@/features/dsh-runtime/dshActions'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
@@ -145,28 +145,19 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     source: currentRuntimeTask,
     project: activePaneProject,
   })
-  const connectorAuthGate = useLocalConnectorAuthGate({
+  const connectorAuthRecovery = useLocalConnectorAuthRecovery({
     onError: message => paneSession.setError(message),
     messages: paneSession.messages,
     onResumeSend: async input => {
-      await paneSession.send(input)
+      await paneSession.sendContinuation(input)
     },
-    onRetryMessage: message => paneSession.retryFailedMessage(message),
   })
   const submitPaneInput = useCallback(
     async (value?: string) => {
-      const submitted = (value ?? paneSession.input).trim()
-      if (submitted) {
-        const gate = await connectorAuthGate.gateBeforeSend(submitted)
-        if (gate === 'blocked') {
-          // Keep composer text so cancel does not discard the draft; resume
-          // send still uses pendingInput and clears after a successful send.
-          return
-        }
-      }
+      connectorAuthRecovery.clearPending()
       return paneSession.send(value)
     },
-    [connectorAuthGate, paneSession]
+    [connectorAuthRecovery, paneSession]
   )
   const retryFailedMessage = paneSession.retryFailedMessage
   const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
@@ -479,14 +470,14 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                       className="mb-2"
                     />
                   )}
-                  {connectorAuthGate.pending ? (
+                  {connectorAuthRecovery.pending ? (
                     <ConnectorAuthCard
-                      target={connectorAuthGate.pending.target}
-                      title={connectorAuthGate.pending.title}
+                      target={connectorAuthRecovery.pending.target}
+                      title={connectorAuthRecovery.pending.title}
                       onSuccess={() => {
-                        void connectorAuthGate.completePending()
+                        void connectorAuthRecovery.completePending()
                       }}
-                      onCancel={connectorAuthGate.clearPending}
+                      onCancel={connectorAuthRecovery.clearPending}
                     />
                   ) : pendingRequestUserInput ? (
                     <RequestUserInputCard
