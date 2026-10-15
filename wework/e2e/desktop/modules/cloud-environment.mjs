@@ -264,7 +264,6 @@ class LocalNevisSandboxService {
   }
 
   async start() {
-    this.port = await reservePort()
     this.server = createServer((request, response) => {
       void this.handle(request, response).catch(error => {
         if (response.headersSent) {
@@ -277,8 +276,9 @@ class LocalNevisSandboxService {
     })
     await new Promise((resolvePromise, reject) => {
       this.server.once('error', reject)
-      this.server.listen(this.port, '127.0.0.1', resolvePromise)
+      this.server.listen(0, '127.0.0.1', resolvePromise)
     })
+    this.port = this.server.address().port
     this.endpoint = `http://127.0.0.1:${this.port}`
   }
 
@@ -1211,6 +1211,12 @@ class RealCloudEnvironment {
     })
   }
 
+  get runtimeWorkspaceRoot() {
+    const root = this.remoteExecutorEnv?.LOCAL_WORKSPACE_ROOT
+    assert.ok(root, 'The cloud Executor workspace root is not configured')
+    return root
+  }
+
   async runtimeTask(taskId) {
     const work = await this.runtimeWork()
     const workspaces = [
@@ -1371,7 +1377,52 @@ class RealCloudEnvironment {
       appendProcessOutput(executor.stderr, logPath),
     ])
     await this.waitForDevice(deviceId, logPath)
-    return { home, logPath }
+    return { home, logPath, executor }
+  }
+
+  async createOfflineLocalSidebarAlias() {
+    const app = await this.waitForConnectedAppDevice()
+    assert.ok(app.app_device_id, 'The local App must expose its IPC address')
+    assert.notEqual(
+      app.app_device_id,
+      app.device_id,
+      'The IPC address must differ from the App registration id'
+    )
+    const { logPath, executor } = await this.startGeneratedRemoteDevice({
+      deviceId: app.app_device_id,
+      deviceName: 'Wework E2E historical local alias',
+      authToken: this.authToken,
+    })
+    const waitForAliasStatus = async (status, runtimeInstanceId) => {
+      const startedAt = Date.now()
+      while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
+        const matching = (await this.devices()).filter(
+          device =>
+            device.device_type === 'remote' &&
+            device.device_id === app.app_device_id &&
+            (!runtimeInstanceId || device.runtime_instance_id === runtimeInstanceId)
+        )
+        if (matching.length === 1 && matching[0].status === status) return matching[0]
+        await new Promise(resolve => setTimeout(resolve, 250))
+      }
+      throw new Error(`The real sidebar alias fixture did not become ${status}; see ${logPath}`)
+    }
+    const historical = await waitForAliasStatus('online')
+    assert.ok(historical?.runtime_instance_id, 'The historical alias must own a real runtime')
+    assert.notEqual(historical.runtime_instance_id, app.runtime_instance_id)
+    const assertOriginalAppRegistration = async () => {
+      const current = (await this.devices()).find(device => device.id === app.id)
+      assert.ok(current, 'The original App registration must remain present')
+      assert.equal(current.device_id, app.device_id)
+      assert.equal(current.app_device_id, app.app_device_id)
+      assert.equal(current.runtime_instance_id, app.runtime_instance_id)
+      assert.equal(current.status, 'online')
+    }
+    await assertOriginalAppRegistration()
+    await stopProcessGroup(executor)
+    await waitForAliasStatus('offline', historical.runtime_instance_id)
+    await assertOriginalAppRegistration()
+    return historical
   }
 
   async seedCloudProtocolModels() {
@@ -1703,4 +1754,9 @@ async function verifyLocalExecutorUsesCloudSocketUrl(control, cloudEnvironment) 
   )
 }
 
-export { RealCloudEnvironment, startRedisServer, verifyLocalExecutorUsesCloudSocketUrl }
+export {
+  LocalNevisSandboxService,
+  RealCloudEnvironment,
+  startRedisServer,
+  verifyLocalExecutorUsesCloudSocketUrl,
+}

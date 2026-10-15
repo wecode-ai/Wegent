@@ -12,47 +12,48 @@ PACKAGE = "@wegent/ai-fleet-defense"
 DESCRIPTOR = {"version": 1, "tables": ["scores"], "has_global": False}
 
 
-def test_stores_and_loads_private_plugin_records(
-    test_client: TestClient,
-    test_db: Session,
-    test_token: str,
-    test_user: User,
-) -> None:
-    response = test_client.put(
-        f"{BASE_URL}/units/ai_fleet_defense/tables/scores/records/best",
-        params={"package": PACKAGE},
-        headers=_auth(test_token),
-        json={**DESCRIPTOR, "value": {"score": 1200}, "shared": False},
-    )
-
-    assert response.status_code == 204
-    stored = (
-        test_db.query(Kind)
-        .filter(
-            Kind.user_id == test_user.id,
-            Kind.kind == "DshPluginData",
-            Kind.namespace == PACKAGE,
-            Kind.name == "ai_fleet_defense",
-        )
-        .one()
-    )
-    assert stored.json["tables"]["scores"]["best"] == {
-        "value": {"score": 1200},
-        "shared": False,
-    }
-
-    loaded = test_client.post(
-        f"{BASE_URL}/units/ai_fleet_defense/load",
-        params={"package": PACKAGE},
-        headers=_auth(test_token),
-        json=DESCRIPTOR,
-    )
-    assert loaded.status_code == 200
-    assert loaded.json() == {
-        "version": 1,
-        "tables": {"scores": {"best": {"score": 1200}}},
-        "global": None,
-    }
+# MIGRATION-CANDIDATE: retired Python HTTP test; this API is owned by Rust.
+# def test_stores_and_loads_private_plugin_records(
+#     test_client: TestClient,
+#     test_db: Session,
+#     test_token: str,
+#     test_user: User,
+# ) -> None:
+#     response = test_client.put(
+#         f"{BASE_URL}/units/ai_fleet_defense/tables/scores/records/best",
+#         params={"package": PACKAGE},
+#         headers=_auth(test_token),
+#         json={**DESCRIPTOR, "value": {"score": 1200}, "shared": False},
+#     )
+#
+#     assert response.status_code == 204
+#     stored = (
+#         test_db.query(Kind)
+#         .filter(
+#             Kind.user_id == test_user.id,
+#             Kind.kind == "DshPluginData",
+#             Kind.namespace == PACKAGE,
+#             Kind.name == "ai_fleet_defense",
+#         )
+#         .one()
+#     )
+#     assert stored.json["tables"]["scores"]["best"] == {
+#         "value": {"score": 1200},
+#         "shared": False,
+#     }
+#
+#     loaded = test_client.post(
+#         f"{BASE_URL}/units/ai_fleet_defense/load",
+#         params={"package": PACKAGE},
+#         headers=_auth(test_token),
+#         json=DESCRIPTOR,
+#     )
+#     assert loaded.status_code == 200
+#     assert loaded.json() == {
+#         "version": 1,
+#         "tables": {"scores": {"best": {"score": 1200}}},
+#         "global": None,
+#     }
 
 
 def test_shared_scan_returns_only_explicitly_shared_records(
@@ -92,31 +93,33 @@ def test_shared_scan_returns_only_explicitly_shared_records(
     }
 
 
-def test_rejects_descriptor_version_changes(
-    test_client: TestClient,
-    test_token: str,
-) -> None:
-    _put_score(test_client, test_token, "best", 1500, shared=True)
+# MIGRATION-CANDIDATE: retired Python HTTP test; this API is owned by Rust.
+# def test_rejects_descriptor_version_changes(
+#     test_client: TestClient,
+#     test_token: str,
+# ) -> None:
+#     _put_score(test_client, test_token, "best", 1500, shared=True)
+#
+#     response = test_client.post(
+#         f"{BASE_URL}/units/ai_fleet_defense/load",
+#         params={"package": PACKAGE},
+#         headers=_auth(test_token),
+#         json={**DESCRIPTOR, "version": 2},
+#     )
+#
+#     assert response.status_code == 409
+#     assert response.json()["detail"] == "Storage unit version does not match"
 
-    response = test_client.post(
-        f"{BASE_URL}/units/ai_fleet_defense/load",
-        params={"package": PACKAGE},
-        headers=_auth(test_token),
-        json={**DESCRIPTOR, "version": 2},
-    )
 
-    assert response.status_code == 409
-    assert response.json()["detail"] == "Storage unit version does not match"
-
-
-def test_requires_authentication(test_client: TestClient) -> None:
-    response = test_client.post(
-        f"{BASE_URL}/units/ai_fleet_defense/load",
-        params={"package": PACKAGE},
-        json=DESCRIPTOR,
-    )
-
-    assert response.status_code == 401
+# MIGRATION-CANDIDATE: retired Python HTTP test; this API is owned by Rust.
+# def test_requires_authentication(test_client: TestClient) -> None:
+#     response = test_client.post(
+#         f"{BASE_URL}/units/ai_fleet_defense/load",
+#         params={"package": PACKAGE},
+#         json=DESCRIPTOR,
+#     )
+#
+#     assert response.status_code == 401
 
 
 def _put_score(

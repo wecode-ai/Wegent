@@ -984,6 +984,33 @@ def test_auto_update_batches_are_bounded_and_drain_all_candidates(
         assert installed.json["spec"]["componentStates"] == {"skills:review": False}
 
 
+@pytest.mark.parametrize("install_state", ["empty", "current", "manual"])
+def test_auto_update_empty_batch_releases_transaction_before_returning(
+    test_db, test_user, install_state
+):
+    service = PluginMarketplaceService()
+    user_id = test_user.id
+    if install_state != "empty":
+        installed, plugin, current, _ = _create_auto_update_install(
+            test_db, user_id=user_id, index=1
+        )
+        if install_state == "current":
+            plugin.latest_release_id = current.id
+        else:
+            installed.json["spec"]["updatePolicy"] = "manual"
+            flag_modified(installed, "json")
+    test_db.commit()
+
+    result = service.auto_update_batch(test_db, user_id=user_id)
+
+    assert result.updatedCount == 0
+    assert result.remainingCount == 0
+    assert not test_db.in_transaction(), (
+        "An empty auto-update poll must release its locking transaction before "
+        "the request dependency cleanup can be delayed by a concurrent install"
+    )
+
+
 def test_auto_update_is_idempotent_and_excludes_invalid_installations(
     test_db, test_user
 ):

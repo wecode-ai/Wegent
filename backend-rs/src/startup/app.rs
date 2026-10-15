@@ -57,7 +57,8 @@ pub async fn build() -> Result<AppState> {
     // service: its refresh worker is started here, at process startup, so a
     // device listing only enqueues the refresh a cache miss requires.
     let executor_version =
-        crate::executor_version::ExecutorVersionService::from_redis(redis.clone());
+        crate::executor_version::ExecutorVersionService::from_redis(redis.clone())
+            .context("failed to build the executor-version service")?;
     // `GET /api/git/repositories`: the retained provider HTTP client and the
     // process-owned background full-fetch worker are built here so the worker
     // is initialization-owned.
@@ -68,6 +69,7 @@ pub async fn build() -> Result<AppState> {
         entity_resolvers: crate::permissions::EntityResolvers::public(mysql.clone()),
         user_profile: Arc::new(crate::user_profile::DefaultUserViewExtension),
         user_git_info: Arc::new(crate::user_profile::StoredGitInfo),
+        user_git_info_mask: Arc::new(crate::user_profile::NoGitInfoMasking),
         media_policy: Arc::new(crate::media_policy::DefaultMediaPolicy),
         external_media: Arc::new(crate::attachments::external_media::NoExternalMediaRelay),
         attachment_upload: Arc::new(crate::attachments::upload::MySqlStorageBackend),

@@ -95,6 +95,7 @@ export function createDesktopScenario({
   resultDir,
   workspacePath,
   uiTimeoutMs,
+  modelResponseTimeoutMs,
 }) {
   const capture = (control, name) => captureScreenshot(control, name, 'body')
   let active = false
@@ -179,6 +180,8 @@ export function createDesktopScenario({
       await control.command('press', composer, { key: 'Enter' })
       await control.command('waitFor', `${PANE} [data-testid="message-assistant"]`, {
         text: COMPLETE,
+        // Windows unified exec clamps each initial yield to at least ten seconds.
+        timeoutMs: modelResponseTimeoutMs,
       })
       const snapshot = await waitForIdle(control, uiTimeoutMs)
       await writeFile(

@@ -129,12 +129,6 @@ impl LocalBackendTransport for SocketIoTransport {
             if let Some(previous) = previous {
                 let _ = previous.client.disconnect().await;
             }
-            // The backend socket must never travel through the user's HTTP
-            // proxy: macOS system proxies (for example Clash on 127.0.0.1)
-            // intercept `localhost` and break the Engine.IO connection.
-            // NO_PROXY only affects loopback hosts; model gateway and other
-            // external requests still use the configured proxy.
-            std::env::set_var("NO_PROXY", "localhost,127.0.0.1,::1");
             let handlers = self.handlers.lock().expect("handler lock").clone();
             let socket_url = normalize_socket_url(&config.socket_url);
             let (connect_sender, connect_receiver) = oneshot::channel();

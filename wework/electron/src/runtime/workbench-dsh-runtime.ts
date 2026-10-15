@@ -449,7 +449,14 @@ async function addProfilePackages(
   const before = await readWorkbenchProfileManifest(profileDir)
   await run(
     nodeCommand,
-    runtimeNodeArgs(environment, [pnpmEntry, 'add', '--ignore-scripts', ...specs]),
+    runtimeNodeArgs(environment, [
+      pnpmEntry,
+      '--store-dir',
+      join(dshHome, 'pnpm-store'),
+      'add',
+      '--ignore-scripts',
+      ...specs,
+    ]),
     { cwd: profileDir, env: environment }
   )
   await reconcileProfileBundles(profileDir, before)

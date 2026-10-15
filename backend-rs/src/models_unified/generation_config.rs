@@ -2,18 +2,20 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Pydantic-compatible projection of `spec.videoConfig` and
-//! `spec.imageConfig` for `GET /api/models/unified`.
+//! Pydantic-compatible projection of `spec.videoConfig`, `spec.imageConfig`
+//! and `spec.embeddingConfig` for `GET /api/models/unified`.
 //!
 //! `_extract_model_info_from_crd` validates every model CRD through
 //! `app.schemas.kind.Model` and serializes the nested video and image
-//! configuration with `model_dump(exclude_none=True)`. That dump is not a raw
-//! passthrough: pydantic keeps the declared field order and per-field defaults,
-//! coerces lax input (`2` into an `Optional[float]`, `"true"` into an
+//! configuration with `model_dump(exclude_none=True)`. The public adapter
+//! `to_model_dict` additionally serializes `spec.embeddingConfig`. That dump is
+//! not a raw passthrough: pydantic keeps the declared field order and per-field
+//! defaults, coerces lax input (`2` into an `Optional[float]`, `"true"` into an
 //! `Optional[bool]`), drops unknown keys and drops every `None`. The types
-//! below mirror `app/schemas/generation.py` field for field and reproduce that
-//! dump. A conversion failure stands in for the `pydantic.ValidationError`
-//! that makes the caller fall back to its error projection.
+//! below mirror `app/schemas/generation.py` and `app/schemas/kind.py` field for
+//! field and reproduce that dump. A conversion failure stands in for the
+//! `pydantic.ValidationError` that makes the caller fall back to its error
+//! projection.
 //!
 //! Integer fields are represented as `i64`, so an integer literal outside the
 //! signed 64-bit range is rejected where pydantic would keep it as an
@@ -21,6 +23,7 @@
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use serde_json::Map as JsonMap;
 use serde_json::Value as Json;
 
 /// Stands in for `pydantic.ValidationError`.
@@ -37,6 +40,60 @@ pub fn video_config_dump(raw: &Json) -> Valid<Json> {
 /// `spec.imageConfig` -> `ImageGenerationConfig.model_dump(exclude_none=True)`.
 pub fn image_config_dump(raw: &Json) -> Valid<Json> {
     dump::<ImageGenerationConfig>(raw)
+}
+
+/// `spec.embeddingConfig` -> `EmbeddingConfig.model_dump(exclude_none=True)`.
+///
+/// `EmbeddingConfig` sets `extra="allow"`, so unlike the video and image
+/// configs it keeps unknown keys. The declared fields render first in
+/// declaration order, then the remaining keys in their input order; every
+/// `None` value — declared or extra — is dropped.
+pub fn embedding_config_dump(raw: &Json) -> Valid<Json> {
+    let Json::Object(source) = raw else {
+        return Err(Invalid);
+    };
+    #[derive(Deserialize)]
+    struct Declared {
+        #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
+        dimensions: Option<i64>,
+        #[serde(
+            default = "default_encoding_format",
+            deserialize_with = "brz_json::adapters::optional_str"
+        )]
+        encoding_format: Option<String>,
+        #[serde(default, deserialize_with = "brz_json::adapters::optional_strings")]
+        additional_input_modalities: Option<Vec<String>>,
+    }
+    let declared: Declared =
+        serde_json::from_value(Json::Object(source.clone())).map_err(|_| Invalid)?;
+    let mut output = JsonMap::new();
+    if let Some(value) = declared.dimensions {
+        output.insert("dimensions".into(), Json::Number(value.into()));
+    }
+    if let Some(value) = declared.encoding_format {
+        output.insert("encoding_format".into(), Json::String(value));
+    }
+    if let Some(value) = declared.additional_input_modalities {
+        output.insert(
+            "additional_input_modalities".into(),
+            serde_json::to_value(value).map_err(|_| Invalid)?,
+        );
+    }
+    for (key, value) in source {
+        if matches!(
+            key.as_str(),
+            "dimensions" | "encoding_format" | "additional_input_modalities"
+        ) || value.is_null()
+        {
+            continue;
+        }
+        output.insert(key.clone(), value.clone());
+    }
+    Ok(Json::Object(output))
+}
+
+fn default_encoding_format() -> Option<String> {
+    Some("float".to_string())
 }
 
 fn dump<T>(raw: &Json) -> Valid<Json>

@@ -16,6 +16,7 @@
 pub mod auth;
 mod auto_update;
 mod catalog_reconcile;
+mod catalog_write;
 mod handler;
 mod item;
 mod report;

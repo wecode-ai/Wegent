@@ -1,7 +1,7 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import { createInterface } from 'node:readline'
-import type { Readable } from 'node:stream'
 import { join } from 'node:path'
+import type { Readable } from 'node:stream'
+import { createInterface } from 'node:readline'
 import type { HostPipeServer } from '../host/host-pipe.js'
 import { RuntimeSupervisor } from './runtime-supervisor.js'
 
@@ -27,13 +27,16 @@ export interface DshRuntimeOptions {
 export class DshRuntime {
   private readonly process: RuntimeSupervisor | null
   private child: ChildProcessWithoutNullStreams | null = null
+  private listeningUrl: string
 
   constructor(private readonly options: DshRuntimeOptions) {
+    this.listeningUrl = options.url
+    const args = options.args ? [...options.args] : undefined
     const browserAuthentication = options.env?.WEWORK_DSH_BROWSER_AUTH === '1'
     this.process = options.command
       ? new RuntimeSupervisor({
           command: options.command,
-          args: options.args,
+          args,
           cwd: options.cwd,
           env: {
             ...options.env,
@@ -54,10 +57,21 @@ export class DshRuntime {
               : {}),
           startTimeoutMs: options.startTimeoutMs,
           probe: async (child, signal) => {
+            if (new URL(options.url).port === '0') {
+              this.listeningUrl = await waitForListeningUrl(child, signal)
+              const portFlag = args?.indexOf('--port') ?? -1
+              if (args && portFlag >= 0 && args[portFlag + 1] === '0') {
+                args[portFlag + 1] = new URL(this.listeningUrl).port
+              }
+            }
             const request = browserAuthentication
-              ? await authenticateBrowser(child, options.url, signal)
+              ? await authenticateBrowser(child, this.listeningUrl, signal)
               : fetch
-            await waitForHttpEndpoints(runtimeProbeUrls(options), signal, request)
+            await waitForHttpEndpoints(
+              runtimeProbeUrls(options, this.listeningUrl),
+              signal,
+              request
+            )
           },
         })
       : null
@@ -88,7 +102,7 @@ export class DshRuntime {
   }
 
   url(): string {
-    return this.options.url
+    return this.listeningUrl
   }
 
   pid(): number | null {
@@ -101,9 +115,47 @@ export class DshRuntime {
   }
 }
 
-function runtimeProbeUrls(options: DshRuntimeOptions): string[] {
+function runtimeProbeUrls(options: DshRuntimeOptions, listeningUrl = options.url): string[] {
   const configured = options.probeUrls?.filter(Boolean)
-  return configured?.length ? configured : [options.probeUrl ?? options.url]
+  const urls = configured?.length ? configured : [options.probeUrl ?? options.url]
+  return urls.map(url => {
+    const probe = new URL(url)
+    if (probe.origin === new URL(options.url).origin) {
+      return new URL(`${probe.pathname}${probe.search}`, listeningUrl).href
+    }
+    return url
+  })
+}
+
+function waitForListeningUrl(
+  child: ChildProcessWithoutNullStreams,
+  signal: AbortSignal
+): Promise<string> {
+  if (signal.aborted) return Promise.reject(signal.reason)
+  return new Promise((resolve, reject) => {
+    const lines = createInterface({ input: child.stdout })
+    const cleanUp = () => {
+      signal.removeEventListener('abort', abort)
+      lines.removeAllListeners()
+      lines.close()
+      child.stdout.resume()
+    }
+    const abort = () => {
+      cleanUp()
+      reject(signal.reason)
+    }
+    lines.on('line', line => {
+      const match = /^dsh web: (http:\/\/127\.0\.0\.1:(\d+))(?:\s|$)/.exec(line)
+      if (!match || Number(match[2]) < 1 || Number(match[2]) > 65535) return
+      cleanUp()
+      resolve(match[1])
+    })
+    lines.once('close', () => {
+      cleanUp()
+      reject(new Error('DSH exited without announcing its listening URL'))
+    })
+    signal.addEventListener('abort', abort, { once: true })
+  })
 }
 
 async function waitForHttpEndpoints(

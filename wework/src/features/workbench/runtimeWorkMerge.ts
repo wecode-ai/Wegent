@@ -12,6 +12,10 @@ import {
   runtimeWorkspaceLocationKey,
 } from '@/lib/runtime-project-identity'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
+import {
+  getLocalRuntimeSourceIdentity,
+  qualifyLocalRuntimeSource,
+} from '@/lib/local-runtime-sidebar-identity'
 import { createWorkbenchDeviceResolver, type WorkbenchDeviceResolver } from '@/lib/workbench-device'
 import {
   normalizeRuntimeTaskSummary,
@@ -100,7 +104,16 @@ function mergeRuntimeProjects(
     for (const { work } of group.native) {
       if (!work.project.key) continue
       const owner = work.project.stateDeviceId ?? work.deviceWorkspaces[0]?.deviceId ?? ''
-      addGroupIndex(targets, runtimeProjectTargetKey(owner, work.project.key, devices), group)
+      addGroupIndex(
+        targets,
+        runtimeProjectTargetKey(
+          owner,
+          work.project.key,
+          devices,
+          getLocalRuntimeSourceIdentity(work.project)
+        ),
+        group
+      )
     }
   }
   for (const entry of references) {
@@ -119,7 +132,7 @@ function mergeRuntimeProjects(
     const target = matching?.size === 1 ? [...matching][0] : null
     const key = targetKey
       ? `target:${targetKey}`
-      : `reference:${runtimeProjectTargetKey(reference.stateDeviceId ?? '', reference.stateKey, devices)}`
+      : `reference:${runtimeProjectTargetKey(reference.stateDeviceId ?? '', reference.stateKey, devices, getLocalRuntimeSourceIdentity(entry.work.project))}`
     const group = target ?? groups.get(key) ?? { native: [], references: [] }
     group.references.push(entry)
     if (!target) groups.set(key, group)
@@ -158,7 +171,7 @@ function nativeProjectIdentity(work: RuntimeProjectWork, devices: WorkbenchDevic
     return `directory:${runtimeWorkspaceLocationKey(workspace, devices)}`
   }
   const owner = work.project.stateDeviceId ?? workspace?.deviceId ?? ''
-  return `project:${runtimeProjectTargetKey(owner, work.project.key, devices)}`
+  return `project:${runtimeProjectTargetKey(owner, work.project.key, devices, getLocalRuntimeSourceIdentity(work.project))}`
 }
 
 function addGroupIndex(index: Map<string, Set<ProjectGroup>>, key: string, group: ProjectGroup) {
@@ -214,9 +227,17 @@ function mergeProjectGroup(
   }
   if (descriptor) {
     const reference = getRuntimeProjectReference(descriptor)!
+    const ownerProjectKey = reference.projectKey ?? (native.length ? first.project.key : null)
     project = {
       ...project,
       id: descriptor.project.id ?? project.id ?? runtimeProjectUiId(project),
+      ...(ownerProjectKey
+        ? {
+            ownerDeviceId:
+              descriptor.project.ownerDeviceId ?? first.project.ownerDeviceId ?? reference.hostId,
+            ownerProjectKey,
+          }
+        : {}),
       sidebarStateKey: reference.stateKey,
       stateDeviceId: reference.stateDeviceId,
       kind: 'remote',
@@ -228,6 +249,8 @@ function mergeProjectGroup(
       active: descriptor.project.active,
       appearance: descriptor.project.appearance,
     }
+    const localSource = getLocalRuntimeSourceIdentity(descriptor.project)
+    if (localSource) project = qualifyLocalRuntimeSource(project, localSource)
     deviceWorkspaces = deviceWorkspaces.map(workspace => ({
       ...workspace,
       workspaceSource: 'remote',
@@ -299,7 +322,12 @@ function canonicalizeRuntimeWorkspace(
   workspace: RuntimeDeviceWorkspace,
   canonicalizer: WorkbenchDeviceResolver
 ): RuntimeDeviceWorkspace {
-  const device = canonicalizer.resolve(workspace.deviceId)
+  const localSource = getLocalRuntimeSourceIdentity(workspace)
+  const device = canonicalizer.resolve(
+    localSource?.deviceId === workspace.deviceId
+      ? localSource.runtimeInstanceId
+      : workspace.deviceId
+  )
   if (!device) return workspace
   return {
     ...workspace,

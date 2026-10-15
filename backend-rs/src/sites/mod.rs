@@ -269,7 +269,7 @@ async fn list_platform_sites(
             }
         }
         cursor = next_cursor(payload.as_ref())?;
-        if has_more || !cursor.as_deref().is_some_and(|value| !value.is_empty()) {
+        if has_more || cursor.as_deref().is_none_or(|value| value.is_empty()) {
             break;
         }
     }

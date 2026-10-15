@@ -1,5 +1,3 @@
-import { readdir } from 'node:fs/promises'
-
 import {
   distanceFromBottom,
   distanceFromTop,
@@ -1307,37 +1305,6 @@ async function waitForDurableAttachmentPreviews(executorHome, expectedCount) {
   throw new Error('The attachment-only tasks did not persist durable attachment previews')
 }
 
-async function waitForDeviceRuntimeAttachments(runtimeWorkspaceRoot, expectedCount) {
-  const startedAt = Date.now()
-  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
-    const entries = await readdir(runtimeWorkspaceRoot, { withFileTypes: true })
-    const attachments = (
-      await Promise.all(
-        entries
-          .filter(entry => entry.isDirectory())
-          .map(entry => findAttachmentFiles(join(runtimeWorkspaceRoot, entry.name, 'attachments')))
-      )
-    ).flat()
-    if (attachments.length >= expectedCount) return attachments
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
-  }
-  throw new Error('The remote device did not persist attachments in its task workspace directories')
-}
-
-async function findAttachmentFiles(directory) {
-  const entries = await readdir(directory, { withFileTypes: true }).catch(error => {
-    if (error.code === 'ENOENT') return []
-    throw error
-  })
-  const files = await Promise.all(
-    entries.map(entry => {
-      const path = join(directory, entry.name)
-      return entry.isDirectory() ? findAttachmentFiles(path) : [path]
-    })
-  )
-  return files.flat().filter(path => path.endsWith(ATTACHMENT_ONLY_FILENAME))
-}
-
 function readGitStatus(workspacePath) {
   return commandOutput('git', ['status', '--porcelain', '--untracked-files=all'], {
     cwd: workspacePath,
@@ -1351,11 +1318,15 @@ async function verifyAttachmentOnlySidebarLifecycle({
   composerSelector,
   control,
   executorHome,
-  runtimeWorkspaceRoot,
+  prepareConversation,
+  verifySubmittedTask,
+  verifyTaskAttachments,
   workspacePath,
 }) {
   const gitStatusBefore = workspacePath ? readGitStatus(workspacePath) : null
+  const verifiedTasks = []
   control.setScenario('attachment_only')
+  await prepareConversation?.()
   const rowsBeforeAttachmentOnly = new Set(
     JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
       testId.startsWith('runtime-local-task-row-')
@@ -1369,23 +1340,34 @@ async function verifyAttachmentOnlySidebarLifecycle({
     text: `${ATTACHMENT_ONLY_COMPLETION_TEXT}_1`,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  const firstVerifiedTask = await verifySubmittedTask?.()
+  const firstVerifiedRow = firstVerifiedTask
+    ? `runtime-local-task-row-${firstVerifiedTask.taskId}`
+    : null
+  if (firstVerifiedTask) verifiedTasks.push(firstVerifiedTask)
   const firstSnapshot = await waitForSnapshot(
     control,
     snapshot =>
-      snapshot.testIds.some(
-        testId =>
-          testId.startsWith('runtime-local-task-row-') && !rowsBeforeAttachmentOnly.has(testId)
-      ),
+      firstVerifiedRow
+        ? snapshot.testIds.includes(firstVerifiedRow)
+        : snapshot.testIds.some(
+            testId =>
+              testId.startsWith('runtime-local-task-row-') && !rowsBeforeAttachmentOnly.has(testId)
+          ),
     'The first attachment-only task did not appear in the sidebar'
   )
-  const firstTaskRow = firstSnapshot.testIds.find(
-    testId => testId.startsWith('runtime-local-task-row-') && !rowsBeforeAttachmentOnly.has(testId)
-  )
+  const firstTaskRow =
+    firstVerifiedRow ??
+    firstSnapshot.testIds.find(
+      testId =>
+        testId.startsWith('runtime-local-task-row-') && !rowsBeforeAttachmentOnly.has(testId)
+    )
   assert.ok(firstTaskRow, 'The first attachment-only task row was not found')
   await captureVerificationScreenshot(control, '02-attachment-only-first-completed.png')
 
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+  await prepareConversation?.()
   await attachAndSendOnlyFile(control, composerSelector)
   await captureVerificationScreenshot(control, '03-attachment-only-second-submitted.png')
   await control.awaitScenarioRequestCount('attachment_only', 2)
@@ -1393,12 +1375,15 @@ async function verifyAttachmentOnlySidebarLifecycle({
     text: `${ATTACHMENT_ONLY_COMPLETION_TEXT}_2`,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  const secondVerifiedTask = await verifySubmittedTask?.()
+  const secondVerifiedRow = secondVerifiedTask
+    ? `runtime-local-task-row-${secondVerifiedTask.taskId}`
+    : null
+  if (secondVerifiedTask) verifiedTasks.push(secondVerifiedTask)
   if (executorHome) {
     await waitForDurableAttachmentPreviews(executorHome, 2)
   }
-  if (runtimeWorkspaceRoot) {
-    await waitForDeviceRuntimeAttachments(runtimeWorkspaceRoot, 2)
-  }
+  await verifyTaskAttachments?.(verifiedTasks)
   if (workspacePath) {
     assert.equal(
       readGitStatus(workspacePath),
@@ -1411,20 +1396,24 @@ async function verifyAttachmentOnlySidebarLifecycle({
     control,
     snapshot =>
       snapshot.testIds.includes(firstTaskRow) &&
-      snapshot.testIds.some(
-        testId =>
-          testId.startsWith('runtime-local-task-row-') &&
-          testId !== firstTaskRow &&
-          !rowsBeforeAttachmentOnly.has(testId)
-      ),
+      (secondVerifiedRow
+        ? snapshot.testIds.includes(secondVerifiedRow)
+        : snapshot.testIds.some(
+            testId =>
+              testId.startsWith('runtime-local-task-row-') &&
+              testId !== firstTaskRow &&
+              !rowsBeforeAttachmentOnly.has(testId)
+          )),
     'A same-title attachment-only task disappeared after the authoritative sidebar refresh'
   )
-  const secondTaskRow = twoTaskSnapshot.testIds.find(
-    testId =>
-      testId.startsWith('runtime-local-task-row-') &&
-      testId !== firstTaskRow &&
-      !rowsBeforeAttachmentOnly.has(testId)
-  )
+  const secondTaskRow =
+    secondVerifiedRow ??
+    twoTaskSnapshot.testIds.find(
+      testId =>
+        testId.startsWith('runtime-local-task-row-') &&
+        testId !== firstTaskRow &&
+        !rowsBeforeAttachmentOnly.has(testId)
+    )
   assert.ok(secondTaskRow, 'The second attachment-only task row was not found')
   const expectedRows = [firstTaskRow, secondTaskRow]
   await captureVerificationScreenshot(control, '04-attachment-only-two-tasks-after-refresh.png')

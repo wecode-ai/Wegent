@@ -42,6 +42,37 @@ fn setup() -> (
 }
 
 #[test]
+fn queued_nested_runtime_payload_requires_catalog_before_claim() {
+    let (_directory, store, project, agent, issue, catalog) = setup();
+    assert!(!store.has_queued_executions().unwrap());
+    let run = store
+        .enqueue_execution(
+            &project.id,
+            &issue.id,
+            &agent.id,
+            json!({"message":"Resume manager"}),
+            None,
+        )
+        .unwrap();
+    let payload = json!({"runtimePayload": run.execution_payload});
+    store
+        .connection()
+        .unwrap()
+        .execute(
+            "UPDATE loop_item_executions SET execution_payload=?1 WHERE id=?2",
+            params![payload.to_string(), run.id],
+        )
+        .unwrap();
+    assert!(store.has_queued_executions().unwrap());
+    let claimed = store
+        .claim_next_execution_with_catalog(Some("runner-a"), "instance", 300, Some(&catalog))
+        .unwrap()
+        .unwrap();
+    assert!(claimed.execution_payload.unwrap()["runnerRouting"].is_object());
+    assert!(!store.has_queued_executions().unwrap());
+}
+
+#[test]
 fn native_claim_binds_issue_and_rechecks_removed_model_and_can_cancel() {
     let (_directory, store, project, agent, issue, catalog) = setup();
     let run = store

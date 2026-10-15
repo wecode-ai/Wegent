@@ -89,6 +89,7 @@ export interface CollaborationWorkspaceControllerCommands {
   ): Promise<void>;
   loadProjectSnapshot(
     projectId: string,
+    options?: { invalidate?: boolean },
   ): Promise<WorkspaceBoardSnapshot | null>;
   loadMoreExternalColumn(status: string): Promise<void>;
   getIssue(issueId: string): Promise<CollaborationIssue | null>;
@@ -1108,7 +1109,8 @@ export function createCollaborationWorkspaceControllerCommands({
       }
     },
     loadProject,
-    async loadProjectSnapshot(projectId) {
+    async loadProjectSnapshot(projectId, options) {
+      if (options?.invalidate) markProjectMutated(projectId);
       const mutationGeneration = projectMutationGeneration(projectId);
       try {
         const project = catalogProjects.find(

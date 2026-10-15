@@ -747,7 +747,7 @@ full_desktop_expected="${full_desktop_expected/\"segments\":\"resilience\"/\"seg
 full_desktop_expected="${full_desktop_expected/\"segments\":\"project-automation\"/\"segments\":\"project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,collaboration-local-group-coordinate,collaboration-human-round-resume\"}"
 full_desktop_expected="${full_desktop_expected/\"segments\":\"project-assignment-notification,split-workbench,priority-filter\"/\"segments\":\"project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention\"}"
 full_desktop_expected="${full_desktop_expected/\"segments\":\"local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome\"/\"segments\":\"local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification\"}"
-full_desktop_expected="${full_desktop_expected/temporary-chat,local-file-preview,conversation-state,reply-predictions/temporary-chat,local-file-preview,conversation-state,reply-predictions,model-settings}"
+full_desktop_expected="${full_desktop_expected/temporary-chat,local-file-preview,conversation-state,reply-predictions/temporary-chat,local-file-preview,conversation-state,reply-predictions,model-settings,codex-native-catalog}"
 full_desktop_expected="${full_desktop_expected/\"segments\":\"codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery\"/\"segments\":\"codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,model-overload-recovery\"}"
 
 assert_desktop_case "drawing implementation and scenario select their desktop regression" \
@@ -764,6 +764,16 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "runner-only changes retain full coverage" \
   "$full_desktop_expected" \
   "wework/e2e/desktop/task-flow.e2e.mjs"
+
+assert_desktop_case "native Codex catalog changes select their regression" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"codex-native-catalog"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "executor/src/server/codex_model_catalog.rs" \
+  "executor/src/server/codex_model_catalog_tests.rs" \
+  "wework/e2e/desktop/scenarios/codex-native-catalog.scenario.mjs"
 
 assert_desktop_case "collaboration executor runtime changes retain full coverage including Issue Dispatch" \
   "$full_desktop_expected" \
@@ -1433,6 +1443,8 @@ for workflow in lint.yml test.yml e2e-tests.yml wework-e2e.yml; do
 done
 
 wework_workflow="$script_dir/../workflows/wework-e2e.yml"
+node "$script_dir/test-wework-windows-ci.mjs"
+node "$script_dir/test-wework-executor-debugger.mjs"
 if [[ "$(grep -c "github.event.action != 'labeled'" "$wework_workflow")" -lt 2 ]]; then
   printf 'Wework non-memory E2E jobs must filter pull_request label events\n' >&2
   exit 1
@@ -1600,8 +1612,7 @@ wework_windows_desktop_core_build_job="$(
     "$wework_workflow"
 )"
 if [[ "$wework_windows_desktop_core_build_job" != *"runs-on: windows-latest"* ]] ||
-  [[ "$wework_windows_desktop_core_build_job" != *"github.event_name != 'merge_group'"* ]] ||
-  [[ "$wework_windows_desktop_core_build_job" != *"github.event.action == 'labeled'"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"needs.changes.outputs.windows_desktop_core_e2e == 'true'"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"pnpm --filter wework ai:verify:electron:build"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"WeWork-win32-x64/WeWork.exe"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"resources/bin/wegent-executor.exe"* ]] ||
@@ -1620,8 +1631,7 @@ wework_windows_desktop_core_job="$(
     "$wework_workflow"
 )"
 if [[ "$wework_windows_desktop_core_job" != *"runs-on: windows-latest"* ]] ||
-  [[ "$wework_windows_desktop_core_job" != *"github.event_name != 'merge_group'"* ]] ||
-  [[ "$wework_windows_desktop_core_job" != *"github.event.action == 'labeled'"* ]] ||
+  [[ "$wework_windows_desktop_core_job" != *"needs.changes.outputs.windows_desktop_core_e2e == 'true'"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *"fromJSON(needs.changes.outputs.wework_desktop_core_e2e_matrix)"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *"max-parallel: 17"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"'* ]] ||

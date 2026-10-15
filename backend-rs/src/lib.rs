@@ -98,6 +98,7 @@ mod cloud_projects_runtime_default;
 pub mod config;
 mod connector_runtime;
 mod crd;
+mod delivery_storage;
 mod device_identity;
 mod device_records;
 mod device_running_tasks;
@@ -143,6 +144,7 @@ pub mod media_policy;
 mod models_error_recommendations;
 mod models_unified;
 mod oidc_callback;
+mod oidc_cli_poll;
 mod oidc_login;
 mod oidc_service;
 pub mod permissions;
@@ -220,6 +222,7 @@ mod users_me;
 mod users_me_available_channels;
 mod users_me_mcps_providers_services;
 mod users_me_proxy_config;
+mod users_me_update;
 mod users_me_wegent_runtime_token;
 mod users_runtime_configs;
 mod users_search;
@@ -240,6 +243,7 @@ mod work_queues;
 mod workspace_archive;
 mod workspace_members;
 mod workspaces;
+mod workspaces_execution_environments;
 
 // Shared route registrations stay at crate scope for the HTTP macros.
 // Public routes are composed by startup::routes.

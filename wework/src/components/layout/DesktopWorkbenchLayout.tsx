@@ -1110,6 +1110,7 @@ export function DesktopWorkbenchLayout({
       onStartGitCloneProject={startGitCloneProject}
       onRetryGitCloneOperation={retryGitCloneOperation}
       onDismissGitCloneOperation={dismissGitCloneOperation}
+      projectDevicePluginApi={services.projectDevicePluginApi}
       projectSpaceApis={availableProjectSpaceApis}
       models={projectChat.models}
       onOpenSettings={options => openSettings(options)}

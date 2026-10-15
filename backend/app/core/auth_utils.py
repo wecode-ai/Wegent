@@ -44,34 +44,14 @@ def is_api_key(token: str) -> bool:
     return token.startswith(API_KEY_PREFIX) if token else False
 
 
-def verify_api_key(
+def find_valid_api_key(
     db: Session,
     api_key: str,
     *,
-    update_last_used_at: bool = True,
-) -> Optional[User]:
-    """
-    Verify API Key and return the associated user.
-
-    Only supports Personal type API Keys. Service keys are not supported
-    for executor authentication.
-
-    Args:
-        db: Database session
-        api_key: API Key string (must start with 'wg-')
-        update_last_used_at: Whether to update the key usage timestamp.
-
-    Returns:
-        User object if verification succeeds, None otherwise
-
-    Note:
-        - API Key must be active (is_active=True)
-        - API Key must not be expired
-        - Only personal keys (key_type='personal') are accepted
-        - User must exist and be active
-    """
-    if not api_key or not is_api_key(api_key):
-        logger.warning("[auth_utils] Invalid API key format")
+    key_type: str,
+) -> Optional[APIKey]:
+    """Find an active, unexpired key of the requested type without writing."""
+    if not is_api_key(api_key):
         return None
 
     # Calculate SHA256 hash of the API key
@@ -82,13 +62,13 @@ def verify_api_key(
         db.query(APIKey)
         .filter(
             APIKey.key_hash == key_hash,
+            APIKey.key_type == key_type,
             APIKey.is_active == True,  # noqa: E712
         )
         .first()
     )
 
     if not api_key_record:
-        logger.warning("[auth_utils] API key not found or inactive")
         return None
 
     # Check if API key is expired
@@ -99,12 +79,23 @@ def verify_api_key(
         )
         return None
 
-    # Only accept personal keys for executor authentication
-    if api_key_record.key_type != KEY_TYPE_PERSONAL:
-        logger.warning(
-            f"[auth_utils] Service key not allowed for executor auth: "
-            f"name={api_key_record.name}, type={api_key_record.key_type}"
-        )
+    return api_key_record
+
+
+def verify_api_key(
+    db: Session,
+    api_key: str,
+    *,
+    update_last_used_at: bool = True,
+) -> Optional[User]:
+    """Verify a personal API key and return its active owner.
+
+    Service keys are not supported for executor authentication. Set
+    ``update_last_used_at=False`` for a read-only owner lookup.
+    """
+    api_key_record = find_valid_api_key(db, api_key, key_type=KEY_TYPE_PERSONAL)
+    if not api_key_record:
+        logger.warning("[auth_utils] Invalid, inactive, or expired personal API key")
         return None
 
     # Get the associated user

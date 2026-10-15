@@ -64,14 +64,17 @@ fn project_provider_config(metadata: &Option<Json<ProjectMetadata>>) -> Option<&
 }
 
 /// Typed metadata for a binding row. Only `workflow_node_id`,
-/// `model_selection`, `change_requests`, and the dispatch/assignment ids
-/// rendered by `LoopItemTaskBindingResponse` are consumed.
+/// `model_selection`, `execution_context`, `change_requests`, and the
+/// dispatch/assignment ids rendered by `LoopItemTaskBindingResponse` are
+/// consumed.
 #[derive(Debug, Deserialize)]
 pub(crate) struct BindingMetadata {
     #[serde(default)]
     workflow_node_id: Option<String>,
     #[serde(default)]
     model_selection: Option<brz_json::RawJson>,
+    #[serde(default)]
+    execution_context: Option<brz_json::RawJson>,
     #[serde(default)]
     human_assignment_id: Option<String>,
     #[serde(default)]
@@ -230,6 +233,26 @@ impl BotConfig<'_> {
     pub(crate) fn workspace_binding(&self) -> Option<&serde_json::Map<String, serde_json::Value>> {
         match self.raw("workspace_binding") {
             Some(serde_json::Value::Object(map)) => Some(map),
+            _ => None,
+        }
+    }
+
+    /// `bot_config(row)["execution_policy"]` (`agent_to_view`): the stored
+    /// policy object, else `None`.
+    pub(crate) fn execution_policy(&self) -> Option<brz_json::RawJson> {
+        self.policy("execution_policy")
+    }
+
+    /// `bot_config(row)["model_policy"]` (`agent_to_view`): the stored policy
+    /// object, else `None`.
+    pub(crate) fn model_policy(&self) -> Option<brz_json::RawJson> {
+        self.policy("model_policy")
+    }
+
+    /// A stored policy object rendered as raw JSON, or `None`.
+    fn policy(&self, key: &str) -> Option<brz_json::RawJson> {
+        match self.raw(key) {
+            Some(value @ serde_json::Value::Object(_)) => Some(brz_json::raw_json(value)),
             _ => None,
         }
     }
@@ -425,6 +448,20 @@ impl BindingRow {
             .metadata
             .as_ref()
             .and_then(|json| json.0.model_selection.as_ref())
+            .and_then(|raw| serde_json::from_str(raw.get()).ok());
+        value
+            .filter(|value: &serde_json::Value| value.is_object())
+            .as_ref()
+            .map(brz_json::raw_json)
+    }
+
+    /// `LoopItemTaskBinding.execution_context`: the metadata value when it is
+    /// a JSON object, otherwise `None`.
+    pub fn execution_context(&self) -> Option<brz_json::RawJson> {
+        let value: Option<serde_json::Value> = self
+            .metadata
+            .as_ref()
+            .and_then(|json| json.0.execution_context.as_ref())
             .and_then(|raw| serde_json::from_str(raw.get()).ok());
         value
             .filter(|value: &serde_json::Value| value.is_object())

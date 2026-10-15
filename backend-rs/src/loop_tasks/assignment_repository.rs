@@ -19,7 +19,7 @@ use super::loop_repository::{ItemMetadata, ProjectMetadata};
 /// plain column expressions, without the `AS` aliases of the labeled
 /// `db.query(...)` form. Column order follows the mapped table.
 pub(crate) const LOOP_ITEMS_UNLABELED: &str = "\
-     loop_items.id, loop_items.resource_type, loop_items.project_space, loop_items.cloud_project_id, loop_items.parent_id, loop_items.loop_item_id, loop_items.delivery_id, loop_items.public_id, loop_items.project_key, loop_items.name, loop_items.title, loop_items.description, loop_items.storage_prefix, loop_items.sequence_number, loop_items.next_item_number, loop_items.created_by_user_id, loop_items.updated_by_user_id, loop_items.assignee_user_id, loop_items.user_id, loop_items.added_by_user_id, loop_items.source, loop_items.status, loop_items.priority, loop_items.due_at, loop_items.sort_order, loop_items.current_delivery_id, loop_items.local_project_id, loop_items.device_id, loop_items.is_default, loop_items.task_user_id, loop_items.assignee_agent_id, loop_items.assignee_team_id, loop_items.task_id, loop_items.task_title, loop_items.backend_task_id, loop_items.linked_by_user_id, loop_items.linked_at, loop_items.unlinked_at, loop_items.path, loop_items.kind, loop_items.display_name, loop_items.relative_path, loop_items.object_key, loop_items.content_type, loop_items.size_bytes, loop_items.sha256, loop_items.source_task_binding_id, loop_items.source_task_snapshot, loop_items.markdown_object_key, loop_items.chat_object_key, loop_items.manifest_object_key, loop_items.metadata, loop_items.version, loop_items.created_at, loop_items.updated_at, loop_items.completed_at, loop_items.delivered_at, loop_items.deleted_at";
+     loop_items.id, loop_items.resource_type, loop_items.project_space, loop_items.cloud_project_id, loop_items.parent_id, loop_items.loop_item_id, loop_items.delivery_id, loop_items.public_id, loop_items.project_key, loop_items.name, loop_items.title, loop_items.description, loop_items.storage_prefix, loop_items.sequence_number, loop_items.next_item_number, loop_items.created_by_user_id, loop_items.updated_by_user_id, loop_items.assignee_user_id, loop_items.user_id, loop_items.added_by_user_id, loop_items.source, loop_items.status, loop_items.priority, loop_items.start_at, loop_items.due_at, loop_items.sort_order, loop_items.current_delivery_id, loop_items.local_project_id, loop_items.device_id, loop_items.is_default, loop_items.task_user_id, loop_items.assignee_agent_id, loop_items.assignee_team_id, loop_items.task_id, loop_items.task_title, loop_items.backend_task_id, loop_items.linked_by_user_id, loop_items.linked_at, loop_items.unlinked_at, loop_items.path, loop_items.kind, loop_items.display_name, loop_items.relative_path, loop_items.object_key, loop_items.content_type, loop_items.size_bytes, loop_items.sha256, loop_items.source_task_binding_id, loop_items.source_task_snapshot, loop_items.markdown_object_key, loop_items.chat_object_key, loop_items.manifest_object_key, loop_items.metadata, loop_items.version, loop_items.created_at, loop_items.updated_at, loop_items.completed_at, loop_items.delivered_at, loop_items.deleted_at";
 
 /// One `db.get(LoopItem, id)` row: the unlabeled `loop_items` projection whose
 /// `resource_type` is the model's polymorphic `task` identity.
@@ -140,6 +140,17 @@ mod tests {
                  AND loop_items.resource_type IN ('task')"
             ))
         );
+    }
+
+    /// The unlabeled projection is the source's complete mapped column list
+    /// (`db.get` renders every column), so `start_at`, which sits between
+    /// `priority` and `due_at`, must be present to match the recorded
+    /// primary-key lookup.
+    #[test]
+    fn unlabeled_projection_carries_start_at() {
+        assert!(LOOP_ITEMS_UNLABELED.contains(
+            "loop_items.status, loop_items.priority, loop_items.start_at, loop_items.due_at, loop_items.sort_order"
+        ));
     }
 
     #[tokio::test]

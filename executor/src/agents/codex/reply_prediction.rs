@@ -251,6 +251,7 @@ mod tests {
         _directory: tempfile::TempDir,
         client: CodexAppServerClient,
         log: PathBuf,
+        // Keep launch environment stable until every RPC and fixture cleanup finishes.
         _environment: LaunchEnvironment,
     }
 

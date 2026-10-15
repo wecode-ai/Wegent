@@ -1,18 +1,8 @@
-import {
-  chmod,
-  cp,
-  lstat,
-  mkdir,
-  readFile,
-  readdir,
-  realpath,
-  rm,
-  symlink,
-  writeFile,
-} from 'node:fs/promises'
+import { chmod, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import semver from 'semver'
 import { hashComponentPath } from './component-update-manager.js'
+import { copyManagedPlugin } from './managed-plugin-files.js'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
 
 export const CORE_DSH_VERSION = '0.2.0-rc.2'
@@ -88,6 +78,7 @@ interface RuntimeIdentity {
 }
 
 interface ProfileStamp extends RuntimeIdentity {
+  managedPluginCopyVersion: number
   managedUiPlugins: boolean
   corePluginsFingerprint: string
 }
@@ -295,6 +286,7 @@ async function prepareProfile(options: {
   const profileRoot = join(options.dshHome, 'profiles', PROFILE_NAME)
   const workspacePath = join(profileRoot, 'pnpm-workspace.yaml')
   const expectedStamp: ProfileStamp = {
+    managedPluginCopyVersion: 1,
     dshVersion: options.runtime.version,
     role: 'core',
     sourceFingerprint: options.runtime.sourceFingerprint,
@@ -394,49 +386,6 @@ async function prepareProfile(options: {
   await writeFile(join(profileRoot, PROFILE_STAMP), `${JSON.stringify(expectedStamp, null, 2)}\n`, {
     mode: 0o600,
   })
-}
-
-export async function copyManagedPlugin(
-  source: string,
-  destination: string,
-  options: {
-    platform?: NodeJS.Platform
-    linkDirectory?: typeof symlink
-  } = {}
-): Promise<void> {
-  const platform = options.platform ?? process.platform
-  if (platform !== 'win32') {
-    await cp(source, destination, { recursive: true })
-    return
-  }
-  await copyWindowsEntry(source, destination, options.linkDirectory ?? symlink)
-}
-
-async function copyWindowsEntry(
-  source: string,
-  destination: string,
-  linkDirectory: typeof symlink
-): Promise<void> {
-  const metadata = await lstat(source)
-  if (metadata.isSymbolicLink()) {
-    const target = await realpath(source)
-    const targetMetadata = await lstat(target)
-    if (targetMetadata.isDirectory()) {
-      await linkDirectory(target, destination, 'junction')
-    } else {
-      await cp(target, destination)
-    }
-    return
-  }
-  if (!metadata.isDirectory()) {
-    await cp(source, destination)
-    return
-  }
-  await mkdir(destination, { recursive: true, mode: 0o700 })
-  const entries = await readdir(source)
-  for (const entry of entries) {
-    await copyWindowsEntry(join(source, entry), join(destination, entry), linkDirectory)
-  }
 }
 
 async function ensureCoreWorkspace(workspacePath: string): Promise<void> {
@@ -665,6 +614,7 @@ async function stampMatches(path: string, expected: ProfileStamp): Promise<boole
   try {
     const current = JSON.parse(await readFile(path, 'utf8')) as ProfileStamp
     return (
+      current.managedPluginCopyVersion === expected.managedPluginCopyVersion &&
       current.dshVersion === expected.dshVersion &&
       current.sourceFingerprint === expected.sourceFingerprint &&
       current.managedUiPlugins === expected.managedUiPlugins &&

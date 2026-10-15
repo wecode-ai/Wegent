@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+trap 'printf "CI cache policy tests failed at line %s\n" "$LINENO" >&2' ERR
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 workflow_dir="$script_dir/../workflows"
@@ -337,6 +338,11 @@ if ! grep -Fq "$docker_cache_ref" "$workflow_dir/e2e-tests.yml" ||
 fi
 
 node_action="$action_dir/setup-node-workspace/action.yml"
+if ! grep -Fq "if: runner.os != 'Windows'" "$node_action" ||
+  ! grep -Fq "if: runner.os == 'Windows' || steps.workspace-cache.outputs.cache-hit != 'true'" "$node_action" ||
+  ! grep -Fq 'node-24-pnpm-store-v1-' "$node_action"; then
+  fail "Windows must rebuild dependency links from the pnpm store instead of archiving node_modules"
+fi
 workspace_manifests="hashFiles('pnpm-lock.yaml', 'package.json', 'pnpm-workspace.yaml', 'frontend/package.json', 'wework/package.json', 'packages/*/package.json')"
 # GitHub expressions are matched literally in action source.
 # shellcheck disable=SC2016
@@ -546,7 +552,12 @@ jobs = YAML.load_file(ARGV[0])['jobs']
   ['workbench-mode', 'native-window-startup'].each do |segment|
     abort "#{name} must install Electron for #{segment}" unless step['if'].include?("contains(matrix.segments, '#{segment}')")
   end
-  abort "#{name} must use the locked Electron toolchain" unless step['run'] == 'pnpm --dir wework/electron install --frozen-lockfile'
+  expected_commands = [
+    'pnpm --dir wework/electron install --frozen-lockfile',
+    %q{pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"}
+  ]
+  commands = step['run'].lines.map(&:strip).reject(&:empty?)
+  abort "#{name} must install and verify the locked Electron toolchain" unless commands == expected_commands
 end
 RUBY
 then

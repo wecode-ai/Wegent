@@ -1,3 +1,4 @@
+import { createLocalProjectDevicePluginApi } from '@/api/projectDevicePlugins'
 import { requestRunnerSelection } from '@/lib/runner-selection'
 import {
   cloudRunnerModels,
@@ -146,12 +147,22 @@ import type {
 import type { WorkspaceTextFileResponse, WorkspaceTreeResponse } from '@/types/workspace-files'
 import {
   getLocalExecutorStatus,
+  ensureLocalExecutorAvailable,
   ensureLocalExecutorStarted,
   requestLocalExecutor,
   subscribeLocalExecutorEvents,
   type LocalExecutorEvent,
   type LocalExecutorStatus,
 } from '@/desktop/localExecutor'
+import {
+  assertLocalRuntimeSidebarIdentity,
+  localRuntimeSidebarIdentity,
+  isInvalidLocalRuntimeIdentityError,
+  qualifyLocalRuntimeSource,
+  qualifyLocalRuntimeWork,
+  type LocalRuntimeSidebarOptions,
+  type LocalRuntimeSidebarIdentity,
+} from '@/lib/local-runtime-sidebar-identity'
 import {
   listLocalWorkspaceEntries,
   readLocalWorkspaceFileChunk,
@@ -478,9 +489,15 @@ interface CloudModelGateway {
 }
 
 interface RuntimeWorkIpcOptions {
+  getLocalRuntimeSidebarIdentity?: WorkbenchServices['getLocalRuntimeSidebarIdentity']
   resolveDeviceId?: (data?: Record<string, unknown>) => Promise<string>
   normalizeDeviceRecord?: <T extends Record<string, unknown>>(data: T, deviceId: string) => T
-  adaptListResponse?: (response: unknown, deviceId: string) => RuntimeWorkListResponse
+  adaptListResponse?: (
+    response: unknown,
+    deviceId: string,
+    options?: RuntimeWorkListRequestOptions,
+    localSidebarIdentity?: LocalRuntimeSidebarIdentity
+  ) => RuntimeWorkListResponse
   cloudModelGateway?: CloudModelGateway
   resolveProxy?: RuntimeProxyResolver
   user?: User
@@ -575,7 +592,7 @@ function localDeviceFromStatus(status: LocalExecutorStatus): DeviceInfo {
   const online = status.running && status.ready !== false && !status.error
   const device = {
     id: 0,
-    device_id: status.deviceId || LOCAL_DEVICE_ID,
+    device_id: localDeviceIdFromStatus(status),
     name: 'Local Executor',
     status: online ? ('online' as const) : ('offline' as const),
     is_default: true,
@@ -592,7 +609,9 @@ function localDeviceFromStatus(status: LocalExecutorStatus): DeviceInfo {
     bind_shell: 'claudecode' as const,
     runtime_transfer_host: null,
   }
-  return device
+  return online && status.deviceId?.trim() && status.runtimeInstanceId?.trim()
+    ? qualifyLocalRuntimeSource(device, localRuntimeSidebarIdentity(status))
+    : device
 }
 
 function localDeviceIdFromStatus(status: LocalExecutorStatus | null | undefined): string {
@@ -2076,7 +2095,8 @@ async function createLocalRuntimeSendPayload(
 
 function normalizeRuntimeWorkDeviceId(
   runtimeWork: RuntimeWorkListResponse,
-  localDeviceId: string
+  localDeviceId: string,
+  localSidebarIdentity?: LocalRuntimeSidebarIdentity
 ): RuntimeWorkListResponse {
   const normalizeWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => {
     const workspaceRecord = recordValue(workspace)
@@ -2128,7 +2148,17 @@ function normalizeRuntimeWorkDeviceId(
       ...project,
       project: {
         ...project.project,
-        stateDeviceId: project.project.stateDeviceId ?? localDeviceId,
+        stateDeviceId: localSidebarIdentity
+          ? localDeviceId
+          : (project.project.stateDeviceId ?? localDeviceId),
+        ...(localSidebarIdentity &&
+        project.project.source !== 'remote_project' &&
+        project.project.kind !== 'remote' &&
+        project.deviceWorkspaces.every(
+          workspace => !workspace.remoteHostId && workspace.workspaceSource !== 'remote'
+        )
+          ? { ownerDeviceId: localDeviceId }
+          : {}),
       },
       deviceWorkspaces: project.deviceWorkspaces.map(normalizeWorkspace),
     })),
@@ -2171,11 +2201,17 @@ function normalizeLocalDeviceRecord<T extends Record<string, unknown>>(
 
 function adaptRuntimeWorkListResponse(
   response: unknown,
-  localDeviceId: string
+  localDeviceId: string,
+  options?: RuntimeWorkListRequestOptions,
+  localSidebarIdentity?: LocalRuntimeSidebarIdentity
 ): RuntimeWorkListResponse {
   const record = recordValue(response)
   if (Array.isArray(record.projects) && Array.isArray(record.chats)) {
-    return normalizeRuntimeWorkDeviceId(response as RuntimeWorkListResponse, localDeviceId)
+    return normalizeRuntimeWorkDeviceId(
+      response as RuntimeWorkListResponse,
+      localDeviceId,
+      localSidebarIdentity
+    )
   }
 
   const workspaces = Array.isArray(record.workspaces)
@@ -2262,7 +2298,9 @@ function adaptRuntimeWorkListResponse(
       ? workspace.projectRoots
       : Array.isArray(workspace.project_roots)
         ? workspace.project_roots
-        : [workspacePath]
+        : options?.requireExplicitProjectRoots
+          ? undefined
+          : [workspacePath]
     const projectKind =
       stringValue(workspace.projectKind) ?? stringValue(workspace.project_kind) ?? 'local'
     const projectSource =
@@ -2335,23 +2373,33 @@ function adaptRuntimeWorkListResponse(
         : null
     const remoteTarget =
       projectSource === 'remote_project' ? parseRuntimeRemoteProjectStateId(projectKey) : null
+    const ownerProjectKey =
+      stringValue(workspace.ownerProjectKey) ??
+      remoteTarget?.projectKey ??
+      (projectSource === 'remote_project' ? null : projectKey)
     const projectWork: RuntimeWorkListResponse['projects'][number] = {
       project: {
         key: projectKey,
         ...(projectSource === 'remote_project' ? { sidebarStateKey: projectKey } : {}),
         id: runtimeProjectUiId({
-          key: remoteTarget?.projectKey ?? projectKey,
-          stateDeviceId: remoteTarget ? workspaceDeviceId : localDeviceId,
+          key: ownerProjectKey ?? projectKey,
+          stateDeviceId: ownerProjectKey ? workspaceDeviceId : localDeviceId,
           name: label,
         }),
         name: label,
         kind: projectKind,
         source: projectSource,
         stateDeviceId: localDeviceId,
-        roots: rawRoots
-          .map(root => stringValue(root))
-          .filter((root): root is string => Boolean(root))
-          .map(path => ({ kind: 'local', path })),
+        ownerDeviceId: workspaceDeviceId,
+        ownerProjectKey: ownerProjectKey ?? null,
+        ...(rawRoots
+          ? {
+              roots: rawRoots
+                .map(root => stringValue(root))
+                .filter((root): root is string => Boolean(root))
+                .map(path => ({ kind: 'local' as const, path })),
+            }
+          : {}),
         sidebarOrder:
           typeof projectSidebarOrder === 'number' && Number.isInteger(projectSidebarOrder)
             ? projectSidebarOrder
@@ -2436,6 +2484,21 @@ export function createRuntimeWorkApiFromIpc(
     }
   }
   const resolveProxy = options.resolveProxy
+
+  const requestLocalSidebarMutation = async (
+    method: string,
+    data: RuntimeRemoteProjectsSyncRequest | RuntimeProjectActivateRequest,
+    sidebarOptions?: LocalRuntimeSidebarOptions
+  ): Promise<RuntimeSidebarMutationResponse> => {
+    const identity = sidebarOptions?.localSidebarIdentity
+    if (!identity) return requestWithLocalDevice(method, data)
+    assertLocalRuntimeSidebarIdentity(
+      identity,
+      (await options.getLocalRuntimeSidebarIdentity?.()) ?? null
+    )
+    if (data.deviceId !== identity.deviceId) throw new Error('local-sidebar-runtime-changed')
+    return request(method, { ...data })
+  }
 
   const prepareRuntimeModel = async (data: RuntimeModelPrepareRequest): Promise<boolean> => {
     const selectedModel = findLocalModelConfigByModelName(data.modelId)
@@ -2627,7 +2690,11 @@ export function createRuntimeWorkApiFromIpc(
     async listRuntimeWork(
       requestOptions?: RuntimeWorkListRequestOptions
     ): Promise<RuntimeWorkListResponse> {
-      const localDeviceId = await getDefaultDeviceId()
+      const identity = await options.getLocalRuntimeSidebarIdentity?.()
+      if (options.getLocalRuntimeSidebarIdentity && !identity) {
+        throw new Error('local-sidebar-identity-unavailable')
+      }
+      const localDeviceId = requestOptions?.deviceId ?? (await getDefaultDeviceId())
       const startedAt = nowMs()
       try {
         const response = await request(
@@ -2635,8 +2702,19 @@ export function createRuntimeWorkApiFromIpc(
           requestOptions?.preferCached ? { preferCached: true } : {},
           localDeviceId
         )
-        const runtimeWork = adaptListResponse(response, localDeviceId)
-        return runtimeWork
+        if (identity) {
+          assertLocalRuntimeSidebarIdentity(
+            identity,
+            (await options.getLocalRuntimeSidebarIdentity?.()) ?? null
+          )
+        }
+        const runtimeWork = adaptListResponse(
+          response,
+          identity?.deviceId ?? localDeviceId,
+          requestOptions,
+          identity ?? undefined
+        )
+        return identity ? qualifyLocalRuntimeWork(runtimeWork, identity) : runtimeWork
       } catch (error) {
         console.error(`[Wework] ${transportLabel} runtime IPC list failed`, {
           elapsedMs: Math.round(nowMs() - startedAt),
@@ -2790,11 +2868,40 @@ export function createRuntimeWorkApiFromIpc(
       const localDeviceId = await resolveDeviceId({ address: data.address })
       const normalizedAddress = normalizeLocalDeviceRecord({ address: data.address }, localDeviceId)
         .address as RuntimeTaskAddress
+      // Persisted execution profiles are redacted. Rebuild the selected model
+      // with current credentials, just as a continuation or fork does.
+      const handle = recordValue(normalizedAddress.runtimeHandle)
+      const selection =
+        data.modelSelection ?? modelSelectionValue(handle.modelSelection ?? handle.model_selection)
+      let modelConfig: Record<string, unknown> | undefined
+      if (selection?.modelName) {
+        if (
+          !(await prepareRuntimeModel({
+            deviceId: localDeviceId,
+            modelId: selection.modelName,
+          }))
+        ) {
+          throw modelCatalogSyncCancelled()
+        }
+        modelConfig = await applyRuntimeModelOptions(
+          localRuntimeModelConfig(
+            'codex',
+            requireLocalCodexCatalog,
+            selection.modelName,
+            selection.modelType,
+            selection.options,
+            options.cloudModelGateway
+          ),
+          selection.options,
+          resolveProxy
+        )
+      }
       return request(
         'runtime.tasks.compact',
         {
           taskId: normalizedAddress.taskId,
           address: normalizedAddress,
+          ...(modelConfig ? { modelConfig } : {}),
         },
         localDeviceId
       )
@@ -2966,14 +3073,16 @@ export function createRuntimeWorkApiFromIpc(
       return requestWithLocalDevice('runtime.sidebar.projects.appearance', data)
     },
     syncRuntimeRemoteProjects(
-      data: RuntimeRemoteProjectsSyncRequest
+      data: RuntimeRemoteProjectsSyncRequest,
+      syncOptions?: LocalRuntimeSidebarOptions
     ): Promise<RuntimeSidebarMutationResponse> {
-      return requestWithLocalDevice('runtime.sidebar.projects.sync_remote', data)
+      return requestLocalSidebarMutation('runtime.sidebar.projects.sync_remote', data, syncOptions)
     },
     activateRuntimeProject(
-      data: RuntimeProjectActivateRequest
+      data: RuntimeProjectActivateRequest,
+      sidebarOptions?: LocalRuntimeSidebarOptions
     ): Promise<RuntimeSidebarMutationResponse> {
-      return requestWithLocalDevice('runtime.sidebar.projects.activate', data)
+      return requestLocalSidebarMutation('runtime.sidebar.projects.activate', data, sidebarOptions)
     },
     reorderRuntimeProjectTasks(
       data: RuntimeProjectTaskReorderRequest
@@ -3577,6 +3686,21 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   }
 
   const bootstrapStatus = deps.available || !deps.ensure ? availableStatus : ensureStatus
+  const getLocalRuntimeSidebarIdentity = async () => {
+    try {
+      const status = await (
+        deps.available ??
+        deps.ensure ??
+        (() => ensureLocalExecutorAvailable({ refresh: true }))
+      )()
+      const identity = localRuntimeSidebarIdentity(status)
+      lastStatus = status
+      return identity
+    } catch (error) {
+      if (isInvalidLocalRuntimeIdentityError(error)) lastStatus = null
+      throw error
+    }
+  }
   const getLocalDeviceId = async () => localDeviceIdFromStatus(await bootstrapStatus())
   const getDeviceCommandLocalDeviceId = async () =>
     localDeviceIdFromStatus(lastStatus ?? (await bootstrapStatus()))
@@ -3731,6 +3855,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       resolveProxy,
       user: deps.user,
       materializeRuntimeTask: deps.materializeRuntimeTask,
+      getLocalRuntimeSidebarIdentity,
     }
   ) as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>
   const automationApi = createAutomationApiFromIpc(
@@ -4359,6 +4484,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       revertTurnFileChanges: () => cloudConnectionRequired('revertTurnFileChanges'),
     },
     deviceApi,
+    getLocalRuntimeSidebarIdentity,
     deliveryApi,
     externalIssueApi,
     localProjectChatAgentApi,
@@ -4454,6 +4580,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       },
       deps.listCloudInstalledPlugins ?? (async () => [])
     ),
+    projectDevicePluginApi: () => createLocalProjectDevicePluginApi(),
     pluginApi: projectPluginApi,
     branchNameApi,
     textGenerationApi,

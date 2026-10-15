@@ -86,7 +86,8 @@ async def list_work_queues(
     return WorkQueueListResponse(items=queues, total=len(queues))
 
 
-@router.get("/messages/unread-count", response_model=UnreadCountResponse)
+# MIGRATION-CANDIDATE(api="GET /api/work-queues/messages/unread-count"): remove after final confirmation.
+# @router.get("/messages/unread-count", response_model=UnreadCountResponse)
 async def get_unread_message_count(
     current_user: User = Depends(security.get_current_user),
 ):

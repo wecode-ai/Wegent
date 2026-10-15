@@ -42,13 +42,16 @@ describe('macOS app icon packaging', () => {
 })
 
 describe.skipIf(process.platform !== 'darwin')('compiled macOS app icon', () => {
+  // Native setup exceeded the 30s hook deadline in the full suite. Allow bounded
+  // Apple tool startup headroom; parallel builds serialize on the catalog lock.
+  const nativeCompilationTimeoutMs = 60_000
   let root
   let compiled
 
   beforeAll(async () => {
     root = await mkdtemp(join(tmpdir(), 'wework-icon-test-'))
     compiled = await compileMacosAppIcon({ assetCatalog: join(root, 'Assets.car') })
-  }, 30_000)
+  }, nativeCompilationTimeoutMs)
   afterAll(async () => {
     if (root) await rm(root, { recursive: true, force: true })
   })
@@ -69,13 +72,17 @@ describe.skipIf(process.platform !== 'darwin')('compiled macOS app icon', () => 
     expectCatalogHashes
   )
 
-  test('publishes a complete catalog and matching metadata for parallel builds', async () => {
-    await Promise.all([
-      compileMacosAppIcon({ assetCatalog: compiled.assetCatalog }),
-      compileMacosAppIcon({ assetCatalog: compiled.assetCatalog }),
-    ])
-    await expectCatalogHashes()
-  }, 30_000)
+  test(
+    'publishes a complete catalog and matching metadata for parallel builds',
+    async () => {
+      await Promise.all([
+        compileMacosAppIcon({ assetCatalog: compiled.assetCatalog }),
+        compileMacosAppIcon({ assetCatalog: compiled.assetCatalog }),
+      ])
+      await expectCatalogHashes()
+    },
+    2 * nativeCompilationTimeoutMs
+  )
 
   test('registers every existing bitmap size without an Icon Composer stack', () => {
     const records = JSON.parse(

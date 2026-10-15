@@ -227,6 +227,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     const acknowledgesPublishedDraft = !replacingDraft && acknowledgedPublicationIndex >= 0
     const shouldSetComposer = !acknowledgesPublishedDraft && value !== draftRef.current
     recordComposerDiagnostic('draft-external-sync', {
+      scopeKey: scopeKey ?? null,
       sourceValueLength: value.length,
       draftLength: draftRef.current.length,
       acknowledgesPublishedDraft,

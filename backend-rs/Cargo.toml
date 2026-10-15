@@ -14,15 +14,15 @@ async-trait = "0.1"
 base64 = "0.23.1"
 bcrypt = "0.19"
 cbc = { version = "0.1", features = ["alloc", "block-padding"] }
-brz-http = { version = "=0.0.9", features = ["json", "gzip", "metrics", "slow-log"] }
-brz-http-gateway = { version = "=0.2.5", features = ["fallback-log"] }
-brz-http-server = { version = "=0.0.28", features = ["macros", "metrics", "api-log", "slow-log"] }
-brz-logs = { version = "=0.0.12", features = ["metrics"] }
+brz-http = { version = "=0.0.13", features = ["json", "gzip", "metrics", "slow-log"] }
+brz-http-gateway = { version = "=0.2.10", features = ["fallback-log"] }
+brz-http-server = { version = "=0.0.32", features = ["macros", "metrics", "api-log", "slow-log"] }
+brz-logs = { version = "=0.0.16", features = ["metrics"] }
 # Keep the Breeze components on exact published versions and one metrics
 # registry revision in the final backend binary.
-brz-metrics = "=0.0.8"
-brz-mysql = { version = "=0.0.14", features = ["metrics", "slow-log"] }
-brz-redis = { version = "=0.0.11", features = ["metrics", "slow-log"] }
+brz-metrics = { version = "=0.0.12", features = ["tokio"] }
+brz-mysql = { version = "=0.0.20", features = ["metrics", "slow-log"] }
+brz-redis = { version = "=0.0.16", features = ["metrics", "slow-log"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 chrono-tz = { version = "0.10", default-features = false, features = ["std"] }
 erased-serde = "0.4"
@@ -37,13 +37,14 @@ jsonwebtoken = { version = "9.3", default-features = false }
 # (`hashlib.md5`).
 md-5 = "0.10"
 serde = { version = "1", features = ["derive"] }
-brz-json = "=0.0.9"
+brz-json = "=0.0.11"
 # Preserve source dict ordering at the remaining dynamic mutation boundaries.
 serde_json = { version = "1", features = ["preserve_order"] }
 sha1 = "0.10"
 sha2 = "0.10"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 toml = "0.8"
+tokio-util = { version = "0.7", features = ["io"] }
 tracing = "0.1"
 url = "2"
 

@@ -14,14 +14,21 @@
 //! through the application's credential service; the target exposes that as
 //! [`crate::repository_tokens::RepositoryTokenResolver`], defaulting to the
 //! stored value.
+//!
+//! `GET /api/git/repositories/branches` lives in the same router and shares
+//! the provider, entry-projection, and token-resolution infrastructure; see
+//! [`branches`] and [`branch_providers`].
+mod branch_providers;
+mod branches;
 mod cache;
-mod crypto;
+pub(crate) mod crypto;
 mod digest;
 mod projection;
 mod providers;
 mod service;
 mod worker;
 
+pub use branches::Branch;
 pub use service::GitRepositoriesService;
 
 use serde::{Deserialize, Serialize};

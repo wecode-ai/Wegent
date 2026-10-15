@@ -85,9 +85,26 @@ pnpm --filter wework ai:verify:electron:build
 
 `.github/workflows/wework-e2e.yml` 会在 `windows-latest` 上构建该原生应用，并让
 Windows Desktop Core E2E 复用 Linux 的同一份 Core 分片矩阵。完整回归会运行全部
-17 个 Core 分片；路径分类只选中部分 checkpoint 时，两个平台仍运行完全相同的已选
+18 个 Core 分片；路径分类只选中部分 checkpoint 时，两个平台仍运行完全相同的已选
 分片。Windows 路径、盘符、UNC 路径、命名管道和 `.exe` sidecar 行为必须由这个
 Windows job 验证，其他平台的通过结果不能替代它。
+
+Windows CI 缓存 pnpm store，每次安装时重建依赖链接，不恢复 `node_modules`
+目录链接。E2E 使用随构建产物打包的 Socket.IO 客户端。远程设备 HOME 查询会将
+Git Bash 的路径转换为 Windows 原生路径；文件预览断言使用界面规范化的路径。
+技能目录在 Windows 使用绝对目标的 junction，Unix 使用相对符号链接。
+生成图片的工作区引用移除 Rust canonicalize 产生的 Windows 扩展路径前缀，
+避免 renderer 将其误解析为 POSIX 路径。
+Windows 工作区克隆会启用并保存 `core.longpaths=true`，确保 Git 模板文件及后续
+操作支持长路径。Core DSH 和智能工作台插件安装使用各自 DSH Home 内的
+`pnpm-store`，避免跨盘默认 store 指向管理员创建的只读 SQLite 缓存。
+
+普通用户 CI 进程的 stdout/stderr 会实时转发，并独立保存到
+`.ci-artifacts/windows-standard-user/`，避免其他运行时文件被锁定时丢失进程日志。
+新桌面窗口的就绪握手使用已有的 180 秒启动预算；缺少就绪事件会明确失败并保存
+诊断，而不是一直等到整个 CI job 被终止。
+抽屉 E2E 分别通过 Electron 的媒体偏好控制验证正常动画与减少动态效果，结束后恢复
+系统偏好。固定环境面板场景会显式建立足够宽的窗口，避免误测窄窗口的浮动面板。
 
 正式安装器、代码签名和 Electron YAML 更新清单由
 `.github/workflows/wework-app.yml` 在 `windows-latest` 上生成。

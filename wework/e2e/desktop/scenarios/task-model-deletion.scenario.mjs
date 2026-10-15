@@ -86,6 +86,8 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
     await control.command('waitFor', SELECTOR, { visible: true })
     assert.ok((await control.command('getText', SELECTOR)).trim(), 'Model selector label is empty')
     assert.equal(Number(await control.command('getElementCount', `${SELECTOR}:disabled`)), 0)
+    // Cold task hydration can temporarily replace Send with Pause.
+    await control.command('waitFor', SEND, { visible: true })
     await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: `${MARKER} unsent draft` })
     assert.equal(Number(await control.command('getElementCount', `${SEND}:disabled`)), 1)
     await control.command('click', SELECTOR)

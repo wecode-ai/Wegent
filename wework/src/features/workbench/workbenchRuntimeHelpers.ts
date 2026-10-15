@@ -1,3 +1,4 @@
+import { isDeviceRuntimeProject } from '@/lib/runtime-project-state'
 import { normalizeProjectPluginNames } from '@wegent/chat-core/composer-plugin-scope'
 import { findRuntimeTask, findRuntimeTaskWorkspace } from '@wegent/chat-core/runtime-task-lookup'
 export { findRuntimeTask, findRuntimeTaskWorkspace } from '@wegent/chat-core/runtime-task-lookup'
@@ -449,7 +450,7 @@ export function resolveComposerProjectPluginNames(
     (currentProjectId == null
       ? null
       : runtimeWork.projects.find(item => runtimeProjectUiId(item.project) === currentProjectId))
-  if (project?.project.source !== 'local_project') return null
+  if (!project || !isDeviceRuntimeProject(project.project)) return null
   return normalizeProjectPluginNames(
     (project.project.aiSettings?.plugins ?? []).map(plugin => plugin.pluginName)
   )
@@ -510,7 +511,7 @@ export function getDefaultProjectDeviceWorkspace(
   const projectWork = runtimeWork?.projects.find(
     item => runtimeProjectUiId(item.project) === projectId
   )
-  if (projectWork?.project.source !== 'local_project') return null
+  if (!projectWork || !isDeviceRuntimeProject(projectWork.project)) return null
 
   const primaryRoot = projectWork.project.roots?.[0]?.path
   if (primaryRoot) {
@@ -520,7 +521,10 @@ export function getDefaultProjectDeviceWorkspace(
     )
     if (primaryWorkspace) return primaryWorkspace
   }
-  return workspaces[0] ?? null
+  return new Set(workspaces.map(workspace => workspace.remoteHostId || workspace.deviceId)).size <=
+    1
+    ? (workspaces[0] ?? null)
+    : null
 }
 
 export function getDefaultProjectDeviceWorkspaceId(
@@ -569,7 +573,7 @@ export function findProjectMetadataDeviceWorkspace(
   const projectWork = runtimeWork?.projects.find(
     item => runtimeProjectUiId(item.project) === projectId
   )
-  if (projectWork?.project.source !== 'local_project') return null
+  if (!projectWork || !isDeviceRuntimeProject(projectWork.project)) return null
 
   const primaryRoot = projectWork.project.roots?.[0]?.path
   if (primaryRoot) {
@@ -579,7 +583,10 @@ export function findProjectMetadataDeviceWorkspace(
     )
     if (primaryWorkspace) return primaryWorkspace
   }
-  return workspaces[0] ?? null
+  return new Set(workspaces.map(workspace => workspace.remoteHostId || workspace.deviceId)).size <=
+    1
+    ? (workspaces[0] ?? null)
+    : null
 }
 
 const MARKDOWN_MENTION_PATTERN = /\[([^\]]+)]\(([^)]+)\)/g

@@ -81,6 +81,9 @@ describe('CoreDshPluginManager', () => {
     const pnpmCalls = runCommand.mock.calls.filter(([, args]) => args.includes('update'))
     expect(pnpmCalls).toHaveLength(1)
     expect(pnpmCalls[0]?.[2]?.cwd).toBe(fixture.profileRoot)
+    expect(pnpmCalls[0]?.[1]).toEqual(
+      expect.arrayContaining(['--store-dir', join(fixture.profileRoot, '..', '..', 'pnpm-store')])
+    )
     const preflightCall = runCommand.mock.calls.find(([, args]) => args.includes('--dump-config'))
     expect(preflightCall?.[2]?.cwd).toBe(fixture.runtimeRoot)
     await fixture.remove()

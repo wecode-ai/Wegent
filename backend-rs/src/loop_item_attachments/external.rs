@@ -63,7 +63,23 @@ pub(super) async fn list_external_attachments(
         ));
     }
 
-    // `self.get(db, item_id, user_id)`:
+    // `self.get(db, item_id, user_id)`.
+    let access_project = require_external_access(state, item_id, project, user_id).await?;
+
+    // `_gitlab_attachments(project, item_id, self._get_issue(project, number))`.
+    let issue = get_issue(state, &access_project, number).await?;
+    gitlab_attachments(item_id, &issue)
+}
+
+/// `ExternalLoopItemProvider.get(db, item_id, user_id)`: the Viewer role
+/// check, the provider issue fetch, and the `can_view_item` gate. Returns the
+/// access-checked project row for the caller's own provider reply.
+async fn require_external_access(
+    state: &AppState,
+    item_id: &str,
+    project: &ProjectRow,
+    user_id: i32,
+) -> Result<ProjectRow, HttpError> {
     // `require_cloud_project_role(db, project.id, user_id, Viewer)`.
     let project_id: i64 = project
         .id
@@ -76,6 +92,7 @@ pub(super) async fn list_external_attachments(
         .ok_or_else(HttpError::cloud_project_not_found)?;
 
     // `_get_issue(project, number)` plus the `can_view_detail` view gate.
+    let number = item_number(project, item_id).ok_or_else(HttpError::todo_not_found)?;
     let issue = get_issue(state, &access.project, number).await?;
     if !can_view_item(
         state,
@@ -89,10 +106,63 @@ pub(super) async fn list_external_attachments(
     {
         return Err(HttpError::todo_not_found());
     }
+    Ok(access.project)
+}
 
-    // `_gitlab_attachments(project, item_id, self._get_issue(project, number))`.
-    let issue = get_issue(state, &access.project, number).await?;
-    gitlab_attachments(item_id, &issue)
+/// `LoopItemAttachmentProviderRouter.content`'s external branch:
+/// `external_loop_item_provider.attachment_content`.
+///
+/// `_decode_attachment_id` -> `_resolve_project` -> `self.get` ->
+/// `delivery_storage.get_bytes(self._external_attachment_key(attachment_id))`.
+/// The source reports every storage failure as the 404 `Provider attachment
+/// is not available in unified storage`; the filename is the resolved URL's
+/// last path segment (`url.rstrip("/").rsplit("/", 1)[-1] or "attachment"`).
+pub(super) async fn attachment_content(
+    state: &AppState,
+    attachment_id: &str,
+    user_id: i32,
+) -> Result<(Vec<u8>, String, String), HttpError> {
+    let (item_id, url) = decode_attachment_id(attachment_id)?;
+    let project = LoopItemRepository::new(&state.mysql)
+        .find_external_project(&item_id)
+        .await
+        .map_err(HttpError::internal)?
+        .ok_or_else(HttpError::todo_not_found)?;
+    require_external_access(state, &item_id, &project, user_id).await?;
+
+    let content = crate::delivery_storage::read_object(
+        &state.attachment_http,
+        &external_attachment_key(attachment_id),
+    )
+    .await
+    .map_err(|_| {
+        HttpError::new(
+            StatusCode::NOT_FOUND,
+            "Provider attachment is not available in unified storage",
+        )
+    })?;
+    Ok((
+        content,
+        "application/octet-stream".to_string(),
+        filename_from_url(&url),
+    ))
+}
+
+/// `_external_attachment_key`: `loop-items/external-attachments/{sha256(id)}`.
+fn external_attachment_key(attachment_id: &str) -> String {
+    format!(
+        "loop-items/external-attachments/{}",
+        hex_sha256(attachment_id)
+    )
+}
+
+/// `url.rstrip("/").rsplit("/", 1)[-1] or "attachment"`.
+fn filename_from_url(url: &str) -> String {
+    let trimmed = url.trim_end_matches('/');
+    match trimmed.rsplit('/').next() {
+        Some(name) if !name.is_empty() => name.to_string(),
+        _ => "attachment".to_string(),
+    }
 }
 
 /// `_item_number`: the numeric suffix of `"{project_key}-{number}"`.
@@ -529,7 +599,7 @@ fn skip_whitespace(bytes: &[u8], mut cursor: usize) -> usize {
 /// `_decode_attachment_id`: the urlsafe-base64 `"{item_id}\n{url}"` payload.
 /// A non-`gitlab-` id or an undecodable payload maps to the source's
 /// `404 "TODO attachment not found"`.
-fn decode_attachment_id(attachment_id: &str) -> Result<(String, String), HttpError> {
+pub(super) fn decode_attachment_id(attachment_id: &str) -> Result<(String, String), HttpError> {
     let not_found = HttpError::new(StatusCode::NOT_FOUND, "TODO attachment not found");
     let encoded = attachment_id.strip_prefix("gitlab-").ok_or(not_found)?;
     let padding = (4 - encoded.len() % 4) % 4;

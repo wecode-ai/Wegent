@@ -16,7 +16,6 @@
 //! `task_kinds_service.get_task_by_id` + `_task_to_response_object`.
 
 use brz_http_server::StatusCode;
-use brz_redis::{Redis, RedisKey2};
 use serde_json::{Value, json};
 
 use super::auth::ResponsesUser;
@@ -25,6 +24,7 @@ use super::http_error::HttpError;
 use super::output_builder::{OutputItem, ResponseObject, task_to_response_object};
 use super::rate_limit::{self, RateLimit};
 use super::responses_repository as repo;
+use super::stream_state::{cancel_stream, streaming_content};
 use crate::json_compat::python_json_value;
 use crate::state::AppState;
 use crate::task_store::task_update_timestamp;
@@ -34,12 +34,6 @@ const RESPONSE_ID_PREFIX: &str = "resp_";
 /// `is_wework_response_id`: native wework ids encode a JSON array, whose
 /// base64url prefix is always `Wy`.
 const WEWORK_RESPONSE_ID_PREFIX: &str = "resp_Wy";
-/// `session_manager.CANCEL_KEY_PREFIX`.
-const CANCEL_KEY_PREFIX: &str = "chat:cancel:";
-/// `session_manager.STREAMING_KEY_PREFIX`.
-const STREAMING_KEY_PREFIX: &str = "chat:streaming:";
-/// `session_manager.CANCEL_FLAG_TTL` (seconds).
-const CANCEL_FLAG_TTL: u64 = 300;
 /// `SubtaskStatus` values the source searches for.
 const RUNNING_ASSISTANT_STATUSES: [&str; 2] = ["PENDING", "RUNNING"];
 /// `TaskStatus` terminal states (`cancel_task`'s `final_states`).
@@ -369,12 +363,8 @@ async fn load_cancelled_response(
         .map_err(internal)?;
 
     let model_string = repo::model_string_for(Some(&task));
-    Ok(Some(task_to_response_object(
-        &task,
-        &model_string,
-        &subtasks,
-        None,
-    )))
+    let response = task_to_response_object(&task, &model_string, &subtasks, None, &state.auth)?;
+    Ok(Some(response))
 }
 
 /// The source's fallback `ResponseObject` when the refreshed task lookup fails
@@ -391,42 +381,6 @@ fn minimal_cancelled_response(response_id: &str) -> ResponseObject {
         pending_user_input: None,
         pending_user_input_payload: None,
         previous_response_id: None,
-    }
-}
-
-/// `session_manager.get_streaming_content`: the raw string accumulated under
-/// `chat:streaming:{subtask_id}`, or `None` on a miss or Redis error (the
-/// source swallows the exception).
-async fn streaming_content<R>(redis: Option<&R>, subtask_id: i64) -> Option<String>
-where
-    R: Redis,
-{
-    let redis = redis?;
-    let key = RedisKey2(STREAMING_KEY_PREFIX, subtask_id);
-    let content: Option<Vec<u8>> = match redis.get(key).await {
-        Ok(content) => content,
-        Err(error) => {
-            tracing::error!(%error, subtask_id, "error getting streaming content");
-            None
-        }
-    };
-    content.map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
-}
-
-/// `session_manager.cancel_stream`: `SET chat:cancel:{subtask_id} true EX 300`.
-/// Failures are logged and swallowed like the source's `except Exception`.
-async fn cancel_stream<R>(redis: Option<&R>, subtask_id: i64)
-where
-    R: Redis,
-{
-    let Some(redis) = redis else {
-        return;
-    };
-    let key = RedisKey2(CANCEL_KEY_PREFIX, subtask_id);
-    let options = brz_redis::SetOptions::default()
-        .with_expiration(brz_redis::SetExpiration::Seconds(CANCEL_FLAG_TTL));
-    if let Err(error) = redis.set_with(key, "true", options).await {
-        tracing::error!(%error, subtask_id, "failed to set Redis cancel flag");
     }
 }
 

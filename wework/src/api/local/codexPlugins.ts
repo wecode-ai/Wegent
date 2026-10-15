@@ -930,11 +930,26 @@ function matchesInstalledPluginTrialLookup(
   return pluginKey.toLowerCase() === normalized.toLowerCase()
 }
 
+export async function writeCodexPluginEnabled(
+  id: string | number,
+  enabled: boolean
+): Promise<void> {
+  await codexAppServerRequest('config/value/write', {
+    keyPath: pluginEnabledConfigKeyPath(id),
+    value: enabled,
+    mergeStrategy: 'upsert',
+  })
+  clearLocalCodexPluginsReadStateCache()
+}
+
 export function pluginEnabledConfigKeyPath(id: string | number): string {
   return `plugins.${JSON.stringify(String(id))}.enabled`
 }
 
-function installedPluginConfigId(plugin: InstalledPlugin, fallbackId: string | number): string {
+export function installedPluginConfigId(
+  plugin: InstalledPlugin,
+  fallbackId: string | number
+): string {
   const id = String(fallbackId)
   if (id.includes('@')) return id
 
@@ -1154,7 +1169,7 @@ function pluginInstallName(item: PluginMarketplaceItem, localMarketplace: boolea
   return catalogId
 }
 
-function isRetriablePluginInstallCandidateError(message: string): boolean {
+export function isRetriablePluginInstallCandidateError(message: string): boolean {
   return (
     /not found|unknown plugin|unexpected plugin id|invalid remote plugin id/i.test(message) ||
     /invalid plugin(?: name| id)?/i.test(message)
@@ -1167,9 +1182,10 @@ function pushUniqueInstallCandidate(candidates: string[], value: string | null |
   candidates.push(trimmed)
 }
 
-async function resolveRemoteInstallPluginNames(
+export async function resolveRemoteInstallPluginNames(
   marketplace: LocalCodexMarketplace,
-  item: PluginMarketplaceItem
+  item: PluginMarketplaceItem,
+  readDetail: typeof readPluginDetail = readPluginDetail
 ): Promise<string[]> {
   const candidates: string[] = []
   pushUniqueInstallCandidate(
@@ -1187,7 +1203,7 @@ async function resolveRemoteInstallPluginNames(
   // bare gmail. plugin/read carries the connector-style id needed for install.
   if (candidates.length === 0) {
     try {
-      const detail = await readPluginDetail(marketplace, item.name)
+      const detail = await readDetail(marketplace, item.name)
       const summary = detail.summary
       pushUniqueInstallCandidate(
         candidates,
@@ -1378,7 +1394,7 @@ function marketplaceInfo(marketplace: CodexPluginMarketplaceEntry): LocalCodexMa
   }
 }
 
-function toMarketplaceItem(
+export function toMarketplaceItem(
   marketplace: CodexPluginMarketplaceEntry,
   plugin: CodexPluginSummary,
   detail?: CodexPluginDetail | null,
@@ -1645,7 +1661,7 @@ export function applyPluginCloudLinks(
   })
 }
 
-function pluginMarketplaceIdentity(pluginName: string, marketplaceName: string): string {
+export function pluginMarketplaceIdentity(pluginName: string, marketplaceName: string): string {
   const plugin = pluginName.trim().toLowerCase()
   const rawMarketplace = marketplaceName.trim().toLowerCase()
   const marketplace = isPersonalMarketplaceId(rawMarketplace)
@@ -2924,11 +2940,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       )
       if (!plugin) throw new Error('Codex plugin is not installed')
       if (data.enabled !== undefined) {
-        await codexAppServerRequest('config/value/write', {
-          keyPath: pluginEnabledConfigKeyPath(installedPluginConfigId(plugin, id)),
-          value: data.enabled,
-          mergeStrategy: 'upsert',
-        })
+        await writeCodexPluginEnabled(installedPluginConfigId(plugin, id), data.enabled)
       }
       if (data.componentStates) {
         await Promise.all(

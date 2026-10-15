@@ -47,10 +47,33 @@ function overloaded(id) {
 }
 
 function toolEvents(id, body, workspacePath) {
+  const execNamespace = (body.input ?? [])
+    .filter(item => item.type === 'additional_tools')
+    .flatMap(item => item.tools ?? [])
+    .find(tool => tool.type === 'namespace' && tool.tools?.some(child => child.name === 'exec'))
+  const command = `echo ${TOOL_MARKER}`
+  if (execNamespace) {
+    const exec = execNamespace.tools.find(tool => tool.name === 'exec')
+    assert.ok(exec.description.includes('exec_command'), 'Code mode did not advertise exec_command')
+    return [
+      {
+        type: 'response.output_item.done',
+        output_index: 0,
+        item: {
+          id: `${id}-call`,
+          type: 'custom_tool_call',
+          call_id: CALL_ID,
+          namespace: execNamespace.name,
+          name: 'exec',
+          input: `text(await tools.exec_command(${JSON.stringify({ cmd: command, workdir: workspacePath, yield_time_ms: 1000 })}))`,
+        },
+      },
+      completed(id),
+    ]
+  }
   const names = new Set((body.tools ?? []).map(tool => tool.name))
   const name = names.has('exec_command') ? 'exec_command' : 'shell_command'
   assert.ok(names.has(name), 'The real Codex did not advertise its shell tool')
-  const command = `echo ${TOOL_MARKER}`
   const argumentsValue =
     name === 'exec_command'
       ? { cmd: command, workdir: workspacePath, yield_time_ms: 1000 }
@@ -118,7 +141,9 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, workspacePath })
         return true
       }
       const toolOutputs = (body.input ?? []).filter(
-        item => item.type === 'function_call_output' && item.call_id === CALL_ID
+        item =>
+          ['function_call_output', 'custom_tool_call_output'].includes(item.type) &&
+          item.call_id === CALL_ID
       )
       assert.equal(toolOutputs.length, 1, 'Recovery lost or duplicated the completed tool output')
       assert.ok(JSON.stringify(toolOutputs[0]).includes(TOOL_MARKER))
@@ -154,7 +179,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, workspacePath })
     async verify(control) {
       active = true
       await createSingleRootLocalProject(control, workspacePath, 'model-overload-recovery')
-      await selectE2EModel(control, undefined, undefined, WORKBENCH)
+      await selectE2EModel(control, undefined, 'GPT-5.6 Luna', WORKBENCH)
       await control.command('fill', COMPOSER, { value: PROMPT })
       await control.command('press', COMPOSER, { key: 'Enter' })
       await waitUntil(
@@ -243,6 +268,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, workspacePath })
       cancelling = true
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER, { timeoutMs: uiTimeoutMs })
+      await selectE2EModel(control, undefined, 'GPT-5.6 Luna', WORKBENCH)
       await control.command('fill', COMPOSER, { value: CANCEL_PROMPT })
       await control.command('press', COMPOSER, { key: 'Enter' })
       await waitUntil(

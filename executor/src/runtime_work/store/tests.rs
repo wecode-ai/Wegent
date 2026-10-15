@@ -16,6 +16,64 @@ fn atomic_write_replaces_existing_index() {
 }
 
 #[test]
+fn atomic_write_preserves_open_readers_and_publishes_each_index() {
+    use std::io::Read;
+
+    let directory = tempfile::tempdir().expect("temporary directory should be created");
+    let index_path = directory.path().join("index.json");
+    let mut previous_payload = b"index 0".to_vec();
+    atomic_write_file(&index_path, &previous_payload).expect("initial index should be written");
+
+    for sequence in 1..=64 {
+        let mut reader = fs::File::open(&index_path).expect("existing index should be opened");
+        let payload = format!("index {sequence}").into_bytes();
+
+        atomic_write_file(&index_path, &payload)
+            .expect("index replacement must succeed while the old index is being read");
+
+        let mut old_payload = Vec::new();
+        reader
+            .read_to_end(&mut old_payload)
+            .expect("open readers must retain the complete old index");
+        assert_eq!(old_payload, previous_payload);
+        assert_eq!(
+            fs::read(&index_path).expect("new index should be readable"),
+            payload
+        );
+        previous_payload = payload;
+    }
+    assert!(temporary_files(directory.path()).is_empty());
+}
+
+#[test]
+fn atomic_write_preserves_open_readers_beyond_windows_max_path() {
+    use std::io::Read;
+
+    let directory = tempfile::tempdir().expect("temporary directory should be created");
+    let mut parent = directory.path().to_path_buf();
+    for _ in 0..5 {
+        parent.push("long-index-directory-".repeat(3));
+    }
+    let index_path = parent.join("index.json");
+    assert!(index_path.as_os_str().len() > 260);
+    atomic_write_file(&index_path, b"old index").expect("long-path index should be created");
+    let mut reader = fs::File::open(&index_path).expect("old index should be opened");
+
+    atomic_write_file(&index_path, b"new index").expect("long-path index should be replaced");
+
+    let mut old_payload = Vec::new();
+    reader
+        .read_to_end(&mut old_payload)
+        .expect("old index should remain readable");
+    assert_eq!(old_payload, b"old index");
+    assert_eq!(
+        fs::read(&index_path).expect("new index should be readable"),
+        b"new index"
+    );
+    assert!(temporary_files(&parent).is_empty());
+}
+
+#[test]
 fn atomic_write_cleans_up_temp_file_after_replace_failure() {
     let directory = tempfile::tempdir().expect("temporary directory should be created");
     let index_path = directory.path().join("index.json");

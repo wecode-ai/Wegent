@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { createLocalAppServices } from '@/api/local/localServices'
+import { createLocalAppServices, createRuntimeWorkApiFromIpc } from '@/api/local/localServices'
+import { getLocalRuntimeSourceIdentity } from '@/lib/local-runtime-sidebar-identity'
+import { updateRuntimeWorkProject } from '@/lib/runtime-project-update'
+import { getRuntimeProjectActivation, getRuntimeProjectOwner } from '@/lib/runtime-project-state'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
 import {
   DshExecutorTransportError,
   describeDshExecutor,
@@ -173,6 +177,301 @@ describe('localExecutor', () => {
         ([method]) => method === 'runtime.codex.ensure_started'
       )
     ).toHaveLength(1)
+  })
+
+  test('refreshes a healthy cached IPC identity and revokes startup state on runtime replacement', async () => {
+    await ensureLocalExecutorStarted()
+    describeDshExecutorMock.mockResolvedValue({
+      protocol_version: 1,
+      device_id: 'electron-device',
+      runtime_instance_id: 'replacement-runtime',
+      version: '1.8.6',
+      capabilities: [],
+      renderer_methods: [],
+      transports: [],
+    })
+    await expect(ensureLocalExecutorAvailable({ refresh: true })).resolves.toMatchObject({
+      runtimeInstanceId: 'replacement-runtime',
+      running: true,
+      ready: true,
+    })
+    await ensureLocalExecutorStarted()
+    expect(
+      requestDshExecutorMock.mock.calls.filter(
+        ([method]) => method === 'runtime.codex.ensure_started'
+      )
+    ).toHaveLength(2)
+  })
+
+  test('rejects a fresh sidebar status check when a cached executor is no longer reachable', async () => {
+    await ensureLocalExecutorAvailable()
+    describeDshExecutorMock.mockRejectedValueOnce(new Error('IPC offline'))
+    await expect(ensureLocalExecutorAvailable({ refresh: true })).rejects.toThrow('IPC offline')
+  })
+
+  test('keeps qualified sidebar metadata off the local RPC wire and revalidates before dispatch', async () => {
+    const services = createLocalAppServices({ subscribe: () => () => undefined })
+    const identity = await services.getLocalRuntimeSidebarIdentity!()
+    const request = {
+      deviceId: 'electron-device',
+      projects: [{ id: 'sidebar-key', hostId: 'remote', remotePath: '/srv/repo' }],
+    }
+    requestDshExecutorMock.mockClear()
+    await services.runtimeWorkApi!.syncRuntimeRemoteProjects(request, {
+      localSidebarIdentity: identity!,
+    })
+    const activation = {
+      deviceId: 'electron-device',
+      projectKey: 'sidebar-key',
+      workspacePath: '/srv/repo',
+      remoteHostId: 'remote',
+    }
+    await services.runtimeWorkApi!.activateRuntimeProject(activation, {
+      localSidebarIdentity: identity!,
+    })
+    expect(requestDshExecutorMock).toHaveBeenCalledWith(
+      'runtime.sidebar.projects.activate',
+      activation
+    )
+    expect(requestDshExecutorMock).toHaveBeenCalledWith(
+      'runtime.sidebar.projects.sync_remote',
+      request
+    )
+    expect(JSON.stringify(requestDshExecutorMock.mock.calls)).not.toContain('localSidebarIdentity')
+    describeDshExecutorMock.mockResolvedValue({
+      protocol_version: 1,
+      device_id: 'electron-device',
+      runtime_instance_id: 'replacement',
+      capabilities: [],
+      renderer_methods: [],
+      transports: [],
+    })
+    requestDshExecutorMock.mockClear()
+    await expect(
+      services.runtimeWorkApi!.syncRuntimeRemoteProjects(request, {
+        localSidebarIdentity: identity!,
+      })
+    ).rejects.toThrow('local-sidebar-runtime-changed')
+    await expect(
+      services.runtimeWorkApi!.activateRuntimeProject(activation, {
+        localSidebarIdentity: identity!,
+      })
+    ).rejects.toThrow('local-sidebar-runtime-changed')
+    expect(requestDshExecutorMock).not.toHaveBeenCalled()
+  })
+
+  test('does not invent a sidebar owner from missing or offline local IPC status', async () => {
+    const missing = createLocalAppServices({ available: async () => ({ running: true }) })
+    await expect(missing.getLocalRuntimeSidebarIdentity!()).rejects.toThrow(
+      'local-sidebar-identity-unavailable'
+    )
+    const offline = createLocalAppServices({
+      available: async () => ({
+        running: false,
+        deviceId: 'old-device',
+        runtimeInstanceId: 'old-runtime',
+      }),
+    })
+    await expect(offline.getLocalRuntimeSidebarIdentity!()).rejects.toThrow(
+      'local-sidebar-executor-offline'
+    )
+  })
+
+  test('rejects a pure local list when the IPC runtime is replaced during its read', async () => {
+    let status = {
+      running: true,
+      ready: true,
+      deviceId: 'electron-device',
+      runtimeInstanceId: 'one',
+    }
+    let resolveList!: (value: unknown) => void
+    const request = vi.fn(
+      () =>
+        new Promise(resolve => {
+          resolveList = resolve
+        })
+    )
+    const services = createLocalAppServices({ available: async () => status, request })
+    const listing = services.runtimeWorkApi!.listRuntimeWork({ deviceId: 'app-alias' })
+    const rejected = expect(listing).rejects.toThrow('local-sidebar-runtime-changed')
+    await vi.waitFor(() => expect(request).toHaveBeenCalledOnce())
+    status = { ...status, runtimeInstanceId: 'replacement' }
+    resolveList({ workspaces: [] })
+    await rejected
+  })
+
+  test.each(['raw', 'normalized'])(
+    'binds explicit local APP %s readback to the canonical IPC owner and preserves remote ownership',
+    async format => {
+      const identity = {
+        deviceId: 'electron-device',
+        runtimeInstanceId: 'one',
+        provenance: 'local-ipc' as const,
+      }
+      const status = {
+        running: true,
+        ready: true,
+        deviceId: identity.deviceId,
+        runtimeInstanceId: identity.runtimeInstanceId,
+      }
+      const raw = {
+        workspaces: [
+          {
+            workspacePath: '/repo/local',
+            projectKey: 'local-key',
+            projectSource: 'local_project',
+            label: 'Local',
+            tasks: [],
+          },
+          {
+            workspacePath: '/srv/remote',
+            projectKey: 'legacy-mirror',
+            projectSource: 'remote_project',
+            workspaceSource: 'remote',
+            remoteHostId: 'remote-owner',
+            label: 'Remote',
+            tasks: [],
+          },
+        ],
+      }
+      const response =
+        format === 'normalized'
+          ? await createRuntimeWorkApiFromIpc(
+              vi.fn().mockResolvedValue(raw),
+              async () => 'app-alias'
+            ).listRuntimeWork()
+          : raw
+      const request = vi.fn().mockResolvedValue(response)
+      const available = vi.fn().mockResolvedValue(status)
+      const services = createLocalAppServices({ available, request })
+      const aliasWork = await services.runtimeWorkApi!.listRuntimeWork({ deviceId: 'app-alias' })
+      const canonicalWork = await services.runtimeWorkApi!.listRuntimeWork()
+      expect(request).toHaveBeenCalledWith('runtime.tasks.list', {})
+      const native = aliasWork.projects[0]
+      const remote = aliasWork.projects[1]
+      expect(getRuntimeProjectOwner(native)).toEqual({
+        deviceId: identity.deviceId,
+        projectKey: 'local-key',
+      })
+      expect(native.deviceWorkspaces[0].deviceId).toBe(identity.deviceId)
+      expect(getLocalRuntimeSourceIdentity(native.deviceWorkspaces[0])).toEqual(identity)
+      expect(getLocalRuntimeSourceIdentity(native.project)).toEqual(identity)
+      expect(remote.project).toMatchObject({
+        stateDeviceId: identity.deviceId,
+        ownerDeviceId: 'remote-owner',
+      })
+      expect(remote.deviceWorkspaces[0]).toMatchObject({
+        deviceId: 'remote-owner',
+        remoteHostId: 'remote-owner',
+      })
+      expect(getLocalRuntimeSourceIdentity(remote.deviceWorkspaces[0])).toBeUndefined()
+      expect(getLocalRuntimeSourceIdentity(remote.project)).toEqual(identity)
+      expect(runtimeProjectUiId(native.project)).toBe(
+        runtimeProjectUiId(canonicalWork.projects[0].project)
+      )
+      const projected = updateRuntimeWorkProject(
+        aliasWork,
+        {
+          deviceId: identity.deviceId,
+          projectKey: 'local-key',
+          name: 'Saved',
+          roots: ['/new-root'],
+          aiSettings: null,
+          defaultProjectSpace: null,
+        },
+        [
+          {
+            id: 1,
+            device_id: identity.deviceId,
+            runtime_instance_id: identity.runtimeInstanceId,
+            device_type: 'local',
+            name: 'Local',
+            status: 'online',
+            is_default: true,
+          },
+          {
+            id: 2,
+            device_id: 'remote-owner',
+            runtime_instance_id: 'remote-runtime',
+            device_type: 'remote',
+            name: 'Remote',
+            status: 'online',
+            is_default: false,
+          },
+        ]
+      )
+      expect(projected.projects[0].project.name).toBe('Saved')
+      expect(getLocalRuntimeSourceIdentity(projected.projects[0].project)).toEqual(identity)
+      const activation = getRuntimeProjectActivation(
+        projected,
+        runtimeProjectUiId(native.project),
+        identity.deviceId,
+        [],
+        identity
+      )
+      expect(activation).toEqual({
+        deviceId: identity.deviceId,
+        projectKey: 'local-key',
+        workspacePath: '/new-root',
+      })
+      await services.runtimeWorkApi!.activateRuntimeProject(activation!, {
+        localSidebarIdentity: identity,
+      })
+      await services.runtimeWorkApi!.removeRuntimeWorkspace({
+        deviceId: native.deviceWorkspaces[0].deviceId,
+        projectKey: native.project.key,
+        workspacePath: native.deviceWorkspaces[0].workspacePath,
+        runtime: 'codex',
+      })
+      expect(request).toHaveBeenCalledWith('runtime.sidebar.projects.activate', activation)
+      expect(request).toHaveBeenCalledWith(
+        'runtime.workspaces.remove',
+        expect.objectContaining({ deviceId: identity.deviceId, projectKey: 'local-key' })
+      )
+    }
+  )
+
+  test('keeps remote IPC adapters without a local source callback unchanged', async () => {
+    const request = vi.fn().mockResolvedValue({
+      workspaces: [{ workspacePath: '/srv/repo', projectKey: 'remote-key', tasks: [] }],
+    })
+    const api = createRuntimeWorkApiFromIpc(request, async () => 'remote-default')
+    const work = await api.listRuntimeWork({ deviceId: 'remote-alias' })
+    expect(work.projects[0].deviceWorkspaces[0].deviceId).toBe('remote-alias')
+    expect(getLocalRuntimeSourceIdentity(work.projects[0].project)).toBeUndefined()
+    expect(request).toHaveBeenCalledExactlyOnceWith('runtime.tasks.list', {}, 'remote-alias')
+  })
+
+  test('does not treat a present but unavailable local list source as a remote adapter', async () => {
+    const request = vi.fn().mockResolvedValue({ workspaces: [] })
+    const api = createRuntimeWorkApiFromIpc(request, async () => 'local-device', {
+      getLocalRuntimeSidebarIdentity: async () => null,
+    })
+    await expect(api.listRuntimeWork()).rejects.toThrow('local-sidebar-identity-unavailable')
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  test('revokes service-level cached identity after a malformed fresh IPC description', async () => {
+    const unavailable = new DshExecutorTransportError('protocol_mismatch', 'Invalid local identity')
+    const available = vi.fn().mockResolvedValue({
+      running: true,
+      ready: true,
+      deviceId: 'old-device',
+      runtimeInstanceId: 'old-runtime',
+    })
+    const request = vi
+      .fn()
+      .mockResolvedValue({ success: true, exit_code: 0, stdout: '', stderr: '' })
+    const services = createLocalAppServices({ available, request })
+    await services.getLocalRuntimeSidebarIdentity!()
+    available.mockRejectedValue(unavailable)
+    await expect(services.getLocalRuntimeSidebarIdentity!()).rejects.toThrow(
+      'Invalid local identity'
+    )
+    await expect(
+      services.deviceApi.executeCommand('old-device', { command_key: 'git_branch' })
+    ).rejects.toThrow('Invalid local identity')
+    expect(request).not.toHaveBeenCalled()
   })
 
   test('invalidates the initialized status after an executor request failure', async () => {

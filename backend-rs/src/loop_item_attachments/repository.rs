@@ -75,6 +75,35 @@ pub async fn get_task_item<M: Mysql>(
         .await
 }
 
+/// `db.get(LoopItemAttachment, attachment_id)` row: the attachment columns
+/// consumed by `loop_item_service.attachment_content` (`LoopItemAttachment`
+/// is the `resource_type='attachment'` polymorphic child of `loop_items`).
+#[derive(Debug, FromMysqlRow)]
+pub struct AttachmentContentRow {
+    pub loop_item_id: Option<String>,
+    pub object_key: Option<String>,
+    pub content_type: Option<String>,
+    pub display_name: Option<String>,
+}
+
+/// `db.get(LoopItemAttachment, attachment_id)` (`LoopItemService._get_attachment`):
+/// the attachment row selected by primary key plus the polymorphic
+/// discriminator, with no soft-delete filter and no `LIMIT`.
+pub async fn get_attachment<M: Mysql>(
+    mysql: &M,
+    attachment_id: &str,
+) -> MysqlResult<Option<AttachmentContentRow>> {
+    mysql
+        .fetch_optional(
+            "SELECT loop_item_id, object_key, content_type, display_name \
+             FROM loop_items \
+             WHERE id = ? \
+             AND resource_type IN ('attachment')",
+            (attachment_id,),
+        )
+        .await
+}
+
 /// `LoopItemService.list_attachments`: the item's attachment rows, newest
 /// first.
 pub async fn list_attachments<M: Mysql>(

@@ -1319,8 +1319,8 @@ class ProjectChatService:
     ) -> ProjectChatMessage | None:
         """Return the open streaming AI message for one runtime task."""
 
-        return (
-            db.query(ProjectChatMessage)
+        candidate = (
+            db.query(ProjectChatMessage.id)
             .filter(
                 ProjectChatMessage.runtime_device_id.in_(
                     device_ids or [runtime_device_id]
@@ -1331,8 +1331,22 @@ class ProjectChatService:
                 loop_datetime_is_unset(ProjectChatMessage.deleted_at),
             )
             .order_by(ProjectChatMessage.id.desc())
-            .with_for_update()
             .first()
+        )
+        if candidate is None:
+            return None
+        # Lock only an existing primary key. A missing Runtime-index lookup
+        # otherwise gap-locks unrelated members' first activity inserts.
+        return (
+            db.query(ProjectChatMessage)
+            .filter(
+                ProjectChatMessage.id == candidate.id,
+                ProjectChatMessage.status.in_(["pending", "streaming"]),
+                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+            )
+            .populate_existing()
+            .with_for_update()
+            .one_or_none()
         )
 
     def _open_activity_from_execution(

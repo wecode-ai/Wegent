@@ -1,4 +1,5 @@
 import { registerModelConfigurationCapabilities } from './model-configuration-capabilities.js'
+import { setReducedMotion } from './e2e-media-preferences.js'
 import {
   app,
   BrowserWindow,
@@ -682,6 +683,14 @@ export function createElectronCapabilityRouter(
     )
   })
   router.register('e2e.getProcessSnapshot', () => getElectronProcessSnapshot())
+  router.register('e2e.setReducedMotion', async params => {
+    const contents = e2eHost.captureTarget('main')
+    if (!contents || contents.isDestroyed()) {
+      throw new HostCapabilityError('e2e_view_unavailable', 'Primary DSH view is unavailable')
+    }
+    await setReducedMotion(contents, stringParam(params, 'preference'))
+    return null
+  })
   router.register('e2e.getRendererHeapUsage', async () => {
     const contents = e2eHost.captureTarget('main')
     if (!contents || contents.isDestroyed()) {

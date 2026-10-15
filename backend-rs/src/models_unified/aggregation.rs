@@ -16,9 +16,10 @@ use super::models::{
     is_model_compatible_with_shell, is_public_model_visible, is_wework_available,
 };
 use super::mysql::{
-    EntityIdRow, KindJsonRow, KindRow, MemberRow, NameRow, NamespaceRefRow, NamespaceRow,
-    ReferencedKindRow, UserRow,
+    EntityIdRow, KindRow, MemberRow, NameRow, NamespaceRefRow, NamespaceRow, ReferencedKindRow,
+    UserRow,
 };
+use super::shell_lookup::get_shell_support_model;
 use crate::erp_provider::ErpProvider;
 
 /// Kind names that carry capability references, mirroring the source
@@ -46,9 +47,7 @@ where
 {
     let (support_model, actual_shell_type) = match &query.shell_type {
         Some(shell_type) => {
-            let (support, shell_type_value) =
-                get_shell_support_model(mysql, shell_type, current_user.id).await?;
-            (support, shell_type_value)
+            get_shell_support_model(mysql, erp, redis, shell_type, current_user.id).await?
         }
         None => (Vec::new(), String::new()),
     };
@@ -159,6 +158,7 @@ where
                 context_window: info.context_window,
                 max_output_tokens: info.max_output_tokens,
                 cost_index: info.cost_index,
+                capability: info.capability,
                 model_capabilities: info.model_capabilities.map(Into::into),
                 resource_id: Some(resource.id as i64),
                 resource_user_id: Some(resource.user_id as i64),
@@ -209,6 +209,7 @@ where
             context_window: info.context_window,
             max_output_tokens: info.max_output_tokens,
             cost_index: info.cost_index,
+            capability: info.capability,
             model_capabilities: info.model_capabilities.map(Into::into),
             resource_id: None,
             resource_user_id: Some(0),
@@ -241,6 +242,7 @@ struct PublicModelInfo {
     context_window: Option<i64>,
     max_output_tokens: Option<i64>,
     cost_index: Option<String>,
+    capability: Option<String>,
     model_capabilities: Option<super::models::ModelCapabilities>,
     created_at: Option<String>,
     updated_at: Option<String>,
@@ -257,6 +259,20 @@ fn public_model_info(resource: &KindRow) -> PublicModelInfo {
     // The public adapter adds the type-specific config only for video
     // models (no imageConfig branch), so drop the image variant here.
     info.config.remove("imageConfig");
+    // The public adapter also exports `embeddingConfig`, which
+    // `_extract_model_info_from_crd` validates through `Model.model_validate`
+    // but never returns.
+    if let Some(raw) = resource
+        .json
+        .0
+        .get("spec")
+        .and_then(Json::as_object)
+        .and_then(|spec| spec.get("embeddingConfig"))
+        .filter(|value| !value.is_null())
+        && let Ok(dumped) = super::generation_config::embedding_config_dump(raw)
+    {
+        info.config.insert("embeddingConfig".into(), dumped);
+    }
     // Strip sensitive env values; the public adapter keeps env as an empty map.
     info.config
         .insert("env".into(), Json::Object(JsonMap::new()));
@@ -275,6 +291,7 @@ fn public_model_info(resource: &KindRow) -> PublicModelInfo {
         context_window: info.context_window,
         max_output_tokens: info.max_output_tokens,
         cost_index: info.cost_index,
+        capability: info.capability,
         model_capabilities: info.model_capabilities,
         created_at: Some(resource.created_at.format("%Y-%m-%dT%H:%M:%S").to_string()),
         updated_at: Some(resource.updated_at.format("%Y-%m-%dT%H:%M:%S").to_string()),
@@ -312,7 +329,7 @@ where
 /// Get all group names the user belongs to, mirroring `get_user_groups`:
 /// active namespaces, direct memberships, and registered external entity
 /// memberships resolved through the configured provider.
-async fn get_user_groups<M, R: brz_redis::Redis>(
+pub(super) async fn get_user_groups<M, R: brz_redis::Redis>(
     mysql: &M,
     erp: &dyn ErpProvider<R>,
     redis: Option<&R>,
@@ -578,72 +595,6 @@ where
     Ok(mysql.fetch_all(sql, arguments).await?)
 }
 
-/// `find_shell_json` public-shell lookup: `db.query(Kind.json)` projects the
-/// CRD payload alone and `.first()` renders `LIMIT 1`.
-const SHELL_JSON_PUBLIC_SQL: &str = "SELECT json FROM kinds \
-     WHERE user_id = 0 AND kind = 'Shell' AND name = ? AND is_active = true LIMIT 1";
-
-/// `find_shell_json` personal-shell lookup, with the same single-column
-/// projection, `namespace = 'default'` filter and `.first()` pagination.
-const SHELL_JSON_PERSONAL_SQL: &str = "SELECT json FROM kinds \
-     WHERE user_id = ? AND kind = 'Shell' AND name = ? AND namespace = 'default' \
-     AND is_active = true LIMIT 1";
-
-async fn get_shell_support_model<M>(
-    mysql: &M,
-    shell_name: &str,
-    user_id: i32,
-) -> anyhow::Result<(Vec<String>, String)>
-where
-    M: Mysql + Sync,
-{
-    // Public shell first (user_id = 0), then the user's personal shell,
-    // mirroring `find_shell_json`.
-    let mut shell_json: Option<Json> = mysql
-        .fetch_optional::<_, _, KindJsonRow>(SHELL_JSON_PUBLIC_SQL, (shell_name,))
-        .await?
-        .map(|row| row.json.0);
-    if shell_json.is_none() {
-        shell_json = mysql
-            .fetch_optional::<_, _, KindJsonRow>(SHELL_JSON_PERSONAL_SQL, (user_id, shell_name))
-            .await?
-            .map(|row| row.json.0);
-    }
-    match shell_json {
-        Some(value) => parse_shell_spec(&value, shell_name),
-        None => Ok((Vec::new(), shell_name.to_string())),
-    }
-}
-
-fn parse_shell_spec(shell_json: &Json, shell_name: &str) -> anyhow::Result<(Vec<String>, String)> {
-    let Some(spec) = shell_json
-        .as_object()
-        .and_then(|root| root.get("spec"))
-        .and_then(Json::as_object)
-    else {
-        return Ok((Vec::new(), shell_name.to_string()));
-    };
-    let shell_type = spec
-        .get("shellType")
-        .or_else(|| spec.get("runtime"))
-        .and_then(Json::as_str)
-        .unwrap_or(shell_name)
-        .to_string();
-    let support_model = spec
-        .get("supportModel")
-        .and_then(Json::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Json::as_str)
-                .filter(|item| !item.is_empty())
-                .map(ToOwned::to_owned)
-                .collect()
-        })
-        .unwrap_or_default();
-    Ok((support_model, shell_type))
-}
-
 /// Direct (namespace-owned) models for every requested namespace, mirroring
 /// `load_direct_models_by_namespace`: the personal namespace keeps its owner
 /// filter, and every group namespace is read in one batched `IN` query.
@@ -696,7 +647,7 @@ where
 /// Referenced capability rows for every requested namespace, mirroring
 /// `list_referenced_capabilities_by_namespace`: the visible membership targets
 /// are resolved first, then one join reads every referenced `kinds` row.
-async fn list_referenced_capabilities_by_namespace<M>(
+pub(super) async fn list_referenced_capabilities_by_namespace<M>(
     mysql: &M,
     kind: &str,
     user_id: i32,
@@ -867,58 +818,6 @@ where
                 )
         })
         .collect())
-}
-
-#[cfg(test)]
-mod shell_lookup_contracts {
-    use super::*;
-
-    /// `find_shell_json` reads the CRD payload alone (`db.query(Kind.json)`)
-    /// and stops at the first row (`.first()` -> `LIMIT 1`).
-    fn assert_shell_statement(sql: &str, bound_parameters: usize) {
-        let normalized = sql.split_whitespace().collect::<Vec<_>>().join(" ");
-        assert!(
-            normalized.starts_with("SELECT json FROM kinds WHERE "),
-            "single-column projection: {normalized}"
-        );
-        assert!(
-            normalized.ends_with("LIMIT 1"),
-            "first-row pagination: {normalized}"
-        );
-        assert_eq!(
-            normalized.matches('?').count(),
-            bound_parameters,
-            "bound parameters: {normalized}"
-        );
-    }
-
-    #[test]
-    fn public_shell_lookup_matches_find_shell_json() {
-        assert_shell_statement(SHELL_JSON_PUBLIC_SQL, 1);
-        let normalized = SHELL_JSON_PUBLIC_SQL
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
-        assert_eq!(
-            normalized,
-            "SELECT json FROM kinds WHERE user_id = 0 AND kind = 'Shell' AND name = ? \
-             AND is_active = true LIMIT 1",
-        );
-    }
-
-    #[test]
-    fn personal_shell_lookup_matches_find_shell_json() {
-        assert_shell_statement(SHELL_JSON_PERSONAL_SQL, 2);
-        let normalized = SHELL_JSON_PERSONAL_SQL
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
-        assert_eq!(
-            normalized,
-            "SELECT json FROM kinds WHERE user_id = ? AND kind = 'Shell' AND name = ? \
-             AND namespace = 'default' AND is_active = true LIMIT 1",
-        );
-    }
 }
 
 #[cfg(test)]

@@ -30,11 +30,25 @@ export function bundledPluginUpgradeFixture(codexHome, plugins) {
       await writeFile(chatPath, 'preserve this conversation\n')
     },
     async verify(control) {
-      await until(
-        async () => JSON.parse(await control.command('getBundledPluginUpdates', 'body')),
-        result => plugins.every(({ name }) => result.states[name]?.status === 'ready'),
-        'Bundled plugin upgrades did not reach ready'
-      )
+      let lastStates
+      try {
+        await until(
+          async () => {
+            const result = JSON.parse(await control.command('getBundledPluginUpdates', 'body'))
+            lastStates = result.states
+            return result
+          },
+          result => plugins.every(({ name }) => result.states[name]?.status === 'ready'),
+          'Bundled plugin upgrades did not reach ready'
+        )
+      } catch (cause) {
+        throw new Error(
+          `Bundled plugin upgrades did not reach ready: ${JSON.stringify(lastStates)}`,
+          {
+            cause,
+          }
+        )
+      }
       for (const { name, version } of plugins) {
         const result = JSON.parse(
           await control.command('ensureBundledPluginUpdated', 'body', { value: name })

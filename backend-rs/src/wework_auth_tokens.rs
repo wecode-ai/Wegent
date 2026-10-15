@@ -89,7 +89,7 @@ pub(crate) fn create_token(
 
 /// UUIDv4 (RFC 4122) string: 8-4-4-4-12 lowercase hex with version 4 and the
 /// RFC 4122 variant bits, matching `str(uuid.uuid4())`.
-fn uuid4_hex() -> Result<String, FastApiError> {
+pub(crate) fn uuid4_hex() -> Result<String, FastApiError> {
     let mut bytes = [0u8; 16];
     getrandom::getrandom(&mut bytes).map_err(|error| {
         tracing::error!(%error, "jti random source failed");

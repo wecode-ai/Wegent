@@ -2043,62 +2043,67 @@ class TestOpenAPIResponsesCreate:
 class TestOpenAPIResponsesGet:
     """Test GET /api/v1/responses/{response_id} endpoint."""
 
-    def test_get_response_invalid_format(self, test_client: TestClient, test_api_key):
-        """Test get response fails with invalid response_id format."""
-        response = test_client.get(
-            "/api/v1/responses/invalid_id",
-            headers={"X-API-Key": test_api_key[0]},
-        )
+    # MIGRATION-CANDIDATE: retired Python HTTP test; this API is owned by Rust.
+    # def test_get_response_invalid_format(self, test_client: TestClient, test_api_key):
+    #     """Test get response fails with invalid response_id format."""
+    #     response = test_client.get(
+    #         "/api/v1/responses/invalid_id",
+    #         headers={"X-API-Key": test_api_key[0]},
+    #     )
+    #
+    #     assert response.status_code == 400
+    #     assert "Invalid response_id format" in response.json()["detail"]
 
-        assert response.status_code == 400
-        assert "Invalid response_id format" in response.json()["detail"]
+    # MIGRATION-CANDIDATE: retired Python HTTP test; this API is owned by Rust.
+    # def test_get_response_invalid_number(self, test_client: TestClient, test_api_key):
+    #     """Test get response fails with invalid response_id number."""
+    #     response = test_client.get(
+    #         "/api/v1/responses/resp_abc",
+    #         headers={"X-API-Key": test_api_key[0]},
+    #     )
+    #
+    #     assert response.status_code == 400
+    #     assert "Invalid response_id format" in response.json()["detail"]
 
-    def test_get_response_invalid_number(self, test_client: TestClient, test_api_key):
-        """Test get response fails with invalid response_id number."""
-        response = test_client.get(
-            "/api/v1/responses/resp_abc",
-            headers={"X-API-Key": test_api_key[0]},
-        )
+    # MIGRATION-CANDIDATE: retired Python HTTP test; this API is owned by Rust.
+    # def test_get_response_not_found(self, test_client: TestClient, test_api_key):
+    #     """Test get response fails when response not found."""
+    #     response = test_client.get(
+    #         "/api/v1/responses/resp_99999",
+    #         headers={"X-API-Key": test_api_key[0]},
+    #     )
+    #
+    #     assert response.status_code == 404
+    #     assert "not found" in response.json()["detail"]
 
-        assert response.status_code == 400
-        assert "Invalid response_id format" in response.json()["detail"]
+    # MIGRATION-CANDIDATE: retired Python HTTP test; this API is owned by Rust.
+    # def test_get_response_without_auth(self, test_client: TestClient):
+    #     """Test get response fails without authentication."""
+    #     response = test_client.get("/api/v1/responses/resp_1")
+    #
+    #     assert response.status_code == 401
 
-    def test_get_response_not_found(self, test_client: TestClient, test_api_key):
-        """Test get response fails when response not found."""
-        response = test_client.get(
-            "/api/v1/responses/resp_99999",
-            headers={"X-API-Key": test_api_key[0]},
-        )
-
-        assert response.status_code == 404
-        assert "not found" in response.json()["detail"]
-
-    def test_get_response_without_auth(self, test_client: TestClient):
-        """Test get response fails without authentication."""
-        response = test_client.get("/api/v1/responses/resp_1")
-
-        assert response.status_code == 401
-
-    def test_get_response_success(
-        self,
-        test_client: TestClient,
-        test_api_key,
-        test_task: TaskResource,
-        test_subtasks: list,
-    ):
-        """Test successful response retrieval."""
-        response = test_client.get(
-            f"/api/v1/responses/resp_{test_task.id}",
-            headers={"X-API-Key": test_api_key[0]},
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["id"] == f"resp_{test_task.id}"
-        assert data["status"] == "completed"
-        assert len(data["output"]) == 1
-        assert data["output"][0]["type"] == "message"
-        assert data["output"][0]["role"] == "assistant"
+    # MIGRATION-CANDIDATE: retired Python HTTP test; this API is owned by Rust.
+    # def test_get_response_success(
+    #     self,
+    #     test_client: TestClient,
+    #     test_api_key,
+    #     test_task: TaskResource,
+    #     test_subtasks: list,
+    # ):
+    #     """Test successful response retrieval."""
+    #     response = test_client.get(
+    #         f"/api/v1/responses/resp_{test_task.id}",
+    #         headers={"X-API-Key": test_api_key[0]},
+    #     )
+    #
+    #     assert response.status_code == 200
+    #     data = response.json()
+    #     assert data["id"] == f"resp_{test_task.id}"
+    #     assert data["status"] == "completed"
+    #     assert len(data["output"]) == 1
+    #     assert data["output"][0]["type"] == "message"
+    #     assert data["output"][0]["role"] == "assistant"
 
     def test_task_to_response_object_omits_pending_user_input_from_subtasks(
         self,
@@ -2131,38 +2136,39 @@ class TestOpenAPIResponsesGet:
         assert "pending_user_input" not in response.output[0].output
         assert "pending_user_input_payload" not in response.output[0].output
 
-    def test_get_response_omits_pending_user_input(
-        self,
-        test_client: TestClient,
-        test_api_key,
-        test_db: Session,
-        test_user: User,
-        test_team: Kind,
-        test_task: TaskResource,
-    ):
-        """GET endpoint should omit legacy pending interactive form state."""
-        assistant_subtask = _assistant_subtask_with_pending_form(
-            subtask_id=304,
-            task_id=test_task.id,
-            user_id=test_user.id,
-            team_id=test_team.id,
-        )
-        assistant_subtask.message_id = 1
-        test_db.add(assistant_subtask)
-        test_db.commit()
-
-        response = test_client.get(
-            f"/api/v1/responses/resp_{test_task.id}",
-            headers={"X-API-Key": test_api_key[0]},
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["pending_user_input"] is None
-        assert data["pending_user_input_payload"] is None
-        assert data["output"][0]["type"] == "mcp_call"
-        assert "pending_user_input" not in data["output"][0]["output"]
-        assert "pending_user_input_payload" not in data["output"][0]["output"]
+    # MIGRATION-CANDIDATE: retired Python HTTP test; this API is owned by Rust.
+    # def test_get_response_omits_pending_user_input(
+    #     self,
+    #     test_client: TestClient,
+    #     test_api_key,
+    #     test_db: Session,
+    #     test_user: User,
+    #     test_team: Kind,
+    #     test_task: TaskResource,
+    # ):
+    #     """GET endpoint should omit legacy pending interactive form state."""
+    #     assistant_subtask = _assistant_subtask_with_pending_form(
+    #         subtask_id=304,
+    #         task_id=test_task.id,
+    #         user_id=test_user.id,
+    #         team_id=test_team.id,
+    #     )
+    #     assistant_subtask.message_id = 1
+    #     test_db.add(assistant_subtask)
+    #     test_db.commit()
+    #
+    #     response = test_client.get(
+    #         f"/api/v1/responses/resp_{test_task.id}",
+    #         headers={"X-API-Key": test_api_key[0]},
+    #     )
+    #
+    #     assert response.status_code == 200
+    #     data = response.json()
+    #     assert data["pending_user_input"] is None
+    #     assert data["pending_user_input_payload"] is None
+    #     assert data["output"][0]["type"] == "mcp_call"
+    #     assert "pending_user_input" not in data["output"][0]["output"]
+    #     assert "pending_user_input_payload" not in data["output"][0]["output"]
 
     def test_task_to_response_object_ignores_stale_pending_state_from_earlier_turn(
         self,
@@ -2212,70 +2218,72 @@ class TestOpenAPIResponsesGet:
         assert response.pending_user_input is None
         assert response.pending_user_input_payload is None
 
-    def test_get_response_ignores_stale_pending_state_from_earlier_turn(
-        self,
-        test_client: TestClient,
-        test_api_key,
-        test_db: Session,
-        test_user: User,
-        test_team: Kind,
-        test_task: TaskResource,
-    ):
-        """GET endpoint should compute top-level pending state from the latest assistant turn only."""
-        stale_assistant = _assistant_subtask_with_pending_form(
-            subtask_id=305,
-            task_id=test_task.id,
-            user_id=test_user.id,
-            team_id=test_team.id,
-        )
-        stale_assistant.message_id = 1
-        current_assistant = Subtask(
-            user_id=test_user.id,
-            task_id=test_task.id,
-            team_id=test_team.id,
-            title="Assistant response",
-            bot_ids=[1],
-            role=SubtaskRole.ASSISTANT,
-            executor_namespace="",
-            executor_name="",
-            prompt="",
-            status=SubtaskStatus.COMPLETED,
-            progress=100,
-            message_id=2,
-            parent_id=1,
-            error_message="",
-            completed_at=datetime.now(),
-            result={"value": "done"},
-            sender_type=SenderType.TEAM,
-            sender_user_id=0,
-        )
-        test_db.add(stale_assistant)
-        test_db.add(current_assistant)
-        test_db.commit()
+    # MIGRATION-CANDIDATE: retired Python HTTP test; this API is owned by Rust.
+    # def test_get_response_ignores_stale_pending_state_from_earlier_turn(
+    #     self,
+    #     test_client: TestClient,
+    #     test_api_key,
+    #     test_db: Session,
+    #     test_user: User,
+    #     test_team: Kind,
+    #     test_task: TaskResource,
+    # ):
+    #     """GET endpoint should compute top-level pending state from the latest assistant turn only."""
+    #     stale_assistant = _assistant_subtask_with_pending_form(
+    #         subtask_id=305,
+    #         task_id=test_task.id,
+    #         user_id=test_user.id,
+    #         team_id=test_team.id,
+    #     )
+    #     stale_assistant.message_id = 1
+    #     current_assistant = Subtask(
+    #         user_id=test_user.id,
+    #         task_id=test_task.id,
+    #         team_id=test_team.id,
+    #         title="Assistant response",
+    #         bot_ids=[1],
+    #         role=SubtaskRole.ASSISTANT,
+    #         executor_namespace="",
+    #         executor_name="",
+    #         prompt="",
+    #         status=SubtaskStatus.COMPLETED,
+    #         progress=100,
+    #         message_id=2,
+    #         parent_id=1,
+    #         error_message="",
+    #         completed_at=datetime.now(),
+    #         result={"value": "done"},
+    #         sender_type=SenderType.TEAM,
+    #         sender_user_id=0,
+    #     )
+    #     test_db.add(stale_assistant)
+    #     test_db.add(current_assistant)
+    #     test_db.commit()
+    #
+    #     response = test_client.get(
+    #         f"/api/v1/responses/resp_{test_task.id}",
+    #         headers={"X-API-Key": test_api_key[0]},
+    #     )
+    #
+    #     assert response.status_code == 200
+    #     data = response.json()
+    #     assert data["pending_user_input"] is None
+    #     assert data["pending_user_input_payload"] is None
 
-        response = test_client.get(
-            f"/api/v1/responses/resp_{test_task.id}",
-            headers={"X-API-Key": test_api_key[0]},
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["pending_user_input"] is None
-        assert data["pending_user_input_payload"] is None
-
-    def test_get_response_user_isolation(
-        self,
-        test_client: TestClient,
-        test_admin_api_key,
-        test_task: TaskResource,
-    ):
-        """Test users cannot access other users' responses."""
-        response = test_client.get(
-            f"/api/v1/responses/resp_{test_task.id}",
-            headers={"X-API-Key": test_admin_api_key[0]},
-        )
-
-        assert response.status_code == 404
+    # MIGRATION-CANDIDATE: retired Python HTTP test; this API is owned by Rust.
+    # def test_get_response_user_isolation(
+    #     self,
+    #     test_client: TestClient,
+    #     test_admin_api_key,
+    #     test_task: TaskResource,
+    # ):
+    #     """Test users cannot access other users' responses."""
+    #     response = test_client.get(
+    #         f"/api/v1/responses/resp_{test_task.id}",
+    #         headers={"X-API-Key": test_admin_api_key[0]},
+    #     )
+    #
+    #     assert response.status_code == 404
 
 
 @pytest.mark.api
@@ -2569,69 +2577,70 @@ class TestOpenAPIResponsesDelete:
 
         assert response.status_code == 401
 
-    def test_delete_response_success(
-        self,
-        test_client: TestClient,
-        test_api_key,
-        test_db: Session,
-        test_user: User,
-    ):
-        """Test successful response deletion."""
-        # Create a task to delete
-        task_json = {
-            "apiVersion": "agent.wecode.io/v1",
-            "kind": "Task",
-            "metadata": {
-                "name": "task-to-delete",
-                "namespace": "default",
-                "labels": {"source": "api"},
-            },
-            "spec": {
-                "title": "Task to delete",
-                "prompt": "Hello",
-                "teamRef": {"name": "test-team", "namespace": "default"},
-                "workspaceRef": {"name": "workspace-1", "namespace": "default"},
-            },
-            "status": {
-                "status": "COMPLETED",
-                "progress": 100,
-                "result": {"value": "Done"},
-                "errorMessage": "",
-                "createdAt": datetime.now().isoformat(),
-                "updatedAt": datetime.now().isoformat(),
-                "completedAt": datetime.now().isoformat(),
-            },
-        }
-        task = TaskResource(
-            user_id=test_user.id,
-            kind="Task",
-            name="task-to-delete",
-            namespace="default",
-            json=task_json,
-            is_active=True,
-        )
-        test_db.add(task)
-        test_db.commit()
-        test_db.refresh(task)
-
-        task_id = task.id
-
-        response = test_client.delete(
-            f"/api/v1/responses/resp_{task_id}",
-            headers={"X-API-Key": test_api_key[0]},
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["id"] == f"resp_{task_id}"
-        assert data["deleted"] is True
-
-        # Verify task is deleted (should return 404)
-        get_response = test_client.get(
-            f"/api/v1/responses/resp_{task_id}",
-            headers={"X-API-Key": test_api_key[0]},
-        )
-        assert get_response.status_code == 404
+    # MIGRATION-CANDIDATE: retired Python HTTP test; this API is owned by Rust.
+    # def test_delete_response_success(
+    #     self,
+    #     test_client: TestClient,
+    #     test_api_key,
+    #     test_db: Session,
+    #     test_user: User,
+    # ):
+    #     """Test successful response deletion."""
+    #     # Create a task to delete
+    #     task_json = {
+    #         "apiVersion": "agent.wecode.io/v1",
+    #         "kind": "Task",
+    #         "metadata": {
+    #             "name": "task-to-delete",
+    #             "namespace": "default",
+    #             "labels": {"source": "api"},
+    #         },
+    #         "spec": {
+    #             "title": "Task to delete",
+    #             "prompt": "Hello",
+    #             "teamRef": {"name": "test-team", "namespace": "default"},
+    #             "workspaceRef": {"name": "workspace-1", "namespace": "default"},
+    #         },
+    #         "status": {
+    #             "status": "COMPLETED",
+    #             "progress": 100,
+    #             "result": {"value": "Done"},
+    #             "errorMessage": "",
+    #             "createdAt": datetime.now().isoformat(),
+    #             "updatedAt": datetime.now().isoformat(),
+    #             "completedAt": datetime.now().isoformat(),
+    #         },
+    #     }
+    #     task = TaskResource(
+    #         user_id=test_user.id,
+    #         kind="Task",
+    #         name="task-to-delete",
+    #         namespace="default",
+    #         json=task_json,
+    #         is_active=True,
+    #     )
+    #     test_db.add(task)
+    #     test_db.commit()
+    #     test_db.refresh(task)
+    #
+    #     task_id = task.id
+    #
+    #     response = test_client.delete(
+    #         f"/api/v1/responses/resp_{task_id}",
+    #         headers={"X-API-Key": test_api_key[0]},
+    #     )
+    #
+    #     assert response.status_code == 200
+    #     data = response.json()
+    #     assert data["id"] == f"resp_{task_id}"
+    #     assert data["deleted"] is True
+    #
+    #     # Verify task is deleted (should return 404)
+    #     get_response = test_client.get(
+    #         f"/api/v1/responses/resp_{task_id}",
+    #         headers={"X-API-Key": test_api_key[0]},
+    #     )
+    #     assert get_response.status_code == 404
 
     def test_delete_response_cleans_runtime_by_task_id_when_binding_missing(
         self,

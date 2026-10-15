@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { bundledPluginUpgradeFixture } from '../modules/bundled-plugin-upgrades.mjs'
 import { execFile } from 'node:child_process'
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { access, lstat, mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -68,6 +68,7 @@ export async function createDesktopScenario({
   uiTimeoutMs,
   workbenchReadyTimeoutMs,
   executorHome,
+  electronUserDataDirectory,
 }) {
   const developerPluginVersion = await readBundledPluginVersion('wework-plugin-developer')
   const upgradeFixture = bundledPluginUpgradeFixture(
@@ -113,6 +114,20 @@ export async function createDesktopScenario({
     },
 
     async verify(control) {
+      const mainAssets = join(
+        electronUserDataDirectory,
+        'dsh-core/profiles/wework-core/node_modules/@wegent/dsh-app-wework/web/assets'
+      )
+      const sharedAssets = await realpath(mainAssets)
+      const originalAssets = (await readdir(sharedAssets)).sort()
+      assert.ok(originalAssets.length > 0, 'The main application has no static assets')
+      if (process.platform === 'win32') {
+        assert.equal(
+          (await lstat(mainAssets)).isSymbolicLink(),
+          false,
+          'Windows managed package assets must be owned files for safe pnpm cleanup'
+        )
+      }
       await upgradeFixture.verify(control)
       await upgradeFixture.verifyUninstall(control)
       await control.command('waitFor', '[data-testid="plugins-button"]', {
@@ -236,6 +251,24 @@ export async function createDesktopScenario({
       )
       const isolatedWindowLabel = isolatedReady.windowLabel
       const isolatedInstanceId = isolatedWindowLabel.slice('plugin-development-'.length)
+      assert.deepEqual(
+        (await readdir(sharedAssets)).sort(),
+        originalAssets,
+        'Starting plugin development deleted the main application static assets'
+      )
+      if (process.platform === 'win32') {
+        const isolatedAssets = join(
+          electronUserDataDirectory,
+          'plugin-development',
+          isolatedInstanceId,
+          'user-data/dsh-core/profiles/wework-core/node_modules/@wegent/dsh-app-wework/web/assets'
+        )
+        assert.equal(
+          (await lstat(isolatedAssets)).isSymbolicLink(),
+          false,
+          'Windows development package assets must not link to shared components'
+        )
+      }
       const installedDeveloperManifestPath = join(
         resultDir,
         'electron-user-data',

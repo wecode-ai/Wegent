@@ -9,7 +9,7 @@
 //! a value that looks like base64 AES ciphertext (`is_data_encrypted`) is
 //! decrypted with `GIT_TOKEN_AES_KEY`/`GIT_TOKEN_AES_IV`; every other value
 //! (including the `***` placeholder) passes through unchanged.
-use aes_gcm::aes::cipher::{Block, BlockDecrypt, KeyInit};
+use aes_gcm::aes::cipher::{Block, BlockDecrypt, BlockEncrypt, KeyInit};
 use aes_gcm::aes::{Aes128, Aes192, Aes256};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
@@ -25,7 +25,7 @@ const BLOCK_SIZE: usize = 16;
 pub struct CryptoConfigurationError;
 
 /// `is_data_encrypted`: base64-decodable to a non-empty whole 16-byte block.
-fn is_token_encrypted(token: &str) -> bool {
+pub(crate) fn is_token_encrypted(token: &str) -> bool {
     if token.is_empty() {
         return false;
     }
@@ -33,6 +33,71 @@ fn is_token_encrypted(token: &str) -> bool {
         Ok(decoded) => !decoded.is_empty() && decoded.len() % BLOCK_SIZE == 0,
         Err(_) => false,
     }
+}
+
+/// `encrypt_git_token` (`shared/utils/crypto.py`): `""`/`"***"` pass through
+/// unchanged; every other value is AES-CBC encrypted with PKCS#7 padding under
+/// `GIT_TOKEN_AES_KEY`/`GIT_TOKEN_AES_IV` and returned as base64. Like
+/// `encrypt_sensitive_data`, the source re-raises a crypto-configuration error,
+/// which the caller reads as a failed update.
+pub(crate) fn encrypt_git_token(token: &str) -> Result<String, CryptoConfigurationError> {
+    if token.is_empty() || token == "***" {
+        return Ok(token.to_string());
+    }
+    let key = crate::config::env_or_dotenv("GIT_TOKEN_AES_KEY")
+        .unwrap_or_else(|| DEFAULT_AES_KEY.to_string());
+    let iv = crate::config::env_or_dotenv("GIT_TOKEN_AES_IV").ok_or(CryptoConfigurationError)?;
+    if iv.len() != BLOCK_SIZE {
+        return Err(CryptoConfigurationError);
+    }
+    encrypt_sensitive_data(key.as_bytes(), iv.as_bytes(), token)
+}
+
+/// `encrypt_sensitive_data` after key resolution: PKCS#7-pad, CBC-encrypt and
+/// base64-encode; a failed key length is a configuration error.
+fn encrypt_sensitive_data(
+    key: &[u8],
+    iv: &[u8],
+    plain: &str,
+) -> Result<String, CryptoConfigurationError> {
+    let mut padded = plain.as_bytes().to_vec();
+    let padding = BLOCK_SIZE - (padded.len() % BLOCK_SIZE);
+    padded.extend(std::iter::repeat_n(padding as u8, padding));
+    let encrypted = encrypt_cbc(key, iv, &padded).map_err(|()| CryptoConfigurationError)?;
+    Ok(STANDARD.encode(encrypted))
+}
+
+/// `AES(key)` + `CBC(iv)`: the variant follows the configured key length.
+fn encrypt_cbc(key: &[u8], iv: &[u8], plain: &[u8]) -> Result<Vec<u8>, ()> {
+    let iv: [u8; BLOCK_SIZE] = iv.try_into().map_err(|_| ())?;
+    match key.len() {
+        16 => cbc_encrypt::<Aes128>(key, iv, plain),
+        24 => cbc_encrypt::<Aes192>(key, iv, plain),
+        32 => cbc_encrypt::<Aes256>(key, iv, plain),
+        _ => Err(()),
+    }
+}
+
+fn cbc_encrypt<C>(key: &[u8], iv: [u8; BLOCK_SIZE], plain: &[u8]) -> Result<Vec<u8>, ()>
+where
+    C: BlockEncrypt + KeyInit,
+{
+    let cipher = C::new_from_slice(key).map_err(|_| ())?;
+    if !plain.len().is_multiple_of(BLOCK_SIZE) {
+        return Err(());
+    }
+    let mut previous = iv;
+    let mut encrypted = Vec::with_capacity(plain.len());
+    for chunk in plain.as_chunks::<BLOCK_SIZE>().0 {
+        let mut block = Block::<C>::clone_from_slice(chunk);
+        for (byte, mask) in block.iter_mut().zip(previous.iter()) {
+            *byte ^= mask;
+        }
+        cipher.encrypt_block(&mut block);
+        encrypted.extend_from_slice(&block);
+        previous.copy_from_slice(&block);
+    }
+    Ok(encrypted)
 }
 
 /// `RepositoryProvider.decrypt_token`: a value that is not encrypted is

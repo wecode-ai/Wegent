@@ -123,3 +123,9 @@ Focused regressions cover title edits concurrent with execution status changes,
 same-field conflicts, network failures, repeated conflicts, unchanged fields,
 and assignments. Existing desktop E2E save/reopen title assertions remain intact;
 CI on the fix commit supplies real integration verification.
+
+## MySQL Concurrency for First Member Activities
+
+A member runtime event may arrive before its activity exists. Looking up a missing runtime activity must not use `FOR UPDATE` on the Runtime secondary index: InnoDB gap locks can conflict with other members’ first inserts. Find an existing activity’s primary key first, then lock that key and refresh its contents. This avoids locking absent members while retaining serialization for existing activities.
+
+`backend/tests/integration/runtime_activity_mysql.py` uses synchronization barriers against real MySQL at `REPEATABLE READ` to reproduce independent first inserts and verify that concurrent updates to one activity retain both results. The first platform E2E shard invokes this check. The existing two-round collaboration E2E still verifies parallel members, complete results, and fresh manager tasks.

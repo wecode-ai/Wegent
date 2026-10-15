@@ -80,6 +80,12 @@ Electron 层不保存事件日志、不生成序号，也不实现重放或合�
 
 Backend 是可选能力，而不是本地 app 的必需依赖。需要登录、模型/能力同步、云端项目或网页版控制本机时，executor 可以使用 Backend Socket.IO 通道注册为本地设备；同一个 executor sidecar 会复用同一个 command handler 和 runtime work handler，一边通过本地 app IPC 端点服务 Wework App 和 core DSH，一边通过 Socket.IO 服务 Backend。这个设计不引入本机 HTTP gateway，也不要求 Wework App 自己启动 Backend。
 
+### Codex 原始模型 Catalog
+
+Wework 的模型路由、Catalog 编辑和保存校验共用同一份原始 Catalog 基线。配置了可读取的自定义上游时使用上游 `/models`；没有上游或上游目录不可用时，通过当前 Codex 二进制的 `debug models --bundled` 导出完整内置 Catalog，并在 executor 进程内缓存成功结果。上游目录失败会记录原因，不阻塞仅支持推理接口的服务商。Wework 的额外模型只按 slug 补入缺失条目，不覆盖 Codex 原始字段。
+
+用户修改以字段差异保存在设备本地的 `capabilities/model-catalog-overrides.json`，恢复默认会删除对应差异。路由在原始基线上应用差异后再生成视觉委托条目。导出失败会明确报错，不会用不完整的 Wework 模型清单替代原始 Catalog。
+
 ### 跨组件请求日志关联
 
 Wework 在请求进入跨进程或跨服务边界时生成 request ID，并在同一次请求的后续日志中复用它。该字段只用于诊断单次请求，不替代任务 ID、设备 ID、线程 ID 或 OpenTelemetry trace ID，也不能用于推断业务状态。
@@ -165,6 +171,8 @@ Wework 创建 Codex thread 时显式设置 `historyMode=paginated`。恢复 tran
 分页 transcript 响应不再伪造全局 `rangeStart`、`rangeEnd` 或 provider 级完整导航索引。Wework 使用当前已加载消息构建回合导航；用户请求更早历史时，将 `beforeCursor` 原样传回 executor，加载结果再合并到现有会话。真实 Codex 桌面 E2E 必须创建超过单页大小的会话，重启应用后验证首屏只恢复最新页、加载更早历史使用不透明游标，并确认虚拟滚动中的导航状态仍由当前可见用户消息决定。
 
 工具状态以 app-server 的生命周期事件为准：`item/started` 创建运行中的工具块，`item/completed` 必须将对应工具块收敛为 `done`（显式失败除外）。部分独立工具条目（如图片查看、等待和网页搜索）不携带 `status` 字段；executor 在实时事件映射和 transcript 恢复时都将这类终态条目规范化为 `done`，避免 Wework 在工具已经完成后继续显示运行状态或递增计时。
+
+Wework 发起压缩前先解析目标会话保存的模型选择，并用当前凭据、模型请求头和执行设备的代理设置重新生成模型配置，再通过 App-IPC 交给 executor。持久化的执行配置已移除密钥和请求头，只能用于恢复身份，不能直接用于模型请求；没有 Wework 模型覆盖的会话继续使用原生 Codex 配置。
 
 手动上下文压缩以 Codex thread 中新的 `contextCompaction` 条目持久化为成功边界，而不是以 `thread/compact/start` 接受请求为成功。executor 在发起压缩前按任务模型配置注册并绑定本地模型路由（与发起一轮对话使用同一套判断和注册逻辑），因此空闲会话、executor 重启后或路由空闲回收后点击压缩同样能触达模型，而不是在 Codex app-server 内以“no local model proxy route is bound to the Codex thread”失败。随后记录最新 turn 并轮询近期 transcript；只有最新 turn 出现压缩条目后，才向 Wework 返回 `turnId` 和 `compactionItemId`。轮询按 wall-clock 预算停止（读取 RPC 的耗时也计入该预算），App-IPC 对 `runtime.tasks.compact` 的超时高于 executor 自身预算；若压缩轮已经结束却没有产生压缩条目（例如 provider 拒绝该轮），立即返回带原因的失败，而不是等满预算后回报超时。压缩期间 Wework 先显示单一的“正在自动压缩上下文”处理块，完成后将同一处理块收敛为“上下文已自动压缩”，失败时收敛为错误态。
 
