@@ -407,12 +407,26 @@ def _apply_device_session_url_rewriter(
         raise
     except Exception as exc:
         raise DeviceSessionError("Failed to build IDE session URL") from exc
-    if not isinstance(rewritten_url, str) or not rewritten_url:
+    if not isinstance(rewritten_url, str) or not _is_valid_browser_session_url(
+        rewritten_url
+    ):
         raise DeviceSessionError("Failed to build IDE session URL")
 
     rewritten = dict(result)
     rewritten["url"] = rewritten_url
     return rewritten
+
+
+def _is_valid_browser_session_url(url: str) -> bool:
+    """Return whether a rewritten session URL is safe for browser navigation."""
+    if url != url.strip() or any(character.isspace() for character in url):
+        return False
+    try:
+        parsed = urlsplit(url)
+        _ = parsed.port
+    except ValueError:
+        return False
+    return parsed.scheme in {"http", "https"} and bool(parsed.hostname)
 
 
 def _extract_cloud_session_host(value: Any) -> str:

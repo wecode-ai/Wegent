@@ -998,6 +998,41 @@ async def test_device_session_service_applies_registered_browser_url_policy(
     }
 
 
+@pytest.mark.parametrize(
+    "rewritten_url",
+    [
+        "",
+        "   ",
+        "not-a-url",
+        "ftp://proxy.example/s/session-123/",
+        "https://proxy.example/s/session 123/",
+        "http://[::1",
+        "http://proxy.example:99999/s/session-123/",
+    ],
+)
+def test_device_session_service_rejects_invalid_rewritten_browser_url(
+    monkeypatch,
+    rewritten_url,
+):
+    from app.services.device import session_service
+
+    monkeypatch.setattr(
+        session_service,
+        "_device_session_url_rewriter",
+        lambda *_args: rewritten_url,
+    )
+
+    with pytest.raises(
+        session_service.DeviceSessionError,
+        match="Failed to build IDE session URL",
+    ):
+        session_service._apply_device_session_url_rewriter(
+            {"url": "http://10.0.0.24:17888/s/session-123/?token=short"},
+            "device-abc",
+            session_service.DeviceType.REMOTE,
+        )
+
+
 @pytest.mark.asyncio
 async def test_remote_device_session_service_falls_back_to_reported_host(monkeypatch):
     """An unusable observed address hands over to the host the device reports."""
