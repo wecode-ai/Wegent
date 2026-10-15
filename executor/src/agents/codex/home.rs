@@ -47,16 +47,7 @@ fn normalize_wework_codex_config(codex_home: &Path) -> Result<(), String> {
     use toml_edit::{value, DocumentMut};
 
     let config_path = codex_home.join("config.toml");
-    let content = fs::read_to_string(&config_path).unwrap_or_else(|error| {
-        crate::logging::log_executor_event(
-            "codex config normalization read failed",
-            &[
-                ("config_path", config_path.display().to_string()),
-                ("error_kind", format!("{:?}", error.kind())),
-            ],
-        );
-        String::new()
-    });
+    let content = crate::local::codex_home::read_optional_config(&config_path)?;
     let mut document = content.parse::<DocumentMut>().map_err(|error| {
         format!(
             "failed to parse Codex config {}: {error}",

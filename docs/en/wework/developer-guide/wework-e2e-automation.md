@@ -387,6 +387,7 @@ cannot replace a newly selected cloud workspace. Diagnostics record project-sele
 reducer actions and IDs, draft scopes and parent acknowledgement revisions, Codex app-server
 process IDs and initialization exit states, and failed Windows process-tree termination states.
 Configuration normalization and replacement record file size and the presence of model and built-in OpenAI URL fields; replacements also record their call site, without configuration contents.
+Only a missing configuration file permits empty initialization; other read failures stop startup and preserve the existing file. A regression uses invalid UTF-8 to trigger a real read error and verifies that the original bytes remain unchanged, preventing normalization from silently clearing model addresses.
 `codex-invalid-launch-cwd` records isolated configuration fingerprints and fixture-field matches before launch, around executor restart, and before sending. It also reads native configuration-layer sources and field presence to distinguish disk changes from runtime loading failures.
 Codex app-server restarts and configuration changes hold the admission lock until the old process exits before admitting a new process.
 Failure artifacts include `codex-sqlite-diagnostics.json` with isolated database file sizes,

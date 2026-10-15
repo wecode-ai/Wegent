@@ -1360,6 +1360,23 @@ fn prepare_wework_codex_home_preserves_user_symlink_when_subscription_disabled()
 }
 
 #[test]
+fn prepare_wework_codex_home_preserves_config_when_reading_fails() {
+    let _environment = environment::LaunchEnvironment::new();
+    let codex_home = wework_codex_home();
+    let path = codex_home.join("config.toml");
+    let original = b"model = \"gpt-5.5\"\nopenai_base_url = \"http://127.0.0.1:1/v1\"\n# \xff\n";
+    fs::write(&path, original).unwrap();
+
+    let result = prepare_wework_codex_home(&codex_home);
+
+    assert!(
+        result.is_err(),
+        "An unreadable existing config must stop startup"
+    );
+    assert_eq!(fs::read(&path).unwrap(), original);
+}
+
+#[test]
 fn prepare_wework_codex_home_migrates_base_instruction_override() {
     let _lock = crate::test_env::lock();
     let root = unique_test_path("wework-codex-config-migration");
