@@ -486,7 +486,7 @@ fn continuation_keeps_original_runner_and_new_attachments_after_policy_changes()
             Some(&second_reply.message_id),
         )
         .unwrap();
-    assert!(!store.has_queued_routed_executions().unwrap());
+    assert!(store.has_queued_executions().unwrap());
     assert!(store
         .claim_next_execution_with_catalog(Some("runner-b"), "instance", 300, None)
         .unwrap()
