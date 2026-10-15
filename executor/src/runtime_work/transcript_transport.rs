@@ -61,11 +61,15 @@ pub(super) fn encode(directory: &Path, response: Value) -> Result<Value, AppIpcE
         // the existing directory so long snapshot paths retain the verbatim prefix.
         let directory = directory.canonicalize().map_err(transport_error)?;
         remove_expired_snapshots(&directory)?;
-        // Atomic publication permits concurrent loads of identical snapshots.
+        // Content-addressed snapshots are immutable. Reuse an existing publication
+        // instead of replacing a file another request may already be reading.
         let mut file = tempfile::NamedTempFile::new_in(&directory).map_err(transport_error)?;
         file.write_all(&bytes).map_err(transport_error)?;
-        file.persist(directory.join(format!("{id}.gz")))
-            .map_err(transport_error)?;
+        if let Err(error) = file.persist_noclobber(directory.join(format!("{id}.gz"))) {
+            if error.error.kind() != std::io::ErrorKind::AlreadyExists {
+                return Err(transport_error(error));
+            }
+        }
     }
     Ok(chunk(
         &id,

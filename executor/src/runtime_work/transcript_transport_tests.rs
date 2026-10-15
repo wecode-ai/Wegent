@@ -85,6 +85,63 @@ fn large_utf8_and_structured_outputs_round_trip_in_bounded_chunks() {
 }
 
 #[test]
+fn publishing_an_existing_snapshot_preserves_the_file_and_active_readers() {
+    let root = tempfile::tempdir().unwrap();
+    let source = large_transcript();
+    let first = encode(root.path(), source.clone()).unwrap();
+    let id = first["transfer"]["snapshotId"].as_str().unwrap();
+    let path = root.path().join(format!("{id}.gz"));
+    File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_modified(SystemTime::now() - Duration::from_secs(60))
+        .unwrap();
+    let modified = fs::metadata(&path).unwrap().modified().unwrap();
+    let mut options = File::options();
+    options.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // A live reader may deny replacement while allowing other readers.
+        options.share_mode(1);
+    }
+    let _reader = options.open(&path).unwrap();
+
+    let repeated = encode(root.path(), source.clone()).unwrap();
+
+    assert_eq!(repeated, first);
+    assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), modified);
+    assert_eq!(restore(repeated, root.path()), source);
+    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn concurrent_identical_snapshots_publish_once_and_restore_completely() {
+    let root = tempfile::tempdir().unwrap();
+    let source = large_transcript();
+    let barrier = std::sync::Barrier::new(4);
+    std::thread::scope(|scope| {
+        let handles = (0..4)
+            .map(|_| {
+                scope.spawn(|| {
+                    barrier.wait();
+                    let packet = encode(root.path(), source.clone()).unwrap();
+                    assert_eq!(restore(packet.clone(), root.path()), source);
+                    packet
+                })
+            })
+            .collect::<Vec<_>>();
+        let packets = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect::<Vec<_>>();
+        assert!(packets.iter().all(|packet| packet == &packets[0]));
+    });
+    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+}
+
+#[test]
 fn interning_preserves_duplicate_bodies_and_user_controlled_keys() {
     let text = "abc🙂".repeat(1024);
     let original =
