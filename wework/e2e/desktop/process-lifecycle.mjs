@@ -7,7 +7,7 @@ const PROCESS_GROUP_GRACE_PERIOD_MS = 1_000
 const PROCESS_GROUP_POLL_INTERVAL_MS = 25
 const DEAD_LINUX_PROCESS_STATES = new Set(['Z', 'X', 'x'])
 const execFileAsync = promisify(execFile)
-// Starting Windows PowerShell is a native process startup, not a UI action.
+// Use the same PowerShell runtime as the Windows E2E workflow.
 const WINDOWS_PROCESS_QUERY_TIMEOUT_MS = 30_000
 
 function linuxProcessStateFromStat(stat) {
@@ -143,7 +143,7 @@ export async function collectWindowsProcessIdentity(processId) {
   }
   const startedAt = Date.now()
   const { stdout } = await execFileAsync(
-    'powershell.exe',
+    'pwsh.exe',
     [
       '-NoProfile',
       '-NonInteractive',
@@ -156,7 +156,18 @@ export async function collectWindowsProcessIdentity(processId) {
       maxBuffer: 16 * 1024,
       windowsHide: true,
     }
-  )
+  ).catch(error => {
+    throw new Error(
+      `Windows process identity query failed: ${JSON.stringify({
+        processId,
+        elapsedMs: Date.now() - startedAt,
+        code: error.code ?? null,
+        signal: error.signal ?? null,
+        killed: error.killed ?? false,
+      })}`,
+      { cause: error }
+    )
+  })
   console.log('[desktop-e2e] Windows process identity query', {
     processId,
     elapsedMs: Date.now() - startedAt,
