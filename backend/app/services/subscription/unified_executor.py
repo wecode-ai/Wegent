@@ -31,7 +31,6 @@ from app.stores.tasks import subtask_store, task_store
 logger = logging.getLogger(__name__)
 
 STALE_SESSION_ERROR = "Existing task session is missing or ambiguous; refusing to start a new conversation"
-STALE_SESSION_FALLBACK_MESSAGE = "历史会话已失效，已自动新建会话"
 
 
 @dataclass
@@ -166,7 +165,6 @@ async def _execute_with_stale_session_retry(
         execution_data.subscription_id,
         execution_data.execution_id,
     )
-    await _record_stale_session_fallback(execution_data, stale_error)
     return False
 
 
@@ -194,38 +192,6 @@ async def _execute_subscription_request(
         await _execute_http_callback(
             request=request,
             execution_data=execution_data,
-        )
-
-
-async def _record_stale_session_fallback(
-    execution_data: SubscriptionExecutionData,
-    original_error: str,
-) -> None:
-    """Record that a history-preserving subscription restarted with a new session."""
-    from app.core.events import TaskCompletedEvent, get_event_bus
-
-    try:
-        event_bus = get_event_bus()
-        await event_bus.publish(
-            TaskCompletedEvent(
-                task_id=execution_data.task_id,
-                subtask_id=execution_data.subtask_id,
-                user_id=execution_data.user_id,
-                status="COMPLETED",
-                result={
-                    "value": STALE_SESSION_FALLBACK_MESSAGE,
-                    "session_recovery_fallback": True,
-                    "original_error": original_error,
-                },
-                error=None,
-            )
-        )
-    except Exception:
-        logger.exception(
-            "[execute_subscription_unified] Failed to record stale session fallback: "
-            "subscription_id=%s execution_id=%s",
-            execution_data.subscription_id,
-            execution_data.execution_id,
         )
 
 

@@ -170,17 +170,6 @@ async def test_preserved_history_stale_session_retries_with_new_session():
         build_calls.append(request)
         return request
 
-    published_events = []
-
-    class FakeEventBus:
-        async def publish(self, event):
-            published_events.append(event)
-
-    fake_events_module = SimpleNamespace(
-        TaskCompletedEvent=lambda **kwargs: SimpleNamespace(**kwargs),
-        get_event_bus=lambda: FakeEventBus(),
-    )
-
     with (
         patch(
             "app.services.subscription.unified_executor._build_subscription_execution_request",
@@ -190,19 +179,10 @@ async def test_preserved_history_stale_session_retries_with_new_session():
             "app.services.subscription.unified_executor._execute_subscription_request",
             side_effect=fake_execute,
         ),
-        patch.dict(
-            sys.modules,
-            {"app.core.events": fake_events_module},
-        ),
     ):
         await execute_subscription_unified(execution_data)
 
     assert len(build_calls) == 2
-    assert len(published_events) == 1
-    event = published_events[0]
-    assert event.status == "COMPLETED"
-    assert event.result["session_recovery_fallback"] is True
-    assert event.result["value"] == "历史会话已失效，已自动新建会话"
 
 
 @pytest.mark.asyncio
