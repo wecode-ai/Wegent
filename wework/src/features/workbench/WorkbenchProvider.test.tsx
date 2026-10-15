@@ -24,6 +24,7 @@ import {
   qualifyLocalRuntimeWork,
 } from '@/lib/local-runtime-sidebar-identity'
 import { resetLocalRuntimeChatStreamsForTests } from '@/api/local/localServices'
+import { clearLocalCodexPluginsReadStateCache } from '@/api/local/codexPlugins'
 import i18n from '@/i18n'
 import {
   CloudConnectionContext,
@@ -2848,6 +2849,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     clearElectronRuntime()
     window.history.pushState({}, '', '/')
     localStorage.clear()
+    clearLocalCodexPluginsReadStateCache()
     clearPluginMarketplaceCache()
     sessionStorage.clear()
     vi.clearAllMocks()
@@ -3901,13 +3903,28 @@ describe('WorkbenchProvider runtime tasks', () => {
 
   test('reports a composer inventory failure and accepts a fresh read after recovery', async () => {
     setElectronRuntime()
-    let storeAvailable = false
+    let inventoryAvailable = false
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
         if (method === 'runtime.tasks.list') return { projects: [], chats: [], totalTasks: 0 }
+        if (
+          !inventoryAvailable &&
+          [
+            'executor.plugins.store.list',
+            'executor.plugins.personal.list',
+            'executor.codex_home.config.read',
+          ].includes(method)
+        ) {
+          throw new Error('local inventory unavailable')
+        }
         if (method === 'executor.plugins.store.list') {
-          if (!storeAvailable) throw new Error('store unavailable')
           return { storePath: '/store', plugins: [] }
+        }
+        if (method === 'executor.plugins.personal.list') {
+          return { marketplacePath: '/personal', plugins: [] }
+        }
+        if (method === 'executor.codex_home.config.read') {
+          return { enabledPluginKeys: [] }
         }
         if (method === 'codex.app_server_request') {
           if (
@@ -3925,10 +3942,10 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('list local apps'))
     await waitFor(() =>
       expect(screen.getByTestId('composer-apps-result')).toHaveTextContent(
-        'failed:Error: store unavailable'
+        'failed:Error: local inventory unavailable'
       )
     )
-    storeAvailable = true
+    inventoryAvailable = true
     await userEvent.click(screen.getByText('list local apps'))
     await waitFor(() =>
       expect(screen.getByTestId('composer-apps-result')).toHaveTextContent(/^loaded:$/)
