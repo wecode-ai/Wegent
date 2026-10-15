@@ -30,9 +30,7 @@ from app.stores.tasks import subtask_store, task_store
 
 logger = logging.getLogger(__name__)
 
-STALE_SESSION_ERROR = (
-    "Existing task session is missing or ambiguous; refusing to start a new conversation"
-)
+STALE_SESSION_ERROR = "Existing task session is missing or ambiguous; refusing to start a new conversation"
 STALE_SESSION_FALLBACK_MESSAGE = "历史会话已失效，已自动新建会话"
 
 
@@ -261,9 +259,7 @@ async def _build_subscription_execution_request(
         ),
         is_subscription=True,
         new_session=(
-            True
-            if force_new_session
-            else not execution_data.preserve_history
+            True if force_new_session else not execution_data.preserve_history
         ),
         enable_tools=True,
         enable_deep_thinking=True,
