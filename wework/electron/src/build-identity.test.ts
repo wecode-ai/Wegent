@@ -14,6 +14,8 @@ const builderConfigPath = require.resolve('../electron-builder.config.cjs')
 
 test('uses the public Electron identity by default', () => {
   expect(resolveBuildIdentity({})).toEqual(DEFAULT_IDENTITY)
+  expect(DEFAULT_IDENTITY.decisionUpstreamUrl).toBeNull()
+  expect(DEFAULT_IDENTITY.decisionDefaultModel).toBeNull()
 })
 
 test('uses a configured identity required for overwrite installation', async () => {
@@ -26,6 +28,8 @@ test('uses a configured identity required for overwrite installation', async () 
       mainBinaryName: 'Example Workbench',
       backendUrl: 'https://backend.example.com/api',
       socketUrl: 'wss://socket.example.com',
+      decisionUpstreamUrl: 'https://decision.example.com:8443/v1/decisions',
+      decisionDefaultModel: 'decision/model-preview:v1',
     })
   )
 
@@ -37,8 +41,81 @@ test('uses a configured identity required for overwrite installation', async () 
     executorNamespace: 'com.example.workbench',
     backendUrl: 'https://backend.example.com/api',
     socketUrl: 'wss://socket.example.com',
+    decisionUpstreamUrl: 'https://decision.example.com:8443/v1/decisions',
+    decisionDefaultModel: 'decision/model-preview:v1',
   })
 })
+
+test.each([
+  {
+    decisionUpstreamUrl: 'https://decision.example.com/v1/decisions',
+  },
+  {
+    decisionDefaultModel: 'decision-model-preview',
+  },
+])('requires decision router brand fields to be configured together', async fields => {
+  const path = resolve(tmpdir(), `wework-brand-decision-pair-${process.pid}-${Date.now()}.json`)
+  await writeFile(
+    path,
+    JSON.stringify({
+      productName: 'Example Workbench',
+      identifier: 'com.example.workbench',
+      ...fields,
+    })
+  )
+
+  expect(() => resolveBuildIdentity({ WEWORK_BRAND_CONFIG: path })).toThrow(
+    'decisionUpstreamUrl and decisionDefaultModel must be configured together'
+  )
+})
+
+test.each([
+  'http://decision.example.com/v1/decisions',
+  'https://user@decision.example.com/v1/decisions',
+  'https://decision.example.com/v1/decisions?region=test',
+  'https://decision.example.com/v1/decisions?',
+  'https://decision.example.com/v1/decisions#fragment',
+  'https://decision.example.com/v1/decisions#',
+  'https://decision.example.com/v1/decisions?#',
+  'https://decision.example.com/v1/decisions/',
+  'https://decision.example.com/v1/other',
+  'not-a-url',
+])('rejects invalid decision upstream URL %s', async decisionUpstreamUrl => {
+  const path = resolve(tmpdir(), `wework-brand-decision-url-${process.pid}-${Date.now()}.json`)
+  await writeFile(
+    path,
+    JSON.stringify({
+      productName: 'Example Workbench',
+      identifier: 'com.example.workbench',
+      decisionUpstreamUrl,
+      decisionDefaultModel: 'decision-model-preview',
+    })
+  )
+
+  expect(() => resolveBuildIdentity({ WEWORK_BRAND_CONFIG: path })).toThrow(
+    'decisionUpstreamUrl must be an absolute https URL with path /v1/decisions'
+  )
+})
+
+test.each(['', 'decision model', 'decision?model', 'x'.repeat(129)])(
+  'rejects invalid decision default model %j',
+  async decisionDefaultModel => {
+    const path = resolve(tmpdir(), `wework-brand-decision-model-${process.pid}-${Date.now()}.json`)
+    await writeFile(
+      path,
+      JSON.stringify({
+        productName: 'Example Workbench',
+        identifier: 'com.example.workbench',
+        decisionUpstreamUrl: 'https://decision.example.com/v1/decisions',
+        decisionDefaultModel,
+      })
+    )
+
+    expect(() => resolveBuildIdentity({ WEWORK_BRAND_CONFIG: path })).toThrow(
+      'decisionDefaultModel must be a valid model identifier of at most 128 characters'
+    )
+  }
+)
 
 test('rejects unsafe executable names', async () => {
   const path = resolve(tmpdir(), `wework-brand-invalid-${process.pid}-${Date.now()}.json`)
@@ -145,10 +222,51 @@ test.each([
     )
 
     expect(builderConfig.extraMetadata.name).toBe(DEFAULT_IDENTITY.packageName)
+    expect(builderConfig.extraMetadata).not.toHaveProperty('weworkDecisionUpstreamUrl')
+    expect(builderConfig.extraMetadata).not.toHaveProperty('weworkDecisionDefaultModel')
     expect(builderConfig.mac.electronLanguages).toEqual(['en', 'zh_CN'])
     expect(builderConfig.mac.signIgnore).toEqual(signIgnore)
     expect(builderConfig.win.electronLanguages).toEqual(['en-US', 'zh-CN'])
     expect(builderConfig.linux.electronLanguages).toEqual(['en-US', 'zh-CN'])
+  }
+)
+
+test.each(['', 'true'])(
+  'writes decision router metadata for installer and Host update builds (%s)',
+  async onlineUpdateBuild => {
+    const path = resolve(
+      tmpdir(),
+      `wework-brand-builder-decision-${process.pid}-${Date.now()}.json`
+    )
+    await writeFile(
+      path,
+      JSON.stringify({
+        productName: 'Example Workbench',
+        identifier: 'com.example.workbench',
+        decisionUpstreamUrl: 'https://decision.example.com/v1/decisions',
+        decisionDefaultModel: 'decision-model-preview',
+      })
+    )
+
+    const config = JSON.parse(
+      execFileSync(
+        process.execPath,
+        ['-e', 'process.stdout.write(JSON.stringify(require(process.argv[1])))', builderConfigPath],
+        {
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            WEWORK_BRAND_CONFIG: path,
+            WEWORK_ONLINE_UPDATE_BUILD: onlineUpdateBuild,
+          },
+        }
+      )
+    )
+
+    expect(config.extraMetadata.weworkDecisionUpstreamUrl).toBe(
+      'https://decision.example.com/v1/decisions'
+    )
+    expect(config.extraMetadata.weworkDecisionDefaultModel).toBe('decision-model-preview')
   }
 )
 

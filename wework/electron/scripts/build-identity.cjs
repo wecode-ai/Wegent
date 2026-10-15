@@ -1,6 +1,10 @@
 const { readFileSync } = require('node:fs')
 const { resolve } = require('node:path')
 
+const DECISION_UPSTREAM_PATH = '/v1/decisions'
+const MAX_DECISION_MODEL_LENGTH = 128
+const DECISION_MODEL_PATTERN = /^[A-Za-z0-9._/:-]+$/
+
 const DEFAULT_IDENTITY = Object.freeze({
   productName: 'WeWork',
   identifier: 'io.wecode.wework',
@@ -9,6 +13,8 @@ const DEFAULT_IDENTITY = Object.freeze({
   executorNamespace: null,
   backendUrl: null,
   socketUrl: null,
+  decisionUpstreamUrl: null,
+  decisionDefaultModel: null,
 })
 
 function resolveBuildIdentity(environment = process.env) {
@@ -37,6 +43,8 @@ function resolveBuildIdentity(environment = process.env) {
     'ws:',
     'wss:',
   ])
+  const decisionUpstreamUrl = optionalDecisionUpstreamUrl(configured.decisionUpstreamUrl, path)
+  const decisionDefaultModel = optionalDecisionDefaultModel(configured.decisionDefaultModel, path)
 
   if (!/^[A-Za-z0-9.-]+$/.test(identifier)) {
     throw new Error(
@@ -45,6 +53,11 @@ function resolveBuildIdentity(environment = process.env) {
   }
   validateFileName(productName, 'productName', path)
   validateFileName(executableName, 'mainBinaryName', path)
+  if ((decisionUpstreamUrl === null) !== (decisionDefaultModel === null)) {
+    throw new Error(
+      `Wework brand config decisionUpstreamUrl and decisionDefaultModel must be configured together: ${path}`
+    )
+  }
 
   return Object.freeze({
     productName,
@@ -54,6 +67,8 @@ function resolveBuildIdentity(environment = process.env) {
     executorNamespace: identifier,
     backendUrl,
     socketUrl,
+    decisionUpstreamUrl,
+    decisionDefaultModel,
   })
 }
 
@@ -87,6 +102,56 @@ function optionalUrl(value, field, path, protocols) {
     throw new Error(`Wework brand config ${field} may not contain credentials: ${path}`)
   }
   return text.replace(/\/+$/, '')
+}
+
+function optionalDecisionUpstreamUrl(value, path) {
+  if (value === undefined) return null
+  const invalid = () =>
+    new Error(
+      `Wework brand config decisionUpstreamUrl must be an absolute https URL with path ${DECISION_UPSTREAM_PATH}: ${path}`
+    )
+  if (typeof value !== 'string' || !value.trim()) {
+    throw invalid()
+  }
+
+  const text = value.trim()
+  let url
+  try {
+    url = new URL(text)
+  } catch {
+    throw invalid()
+  }
+  if (
+    url.protocol !== 'https:' ||
+    !url.hostname ||
+    url.username ||
+    url.password ||
+    text.includes('?') ||
+    text.includes('#') ||
+    url.search ||
+    url.hash ||
+    url.pathname !== DECISION_UPSTREAM_PATH
+  ) {
+    throw invalid()
+  }
+  return text
+}
+
+function optionalDecisionDefaultModel(value, path) {
+  if (value === undefined) return null
+  if (typeof value !== 'string') {
+    throw new Error(
+      `Wework brand config decisionDefaultModel must be a valid model identifier of at most ${MAX_DECISION_MODEL_LENGTH} characters: ${path}`
+    )
+  }
+
+  const text = value.trim()
+  if (!text || text.length > MAX_DECISION_MODEL_LENGTH || !DECISION_MODEL_PATTERN.test(text)) {
+    throw new Error(
+      `Wework brand config decisionDefaultModel must be a valid model identifier of at most ${MAX_DECISION_MODEL_LENGTH} characters: ${path}`
+    )
+  }
+  return text
 }
 
 function validateFileName(value, field, path) {
