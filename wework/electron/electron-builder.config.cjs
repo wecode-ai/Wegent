@@ -29,6 +29,7 @@ module.exports = {
   executableName: identity.executableName,
   compression: 'normal',
   beforePack: macosAppIcon.prepare,
+  afterPack: require('./scripts/verify-windows-migration-lock.cjs'),
   extraMetadata: {
     name: identity.packageName,
     weworkUpdateBaseUrl: updateBaseUrl,
@@ -84,6 +85,11 @@ module.exports = {
     writeUpdateInfo: false,
   },
   win: {
+    // Desktop data migration runs before managed components can be resolved.
+    extraResources:
+      onlineUpdateBuild && !onlineUpdateIncludesComponents
+        ? [{ from: 'resources/bin/wegent-executor.exe', to: 'bin/wegent-executor.exe' }]
+        : [],
     artifactName: `${artifactPrefix}_\${version}_windows_\${arch}-setup.\${ext}`,
     electronLanguages: ['en-US', 'zh-CN'],
     icon: path.resolve(__dirname, '../resources/icons/icon.ico'),
