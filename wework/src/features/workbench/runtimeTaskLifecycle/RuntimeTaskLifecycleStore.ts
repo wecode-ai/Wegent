@@ -324,7 +324,10 @@ export class RuntimeTaskLifecycleStore {
       this.executorStarted(address)
     } else if (transcript.running === false && !ignoreStaleIdleTranscript) {
       this.executorSettled(address)
-      this.turnSettled(address)
+      this.turnSettled(
+        address,
+        transcript.turns.findLast(turn => isTerminalTurnStatus(turn.status))?.id
+      )
     }
   }
 
@@ -540,10 +543,14 @@ export class RuntimeTaskLifecycleStore {
     } else if (previousState.turnPhase === 'awaiting') {
       nextMachine.dispatch({ type: 'send_accepted' })
     }
-    if (previousState.turnOutcome) {
+    if (
+      previousState.turnOutcome ||
+      (previousState.turnPhase === 'idle' && previousState.latestTurnId)
+    ) {
       nextMachine.dispatch({
         type: 'turn_settled',
-        outcome: previousState.turnOutcome,
+        outcome: previousState.turnOutcome ?? undefined,
+        turnId: previousState.latestTurnId,
       })
     }
     if (previousState.unread) nextMachine.dispatch({ type: 'marked_unread' })
@@ -655,6 +662,7 @@ export function runtimeTaskLifecycleTransitionChanged(
     expected.execution.phase !== current.execution.phase ||
     expected.turn.phase !== current.turn.phase ||
     expected.turn.id !== current.turn.id ||
+    expected.turn.latestId !== current.turn.latestId ||
     expected.turn.outcome !== current.turn.outcome ||
     expected.goalStatus !== current.goalStatus ||
     expected.continuable !== current.continuable

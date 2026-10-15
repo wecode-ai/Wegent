@@ -98,8 +98,8 @@ where
         .fetch_optional(
             &format!(
                 "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.user_id = ? \
-             AND kinds.kind = '{kind}' AND kinds.namespace = '{namespace}' \
-             AND kinds.name = '{escaped}' AND kinds.is_active = true \n LIMIT 1",
+             AND kinds.kind = '{kind}' AND kinds.name = '{escaped}' \
+             AND kinds.namespace = '{namespace}' AND kinds.is_active = true \n LIMIT 1",
                 escaped = escape_sql_string(name)
             ),
             (user_id,),
@@ -433,8 +433,8 @@ where
         .fetch_optional(
             &format!(
                 "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.kind = '{kind}' \
-             AND kinds.namespace = '{namespace}' \
-             AND kinds.name = '{escaped}' AND kinds.is_active = true \n LIMIT 1",
+             AND kinds.name = '{escaped}' \
+             AND kinds.namespace = '{namespace}' AND kinds.is_active = true \n LIMIT 1",
                 escaped = escape_sql_string(name)
             ),
             (),

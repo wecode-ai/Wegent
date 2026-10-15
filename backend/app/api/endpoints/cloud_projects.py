@@ -210,7 +210,8 @@ def create_cloud_project(
     return _project_response(db, project, current_user)
 
 
-@router.get("", response_model=CloudProjectListResponse)
+# MIGRATION-CANDIDATE(api="GET /api/v1/cloud-projects"): remove after final confirmation.
+# @router.get("", response_model=CloudProjectListResponse)
 def list_cloud_projects(
     workspace_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
@@ -242,10 +243,11 @@ def update_cloud_project(
     return _project_response(db, project, current_user)
 
 
-@router.get(
-    "/{project_id}/execution-environments",
-    response_model=WorkspaceExecutionEnvironmentListResponse,
-)
+# MIGRATION-CANDIDATE(api="GET /api/v1/cloud-projects/{project_id}/execution-environments"): remove after final confirmation.
+# @router.get(
+#     "/{project_id}/execution-environments",
+#     response_model=WorkspaceExecutionEnvironmentListResponse,
+# )
 async def list_project_execution_environments(
     project_id: int,
     db: Session = Depends(get_db),

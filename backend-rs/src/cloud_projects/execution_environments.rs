@@ -30,8 +30,13 @@ use brz_json::{JsonProjection, OpaqueJson};
 /// 5. one Redis `MGET` of the per-device online keys (`device:online:<user>:
 ///    <route>`, where the route is the `runtime_device_route_id`), which the
 ///    source computes through `cache_manager.mget`;
-/// 6. per device, one labeled `users` lookup (`db.get(User, device.user_id)`)
-///    for the `owner_name`; a missing owner renders an empty string.
+/// 6. per device, one `users` lookup (`db.get(User, device.user_id)`) for the
+///    `owner_name`. The source session's identity map is weak and the loaded
+///    `User` is not retained, so only the authenticated user's instance stays
+///    alive across devices: a device owned by the current user resolves
+///    without a query, while every other device issues its own lookup and a
+///    repeated owner is re-read per device; a missing owner renders an empty
+///    string.
 #[brz_http_server::get("/api/v1/cloud-projects/:project_id/execution-environments")]
 async fn list_execution_environments(
     #[inject(state)] state: &AppState,
@@ -50,6 +55,7 @@ struct ExecutionEnvironmentItem {
     workspace_id: String,
     device_id: i64,
     device_key: String,
+    app_device_id: Option<String>,
     name: String,
     kind: String,
     device_type: String,
@@ -112,6 +118,8 @@ struct DeviceEnvironmentInput {
     display_name: Option<String>,
     #[serde(rename = "deviceId")]
     device_id: Option<String>,
+    #[serde(rename = "appDeviceId")]
+    app_device_id: Option<String>,
     #[serde(rename = "cloudConfig")]
     cloud_config: Option<CloudConfigInput>,
     #[serde(rename = "bindShell")]
@@ -430,6 +438,32 @@ async fn owner_user_row<M: Mysql>(
     Ok(row.map(|row| row.user_name))
 }
 
+/// Resolve `owner_values`' `owner_name` for each device owner in order. The
+/// authenticated user's instance is held by the request and therefore already
+/// in the source session's weak identity map (no query), while every other
+/// device issues its own `db.get(User, device.user_id)` — the loaded `User` is
+/// not retained, so a repeated owner is re-read per device.
+async fn device_owner_names<M: Mysql>(
+    mysql: &M,
+    owner_user_ids: &[i32],
+    current_user_id: i32,
+    current_user_name: &str,
+) -> Result<Vec<String>, brz_mysql::MysqlError> {
+    let mut names = Vec::with_capacity(owner_user_ids.len());
+    for &owner_user_id in owner_user_ids {
+        if owner_user_id == current_user_id {
+            names.push(current_user_name.to_string());
+        } else {
+            names.push(
+                owner_user_row(mysql, owner_user_id)
+                    .await?
+                    .unwrap_or_default(),
+            );
+        }
+    }
+    Ok(names)
+}
+
 /// Handler body for `GET /api/v1/cloud-projects/{project_id}/execution-environments`.
 async fn execution_environments(
     state: &AppState,
@@ -472,15 +506,24 @@ async fn execution_environments(
             .collect();
     let status_map = statuses;
 
-    // `owner_values`: a non-Owner grant resolves the user owner through
-    // `db.get(User, device.user_id)`. The source session's identity map already
-    // holds the authenticated user, so a device it owns resolves without a
-    // query; any other owner is fetched once and cached in the same map.
-    let mut owner_names: std::collections::HashMap<i32, String> = std::collections::HashMap::new();
-    owner_names.insert(current_user.id, current_user.user_name.clone());
+    // `owner_values`: `db.get(User, device.user_id)` feeds `owner_name`. The
+    // source session's identity map is weak and `owner_values` does not retain
+    // the loaded `User`, so only the authenticated user's instance stays alive
+    // across devices: a device owned by the current user resolves without a
+    // query, while every other device issues its own lookup (a repeated owner
+    // is re-read for each device).
+    let owner_user_ids: Vec<i32> = rows.iter().map(|row| row.device_user_id).collect();
+    let owner_names = device_owner_names(
+        &state.mysql,
+        &owner_user_ids,
+        current_user.id,
+        &current_user.user_name,
+    )
+    .await
+    .map_err(internal_execution_error)?;
 
     let mut items = Vec::with_capacity(rows.len());
-    for row in &rows {
+    for (row, owner_name) in rows.iter().zip(owner_names) {
         let spec = row.spec();
         let device_type = execution_device_type(&spec);
         let name = spec
@@ -488,20 +531,6 @@ async fn execution_environments(
             .as_deref()
             .map(str::to_string)
             .unwrap_or_else(|| row.name.clone());
-        let owner_user_id: i32 = row.device_user_id;
-        let owner_name = match owner_names.get(&owner_user_id) {
-            Some(name) => name.clone(),
-            None => match owner_user_row(&state.mysql, owner_user_id)
-                .await
-                .map_err(internal_execution_error)?
-            {
-                Some(name) => {
-                    owner_names.insert(owner_user_id, name.clone());
-                    name
-                }
-                None => String::new(),
-            },
-        };
         let runtime_instance_id = spec
             .runtime_instance_id
             .as_deref()
@@ -514,6 +543,7 @@ async fn execution_environments(
             workspace_id: workspace_id.clone(),
             device_id: row.id,
             device_key: runtime_device_route_id(row),
+            app_device_id: spec.app_device_id.clone(),
             name,
             kind: execution_environment_kind(&device_type),
             device_type,
@@ -558,27 +588,27 @@ mod tests {
 
     #[test]
     fn inline_point_access_sql_inlines_all_authority_values() {
-        let sql = inline_point_access_sql("4232277347815150821", 157);
+        let sql = inline_point_access_sql("1000000000000000002", 301);
         let normalized = normalize(&sql);
-        assert!(normalized.contains("'157'"), "entity_id is a quoted string");
+        assert!(normalized.contains("'301'"), "entity_id is a quoted string");
         assert!(
-            normalized.contains("created_by_user_id = 157"),
+            normalized.contains("created_by_user_id = 301"),
             "owner branch is an integer"
         );
-        assert!(normalized.contains("resource_members.resource_id = 4232277347815150821"));
-        assert!(normalized.contains("loop_items.id = '4232277347815150821'"));
+        assert!(normalized.contains("resource_members.resource_id = 1000000000000000002"));
+        assert!(normalized.contains("loop_items.id = '1000000000000000002'"));
         assert!(!sql.contains('?'), "no bound markers in the recorded shape");
         assert!(normalized.ends_with("LIMIT 1"), "point form keeps one row");
     }
 
     #[test]
     fn inline_point_access_sql_matches_the_source_union_branches() {
-        let sql = inline_point_access_sql("4232277347815150821", 157);
+        let sql = inline_point_access_sql("1000000000000000002", 301);
         let normalized = normalize(&sql);
         // The direct grant keeps the Viewer role and the ROLE_HIERARCHY case.
         assert!(normalized.contains(
             "`role` IN ('Owner', 'Maintainer', 'Developer', 'Viewer') AND \
-             resource_members.resource_id = 4232277347815150821"
+             resource_members.resource_id = 1000000000000000002"
         ));
         assert!(normalized.contains(
             "WHEN 'Reporter' THEN 3 WHEN 'Viewer' THEN 4 WHEN 'RestrictedAnalyst' THEN 5 END"
@@ -607,6 +637,41 @@ mod tests {
         assert!(sql.contains("users.`role`, users.auth_source"));
         assert!(sql.ends_with("FROM users WHERE users.id = 52"));
         assert!(!sql.contains('?'), "the primary-key value is inlined");
+    }
+
+    #[tokio::test]
+    async fn a_repeated_device_owner_is_read_once_per_device() {
+        use crate::sql_test_support::KindQueryCapture;
+        // Two devices owned by the same user, neither being the caller. The
+        // source's weak identity map does not retain the loaded `User`, so
+        // `db.get(User, 86)` runs per device rather than once.
+        let mysql = KindQueryCapture::default();
+        let names = device_owner_names(&mysql, &[86, 86], 157, "viewer")
+            .await
+            .unwrap();
+        assert_eq!(names.len(), 2);
+        let user_reads: Vec<_> = mysql
+            .queries()
+            .into_iter()
+            .filter(|query| query.sql.contains("FROM users WHERE users.id = 86"))
+            .collect();
+        assert_eq!(user_reads.len(), 2, "each device re-reads its owner");
+    }
+
+    #[tokio::test]
+    async fn a_device_owned_by_the_caller_resolves_without_a_read() {
+        use crate::sql_test_support::KindQueryCapture;
+        // The authenticated user's instance is held by the request, so the
+        // source identity map satisfies `db.get(User, caller)` with no query.
+        let mysql = KindQueryCapture::default();
+        let names = device_owner_names(&mysql, &[157, 157], 157, "viewer")
+            .await
+            .unwrap();
+        assert_eq!(names, vec!["viewer".to_string(), "viewer".to_string()]);
+        assert!(
+            mysql.queries().is_empty(),
+            "the identity map holds the caller"
+        );
     }
 
     #[test]
@@ -652,5 +717,55 @@ mod tests {
             ..DeviceEnvironmentInput::default()
         };
         assert_eq!(execution_device_type(&remote), "remote");
+    }
+
+    fn sample_item(app_device_id: Option<&str>) -> ExecutionEnvironmentItem {
+        ExecutionEnvironmentItem {
+            id: "101".to_string(),
+            workspace_id: "201".to_string(),
+            device_id: 101,
+            device_key: "app-record-101".to_string(),
+            app_device_id: app_device_id.map(str::to_string),
+            name: "EXAMPLE-DEVICE-01".to_string(),
+            kind: "local_device".to_string(),
+            device_type: "app".to_string(),
+            runtime_instance_id: None,
+            capabilities: Vec::new(),
+            coding_tools: vec!["claude_code".to_string(), "codex".to_string()],
+            owner_type: "user".to_string(),
+            owner_id: "301".to_string(),
+            owner_name: "example-owner".to_string(),
+            status: "online".to_string(),
+            owner_user_id: Some(301),
+            added_by_user_id: 301,
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    #[test]
+    fn app_device_id_projects_from_the_spec() {
+        let spec: DeviceEnvironmentInput = serde_json::from_str(
+            r#"{"deviceType":"app","appDeviceId":"electron-00000000-0000-4000-8000-000000000001"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            spec.app_device_id.as_deref(),
+            Some("electron-00000000-0000-4000-8000-000000000001")
+        );
+        // A spec without `appDeviceId` projects `None`, like `spec.get(...)`.
+        let absent: DeviceEnvironmentInput =
+            serde_json::from_str(r#"{"deviceType":"local"}"#).unwrap();
+        assert_eq!(absent.app_device_id, None);
+    }
+
+    #[test]
+    fn item_keeps_app_device_id_present_and_null() {
+        let value = serde_json::to_value(sample_item(Some("electron-abc"))).unwrap();
+        assert_eq!(value["app_device_id"], "electron-abc");
+        // The field is always present, `null` when the spec omits it.
+        let value = serde_json::to_value(sample_item(None)).unwrap();
+        assert!(value.get("app_device_id").is_some());
+        assert!(value["app_device_id"].is_null());
     }
 }

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { taskApis } from '@/apis/tasks'
 import HistoryManageDialog from '@/features/tasks/components/sidebar/HistoryManageDialog'
@@ -61,6 +61,14 @@ const createTask = (id: number): Task => ({
 })
 
 describe('HistoryManageDialog', () => {
+  async function renderHistory(initialTaskId?: number) {
+    await act(async () => {
+      render(
+        <HistoryManageDialog open={true} onOpenChange={jest.fn()} initialTaskId={initialTaskId} />
+      )
+    })
+  }
+
   beforeEach(() => {
     jest.clearAllMocks()
     window.localStorage.clear()
@@ -80,24 +88,30 @@ describe('HistoryManageDialog', () => {
   })
 
   it('requires confirmation before deleting selected tasks', async () => {
-    render(<HistoryManageDialog open={true} onOpenChange={jest.fn()} />)
+    await renderHistory()
 
     const firstCheckbox = await screen.findByTestId('history-task-checkbox-1')
     fireEvent.click(firstCheckbox)
-    fireEvent.click(screen.getByTestId('history-delete-selected-button'))
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('history-delete-selected-button'))
+    })
 
     expect(mockedTaskApis.bulkDeleteTasks).not.toHaveBeenCalled()
     expect(screen.getByText('history:confirm.delete_selected')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByTestId('history-confirm-delete-selected-button'))
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('history-confirm-delete-selected-button'))
+    })
 
     await waitFor(() => {
       expect(mockedTaskApis.bulkDeleteTasks).toHaveBeenCalledWith([1])
     })
+    expect(screen.getByTestId('history-task-checkbox-1')).toBeInTheDocument()
+    expect(screen.queryByTestId('history-delete-selected-button')).not.toBeInTheDocument()
   })
 
   it('uses task membership to detect whether all loaded tasks are selected', async () => {
-    render(<HistoryManageDialog open={true} onOpenChange={jest.fn()} initialTaskId={999} />)
+    await renderHistory(999)
 
     const selectAllToggle = await screen.findByTestId('history-select-all-toggle')
 
@@ -106,7 +120,7 @@ describe('HistoryManageDialog', () => {
   })
 
   it('provides touch-sized task controls with stable test IDs', async () => {
-    render(<HistoryManageDialog open={true} onOpenChange={jest.fn()} />)
+    await renderHistory()
 
     const checkbox = await screen.findByTestId('history-task-checkbox-1')
     const deleteButton = screen.getByTestId('history-task-delete-1')

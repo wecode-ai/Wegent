@@ -325,10 +325,11 @@ def delete_folder_open(
 # ---------------------------------------------------------------------------
 
 
-@router.get(
-    "/documents/{document_id}/content",
-    response_model=DocumentContentReadResponse,
-)
+# MIGRATION-CANDIDATE(api="GET /api/knowledge/documents/{document_id}/content"): remove after final confirmation.
+# @router.get(
+#     "/documents/{document_id}/content",
+#     response_model=DocumentContentReadResponse,
+# )
 @trace_sync("get_document_content_open", "knowledge.api")
 def get_document_content_open(
     document_id: int,

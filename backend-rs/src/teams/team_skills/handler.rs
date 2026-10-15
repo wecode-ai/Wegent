@@ -8,10 +8,13 @@
 //!
 //! Flow, in source order:
 //! 1. `get_current_user` resolves the Bearer JWT to a `users` row.
-//! 2. `team_share_service.get_resource_for_use` -> `_get_resource` loads the
-//!    Team with a direct `db.query(Kind)` by id — it does not go through the
-//!    cached kind reader — and enforces access: owner, public
-//!    (`user_id == 0`), group membership, or a direct `ResourceMember` share.
+//! 2. `team_share_service.get_resource_for_use` -> `_get_resource(for_use=True)`
+//!    loads the Team with a direct `db.query(Kind)` by id — it does not go
+//!    through the cached kind reader — and enforces access: the owner or a
+//!    public (`user_id == 0`) Team, then `TeamShareService.check_permission`
+//!    (direct `ResourceMember` row, entity bindings, native group role), then
+//!    `can_use_group_teams`. A denied caller leaves `_get_resource` returning
+//!    `None`, which `get_team_skills` maps to `404 "Team not found"`.
 //! 3. Walk `team.spec.members`: `kindReader.get_by_name_and_namespace(Bot)`
 //!    with the team owner's id (personal -> public fallback for `default`,
 //!    group otherwise), then `bot.spec.ghostRef` ->
@@ -20,19 +23,24 @@
 //!    sets.
 //! 4. Response: `{team_id, team_namespace, skills: sorted, preload_skills:
 //!    sorted}`.
+//!
+//! The `TeamShareService.check_permission` pass reuses the shared
+//! `KindCacheStore::team_share_permission` port; the `can_use_group_teams`
+//! pass reuses `skills_unified::effective_role_in_group`, the same helper the
+//! task-scoped APIs use for `get_effective_role_in_group`.
 use std::collections::HashSet;
 
 use serde::Deserialize;
 use serde::Serialize;
 
-use super::super::group_membership::{
-    ErpContext, ResolvedMemberships, effective_roles, user_group_memberships,
-};
+use super::super::group_membership::{ErpContext, TEAM_USE_ROLE, has_permission};
 use super::super::http_error::HttpError;
 use super::repository as repo;
 use super::repository::KindRow;
 use crate::remote_workspace_tree::kinds::{KindRecord, KindStore};
+use crate::skills::skills_unified::effective_role_in_group;
 use crate::state::AppState;
+use crate::task_skills::kinds::KindCacheStore;
 
 /// `TeamSkillsResponse` (`app.schemas.team.TeamSkillsResponse`).
 #[derive(Serialize)]
@@ -74,12 +82,15 @@ struct GhostRef {
 }
 
 /// `GhostSpec` (`app.schemas.kind.GhostSpec`): `skills` and `preload_skills`.
+/// Both are `Optional[List[str]]` in the source, so an explicit JSON `null`
+/// must deserialize to `None` rather than fail the whole document (a null
+/// value is not an empty list for serde's `#[serde(default)]`).
 #[derive(Debug, Deserialize, Default)]
 struct GhostSpec {
     #[serde(default)]
-    skills: Vec<String>,
+    skills: Option<Vec<String>>,
     #[serde(default)]
-    preload_skills: Vec<String>,
+    preload_skills: Option<Vec<String>>,
 }
 
 /// GET /api/teams/{team_id}/skills: the team-skills free function, injecting
@@ -169,10 +180,10 @@ async fn team_skills(
                 .unwrap_or_else(|| serde_json::json!({})),
         )
         .unwrap_or_default();
-        for name in spec.skills {
+        for name in spec.skills.unwrap_or_default() {
             skills.insert(name);
         }
-        for name in spec.preload_skills {
+        for name in spec.preload_skills.unwrap_or_default() {
             preload_skills.insert(name);
         }
     }
@@ -218,50 +229,64 @@ fn bot_ghost_ref(bot: &KindRecord) -> Option<GhostRef> {
     .ok()
 }
 
-/// `get_team_skills` access check: owner, public, group membership, or direct
-/// share. Raises `403 "Access denied to this team"` on failure.
+/// `team_share_service.get_resource_for_use` (`_get_resource(for_use=True)`):
+/// the owner or a public Team is admitted directly; otherwise
+/// `TeamShareService.check_permission(Reporter)` (direct `ResourceMember`
+/// row, entity bindings, then the native group role for a non-`default`
+/// namespace) or `can_use_group_teams` (`TEAM_USE_ROLE` in the Team's own
+/// namespace) must admit the caller. A denied caller leaves the source
+/// returning `None`, which `get_team_skills` maps to `404 "Team not found"`.
 async fn check_team_access(
     state: &AppState,
     team: &KindRow,
     user_id: i64,
 ) -> Result<(), HttpError> {
-    let is_public_team = team.kinds_user_id == 0;
-    let is_author = team.kinds_user_id == user_id;
-    let is_group_team = team.kinds_namespace != "default" && team.kinds_namespace != "system";
-
-    if is_author || is_public_team {
+    if team.kinds_user_id == user_id || team.kinds_user_id == 0 {
         return Ok(());
     }
 
-    if is_group_team {
-        // `get_user_groups(db, user_id)` — the source's
-        // `group_permission.get_user_groups` resolves the user's effective
-        // group namespaces.
+    // `TeamShareService.check_permission`: the direct member row, then the
+    // entity bindings, then the native group role read through
+    // `_get_active_team`'s namespace.
+    let store: KindCacheStore<'_, brz_mysql::MysqlService, brz_redis::RedisService> =
+        KindCacheStore {
+            mysql: &state.mysql,
+            redis: state.redis.as_ref(),
+            erp: Some(state.erp.as_ref()),
+            resolvers: Some(&state.entity_resolvers),
+        };
+    if store
+        .team_share_permission(team.kinds_id, user_id)
+        .await
+        .map_err(|error| HttpError::internal(format!("{error:?}")))?
+    {
+        return Ok(());
+    }
+
+    // `can_use_group_teams`: a non-`default` namespace whose effective role
+    // clears `TEAM_USE_ROLE`.
+    if team.kinds_namespace != "default" {
         let erp = ErpContext {
             erp: state.erp.as_ref(),
             redis: state.redis.as_ref(),
         };
-        let resolved: ResolvedMemberships = user_group_memberships(&state.mysql, &erp, user_id)
-            .await
-            .map_err(|error| HttpError::internal(format!("{error:?}")))?;
-        let group_names: Vec<String> =
-            effective_roles(&resolved.memberships, &resolved.active_names)
-                .into_keys()
-                .collect();
-        if group_names.contains(&team.kinds_namespace) {
+        let role = effective_role_in_group(
+            &state.mysql,
+            &erp,
+            i32::try_from(user_id).unwrap_or(i32::MAX),
+            &team.kinds_namespace,
+        )
+        .await
+        .map_err(|error| HttpError::internal(format!("{error:?}")))?;
+        if role
+            .as_deref()
+            .is_some_and(|role| has_permission(role, TEAM_USE_ROLE))
+        {
             return Ok(());
         }
     }
 
-    // Direct share: `ResourceMember` row for this team + user.
-    let shared = repo::shared_team_member(&state.mysql, team.kinds_id, user_id)
-        .await
-        .map_err(|error| HttpError::internal(format!("{error:?}")))?;
-    if shared {
-        return Ok(());
-    }
-
-    Err(HttpError::forbidden("Access denied to this team"))
+    Err(HttpError::not_found("Team not found"))
 }
 
 #[cfg(test)]
@@ -325,6 +350,36 @@ mod tests {
     fn team_spec_members_missing_spec_returns_empty() {
         let team = team_row(json!({}));
         assert!(team_spec_members(&team).is_empty());
+    }
+
+    #[test]
+    fn ghost_spec_accepts_null_skill_lists() {
+        // `GhostSpec.skills` / `preload_skills` are `Optional[List[str]]` in
+        // the source, so a JSON `null` is a valid value and must not discard
+        // the whole spec (which would drop the ghost's `skills`).
+        let spec: GhostSpec = serde_json::from_value(json!({
+            "skills": ["interactive"],
+            "preload_skills": null
+        }))
+        .expect("a null skill list is a valid source value");
+        assert_eq!(
+            spec.skills.unwrap_or_default(),
+            vec!["interactive".to_string()]
+        );
+        assert_eq!(
+            spec.preload_skills.unwrap_or_default(),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn ghost_spec_absent_skill_lists_default_to_empty() {
+        let spec: GhostSpec = serde_json::from_value(json!({})).expect("empty spec is valid");
+        assert_eq!(spec.skills.unwrap_or_default(), Vec::<String>::new());
+        assert_eq!(
+            spec.preload_skills.unwrap_or_default(),
+            Vec::<String>::new()
+        );
     }
 
     #[test]

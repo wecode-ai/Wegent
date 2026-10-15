@@ -1,3 +1,4 @@
+import { isDeviceRuntimeProject } from '@/lib/runtime-project-state'
 import { PluginTrialTemplateStrip } from '@wegent/collaboration/composer/PluginTrialTemplateStrip'
 import { PluginTrialSelectionContext } from '@wegent/collaboration/composer/PluginTrialSelectionContext'
 import { ComposerErrorBanner } from '@wegent/collaboration/composer'
@@ -460,8 +461,8 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
   )?.project
   const projectQuickPhrases =
     projectPhrases ??
-    (currentRuntimeProject?.source === 'local_project'
-      ? (currentRuntimeProject.aiSettings?.quickPhrases ?? [])
+    (isDeviceRuntimeProject(currentRuntimeProject)
+      ? (currentRuntimeProject?.aiSettings?.quickPhrases ?? [])
       : [])
   const applyTrialTemplate = (template: PluginPathComponent) => {
     const editor = composerRef.current

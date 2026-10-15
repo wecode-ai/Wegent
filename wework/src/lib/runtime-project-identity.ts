@@ -1,6 +1,12 @@
 import type { RuntimeDeviceWorkspace, RuntimeProjectWork } from '@/types/api'
 import { normalizeRuntimeWorkspacePath } from './runtime-project'
 import type { WorkbenchDeviceResolver } from './workbench-device'
+import {
+  getLocalRuntimeSourceIdentity,
+  qualifyLocalRuntimeSource,
+  assertLocalRuntimeSidebarIdentity,
+  type LocalRuntimeSidebarIdentity,
+} from './local-runtime-sidebar-identity'
 
 export interface RuntimeProjectReference {
   stateKey: string
@@ -18,14 +24,26 @@ export interface RuntimeProjectSyncTarget {
 export function getRuntimeProjectSyncTarget(work: RuntimeProjectWork): RuntimeProjectSyncTarget {
   const reference = getRuntimeProjectReference(work)
   if (reference) {
-    return reference.projectKey
-      ? { deviceId: reference.hostId, projectKey: reference.projectKey }
-      : { deviceId: reference.stateDeviceId ?? reference.hostId, projectKey: reference.stateKey }
+    if (reference.projectKey) {
+      return { deviceId: reference.hostId, projectKey: reference.projectKey }
+    }
+    const target = {
+      deviceId: reference.stateDeviceId ?? reference.hostId,
+      projectKey: reference.stateKey,
+    }
+    const localSource = getLocalRuntimeSourceIdentity(work.project)
+    return localSource?.deviceId === target.deviceId
+      ? qualifyLocalRuntimeSource(target, localSource)
+      : target
   }
-  return {
+  const target = {
     deviceId: work.project.stateDeviceId ?? work.deviceWorkspaces[0]?.deviceId ?? '',
     projectKey: work.project.key,
   }
+  const localSource = getLocalRuntimeSourceIdentity(work.project)
+  return localSource?.deviceId === target.deviceId
+    ? qualifyLocalRuntimeSource(target, localSource)
+    : target
 }
 
 export function buildRuntimeRemoteProjectStateId(hostId: string, projectKey: string): string {
@@ -62,7 +80,9 @@ export function getRuntimeProjectReference(
     stateKey,
     stateDeviceId: work.project.stateDeviceId ?? null,
     hostId: workspace.remoteHostId?.trim() || target?.hostId || workspace.deviceId,
-    projectKey: work.project.key !== stateKey ? work.project.key : (target?.projectKey ?? null),
+    projectKey:
+      work.project.ownerProjectKey?.trim() ||
+      (work.project.key !== stateKey ? work.project.key : (target?.projectKey ?? null)),
     workspacePath: workspace.workspacePath,
   }
 }
@@ -70,9 +90,39 @@ export function getRuntimeProjectReference(
 export function runtimeProjectTargetKey(
   deviceId: string,
   projectKey: string,
-  devices: WorkbenchDeviceResolver
+  devices: WorkbenchDeviceResolver,
+  localIdentity?: LocalRuntimeSidebarIdentity
 ): string {
-  return JSON.stringify([devices.identityKey(deviceId), projectKey])
+  const identityKey =
+    localIdentity?.deviceId === deviceId.trim()
+      ? `runtime:${localIdentity.runtimeInstanceId}`
+      : devices.identityKey(deviceId)
+  return JSON.stringify([identityKey, projectKey])
+}
+
+export function getRuntimeProjectLocalOwnerIdentity(
+  projectWork: RuntimeProjectWork,
+  ownerDeviceId: string
+): LocalRuntimeSidebarIdentity | undefined {
+  const source = getLocalRuntimeSourceIdentity(projectWork.project)
+  return projectWork.project.source !== 'remote_project' &&
+    projectWork.project.kind !== 'remote' &&
+    source?.deviceId === ownerDeviceId &&
+    !projectWork.deviceWorkspaces.some(
+      workspace => workspace.remoteHostId || workspace.workspaceSource === 'remote'
+    )
+    ? source
+    : undefined
+}
+
+export function runtimeProjectSyncTargetKey(
+  target: RuntimeProjectSyncTarget,
+  devices: WorkbenchDeviceResolver,
+  localIdentity?: LocalRuntimeSidebarIdentity
+): string {
+  const localSource = getLocalRuntimeSourceIdentity(target)
+  if (localSource && localIdentity) assertLocalRuntimeSidebarIdentity(localSource, localIdentity)
+  return runtimeProjectTargetKey(target.deviceId, target.projectKey, devices, localSource)
 }
 
 export function runtimeWorkspaceLocationKey(
@@ -82,7 +132,8 @@ export function runtimeWorkspaceLocationKey(
   return runtimeProjectTargetKey(
     workspace.deviceId,
     normalizeRuntimeWorkspacePath(workspace.workspacePath),
-    devices
+    devices,
+    getLocalRuntimeSourceIdentity(workspace)
   )
 }
 

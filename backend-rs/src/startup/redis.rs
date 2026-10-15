@@ -7,8 +7,16 @@ use crate::config::RedisConfig;
 use brz_redis::{RedisResult, RedisService, RedisServiceOptions};
 use std::time::Duration;
 
+/// Read only when constructing a resource, never on the request path.
+pub(super) fn resource_name() -> String {
+    crate::config::optional_env_or_dotenv("REDIS_RESOURCE_NAME")
+        .unwrap_or_else(|| "backend".to_owned())
+}
+
 pub async fn shared(config: &RedisConfig) -> RedisResult<RedisService> {
+    let name = resource_name();
     let options = RedisServiceOptions::default()
+        .with_resource_name(name)
         .with_password(config.password.clone())
         .with_timeout(Duration::from_secs(5));
     let master = config.endpoint();

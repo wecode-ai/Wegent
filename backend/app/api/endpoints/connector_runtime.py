@@ -61,7 +61,8 @@ def get_connector_runtime_user(
     return user
 
 
-@router.post("/token", response_model=ConnectorTokenResponse)
+# MIGRATION-CANDIDATE(api="POST /api/connector-runtime/token"): remove after final confirmation.
+# @router.post("/token", response_model=ConnectorTokenResponse)
 def issue_connector_token(
     user: User = Depends(get_current_user),
 ) -> ConnectorTokenResponse:

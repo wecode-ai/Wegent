@@ -54,6 +54,11 @@ pub struct ItemMetadata {
     pub queued_at: Option<serde_json::Value>,
     pub ai_state: Option<serde_json::Value>,
     pub tags: Option<serde_json::Value>,
+    /// `metadata["human_work"]` read by `human_issue_work_service.view`.
+    pub human_work: Option<serde_json::Value>,
+    /// External-source markers that disable the direct-human view.
+    pub external_index: Option<serde_json::Value>,
+    pub external_shadow: Option<serde_json::Value>,
 }
 
 /// `LoopItemComment.metadata_json` assignment-event fields
@@ -211,6 +216,7 @@ const CLOUD_CONTEXT_COLUMNS: &str = "loop_items.id AS loop_items_id, \
      loop_items.source AS loop_items_source, \
      loop_items.status AS loop_items_status, \
      loop_items.priority AS loop_items_priority, \
+     loop_items.start_at AS loop_items_start_at, \
      loop_items.due_at AS loop_items_due_at, \
      loop_items.sort_order AS loop_items_sort_order, \
      loop_items.current_delivery_id AS loop_items_current_delivery_id, \
@@ -268,6 +274,8 @@ pub struct TaskItemFullRow {
     pub status: Option<String>,
     #[mysql(rename = "loop_items_priority")]
     pub priority: Option<String>,
+    #[mysql(rename = "loop_items_start_at")]
+    pub start_at: Option<NaiveDateTime>,
     #[mysql(rename = "loop_items_due_at")]
     pub due_at: Option<NaiveDateTime>,
     #[mysql(rename = "loop_items_sort_order")]

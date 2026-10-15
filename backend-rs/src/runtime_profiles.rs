@@ -258,18 +258,20 @@ const USER_BY_ID_SQL: &str = "SELECT users.id AS users_id, users.user_name AS us
 #[brz_http_server::get("/api/v1/runtime-profiles")]
 async fn list_runtime_profiles(
     #[inject(state)] state: &AppState,
+    #[header("x-request-id")] request_id: Option<String>,
     #[auth] user: SessionUser,
 ) -> Result<Vec<RuntimeProfileView>, FastApiError> {
-    runtime_profiles(state, user.0.id).await
+    runtime_profiles(state, user.0.id, request_id.as_deref()).await
 }
 
 /// Handler body for `GET /api/v1/runtime-profiles`.
 async fn runtime_profiles(
     state: &AppState,
     user_id: i32,
+    request_id: Option<&str>,
 ) -> Result<Vec<RuntimeProfileView>, FastApiError> {
     // `device_service.get_all_devices`: every provider lists its devices.
-    let devices = list_all_devices(state, user_id).await?;
+    let devices = list_all_devices(state, user_id, request_id).await?;
     let committed = ensure_device_defaults(state, &devices, user_id).await?;
     if committed {
         // The endpoint evaluates `current_user.id` for `list` after the insert

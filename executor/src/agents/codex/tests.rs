@@ -100,6 +100,7 @@ fn spawn_idle_app_server_child() -> Child {
         command.args(["-c", "sleep 60"]);
         command
     };
+    configure_codex_app_server_process_group(&mut command);
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -107,6 +108,43 @@ fn spawn_idle_app_server_child() -> Child {
         .kill_on_drop(true)
         .spawn()
         .expect("the idle app-server child should start")
+}
+
+#[tokio::test]
+async fn restarting_app_server_keeps_admission_locked_until_cleanup_finishes() {
+    let mut client = CodexAppServerClient::new("codex-restart-admission-test");
+    client.state = Arc::new(Mutex::new(CodexAppServerSharedState::default()));
+    let mut child = spawn_idle_app_server_child();
+    let stdin = child.stdin.take().expect("the child should expose stdin");
+    let pending = Arc::new(Mutex::new(HashMap::new()));
+    client.state.lock().await.process = Some(CodexAppServerProcess {
+        child,
+        stdin: Arc::new(Mutex::new(stdin)),
+        pending: Arc::clone(&pending),
+        notifications: CodexNotificationHub::new(),
+        reader_task: tokio::spawn(async {}),
+    });
+    let cleanup_gate = pending.lock().await;
+    let restarting_client = client.clone();
+    let (started_tx, started_rx) = oneshot::channel();
+    let restart = tokio::spawn(async move {
+        started_tx
+            .send(())
+            .expect("the restart observer should remain available");
+        restarting_client.restart().await;
+    });
+    started_rx.await.expect("the restart should start");
+    let admission_locked = client.state.try_lock().is_err();
+    drop(cleanup_gate);
+    restart
+        .await
+        .expect("restart should finish after cleanup is released");
+
+    assert!(
+        admission_locked,
+        "new process admission raced with old process cleanup"
+    );
+    assert!(client.state.lock().await.process.is_none());
 }
 
 #[tokio::test]
@@ -1319,6 +1357,23 @@ fn prepare_wework_codex_home_preserves_user_symlink_when_subscription_disabled()
         user_auth
     );
     let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn prepare_wework_codex_home_preserves_config_when_reading_fails() {
+    let _environment = environment::LaunchEnvironment::new();
+    let codex_home = wework_codex_home();
+    let path = codex_home.join("config.toml");
+    let original = b"model = \"gpt-5.5\"\nopenai_base_url = \"http://127.0.0.1:1/v1\"\n# \xff\n";
+    fs::write(&path, original).unwrap();
+
+    let result = prepare_wework_codex_home(&codex_home);
+
+    assert!(
+        result.is_err(),
+        "An unreadable existing config must stop startup"
+    );
+    assert_eq!(fs::read(&path).unwrap(), original);
 }
 
 #[test]

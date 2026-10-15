@@ -92,6 +92,7 @@ import {
   DEFAULT_MODEL_ID,
   DEFAULT_MODEL_LABEL,
   DEFAULT_STEP_TIMEOUT_MS,
+  DESKTOP_READY_TIMEOUT_MS,
   DESKTOP_CONTROL_DELIVERY_TIMEOUT_MS,
   DESKTOP_CONTROL_RESULT_GRACE_MS,
   DESKTOP_CONTROL_SERVER_PORT,
@@ -750,13 +751,22 @@ class DesktopE2EServer {
     )
   }
 
-  awaitReadyAfter(readyCount) {
+  async awaitReadyAfter(readyCount, timeoutMs = DESKTOP_READY_TIMEOUT_MS) {
     if (this.readyCount > readyCount) return this.guard(Promise.resolve(this.ready))
-    return this.guard(
-      new Promise(resolvePromise => {
-        this.readyWaiters.push({ readyCount, resolve: resolvePromise })
-      })
-    )
+    let waiter
+    const ready = new Promise(resolvePromise => {
+      waiter = { readyCount, resolve: resolvePromise }
+      this.readyWaiters.push(waiter)
+    })
+    try {
+      return await withTimeout(
+        this.guard(ready),
+        timeoutMs,
+        `Timed out waiting for desktop readiness after event ${readyCount}`
+      )
+    } finally {
+      this.readyWaiters = this.readyWaiters.filter(candidate => candidate !== waiter)
+    }
   }
 
   awaitBlockedCloudRequest(pathname) {
@@ -987,17 +997,17 @@ class DesktopE2EServer {
   }
 
   async awaitScenarioRequestCount(scenario, count, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) {
-    const waitForCount = (async () => {
-      while ((this.scenarioRequests.get(scenario)?.length ?? 0) < count) {
-        await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+    const deadline = Date.now() + timeoutMs
+    while ((this.scenarioRequests.get(scenario)?.length ?? 0) < count) {
+      const remainingMs = deadline - Date.now()
+      if (remainingMs <= 0) {
+        throw new Error(`Timed out waiting for ${count} ${scenario} scenario requests`)
       }
-      return this.scenarioRequests.get(scenario).at(-1)
-    })()
-    return withTimeout(
-      this.guard(waitForCount),
-      timeoutMs,
-      `Timed out waiting for ${count} ${scenario} scenario requests`
-    )
+      await this.guard(
+        new Promise(resolvePromise => setTimeout(resolvePromise, Math.min(50, remainingMs)))
+      )
+    }
+    return this.guard(Promise.resolve(this.scenarioRequests.get(scenario).at(-1)))
   }
 
   releaseInitialToolExecution() {
@@ -1320,9 +1330,16 @@ class DesktopE2EServer {
     }
 
     const url = new URL(request.url ?? '/', this.url)
-    this.httpRequests.push({
+    const requestDiagnostic = {
       method: request.method ?? 'UNKNOWN',
       pathname: url.pathname,
+      startedAtUnixMs: Date.now(),
+    }
+    this.httpRequests.push(requestDiagnostic)
+    response.once('finish', () => {
+      requestDiagnostic.finishedAtUnixMs = Date.now()
+      requestDiagnostic.durationMs =
+        requestDiagnostic.finishedAtUnixMs - requestDiagnostic.startedAtUnixMs
     })
     if (await this.handleControlRoute(request, response, url)) return
     try {
@@ -3146,7 +3163,7 @@ class DesktopE2EServer {
       )
       const tool = selectShellToolCommand(
         body,
-        `printf '%s' "$WEGENT_SKILL_USER_NAME"`,
+        `node -e "process.stdout.write(process.env.WEGENT_SKILL_USER_NAME || '')"`,
         this.cloudWorkspacePath,
         { yieldTimeMs: 10_000 }
       )

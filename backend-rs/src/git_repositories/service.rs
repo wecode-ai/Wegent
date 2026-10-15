@@ -17,7 +17,9 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 
 use crate::auth::UserRow;
+use crate::git_repositories::Branch;
 use crate::git_repositories::RepositoryResult;
+use crate::git_repositories::branch_providers;
 use crate::git_repositories::cache::{RedisRepositoryCache, RepositoryCache};
 use crate::git_repositories::providers::{self, MapError, Provider, ProviderEntry};
 use crate::git_repositories::worker;
@@ -50,6 +52,13 @@ impl GitRepositoriesService {
             client,
             refresh,
         })
+    }
+
+    /// The retained provider HTTP client
+    /// (`settings.REPOSITORY_READ_TIMEOUT_SECONDS`), shared with the Git-token
+    /// validation the current-user update performs.
+    pub(crate) fn client(&self) -> Client {
+        self.client.clone()
     }
 
     /// `repository_service.get_repositories`: the provider aggregation plus the
@@ -139,6 +148,31 @@ impl GitRepositoriesService {
             tracing::warn!(%error, "repository full-fetch queue is full; dropping job");
         }
     }
+
+    /// `repository_service.get_branches(user_context, git_repo, type=...,
+    /// git_domain=...)`: the provider dispatch over the user's `git_info`.
+    /// A provider failure is already the service's wrapped
+    /// `Error getting branches from {type}: ...` text; no matching entry
+    /// answers an empty list.
+    pub async fn get_branches(
+        &self,
+        resolver: &dyn RepositoryTokenResolver,
+        user: &UserRow,
+        git_repo: &str,
+        kind: &str,
+        git_domain: &str,
+    ) -> Result<Vec<Branch>, FastApiError> {
+        branch_providers::get_branches(
+            &self.client,
+            resolver,
+            &user.git_info.0,
+            git_repo,
+            kind,
+            git_domain,
+        )
+        .await
+        .map_err(|detail| FastApiError::detail(StatusCode::INTERNAL_SERVER_ERROR, detail))
+    }
 }
 
 /// `_get_user_providers`: configured provider types in `git_info` order, with
@@ -172,7 +206,7 @@ use brz_json::adapters::python_truthy as truthy;
 /// `gitlab_provider_patch._resolve_tokens_for_user`: resolve every `"***"`
 /// placeholder before the provider call, keeping the stored value when the
 /// service returns nothing.
-async fn resolve_gitlab_tokens(
+pub(crate) async fn resolve_gitlab_tokens(
     resolver: &dyn RepositoryTokenResolver,
     entries: &mut [ProviderEntry],
 ) {

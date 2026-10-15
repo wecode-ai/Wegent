@@ -40,6 +40,7 @@ import {
   MULTIMODAL_VISION_COMPLETION_TEXT,
   MULTIMODAL_VISION_PROMPT,
   MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
+  MODEL_REQUEST_TIMEOUT_MS,
   QUEUED_FOLLOW_UP,
   QUEUE_CLEAR_INITIAL,
   QUEUE_CLEAR_MANUAL,
@@ -123,6 +124,11 @@ async function sendPromptWithButton(
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs,
   })
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
+    { enabled: true, visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
   await control.command('press', selector, { key: 'Enter', timeoutMs })
   if (confirmCloudModelCatalogSync) {
     await control.command('waitFor', '[data-testid="cloud-model-catalog-sync-dialog"]', {
@@ -432,11 +438,7 @@ async function verifyBackgroundGuidanceNavigation({
 
   control.holdInitialCompletionResponse()
   control.releaseInitialToolExecution()
-  await withTimeout(
-    control.awaitScenarioRequestCount('initial', 2),
-    DEFAULT_STEP_TIMEOUT_MS,
-    'The background task did not report its tool output before guidance'
-  )
+  await control.awaitScenarioRequestCount('initial', 2, MODEL_REQUEST_TIMEOUT_MS)
   await withTimeout(
     (async () => {
       while (control.modelStage !== 'awaiting_guidance') {
@@ -450,11 +452,7 @@ async function verifyBackgroundGuidanceNavigation({
   await control.command('fill', composerSelector, { value: BACKGROUND_GUIDANCE })
   await control.command('click', '[data-testid="send-mode-menu-button"]')
   await control.command('click', '[data-testid="guide-current-turn-option"]')
-  await withTimeout(
-    control.awaitScenarioRequestCount('initial', 3),
-    DEFAULT_STEP_TIMEOUT_MS,
-    'The guided background task did not continue after guidance was applied'
-  )
+  await control.awaitScenarioRequestCount('initial', 3, MODEL_REQUEST_TIMEOUT_MS)
   assert.equal(
     await control.command('getValue', composerSelector),
     '',
@@ -880,10 +878,15 @@ async function verifyTurnNavigationTracksVisibleTurnMessages(
 }
 
 async function verifyEnvironmentPanelScrollStability(control) {
+  const previousSize = JSON.parse(
+    await control.command('setMainWindowSize', 'body', {
+      value: JSON.stringify({ width: 1600, height: 900 }),
+    })
+  )
   const scrollFrameSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-scroll-frame"]`
   const scrollerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
   const environmentPanelSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="environment-info-panel-container"]`
-  const environmentButtonSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="environment-info-button"]`
+  const environmentButtonSelector = '[data-testid="environment-info-button"]'
   if (
     Number(
       await control.command(
@@ -892,6 +895,10 @@ async function verifyEnvironmentPanelScrollStability(control) {
       )
     ) === 0
   ) {
+    await control.command('waitFor', environmentButtonSelector, {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
     await control.command('click', environmentButtonSelector, { visible: true })
   }
   await control.command(
@@ -1014,6 +1021,7 @@ async function verifyEnvironmentPanelScrollStability(control) {
     })
   )
   await captureVerificationScreenshot(control, 'environment-panel-scroll-03-downward.png')
+  await control.command('setMainWindowSize', 'body', { value: JSON.stringify(previousSize) })
 }
 
 async function reopenCurrentTurnNavigationTask(

@@ -262,7 +262,7 @@ export function createSharedSkillRuntime({
     const assertLayout = async skill => {
       assert.equal((await lstat(join(home, 'skills'))).isSymbolicLink(), false)
       assert.equal((await lstat(link)).isSymbolicLink(), true)
-      assert.equal(isAbsolute(await readlink(link)), false)
+      assert.equal(isAbsolute(await readlink(link)), process.platform === 'win32')
       assert.equal(await realpath(link), await realpath(packagePath(skill)))
       await assert.rejects(lstat(join(home, 'capability-snapshots')), { code: 'ENOENT' })
     }

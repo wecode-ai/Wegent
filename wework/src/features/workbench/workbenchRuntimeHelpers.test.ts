@@ -148,56 +148,59 @@ describe('workbenchRuntimeHelpers', () => {
     })
   })
 
-  test('uses project plugins for a new conversation draft without captured task plugins', () => {
-    const runtimeWork: RuntimeWorkListResponse = {
-      projects: [
-        {
-          project: {
-            id: 7,
-            key: 'local:/workspace/project',
-            name: 'Project',
-            source: 'local_project',
-            aiSettings: {
-              plugins: [
-                {
-                  id: 'quality-gate@team-market',
-                  pluginName: 'quality-gate',
-                  marketplaceId: 'team-market',
-                  displayName: 'Quality Gate',
-                },
-              ],
+  test.each(['local_project', 'remote_project'])(
+    'uses %s plugins for a new conversation draft',
+    source => {
+      const runtimeWork: RuntimeWorkListResponse = {
+        projects: [
+          {
+            project: {
+              id: 7,
+              key: 'local:/workspace/project',
+              name: 'Project',
+              source,
+              aiSettings: {
+                plugins: [
+                  {
+                    id: 'quality-gate@team-market',
+                    pluginName: 'quality-gate',
+                    marketplaceId: 'team-market',
+                    displayName: 'Quality Gate',
+                  },
+                ],
+              },
             },
+            deviceWorkspaces: [
+              {
+                deviceId: 'local-device',
+                available: true,
+                mapped: true,
+                workspacePath: '/workspace/project',
+                tasks: [
+                  {
+                    taskId: 'draft-task',
+                    workspacePath: '/workspace/project',
+                    title: 'New conversation',
+                    runtime: 'codex',
+                  },
+                ],
+              },
+            ],
           },
-          deviceWorkspaces: [
-            {
-              deviceId: 'local-device',
-              available: true,
-              mapped: true,
-              workspacePath: '/workspace/project',
-              tasks: [
-                {
-                  taskId: 'draft-task',
-                  workspacePath: '/workspace/project',
-                  title: 'New conversation',
-                  runtime: 'codex',
-                },
-              ],
-            },
-          ],
-        },
-      ],
-      chats: [],
-      totalTasks: 1,
-    }
+        ],
+        chats: [],
+        totalTasks: 1,
+      }
 
-    expect(
-      resolveComposerProjectPluginNames(runtimeWork, 7, {
-        deviceId: 'local-device',
-        taskId: 'draft-task',
-        workspacePath: '/workspace/project',
-      })
-    ).toEqual(['quality-gate'])
-  })
+      expect(
+        resolveComposerProjectPluginNames(runtimeWork, 7, {
+          deviceId: 'local-device',
+          taskId: 'draft-task',
+          workspacePath: '/workspace/project',
+        })
+      ).toEqual(['quality-gate'])
+    }
+  )
 
   test('keeps an existing task pinned to its captured project plugins', () => {
     const runtimeWork: RuntimeWorkListResponse = {
@@ -467,45 +470,48 @@ describe('workbenchRuntimeHelpers', () => {
     expect(readLastProjectId(7)).toBeUndefined()
   })
 
-  test('selects the primary root for a multi-root local project', () => {
-    const runtimeWork: RuntimeWorkListResponse = {
-      projects: [
-        {
-          project: {
-            id: 7,
-            key: 'product',
-            name: 'Product',
-            source: 'local_project',
-            roots: [
-              { kind: 'local', path: '/workspace/web/' },
-              { kind: 'local', path: '/workspace/api' },
+  test.each(['local_project', 'remote_project'])(
+    'selects the primary root for a multi-root %s project',
+    source => {
+      const runtimeWork: RuntimeWorkListResponse = {
+        projects: [
+          {
+            project: {
+              id: 7,
+              key: 'product',
+              name: 'Product',
+              source,
+              roots: [
+                { kind: 'local', path: '/workspace/web/' },
+                { kind: 'local', path: '/workspace/api' },
+              ],
+            },
+            deviceWorkspaces: [
+              {
+                id: 12,
+                deviceId: 'device-1',
+                workspacePath: '/workspace/api',
+                available: true,
+                tasks: [],
+              },
+              {
+                id: 11,
+                deviceId: 'device-1',
+                workspacePath: '/workspace/web',
+                available: true,
+                tasks: [],
+              },
             ],
           },
-          deviceWorkspaces: [
-            {
-              id: 12,
-              deviceId: 'device-1',
-              workspacePath: '/workspace/api',
-              available: true,
-              tasks: [],
-            },
-            {
-              id: 11,
-              deviceId: 'device-1',
-              workspacePath: '/workspace/web',
-              available: true,
-              tasks: [],
-            },
-          ],
-        },
-      ],
-      chats: [],
-      totalTasks: 0,
-    }
+        ],
+        chats: [],
+        totalTasks: 0,
+      }
 
-    expect(getDefaultProjectDeviceWorkspaceId(runtimeWork, 7)).toBe(11)
-    expect(findProjectDeviceWorkspace(runtimeWork, 7, null)?.workspacePath).toBe('/workspace/web')
-  })
+      expect(getDefaultProjectDeviceWorkspaceId(runtimeWork, 7)).toBe(11)
+      expect(findProjectDeviceWorkspace(runtimeWork, 7, null)?.workspacePath).toBe('/workspace/web')
+    }
+  )
 
   test('keeps multi-location non-local projects explicit', () => {
     const runtimeWork: RuntimeWorkListResponse = {

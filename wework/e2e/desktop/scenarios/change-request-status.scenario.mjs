@@ -4,6 +4,7 @@ import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { delimiter, join } from 'node:path'
 import { promisify } from 'node:util'
 import { waitForAttribute } from '../modules/workspace-flows.mjs'
+import { selectE2EModel } from '../modules/shared.mjs'
 
 const execFileAsync = promisify(execFile)
 const ACTIVE_WORKBENCH_SELECTOR =
@@ -337,6 +338,7 @@ export async function createDesktopScenario({
 
     async verify(control) {
       await createLocalProject(control, workspacePath, uiTimeoutMs)
+      await selectE2EModel(control, undefined, undefined, ACTIVE_WORKBENCH_SELECTOR)
       const monitorRegistrationWindowStartedAt = Date.now()
       await control.command('fill', '[data-testid="chat-message-input"]', {
         value: TASK_PROMPT,

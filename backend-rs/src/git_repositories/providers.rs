@@ -134,12 +134,18 @@ pub(crate) struct RefreshRequest {
 
 /// `settings.REPOSITORY_READ_TIMEOUT_SECONDS` for the background worker.
 /// The shared provider HTTP client (`requests` with a 15s connect/read budget
-/// and default redirect following).
+/// and default redirect following). `requests` validates HTTPS against the
+/// system trust store, so the client also trusts the deployment's mounted
+/// anchor when one exists; a normal host keeps the built-in roots.
 pub(crate) fn build_client() -> Result<Client, brz_http::Error> {
     Client::builder()
         .connect_timeout(READ_TIMEOUT)
         .read_timeout(READ_TIMEOUT)
         .timeout(READ_TIMEOUT)
+        .configure(|builder| match crate::http_trust::trust_anchor() {
+            Some(anchor) => builder.add_root_certificate(anchor),
+            None => builder,
+        })
         .build()
 }
 

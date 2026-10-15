@@ -1,3 +1,4 @@
+import { updateRuntimeWorkProject, type RuntimeProjectUpdate } from '@/lib/runtime-project-update'
 import { mergeDeviceLists } from '@/lib/workbench-device'
 import { mergeRuntimeWorkLists } from '@/features/workbench/runtimeWorkMerge'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -656,7 +657,7 @@ export function useWorkbenchDataRefresh({
           ok: runtimeWorkResult.status === 'fulfilled',
           cancelled,
         })
-        if (cancelled) return
+        if (cancelled || bootstrapRevision !== workListRefreshRevisionRef.current) return
         console.info('[startup][renderer]', {
           step: 'task-list-load',
           status: runtimeWorkResult.status === 'fulfilled' ? 'completed' : 'failed',
@@ -677,10 +678,7 @@ export function useWorkbenchDataRefresh({
           runtimeWorkResult.status === 'fulfilled'
             ? applyRuntimeTaskOverrides(runtimeWorkResult.value, true)
             : EMPTY_RUNTIME_WORK
-        if (
-          runtimeWorkResult.status === 'fulfilled' &&
-          bootstrapRevision === workListRefreshRevisionRef.current
-        ) {
+        if (runtimeWorkResult.status === 'fulfilled') {
           localRuntimeWorkRef.current = runtimeWork
           dispatch({
             type: 'runtime_work_refreshed',
@@ -1005,8 +1003,43 @@ export function useWorkbenchDataRefresh({
       return createCommand()
     }, [services.deviceApi])
 
+  const updateRuntimeProject = useCallback(
+    (update: RuntimeProjectUpdate) => {
+      workListRefreshRevisionRef.current += 1
+      cloudBackgroundRequestControllerRef.current?.abort()
+      const projectUpdate = (work: RuntimeWorkListResponse) =>
+        updateRuntimeWorkProject(work, update, devicesRef.current)
+      if (localRuntimeWorkRef.current)
+        localRuntimeWorkRef.current = projectUpdate(localRuntimeWorkRef.current)
+      if (runtimeWorkRef.current) runtimeWorkRef.current = projectUpdate(runtimeWorkRef.current)
+      cachedRemoteRuntimeWorkRef.current = {
+        userId: user.id,
+        runtimeWork: writeCachedRemoteRuntimeWork(
+          user.id,
+          projectUpdate(cachedRemoteRuntimeWorkRef.current.runtimeWork)
+        ),
+      }
+      const cloud = clearCloudRuntimeSync(cloudRuntimeStateRef.current)
+      updateCloudRuntimeState({
+        ...cloud,
+        current: cloud.current
+          ? { ...cloud.current, runtimeWork: projectUpdate(cloud.current.runtimeWork) }
+          : null,
+        lastGood: cloud.lastGood
+          ? { ...cloud.lastGood, runtimeWork: projectUpdate(cloud.lastGood.runtimeWork) }
+          : null,
+      })
+      dispatch({ type: 'runtime_local_project_updated', ...update })
+    },
+    [dispatch, updateCloudRuntimeState, user.id]
+  )
+
+  const getRuntimeWorkSnapshot = useCallback(() => runtimeWorkRef.current, [])
+
   return {
     cloudWorkStatus,
+    getRuntimeWorkSnapshot,
+    updateRuntimeProject,
     markRuntimeTasksArchived,
     markRuntimeProjectRemoved,
     refreshWorkLists,

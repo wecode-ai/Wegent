@@ -2,12 +2,14 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Static contracts for the cloud/remote device Executor Home."""
+"""Contracts for the cloud/remote device Executor Home and entrypoint."""
 
 import os
 import shlex
 import subprocess
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
 DEVICE_DOCKERFILE = ROOT / "docker" / "device" / "Dockerfile"
@@ -49,14 +51,28 @@ def _run_entrypoint(
     local_workspace_root: Path | None = None,
     volume_mounted: bool = True,
     projects_root: Path | None = None,
+    legacy_executor_home: bool = False,
+    codex_homes: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir(exist_ok=True)
     for name in ("code-server", "flock", "install", "node", "wecode"):
         _write_success_command(fake_bin, name)
+    (fake_bin / "code-server").write_text(
+        "#!/usr/bin/env bash\n"
+        'printf "%s\\n" "${CODEX_HOME-}" "${WEGENT_CODEX_HOME-}" '
+        f'> {shlex.quote(str(tmp_path / "codex-homes"))}\n',
+        encoding="utf-8",
+    )
     data_root = tmp_path / "data-root"
+    legacy_home = tmp_path / "legacy-home"
+    mounted_roots = [data_root, legacy_home] if legacy_executor_home else [data_root]
     (fake_bin / "mountpoint").write_text(
-        f'#!/usr/bin/env bash\n[[ "$2" == {shlex.quote(str(data_root))} ]]\n'
+        "#!/usr/bin/env bash\n"
+        + " || ".join(
+            f'[[ "$2" == {shlex.quote(str(root))} ]]' for root in mounted_roots
+        )
+        + "\n"
     )
     (fake_bin / "mountpoint").chmod(0o755)
     if not volume_mounted:
@@ -91,7 +107,9 @@ def _run_entrypoint(
         **os.environ,
         "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
         "HOME": str(process_home),
-        "WEGENT_EXECUTOR_HOME": str(executor_home),
+        "WEGENT_EXECUTOR_HOME": str(
+            legacy_home if legacy_executor_home else executor_home
+        ),
         "WEGENT_WORKBENCH_HOME": str(data_root / "workbench"),
         "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED": persistence_verified,
         "DEVICE_CODE_SERVER_ENABLED": "true",
@@ -109,10 +127,13 @@ def _run_entrypoint(
         "WEGENT_USER_JWT_TOKEN",
         "WECODE_CLI_CUSTOMER_USER",
         "WEGENT_EXECUTOR_PROJECTS_DIR",
+        "CODEX_HOME",
+        "WEGENT_CODEX_HOME",
     ):
         env.pop(key, None)
     if projects_root is not None:
         env["WEGENT_EXECUTOR_PROJECTS_DIR"] = str(projects_root)
+    env.update(codex_homes or {})
     return subprocess.run(
         ["bash", str(entrypoint)],
         check=False,
@@ -121,6 +142,58 @@ def _run_entrypoint(
         env=env,
         timeout=10,
     )
+
+
+@pytest.mark.parametrize("legacy_executor_home", [False, True])
+def test_device_entrypoint_defaults_codex_homes_to_persisted_executor_home(
+    tmp_path, legacy_executor_home
+):
+    executor_home = tmp_path / "executor-home"
+    expected_home = tmp_path / "legacy-home" if legacy_executor_home else executor_home
+
+    result = _run_entrypoint(
+        tmp_path=tmp_path,
+        executor_home=executor_home,
+        home_id="device-stable-1",
+        legacy_executor_home=legacy_executor_home,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "codex-homes").read_text().splitlines() == [
+        str(expected_home / "codex"),
+        str(expected_home / "codex"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "codex_homes,expected_homes",
+    [
+        ({"CODEX_HOME": "/persisted/user-codex"}, ["/persisted/user-codex"] * 2),
+        (
+            {"WEGENT_CODEX_HOME": "/persisted/app-codex"},
+            ["/persisted/app-codex"] * 2,
+        ),
+        (
+            {
+                "CODEX_HOME": "/persisted/user-codex",
+                "WEGENT_CODEX_HOME": "/persisted/app-codex",
+            },
+            ["/persisted/user-codex", "/persisted/app-codex"],
+        ),
+    ],
+)
+def test_device_entrypoint_preserves_explicit_codex_homes(
+    tmp_path, codex_homes, expected_homes
+):
+    result = _run_entrypoint(
+        tmp_path=tmp_path,
+        executor_home=tmp_path / "executor-home",
+        home_id="device-stable-1",
+        codex_homes=codex_homes,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "codex-homes").read_text().splitlines() == expected_homes
 
 
 def test_device_image_persists_workspace_separately_from_legacy_executor_state():

@@ -688,21 +688,26 @@ pub(crate) fn path_is_within(root: &str, path: &str) -> bool {
 }
 
 fn git_common_workspace_root(path: &str) -> Option<String> {
-    let mut current = PathBuf::from(path);
+    let (workspace, _, common_dir) = git_metadata_directories(Path::new(path))?;
+    let root = if common_dir.file_name().and_then(|name| name.to_str()) == Some(".git") {
+        common_dir.parent()?
+    } else {
+        &workspace
+    };
+    Some(root.to_string_lossy().into_owned())
+}
+
+pub(crate) fn git_metadata_directories(path: &Path) -> Option<(PathBuf, PathBuf, PathBuf)> {
+    let mut current = path.to_path_buf();
     loop {
         let git_marker = current.join(".git");
         if git_marker.is_dir() {
-            return Some(current.to_string_lossy().into_owned());
+            return Some((current, git_marker.clone(), git_marker));
         }
         if git_marker.is_file() {
             let git_dir = parse_gitdir_file(&git_marker, &current)?;
-            let common_dir = read_common_git_dir(&git_dir).unwrap_or(git_dir);
-            if common_dir.file_name().and_then(|name| name.to_str()) == Some(".git") {
-                return common_dir
-                    .parent()
-                    .map(|root| root.to_string_lossy().into_owned());
-            }
-            return Some(current.to_string_lossy().into_owned());
+            let common_dir = read_common_git_dir(&git_dir).unwrap_or_else(|| git_dir.clone());
+            return Some((current, git_dir, common_dir));
         }
         if !current.pop() {
             return None;
@@ -711,21 +716,12 @@ fn git_common_workspace_root(path: &str) -> Option<String> {
 }
 
 fn git_worktree_root_and_id(path: &str) -> Option<(String, String)> {
-    let mut current = PathBuf::from(path);
-    loop {
-        let git_marker = current.join(".git");
-        if git_marker.is_file() {
-            let git_dir = parse_gitdir_file(&git_marker, &current)?;
-            let worktree_id = worktree_id_from_git_dir(&git_dir)?;
-            return Some((current.to_string_lossy().into_owned(), worktree_id));
-        }
-        if git_marker.is_dir() {
-            return None;
-        }
-        if !current.pop() {
-            return None;
-        }
+    let (workspace, git_dir, _) = git_metadata_directories(Path::new(path))?;
+    if workspace.join(".git").is_dir() {
+        return None;
     }
+    let worktree_id = worktree_id_from_git_dir(&git_dir)?;
+    Some((workspace.to_string_lossy().into_owned(), worktree_id))
 }
 
 fn resolved_worktree_root_and_id(path: &str) -> Option<(String, String)> {

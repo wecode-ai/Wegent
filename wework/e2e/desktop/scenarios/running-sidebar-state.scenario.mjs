@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 
-import { createSingleRootLocalProject } from '../modules/shared.mjs'
+import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
 
 const WORKBENCH = '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const COMPOSER = `${WORKBENCH} [data-testid="chat-message-input"][contenteditable="true"]`
@@ -119,6 +119,7 @@ export function createDesktopScenario({ uiTimeoutMs, workspacePath }) {
       try {
         await createSingleRootLocalProject(control, workspacePath, 'running-sidebar-state')
         await control.command('waitFor', COMPOSER, { timeoutMs: uiTimeoutMs })
+        await selectE2EModel(control, undefined, undefined, WORKBENCH)
         await control.command('fill', COMPOSER, { value: FIRST })
         await control.command('press', COMPOSER, { key: 'Enter' })
         await control.command('waitFor', `${WORKBENCH} [data-testid="message-assistant"]`, {

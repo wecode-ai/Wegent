@@ -6,7 +6,7 @@
 //! `DELETE /api/tasks/bulk`, and `PUT /api/tasks/{task_id}`
 //! (`app.api.endpoints.adapter.tasks`).
 
-mod delete_task;
+pub(crate) mod delete_task;
 mod models;
 mod router;
 mod socketio;

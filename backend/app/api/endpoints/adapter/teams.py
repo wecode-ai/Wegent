@@ -315,7 +315,8 @@ def get_team_input_parameters(
     )
 
 
-@router.get("/{team_id}/skills", response_model=TeamSkillsResponse)
+# MIGRATION-CANDIDATE(api="GET /api/teams/{team_id}/skills"): remove after final confirmation.
+# @router.get("/{team_id}/skills", response_model=TeamSkillsResponse)
 def get_team_skills(
     team_id: int,
     current_user: User = Depends(security.get_current_user),

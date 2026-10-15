@@ -81,6 +81,26 @@ describe('RuntimeSupervisor', () => {
     await supervisor.stop()
   })
 
+  test('cancels readiness work when the managed process exits during startup', async () => {
+    let probeSignal: AbortSignal | undefined
+    const supervisor = track(
+      new RuntimeSupervisor({
+        command: process.execPath,
+        args: ['-e', 'setTimeout(() => process.exit(9), 20)'],
+        name: 'failed-readiness',
+        maxCrashes: 0,
+        probe: (_child, signal) => {
+          probeSignal = signal
+          return new Promise((_resolve, reject) => {
+            signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+          })
+        },
+      })
+    )
+    await expect(supervisor.start()).rejects.toThrow('exited during startup')
+    expect(probeSignal?.aborted).toBe(true)
+  })
+
   test('rejects startup when the executable cannot be spawned', async () => {
     const supervisor = track(
       new RuntimeSupervisor({

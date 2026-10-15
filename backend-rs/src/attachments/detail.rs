@@ -20,7 +20,7 @@
 //! knowledge-document download policy before minting its token.
 use std::sync::Arc;
 
-use brz_http_server::{HttpResponse, Response, StatusCode};
+use brz_http_server::{Response, StatusCode};
 
 use super::auth::{AttachmentUser, UserRow};
 use super::context_store::{self};
@@ -140,6 +140,7 @@ async fn download(
     download_token: Option<String>,
     share_token: Option<String>,
     purpose: Option<String>,
+    #[header("range")] range: Option<&str>,
     #[auth] user: Option<AttachmentUser>,
 ) -> Result<super::external_media::AttachmentDownload, crate::http_compat::FastApiError> {
     super::handler::download_attachment(
@@ -148,6 +149,7 @@ async fn download(
         download_token.as_deref(),
         share_token.as_deref(),
         purpose.as_deref(),
+        range,
         user.as_deref(),
     )
     .await
@@ -177,8 +179,9 @@ async fn get_attachment_playback(
 async fn download_shared(
     #[inject(state)] state: &Arc<AppState>,
     token: String,
-) -> Result<HttpResponse<brz_http_server::Binary>, crate::http_compat::FastApiError> {
-    super::shared_download::public_download_attachment(state, &token).await
+    #[header("range")] range: Option<&str>,
+) -> Result<super::external_media::AttachmentDownload, crate::http_compat::FastApiError> {
+    super::shared_download::public_download_attachment(state, &token, range).await
 }
 
 /// The download-token response body (`{"download_token": ..., "expires_in": 300}`),

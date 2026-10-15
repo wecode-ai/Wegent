@@ -1,4 +1,5 @@
 import { registerModelConfigurationCapabilities } from './model-configuration-capabilities.js'
+import { setReducedMotion } from './e2e-media-preferences.js'
 import {
   app,
   BrowserWindow,
@@ -203,6 +204,7 @@ export interface ElectronE2EHost {
   captureTarget: (windowLabel: string) => WebContents | null
   cancelCloseToTray: () => Promise<void>
   closeToTray: () => Promise<void>
+  closeStartupSplash: () => boolean
   completeSystemDragDrop: (payload: {
     action: 'new-chat' | 'follow-up' | 'stash'
     text: string | null
@@ -272,6 +274,7 @@ export function createElectronCapabilityRouter(
     captureTarget: () => null,
     cancelCloseToTray: () => Promise.reject(new Error('Close to tray is unavailable')),
     closeToTray: () => Promise.reject(new Error('Close to tray is unavailable')),
+    closeStartupSplash: () => false,
     completeSystemDragDrop: () => Promise.reject(new Error('System drag is unavailable')),
     dismissPopout: () => undefined,
     dismissSystemDragPanel: () => undefined,
@@ -634,6 +637,14 @@ export function createElectronCapabilityRouter(
     return captureWebContentsDataUrl(contents, { preferDebugger: true })
   })
   router.register('e2e.closeMainWindow', () => requiredWindow(window).close())
+  router.register('e2e.closeStartupSplash', () => {
+    if (!e2eHost.closeStartupSplash()) {
+      throw new HostCapabilityError(
+        'e2e_startup_splash_unavailable',
+        'The startup splash is not open'
+      )
+    }
+  })
   router.register('e2e.activateNotification', params => {
     activateElectronNotification(
       { title: '', body: '', url: stringParam(params, 'url') },
@@ -684,6 +695,14 @@ export function createElectronCapabilityRouter(
     )
   })
   router.register('e2e.getProcessSnapshot', () => getElectronProcessSnapshot())
+  router.register('e2e.setReducedMotion', async params => {
+    const contents = e2eHost.captureTarget('main')
+    if (!contents || contents.isDestroyed()) {
+      throw new HostCapabilityError('e2e_view_unavailable', 'Primary DSH view is unavailable')
+    }
+    await setReducedMotion(contents, stringParam(params, 'preference'))
+    return null
+  })
   router.register('e2e.getRendererHeapUsage', async () => {
     const contents = e2eHost.captureTarget('main')
     if (!contents || contents.isDestroyed()) {

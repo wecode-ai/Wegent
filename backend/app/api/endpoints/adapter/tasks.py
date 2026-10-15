@@ -374,7 +374,8 @@ def delete_all_personal_tasks(
     )
 
 
-@router.get("/{task_id}", response_model=TaskDetail)
+# MIGRATION-CANDIDATE(api="GET /api/tasks/{task_id}"): remove after final confirmation.
+# @router.get("/{task_id}", response_model=TaskDetail)
 def get_task(
     task_id: int = Depends(with_task_telemetry),
     client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
@@ -478,7 +479,8 @@ def get_remote_workspace_file(
     )
 
 
-@router.get("/{task_id}/skills", response_model=TaskSkillsResponse)
+# MIGRATION-CANDIDATE(api="GET /api/tasks/{task_id}/skills"): remove after final confirmation.
+# @router.get("/{task_id}/skills", response_model=TaskSkillsResponse)
 def get_task_skills(
     task_id: int = Depends(with_task_telemetry),
     current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 
 const PRIMARY = process.platform === 'win32' ? 'Control' : 'Meta'
+const NATIVE_PRIMARY = process.platform === 'darwin' ? 'Meta' : 'Control'
 const DRAFT = 'Conversation shortcut regression draft'
 
 export async function verifyConversationShortcuts(control, composerSelector) {
@@ -31,8 +32,19 @@ export async function verifyConversationShortcuts(control, composerSelector) {
   )
   assert.equal(await control.command('getValue', composerSelector), DRAFT)
 
+  await control.command('nativePress', composerSelector, { key: `${NATIVE_PRIMARY}+Alt+S` })
+  await control.command('waitFor', '[data-testid="right-workspace-chat-panel"]')
+  assert.equal(
+    await control.command('getAttribute', '[data-testid="right-workspace-panel-shell"]', {
+      value: 'aria-hidden',
+    }),
+    'false'
+  )
+  assert.equal(await control.command('getValue', composerSelector), DRAFT)
+  await control.command('nativePress', composerSelector, { key: `${PRIMARY}+Alt+B` })
+
   // Native selection and replacement must still belong to the composer.
-  await control.command('nativePress', composerSelector, { key: `${PRIMARY}+A` })
+  await control.command('nativePress', composerSelector, { key: `${NATIVE_PRIMARY}+A` })
   await control.command('nativePress', composerSelector, { key: 'x' })
   assert.equal(await control.command('getValue', composerSelector), 'x')
   await control.command('fill', composerSelector, { value: originalDraft })

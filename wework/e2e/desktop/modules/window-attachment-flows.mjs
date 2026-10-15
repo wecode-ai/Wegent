@@ -1,5 +1,3 @@
-import { readdir } from 'node:fs/promises'
-
 import {
   distanceFromBottom,
   distanceFromTop,
@@ -69,6 +67,9 @@ const MODEL_REQUEST_TIMEOUT_MS = Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
 // The desktop stop budget is five seconds; a runtime that can exit on its own
 // must beat it, otherwise the app force-kills the tree and the window hangs.
 const RUNTIME_SELF_EXIT_TIMEOUT_MS = 4_000
+// Quitting during startup tears down an in-flight runtime and its child
+// processes, so allow longer than the shared step budget for the process exit.
+const STARTUP_QUIT_TIMEOUT_MS = 20_000
 
 async function waitForProcessExit(processId, message) {
   const startedAt = Date.now()
@@ -966,6 +967,92 @@ async function verifyBackgroundTaskWindowLifecycle({
       value: JSON.stringify({ closeToTrayEnabled: true }),
     })
   }
+
+  // Regression: quitting while the startup splash is still on screen must exit the
+  // app. The splash refuses native window closes until the workbench reports
+  // readiness, and that guard used to cancel app.quit() and strand the app on the
+  // splash with its runtime already torn down.
+  setPhase('quit-during-startup-splash')
+  const startupQuitApp = await restartDesktopApp()
+  const startupSplash = JSON.parse(await control.command('getStartupSplashSnapshot', 'body'))
+  assert.notEqual(
+    startupSplash.state,
+    'closed',
+    'The startup splash had already closed before the quit-during-startup request'
+  )
+  if (process.platform === 'darwin') {
+    requestMacosApplicationQuit(startupQuitApp.pid)
+  } else {
+    const tray = JSON.parse(await control.command('getTraySnapshot', 'body'))
+    assert.ok(
+      tray.menu.some(item => item.id === 'quit'),
+      'The Electron Tray did not expose Quit during startup'
+    )
+    // Quitting tears the desktop host bridge down while this request is still in
+    // flight, so the renderer does not always deliver a command result. The
+    // process exit below is what proves the Tray Quit action was processed.
+    void control
+      .command('activateTray', 'body', {
+        value: JSON.stringify({ type: 'menu-item', menuItemId: 'quit' }),
+      })
+      .catch(() => undefined)
+  }
+  const startupQuitExitMs = await waitForProcessExitWithin(
+    startupQuitApp.pid,
+    STARTUP_QUIT_TIMEOUT_MS,
+    'Wework stayed on the startup splash after the quit request during startup'
+  )
+  await writeFile(
+    join(resultDir, 'quit-during-startup.json'),
+    `${JSON.stringify(
+      {
+        appProcessId: startupQuitApp.pid,
+        platform: process.platform,
+        startupSplash,
+        appExitMs: startupQuitExitMs,
+      },
+      null,
+      2
+    )}\n`
+  )
+
+  // Regression: while the splash is up it is the only visible window, so its
+  // native close button must quit the app too. Refusing the close without
+  // acting on it left the user staring at a window that ignored them. The
+  // harness holds the splash on screen, because it otherwise closes as soon as
+  // the workbench reports readiness, before the controller can command it.
+  setPhase('close-during-startup-splash')
+  const startupCloseApp = await restartDesktopApp({
+    appEnvironmentOverrides: { WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '60000' },
+  })
+  const closeSplash = JSON.parse(await control.command('getStartupSplashSnapshot', 'body'))
+  assert.notEqual(
+    closeSplash.state,
+    'closed',
+    'The startup splash had already closed before the close-during-startup request'
+  )
+  await control.command('requestStartupSplashClose', 'body')
+  const startupCloseExitMs = await waitForProcessExitWithin(
+    startupCloseApp.pid,
+    STARTUP_QUIT_TIMEOUT_MS,
+    'Wework ignored its startup splash close button and kept running'
+  )
+  await writeFile(
+    join(resultDir, 'close-during-startup.json'),
+    `${JSON.stringify(
+      {
+        appProcessId: startupCloseApp.pid,
+        platform: process.platform,
+        startupSplash: closeSplash,
+        appExitMs: startupCloseExitMs,
+      },
+      null,
+      2
+    )}\n`
+  )
+  await restartDesktopApp({
+    appEnvironmentOverrides: { WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '' },
+  })
   return taskRowTestId
 }
 
@@ -1307,37 +1394,6 @@ async function waitForDurableAttachmentPreviews(executorHome, expectedCount) {
   throw new Error('The attachment-only tasks did not persist durable attachment previews')
 }
 
-async function waitForDeviceRuntimeAttachments(runtimeWorkspaceRoot, expectedCount) {
-  const startedAt = Date.now()
-  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
-    const entries = await readdir(runtimeWorkspaceRoot, { withFileTypes: true })
-    const attachments = (
-      await Promise.all(
-        entries
-          .filter(entry => entry.isDirectory())
-          .map(entry => findAttachmentFiles(join(runtimeWorkspaceRoot, entry.name, 'attachments')))
-      )
-    ).flat()
-    if (attachments.length >= expectedCount) return attachments
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
-  }
-  throw new Error('The remote device did not persist attachments in its task workspace directories')
-}
-
-async function findAttachmentFiles(directory) {
-  const entries = await readdir(directory, { withFileTypes: true }).catch(error => {
-    if (error.code === 'ENOENT') return []
-    throw error
-  })
-  const files = await Promise.all(
-    entries.map(entry => {
-      const path = join(directory, entry.name)
-      return entry.isDirectory() ? findAttachmentFiles(path) : [path]
-    })
-  )
-  return files.flat().filter(path => path.endsWith(ATTACHMENT_ONLY_FILENAME))
-}
-
 function readGitStatus(workspacePath) {
   return commandOutput('git', ['status', '--porcelain', '--untracked-files=all'], {
     cwd: workspacePath,
@@ -1351,11 +1407,15 @@ async function verifyAttachmentOnlySidebarLifecycle({
   composerSelector,
   control,
   executorHome,
-  runtimeWorkspaceRoot,
+  prepareConversation,
+  verifySubmittedTask,
+  verifyTaskAttachments,
   workspacePath,
 }) {
   const gitStatusBefore = workspacePath ? readGitStatus(workspacePath) : null
+  const verifiedTasks = []
   control.setScenario('attachment_only')
+  await prepareConversation?.()
   const rowsBeforeAttachmentOnly = new Set(
     JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
       testId.startsWith('runtime-local-task-row-')
@@ -1369,23 +1429,34 @@ async function verifyAttachmentOnlySidebarLifecycle({
     text: `${ATTACHMENT_ONLY_COMPLETION_TEXT}_1`,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  const firstVerifiedTask = await verifySubmittedTask?.()
+  const firstVerifiedRow = firstVerifiedTask
+    ? `runtime-local-task-row-${firstVerifiedTask.taskId}`
+    : null
+  if (firstVerifiedTask) verifiedTasks.push(firstVerifiedTask)
   const firstSnapshot = await waitForSnapshot(
     control,
     snapshot =>
-      snapshot.testIds.some(
-        testId =>
-          testId.startsWith('runtime-local-task-row-') && !rowsBeforeAttachmentOnly.has(testId)
-      ),
+      firstVerifiedRow
+        ? snapshot.testIds.includes(firstVerifiedRow)
+        : snapshot.testIds.some(
+            testId =>
+              testId.startsWith('runtime-local-task-row-') && !rowsBeforeAttachmentOnly.has(testId)
+          ),
     'The first attachment-only task did not appear in the sidebar'
   )
-  const firstTaskRow = firstSnapshot.testIds.find(
-    testId => testId.startsWith('runtime-local-task-row-') && !rowsBeforeAttachmentOnly.has(testId)
-  )
+  const firstTaskRow =
+    firstVerifiedRow ??
+    firstSnapshot.testIds.find(
+      testId =>
+        testId.startsWith('runtime-local-task-row-') && !rowsBeforeAttachmentOnly.has(testId)
+    )
   assert.ok(firstTaskRow, 'The first attachment-only task row was not found')
   await captureVerificationScreenshot(control, '02-attachment-only-first-completed.png')
 
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+  await prepareConversation?.()
   await attachAndSendOnlyFile(control, composerSelector)
   await captureVerificationScreenshot(control, '03-attachment-only-second-submitted.png')
   await control.awaitScenarioRequestCount('attachment_only', 2)
@@ -1393,12 +1464,15 @@ async function verifyAttachmentOnlySidebarLifecycle({
     text: `${ATTACHMENT_ONLY_COMPLETION_TEXT}_2`,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  const secondVerifiedTask = await verifySubmittedTask?.()
+  const secondVerifiedRow = secondVerifiedTask
+    ? `runtime-local-task-row-${secondVerifiedTask.taskId}`
+    : null
+  if (secondVerifiedTask) verifiedTasks.push(secondVerifiedTask)
   if (executorHome) {
     await waitForDurableAttachmentPreviews(executorHome, 2)
   }
-  if (runtimeWorkspaceRoot) {
-    await waitForDeviceRuntimeAttachments(runtimeWorkspaceRoot, 2)
-  }
+  await verifyTaskAttachments?.(verifiedTasks)
   if (workspacePath) {
     assert.equal(
       readGitStatus(workspacePath),
@@ -1411,20 +1485,24 @@ async function verifyAttachmentOnlySidebarLifecycle({
     control,
     snapshot =>
       snapshot.testIds.includes(firstTaskRow) &&
-      snapshot.testIds.some(
-        testId =>
-          testId.startsWith('runtime-local-task-row-') &&
-          testId !== firstTaskRow &&
-          !rowsBeforeAttachmentOnly.has(testId)
-      ),
+      (secondVerifiedRow
+        ? snapshot.testIds.includes(secondVerifiedRow)
+        : snapshot.testIds.some(
+            testId =>
+              testId.startsWith('runtime-local-task-row-') &&
+              testId !== firstTaskRow &&
+              !rowsBeforeAttachmentOnly.has(testId)
+          )),
     'A same-title attachment-only task disappeared after the authoritative sidebar refresh'
   )
-  const secondTaskRow = twoTaskSnapshot.testIds.find(
-    testId =>
-      testId.startsWith('runtime-local-task-row-') &&
-      testId !== firstTaskRow &&
-      !rowsBeforeAttachmentOnly.has(testId)
-  )
+  const secondTaskRow =
+    secondVerifiedRow ??
+    twoTaskSnapshot.testIds.find(
+      testId =>
+        testId.startsWith('runtime-local-task-row-') &&
+        testId !== firstTaskRow &&
+        !rowsBeforeAttachmentOnly.has(testId)
+    )
   assert.ok(secondTaskRow, 'The second attachment-only task row was not found')
   const expectedRows = [firstTaskRow, secondTaskRow]
   await captureVerificationScreenshot(control, '04-attachment-only-two-tasks-after-refresh.png')

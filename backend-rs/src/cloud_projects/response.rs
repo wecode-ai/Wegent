@@ -125,10 +125,28 @@ fn board_config_value(config: Option<&OpaqueJson>) -> BoardConfig {
     {
         processing = Some(value.to_string());
     }
+    // `CloudProjectScheduleViewConfig` has a `default_factory`, so the source
+    // always renders `schedule_view`; a stored partial object supplies only the
+    // present keys and the rest fall back to the schema defaults.
+    let schedule = source.get("schedule_view").and_then(Value::as_object);
+    let schedule_text = |key: &str| {
+        schedule
+            .and_then(|map| map.get(key))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    };
+    let schedule_view = ScheduleView {
+        status_filter: schedule_text("status_filter"),
+        assignee_filter: schedule_text("assignee_filter"),
+        tag_filter: schedule_text("tag_filter"),
+        group_by: schedule_text("group_by").unwrap_or_else(|| "none".to_string()),
+        sort_by: schedule_text("sort_by").unwrap_or_else(|| "start_asc".to_string()),
+    };
     BoardConfig {
         group_by: group_by.to_owned(),
         statuses: raw_json(&statuses),
         processing_start_status_id: processing,
+        schedule_view,
     }
 }
 
@@ -527,6 +545,15 @@ struct BoardConfig {
     group_by: String,
     statuses: RawJson,
     processing_start_status_id: Option<String>,
+    schedule_view: ScheduleView,
+}
+#[derive(Debug, serde::Serialize)]
+struct ScheduleView {
+    status_filter: Option<String>,
+    assignee_filter: Option<String>,
+    tag_filter: Option<String>,
+    group_by: String,
+    sort_by: String,
 }
 #[derive(Debug, serde::Serialize)]
 struct AiAutomation {
@@ -605,12 +632,12 @@ mod tests {
     }
     fn row(metadata: Value) -> ProjectListRow {
         ProjectListRow {
-            id: "1712605396200092385".to_string(),
-            public_id: Some("99f780dd-f8c3-4df9-99d8-2c5dfa9c3336".to_string()),
-            project_key: Some("WEWORKBU0CEBB1".to_string()),
-            name: Some("WeWork Bug Feedback".to_string()),
+            id: "1000000000000000001".to_string(),
+            public_id: Some("00000000-0000-4000-8000-000000000003".to_string()),
+            project_key: Some("EXAMPLEPROJECT1".to_string()),
+            name: Some("Example Project".to_string()),
             description: Some("Description".to_string()),
-            created_by_user_id: 86,
+            created_by_user_id: 101,
             status: "active".to_string(),
             version: 4,
             created_at: NaiveDateTime::parse_from_str("2026-07-28 15:44:57", "%Y-%m-%d %H:%M:%S")
@@ -632,11 +659,11 @@ mod tests {
                 "domain": "git.example.invalid",
                 "api_base": "https://git.example.invalid/api/v4",
                 "credential": {"nonce": "n", "version": 2},
-                "repository": "example_org/common/example/wework-issues",
+                "repository": "example_org/common/example/example-issues",
             },
         });
-        let value = project_response(&row(metadata), 302, "dehua", "RestrictedAnalyst");
-        assert_eq!(value["id"], "1712605396200092385");
+        let value = project_response(&row(metadata), 301, "example-user", "RestrictedAnalyst");
+        assert_eq!(value["id"], "1000000000000000001");
         // The stored metadata `visibility` is overridden: only an approved
         // all-signed-in-users grant makes the project `public`.
         assert_eq!(value["visibility"], "private");
@@ -649,13 +676,13 @@ mod tests {
             serde_json::json!({
                 "domain": "git.example.invalid",
                 "api_base": "https://git.example.invalid/api/v4",
-                "repository": "example_org/common/example/wework-issues",
+                "repository": "example_org/common/example/example-issues",
                 "credential_configured": true,
             })
         );
         assert_eq!(value["access_role"], "RestrictedAnalyst");
-        assert_eq!(value["current_user_id"], 302);
-        assert_eq!(value["created_by_user_id"], 86);
+        assert_eq!(value["current_user_id"], 301);
+        assert_eq!(value["created_by_user_id"], 101);
         assert_eq!(value["created_at"], "2026-07-28T15:44:57");
         // defaults
         assert_eq!(value["card_display"]["show_assignee"], true);
@@ -664,6 +691,18 @@ mod tests {
             value["board_config"]["processing_start_status_id"],
             "pending"
         );
+        // `CloudProjectScheduleViewConfig` default_factory: the source always
+        // renders `schedule_view`, defaulting every absent key.
+        assert_eq!(
+            value["board_config"]["schedule_view"],
+            serde_json::json!({
+                "status_filter": null,
+                "assignee_filter": null,
+                "tag_filter": null,
+                "group_by": "none",
+                "sort_by": "start_asc",
+            })
+        );
         assert_eq!(value["ai_automation"]["max_retry_count"], 1);
         assert_eq!(value["pull_request_automation"]["prompt"], "");
         assert_eq!(value["workflow_definition"]["version"], 1);
@@ -671,12 +710,42 @@ mod tests {
         assert_eq!(value["tags"], serde_json::json!([]));
     }
 
+    /// A stored partial `schedule_view` keeps its present keys and defaults the
+    /// absent ones, matching the schema's `default_factory` behavior.
+    #[test]
+    fn schedule_view_fills_present_keys_and_defaults_the_rest() {
+        let value = project_response(
+            &row(serde_json::json!({
+                "board_config": {
+                    "schedule_view": {
+                        "group_by": "status",
+                        "sort_by": "due_asc",
+                        "assignee_filter": "42",
+                    }
+                }
+            })),
+            301,
+            "example-user",
+            "Viewer",
+        );
+        assert_eq!(
+            value["board_config"]["schedule_view"],
+            serde_json::json!({
+                "status_filter": null,
+                "assignee_filter": "42",
+                "tag_filter": null,
+                "group_by": "status",
+                "sort_by": "due_asc",
+            })
+        );
+    }
+
     #[test]
     fn masks_local_provider_config_to_the_flag() {
         let value = project_response(
             &row(serde_json::json!({"task_provider": "local", "provider_config": {}})),
-            302,
-            "dehua",
+            301,
+            "example-user",
             "Maintainer",
         );
         assert_eq!(
@@ -799,7 +868,7 @@ mod tests {
         };
         let value = crate::json_contract_tests::serialized(super::project_response(
             &row(json!({"visibility": "public"})),
-            302,
+            301,
             "user",
             "RestrictedAnalyst",
             None,

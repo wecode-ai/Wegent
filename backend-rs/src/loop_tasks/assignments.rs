@@ -323,16 +323,16 @@ fn item_number(item_id: &str) -> Option<i64> {
 
 /// One active assignment event plus its `(member_type, member_id,
 /// workflow_step)` dedupe key.
-struct ActiveEvent<'a> {
-    comment: &'a CommentRow,
-    metadata: &'a AssignmentMetadata,
+pub(crate) struct ActiveEvent<'a> {
+    pub(crate) comment: &'a CommentRow,
+    pub(crate) metadata: &'a AssignmentMetadata,
     key: (String, String, String),
 }
 
 /// `issue_assignment_service._active_events`: the active `assign` events after
 /// applying the `unassign` cancellations, in activity order. A repeated member
 /// key keeps its first position and takes the newest event.
-fn active_events(comments: &[CommentRow]) -> Vec<ActiveEvent<'_>> {
+pub(crate) fn active_events(comments: &[CommentRow]) -> Vec<ActiveEvent<'_>> {
     let cancelled: Vec<&str> = comments
         .iter()
         .filter_map(|comment| {

@@ -21,6 +21,101 @@ afterEach(async () => {
 })
 
 describe('DSH runtime readiness', () => {
+  test('concurrent managed runtimes bind their own ports and probe their advertised endpoints', async () => {
+    const runtimes = Array.from(
+      { length: 2 },
+      () =>
+        new DshRuntime({
+          url: 'http://127.0.0.1:0',
+          command: process.execPath,
+          args: [
+            '-e',
+            `
+              const http = require('node:http')
+              const requests = []
+              const server = http.createServer((request, response) => {
+                requests.push(request.url)
+                response.end(JSON.stringify(requests))
+              })
+              server.listen(0, '127.0.0.1', () => {
+                process.stdout.write('dsh web: http://127.0.0.1:')
+                setImmediate(() => process.stdout.write(server.address().port + '\\n'))
+              })
+            `,
+          ],
+          probeUrls: ['http://127.0.0.1:0/host', 'http://127.0.0.1:0/executor'],
+          startTimeoutMs: 2_000,
+        })
+    )
+    try {
+      await Promise.all(runtimes.map(runtime => runtime.start()))
+      expect(runtimes[0].url()).not.toBe(runtimes[1].url())
+      for (const runtime of runtimes) {
+        expect(Number(new URL(runtime.url()).port)).toBeGreaterThan(0)
+        const response = await fetch(`${runtime.url()}/requests`)
+        expect(await response.json()).toEqual(['/host', '/executor', '/requests'])
+      }
+    } finally {
+      await Promise.all(runtimes.map(runtime => runtime.stop()))
+    }
+  })
+
+  test('a managed runtime cannot become ready without announcing its bound port', async () => {
+    const runtime = new DshRuntime({
+      url: 'http://127.0.0.1:0',
+      command: process.execPath,
+      args: ['-e', 'setInterval(() => {}, 1000)'],
+      startTimeoutMs: 100,
+    })
+    try {
+      await expect(runtime.start()).rejects.toThrow('dsh-web startup timed out')
+      expect(runtime.url()).toBe('http://127.0.0.1:0')
+    } finally {
+      await runtime.stop()
+    }
+  })
+
+  test('a crashed managed runtime restores its original listening address', async () => {
+    const runtime = new DshRuntime({
+      url: 'http://127.0.0.1:0',
+      command: process.execPath,
+      args: [
+        '-e',
+        `
+          const http = require('node:http')
+          const port = Number(process.argv[process.argv.indexOf('--port') + 1])
+          const server = http.createServer((_request, response) => {
+            response.end(String(process.pid))
+          })
+          server.listen(port, '127.0.0.1', () => {
+            console.log('dsh web: http://127.0.0.1:' + server.address().port)
+          })
+        `,
+        '--',
+        '--port',
+        '0',
+      ],
+      startTimeoutMs: 2_000,
+    })
+    try {
+      await runtime.start()
+      const origin = runtime.url()
+      const firstPid = runtime.pid()
+      if (!firstPid) throw new Error('Managed DSH process has no PID')
+      process.kill(firstPid, 'SIGKILL')
+      await vi.waitFor(
+        async () => {
+          const response = await fetch(origin)
+          expect(Number(await response.text())).not.toBe(firstPid)
+        },
+        { timeout: 3_000 }
+      )
+      expect(runtime.url()).toBe(origin)
+    } finally {
+      await runtime.stop()
+    }
+  })
+
   test('preserves the timeout reason while a probe request is still in flight', async () => {
     const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
       return new Promise<Response>((_resolve, reject) => {

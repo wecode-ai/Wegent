@@ -29,6 +29,7 @@ export const DESKTOP_CHECKPOINTS = [
   'send-key-preference',
   'reply-predictions',
   'model-settings',
+  'codex-native-catalog',
   'system-proxy',
   'system-pac',
   'workbench-mode',

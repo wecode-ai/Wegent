@@ -127,6 +127,7 @@ mod claude_turns;
 mod codex_accounts;
 mod codex_config;
 mod collection;
+mod command_items;
 mod context_compaction;
 mod fork_transfer;
 mod hooks;
@@ -1197,6 +1198,7 @@ impl RuntimeWorkRpcHandler {
                 self.update_codex_runtime_config(payload).await
             }
             "runtime.codex.app_server.restart" => self.restart_codex_app_server(payload).await,
+            "runtime.codex.app_server.request" => self.handle_codex_app_server_rpc(payload).await,
             "runtime.codex.stream_debug.get" => self.get_codex_stream_debug().await,
             "runtime.codex.stream_debug.set" => self.set_codex_stream_debug(payload).await,
             "runtime.harness_proxy.register" => self.register_harness_proxy(payload).await,

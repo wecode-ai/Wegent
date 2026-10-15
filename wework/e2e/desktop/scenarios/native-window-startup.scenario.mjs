@@ -110,39 +110,41 @@ export async function createDesktopScenario({ resultDir }) {
         'executor-start',
         'completed'
       )
-      const portAllocationStarted = startupEventIndex(
-        runtimeStartupEvents,
-        'core-dsh-port-allocation',
-        'started'
-      )
-      const portAllocationCompleted = startupEventIndex(
-        runtimeStartupEvents,
-        'core-dsh-port-allocation',
-        'completed'
-      )
       const coreProcessStarted = startupEventIndex(
         runtimeStartupEvents,
         'core-dsh-process-start',
         'started'
       )
+      const coreProcessCompleted = startupEventIndex(
+        runtimeStartupEvents,
+        'core-dsh-process-start',
+        'completed'
+      )
       assert.ok(corePrepareStarted >= 0, 'Core DSH preparation did not start')
       assert.ok(executorStarted >= 0, 'The managed Executor did not start')
       assert.ok(executorCompleted >= 0, 'The managed Executor did not become ready')
-      assert.ok(portAllocationStarted >= 0, 'Core DSH did not allocate a runtime port')
-      assert.ok(portAllocationCompleted >= 0, 'Core DSH runtime port allocation did not complete')
       assert.ok(coreProcessStarted >= 0, 'The Core DSH process did not start')
+      assert.ok(coreProcessCompleted >= 0, 'The Core DSH process did not become ready')
       assert.ok(
         corePrepareStarted < executorCompleted,
         'Core DSH preparation did not overlap managed Executor startup'
       )
       assert.ok(
-        executorCompleted < portAllocationStarted,
-        'Core DSH allocated its port before the managed Executor bound its startup ports'
+        executorCompleted < coreProcessStarted,
+        'Core DSH started before the managed Executor bound its startup ports'
       )
       assert.ok(
-        portAllocationStarted <= portAllocationCompleted &&
-          portAllocationCompleted < coreProcessStarted,
-        'Core DSH did not start immediately after allocating its runtime port'
+        coreProcessStarted < coreProcessCompleted,
+        'Core DSH startup readiness was logged before its process started'
+      )
+      const coreDshLog = await readFile(
+        join(resultDir, 'electron-user-data', 'logs', 'dsh-core-runtime.log'),
+        'utf8'
+      )
+      const listeningPort = Number(coreDshLog.match(/dsh web: http:\/\/127\.0\.0\.1:(\d+)/)?.[1])
+      assert.ok(
+        Number.isInteger(listeningPort) && listeningPort > 0 && listeningPort <= 65535,
+        'Core DSH did not bind a valid runtime port'
       )
       await writeFile(
         join(resultDir, 'desktop-runtime-startup-order.json'),

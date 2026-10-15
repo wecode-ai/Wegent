@@ -38,6 +38,7 @@ def test_remote_docker_command_binds_device_identity_to_stable_home(monkeypatch)
     assert first.env["DEVICE_CODE_SERVER_ENABLED"] == "true"
     assert first.env["DEVICE_TERMINAL_ENABLED"] == "true"
     assert first.env["WEGENT_EXECUTOR_HOME_ID"] == "device-stable-1"
+    assert "-e WEGENT_WORKBENCH_HOME=/home/wegent/.wegent/workbench" in first.command
     assert first.env["WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED"] == "true"
     assert (
         "-v remote-device-1-home:/home/wegent/.wecode/wegent-executor" in first.command
@@ -51,6 +52,7 @@ def test_remote_docker_command_binds_device_identity_to_stable_home(monkeypatch)
     assert "DEVICE_VNC" not in first.command
     assert "DEVICE_VNC" not in first.commands[1].command
     assert "WEGENT_EXECUTOR_HOME_ID" not in first.commands[1].command
+    assert "WEGENT_WORKBENCH_HOME" not in first.commands[1].command
     assert (
         "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED=true" in first.commands[1].command
     )

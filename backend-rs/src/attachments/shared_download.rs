@@ -16,11 +16,16 @@
 //!    `subtask_contexts` SELECT by id): 404 `Attachment not found` when the
 //!    row is absent or `context_type != 'attachment'`. No ownership check —
 //!    the token alone grants access.
-//! 3. `application media download policy` (video extension with
-//!    the `external account` storage backend -> 400). The registered external playback
-//!    resolvers are empty in this deployment (`_playback_resolvers` has no
-//!    registrations), so `_stream_external_attachment` is always `None`.
-//! 4. `_stream_stored_attachment`: re-fetch the context
+//! 3. `_require_attachment_download_allowed(db, context, "share")`: the
+//!    knowledge-document download policy probe (`download_policy.rs`).
+//! 4. `_stream_external_attachment(context, range_header)`: the
+//!    application-owned playback resolvers (`external_media.rs`) decide
+//!    whether the attachment is served as relays of external media. The
+//!    open-source deployment registers no resolvers, so the stage resolves
+//!    nothing.
+//! 5. The application-owned media download policy, reached only when
+//!    the external media stage resolved nothing.
+//! 6. `_stream_stored_attachment`: re-fetch the context
 //!    (`asyncio.to_thread`, a second `subtask_contexts` SELECT), load the
 //!    bytes from the configured `ATTACHMENT_STORAGE_BACKEND` (`mysql`
 //!    binary_data or the MinIO/S3 object store), decrypt when
@@ -158,7 +163,8 @@ fn percent_encode(value: &str) -> String {
 pub(super) async fn public_download_attachment(
     state: &Arc<AppState>,
     token: &str,
-) -> Result<HttpResponse<Binary>, crate::http_compat::FastApiError> {
+    range_header: Option<&str>,
+) -> Result<super::external_media::AttachmentDownload, crate::http_compat::FastApiError> {
     // `_verify_public_share_token`.
     let Some(attachment_id) = verify_public_share_token(&state.auth, token) else {
         return Err(invalid_share_link());
@@ -180,10 +186,47 @@ pub(super) async fn public_download_attachment(
         return Err(attachment_not_found());
     }
 
-    // `application media download policy`. `_stream_external_
-    // attachment` resolves through the registered playback resolvers, which
-    // this deployment never registers, so it is always `None` and produces
-    // no dependency calls.
+    // `_require_attachment_download_allowed(db, context, "share")`: the
+    // knowledge-document policy probe before any storage access.
+    let file_extension = context.file_extension();
+    match super::download_policy::require_attachment_download_allowed(
+        &state.mysql,
+        attachment_id,
+        &context.mime_type(),
+        Some(&file_extension),
+        super::download_policy::Purpose::Share,
+    )
+    .await
+    {
+        Ok(None) => {}
+        Ok(Some(error)) => return Err(error),
+        Err(error) => {
+            tracing::error!(%error, "shared attachment download policy check failed");
+            return Err(internal_error());
+        }
+    }
+
+    // `_stream_external_attachment(context, range_header, "attachment")`: the
+    // application-owned playback resolvers decide whether the attachment is
+    // served from external media before the external-media policy and the
+    // stored bytes (`external_media.rs`). The open-source deployment
+    // registers no resolvers, so the stage resolves nothing; the internal
+    // deployment's resolver chain relays the media.
+    if let Some(response) = state
+        .external_media
+        .stream_external_attachment(super::external_media::ExternalMediaRequest {
+            attachment_id,
+            user_id: context.user_id.into(),
+            original_filename: &context.original_filename(),
+            range_header,
+            reference: super::external_media::ExternalMediaReference::from_context(&context),
+        })
+        .await?
+    {
+        return Ok(response);
+    }
+
+    // `application media download policy`.
     if state.media_policy.download_unsupported(
         &context.context_type,
         &context.file_extension(),
@@ -241,7 +284,7 @@ pub(super) async fn public_download_attachment(
         .map_err(attachment_header_error)?
         .header("x-accel-buffering", "no")
         .map_err(attachment_header_error)?;
-    Ok(response)
+    Ok(response.into())
 }
 
 /// Maps a response-header construction failure to a 500.
