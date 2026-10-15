@@ -127,6 +127,7 @@ mod claude_turns;
 mod codex_accounts;
 mod codex_config;
 mod collection;
+mod command_items;
 mod context_compaction;
 mod fork_transfer;
 mod hooks;

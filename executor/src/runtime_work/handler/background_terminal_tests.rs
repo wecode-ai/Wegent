@@ -44,6 +44,62 @@ fn background_terminal_output_survives_before_completion_mapper_drains() {
     verify_background_terminal_settlement(false);
 }
 
+#[test]
+fn background_terminal_item_snapshot_preserves_output_received_after_initial_yield() {
+    let (handler, root) = isolated_runtime_work_handler("background-terminal-item-snapshot");
+    let mut link = RuntimeTaskLink::new_pending("task-1".into(), "/project".into(), "Task".into());
+    link.thread_id = Some("thread-1".into());
+    handler.upsert_local_task(link);
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
+    let command = json!({
+        "id": "command-1", "type": "commandExecution", "command": "pnpm dev",
+        "status": "inProgress", "processId": "42", "aggregatedOutput": "ready\n",
+    });
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &json!({
+            "method": "item/started", "params": {"item": command}
+        }),
+    );
+    handler.record_background_terminal_notification(
+        "task-1",
+        &json!({
+            "method": "item/commandExecution/outputDelta",
+            "params": {"itemId": "command-1", "delta": "tick-5\n"}
+        }),
+    );
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &json!({
+            "method": "item/completed", "params": {"item": command}
+        }),
+    );
+    handler.persist_completed_codex_turn_from_notification(
+        "task-1",
+        &json!({
+            "method": "turn/completed", "params": {"threadId": "thread-1", "turn": {
+                "id": "turn-1", "status": "completed", "items": [command]
+            }}
+        }),
+    );
+    handler.record_background_terminal_notification(
+        "task-1",
+        &json!({
+            "method": "item/commandExecution/outputDelta",
+            "params": {"itemId": "command-1", "delta": "tick-6\n"}
+        }),
+    );
+
+    let messages = completed_transcript_messages(&handler.local_task_link("task-1").unwrap());
+    assert_eq!(
+        messages[0]["blocks"][0]["tool_output"],
+        "ready\ntick-5\ntick-6\n"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
 fn verify_background_terminal_settlement(persist_before_finish: bool) {
     let (mut handler, root) = isolated_runtime_work_handler(if persist_before_finish {
         "background-terminal-settlement"
