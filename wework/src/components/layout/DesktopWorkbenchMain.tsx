@@ -34,7 +34,7 @@ import { decodeMarkdownFilePath } from '@/components/chat/assistantMarkdownLinks
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
 import { PluginWorkspaceConversationResult } from '@/components/plugins/PluginWorkspaceConversationResult'
-import { useLocalConnectorAuthGate } from '@/features/plugins/useLocalConnectorAuthGate'
+import { useLocalConnectorAuthRecovery } from '@/features/plugins/useLocalConnectorAuthRecovery'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import {
   SubagentConversationPanel,
@@ -1452,24 +1452,23 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     ]
   )
 
-  const connectorAuthGate = useLocalConnectorAuthGate({
+  const connectorAuthRecovery = useLocalConnectorAuthRecovery({
     active: paneActive && paneVisible && workbenchVisible,
     onError: message => paneSession.setError(message),
     messages: paneSession.messages,
     onResumeSend: async input => {
-      await sendPaneInputWithContext(input)
+      await paneSession.sendContinuation(input)
     },
-    onRetryMessage: message => paneSession.retryFailedMessage(message),
   })
 
-  const connectorAuthCard = connectorAuthGate.pending ? (
+  const connectorAuthCard = connectorAuthRecovery.pending ? (
     <ConnectorAuthCard
-      target={connectorAuthGate.pending.target}
-      title={connectorAuthGate.pending.title}
+      target={connectorAuthRecovery.pending.target}
+      title={connectorAuthRecovery.pending.title}
       onSuccess={() => {
-        void connectorAuthGate.completePending()
+        void connectorAuthRecovery.completePending()
       }}
-      onCancel={connectorAuthGate.clearPending}
+      onCancel={connectorAuthRecovery.clearPending}
     />
   ) : null
 
@@ -1486,18 +1485,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         wegentTeamId?: number
       }
     ) => {
-      const submitted = (value ?? paneSession.input).trim()
-      if (submitted) {
-        const gate = await connectorAuthGate.gateBeforeSend(submitted)
-        if (gate === 'blocked') {
-          // Keep composer text so cancel does not discard the draft; resume
-          // send still uses pendingInput and clears after a successful send.
-          return false
-        }
-      }
+      connectorAuthRecovery.clearPending()
       return sendPaneInputWithContext(value, options)
     },
-    [connectorAuthGate, paneSession, sendPaneInputWithContext]
+    [connectorAuthRecovery, sendPaneInputWithContext]
   )
 
   const setTaskSupervisor = useCallback(
