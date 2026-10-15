@@ -369,6 +369,11 @@ describe('core DSH runtime', () => {
       'dsh-app-wework'
     )
     await writeFile(join(pluginCopyRoot, 'local-helper.js'), 'local')
+    const patchPath = join(launch.dshHome, 'profiles', 'wework-core', 'cordis.patch.yml')
+    await writeFile(
+      patchPath,
+      '- id: client-hmr\n  disabled: false\n- id: hmr\n  disabled: false\n'
+    )
 
     await prepareCoreDshLaunch({
       runtimeRoot: runtime.root,
@@ -378,6 +383,7 @@ describe('core DSH runtime', () => {
     })
 
     await expect(readFile(join(pluginCopyRoot, 'local-helper.js'), 'utf8')).resolves.toBe('local')
+    await expect(readFile(patchPath, 'utf8')).resolves.toBe('- id: client-hmr\n  disabled: true\n')
     await root.remove()
   })
 

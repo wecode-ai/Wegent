@@ -527,7 +527,7 @@ export function createElectronCapabilityRouter(
   })
   router.register('clipboard.readWorkspacePaths', async params => {
     const fallbackPaths = stringArrayParam(params, 'fallbackPaths') ?? []
-    const items = await clipboard.read()
+    const items = await clipboard.read().catch(() => [])
     const nativePayloads = await Promise.all(
       items.flatMap(item =>
         item.types

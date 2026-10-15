@@ -869,6 +869,19 @@ describe('registerDesktopServiceCapabilities', () => {
 })
 
 describe('isolated surface clipboard capabilities', () => {
+  test('inspects supplied workspace paths when the native clipboard is unavailable', async () => {
+    const { router } = createIsolatedClipboardRouter()
+    electronMocks.clipboardRead.mockRejectedValueOnce(new Error('Clipboard unavailable'))
+
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'clipboard.readWorkspacePaths', {
+        fallbackPaths: [resolve(import.meta.dirname, 'electron-capabilities.test.ts')],
+      })
+    ).resolves.toMatchObject([
+      { path: resolve(import.meta.dirname, 'electron-capabilities.test.ts'), isDirectory: false },
+    ])
+  })
+
   beforeEach(() => {
     electronMocks.clipboardReadText.mockClear()
     electronMocks.clipboardWriteText.mockClear()
