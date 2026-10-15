@@ -173,6 +173,7 @@ async def _build_subscription_execution_request(
             else None
         ),
         is_subscription=True,
+        new_session=not execution_data.preserve_history,
         enable_tools=True,
         enable_deep_thinking=True,
         preload_skills=(

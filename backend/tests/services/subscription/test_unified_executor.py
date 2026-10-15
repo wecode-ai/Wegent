@@ -130,6 +130,7 @@ async def test_subscription_request_includes_selected_device_id():
         await _build_subscription_execution_request(execution_data)
 
     assert build_request.await_args.kwargs["device_id"] == "local-device-1"
+    assert build_request.await_args.kwargs["new_session"] is True
 
 
 @pytest.mark.asyncio

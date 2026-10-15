@@ -765,8 +765,17 @@ class TaskRequestBuilder:
 
     @staticmethod
     def _extract_persisted_sessions(subtasks: list[Any]) -> list[dict[str, Any]]:
-        sessions: list[dict[str, Any]] = []
+        """Extract only the latest successful executor session.
+
+        Subscriptions can accumulate many successful sessions while reusing one
+        task. Passing them all makes native session recovery ambiguous after
+        the executor was intentionally deleted.
+        """
+        latest: dict[str, Any] | None = None
         for subtask in reversed(subtasks):
+            status = getattr(subtask, "status", None)
+            if status is not None and status != "COMPLETED":
+                continue
             result = getattr(subtask, "result", None)
             if not isinstance(result, dict):
                 continue
@@ -774,8 +783,9 @@ class TaskRequestBuilder:
                 result.get("executor_session")
             )
             if session:
-                sessions.append(session)
-        return TaskRequestBuilder._merge_inherited_sessions(sessions)
+                latest = session
+                break
+        return [latest] if latest else []
 
     @staticmethod
     def _normalize_executor_session(session: Any) -> dict[str, Any] | None:
