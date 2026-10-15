@@ -24,8 +24,6 @@ use tools::{parse_tool_spec, resolve_auth_tool, LocalAuthToolSpec};
 
 mod diagnostics;
 mod github_cli;
-#[cfg(all(test, unix))]
-mod health_timeout_tests;
 mod logout;
 mod tools;
 
@@ -56,7 +54,6 @@ static BROWSER_AUTH_SESSIONS: OnceLock<Mutex<HashMap<String, BrowserAuthSession>
     OnceLock::new();
 
 const DEFAULT_COMMAND_TIMEOUT_SECONDS: u64 = 45;
-const HEALTH_COMMAND_TIMEOUT_SECONDS: u64 = 3;
 
 pub async fn health(payload: Value) -> Result<Value, AppIpcError> {
     if github_cli::is_target(&payload) {
@@ -70,7 +67,7 @@ pub async fn health(payload: Value) -> Result<Value, AppIpcError> {
             &plugin_root,
             &spec.health,
             tool.as_deref(),
-            HEALTH_COMMAND_TIMEOUT_SECONDS,
+            DEFAULT_COMMAND_TIMEOUT_SECONDS,
         )
         .await?;
         Ok::<_, AppIpcError>(normalize_status_response(&result, &spec, None))
@@ -643,7 +640,7 @@ async fn start_browser_auth(
             &plugin_root,
             &spec.health,
             tool.as_deref(),
-            HEALTH_COMMAND_TIMEOUT_SECONDS,
+            DEFAULT_COMMAND_TIMEOUT_SECONDS,
         )
         .await;
         let mut final_state = match verified {
