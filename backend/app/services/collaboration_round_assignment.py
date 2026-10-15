@@ -6,6 +6,7 @@
 from sqlalchemy.orm import Session
 
 from app.models.delivery import LoopItem
+from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.services.issue_assignments import issue_assignment_service
 from app.services.loop_items.service import loop_item_service
@@ -66,11 +67,70 @@ def agent_round_is_complete(
 ) -> bool:
     """Only an agent-owned batch can finish without a human delivery review."""
 
+    assignments = _current_agent_round(db, row)
+    return (
+        bool(assignments)
+        and all(assignment.get("status") == "completed" for assignment in assignments)
+        and any(
+            assignment.get("agent_id") == owner_agent_id for assignment in assignments
+        )
+    )
+
+
+def finish_agent_round(
+    db: Session, dispatch: LoopItemExecution, row: ProjectChatMessage
+) -> bool:
+    """Project the reported batch outcome without starting another manager."""
+    from app.services.loop_item_executions.service import (
+        TERMINAL_STATUSES,
+        loop_item_execution_service,
+    )
+
+    if dispatch.status in TERMINAL_STATUSES:
+        return False
+    assignments = _current_agent_round(db, row)
+    if not assignments or any(
+        assignment.get("status") not in TERMINAL_STATUSES for assignment in assignments
+    ):
+        return False
+    outcomes = {assignment["status"] for assignment in assignments}
+    outcome = (
+        "failed"
+        if "failed" in outcomes
+        else "cancelled" if "cancelled" in outcomes else "completed"
+    )
+    error = next(
+        (
+            str(assignment.get("error") or "Member execution failed")
+            for assignment in assignments
+            if assignment["status"] == "failed"
+        ),
+        None,
+    )
+    db.flush()
+    loop_item_execution_service._transition_terminal(
+        db,
+        execution_id=dispatch.id,
+        terminal_status=outcome,
+        observed_state="succeeded" if outcome == "completed" else outcome,
+        note="Agent collaboration round finished",
+        content=None,
+        error=error,
+        termination_reason="agent_round_finished",
+        commit=False,
+    )
+    return True
+
+
+def _current_agent_round(
+    db: Session, row: ProjectChatMessage
+) -> list[dict[str, object]]:
+    """Return only the current batch when every assignee is an agent."""
     metadata = row.metadata_json or {}
     dispatch_id = metadata.get("dispatch_id")
     round_id = metadata.get("coordination_round_id")
     if not dispatch_id or not round_id:
-        return False
+        return []
     messages = (
         db.query(ProjectChatMessage)
         .filter(
@@ -87,20 +147,17 @@ def agent_round_is_complete(
                 entry.get("dispatch_id") != dispatch_id
                 or entry.get("coordination_round_id") != round_id
             ):
-                return False
+                return []
             assignments = entry.get("dispatch_assignments")
-            return (
+            if (
                 isinstance(assignments, list)
                 and bool(assignments)
                 and all(
                     isinstance(assignment, dict)
                     and assignment.get("assignee_type") == "agent"
-                    and assignment.get("status") == "completed"
                     for assignment in assignments
                 )
-                and any(
-                    assignment.get("agent_id") == owner_agent_id
-                    for assignment in assignments
-                )
-            )
-    return False
+            ):
+                return assignments
+            return []
+    return []

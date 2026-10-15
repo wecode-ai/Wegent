@@ -27,6 +27,7 @@ interface CollaborationIssue {
   id: string
   status: string
   assignee_group_id: string | null
+  assignee_agent_id: string | null
   execution_state: string | null
 }
 
@@ -143,7 +144,7 @@ test.describe('Collaboration group Executor coordination', () => {
     }
   })
 
-  test('runs two collaboration rounds with parallel members and fresh manager tasks', async ({
+  test('hands an agent-only batch to parallel members without restarting the manager', async ({
     page,
     request,
   }, testInfo) => {
@@ -153,15 +154,10 @@ test.describe('Collaboration group Executor coordination', () => {
     const suffix = `${Date.now()}`
     const issueTitle = `Coordinate CPU investigation ${suffix}`
     const firstRoundId = `collect-${suffix}`
-    const secondRoundId = `synthesize-${suffix}`
     const collectorTask = `Collect CPU evidence ${suffix}`
     const reviewerTask = `Review CPU evidence ${suffix}`
-    const synthesisTask = `Synthesize CPU findings ${suffix}`
     const collectorEvidence = `COLLECTOR_EVIDENCE_${suffix}`
     const reviewerEvidence = `REVIEWER_EVIDENCE_${suffix}`
-    const synthesisEvidence = `SYNTHESIS_EVIDENCE_${suffix}`
-    const finalComment =
-      'The manager reviewed both collaboration rounds and submitted the Issue for confirmation.'
     const fixture = await createProjectFixture(page, suffix, issueTitle)
     const leader = await createProjectAgent(page, `Coordinate Leader ${suffix}`, model.modelName)
     const collector = await createProjectAgent(
@@ -215,47 +211,6 @@ test.describe('Collaboration group Executor coordination', () => {
         responseContent:
           'The first collaboration round was dispatched. Waiting for Executor results.',
       },
-      {
-        toolCalls: [
-          {
-            toolName: 'wework_space__submit_workflow_plan',
-            arguments: {
-              plan: {
-                round_id: secondRoundId,
-                summary: 'Synthesize the independently collected and reviewed CPU evidence.',
-                items: [
-                  {
-                    assignment_id: `synthesis-${suffix}`,
-                    title: synthesisTask,
-                    instructions: `${synthesisTask}. Use ${collectorEvidence} and ${reviewerEvidence}. Return ${synthesisEvidence}.`,
-                    assignee_type: 'agent',
-                    assignee_id: collector.id,
-                  },
-                ],
-              },
-            },
-          },
-        ],
-      },
-      {
-        responseContent:
-          'The second collaboration round was dispatched. Waiting for Executor results.',
-      },
-      {
-        toolCalls: [
-          {
-            toolName: 'wework_space__update_issue_status',
-            arguments: {
-              status: 'in_review',
-              reason: `Both rounds were evaluated: ${collectorEvidence}, ${reviewerEvidence}, ${synthesisEvidence}.`,
-              comment: finalComment,
-            },
-          },
-        ],
-      },
-      {
-        responseContent: `Manager evaluated ${synthesisEvidence} and moved the Issue to review.`,
-      },
     ])
     const clearCollectorScenario = await configureIssueDispatchModelScenario(
       request,
@@ -265,11 +220,6 @@ test.describe('Collaboration group Executor coordination', () => {
     const clearReviewerScenario = await configureIssueDispatchModelScenario(request, reviewerTask, [
       { responseContent: reviewerEvidence, doneDelayMs: 15_000 },
     ])
-    const clearSynthesisScenario = await configureIssueDispatchModelScenario(
-      request,
-      synthesisTask,
-      [{ responseContent: synthesisEvidence }]
-    )
 
     try {
       await page.goto(`${fixture.projectPath}/issues/${encodeURIComponent(fixture.issueId)}`)
@@ -323,51 +273,38 @@ test.describe('Collaboration group Executor coordination', () => {
 
       const completed = await waitForIssueStatus(request, model.token, fixture.issueId, 'in_review')
       expect(completed.execution_state).not.toBe('failed')
+      expect(completed.assignee_group_id).toBeNull()
+      expect(completed.assignee_agent_id).toBe(collector.id)
 
       const managerBodies = await getScenarioModelBodies(request, issueTitle)
       const managerHeaders = await getScenarioRequestHeaders(request, issueTitle)
       const managerScenario = await getToolScenarioState(request, issueTitle)
       const managerSessionIds = distinctSessionIds(managerHeaders)
       const managerToolNames = modelToolNames(managerBodies)
-      expect(managerBodies.length).toBeGreaterThanOrEqual(6)
-      expect(managerScenario.nextStep).toBe(6)
-      expect(managerSessionIds).toHaveLength(3)
-      expect(managerSessionIds.some(id => id.endsWith(`manager-after-${firstRoundId}`))).toBe(true)
-      expect(managerSessionIds.some(id => id.endsWith(`manager-after-${secondRoundId}`))).toBe(true)
+      expect(managerBodies.length).toBeGreaterThanOrEqual(2)
+      expect(managerScenario.nextStep).toBe(2)
+      expect(managerSessionIds).toEqual([`${executions[0].runtimeTaskId}-manager-initial`])
       expect(managerToolNames.some(isSubmitWorkflowPlan)).toBe(true)
       expect(managerToolNames.some(isUpdateIssueStatus)).toBe(true)
       expect(managerToolNames.some(isNativeSubagentTool)).toBe(false)
       expect(modelRequestText(managerBodies.slice(0, 1))).toContain(
         'Project collaboration rules and workflow'
       )
-      expect(modelRequestText(managerBodies.slice(2, 4))).toContain(collectorEvidence)
-      expect(modelRequestText(managerBodies.slice(2, 4))).toContain(reviewerEvidence)
-      expect(modelRequestText(managerBodies.slice(4))).toContain(synthesisEvidence)
 
       const collectorScenario = await getToolScenarioState(request, collectorTask)
       const reviewerScenario = await getToolScenarioState(request, reviewerTask)
-      const synthesisScenario = await getToolScenarioState(request, synthesisTask)
       const collectorSessionIds = distinctSessionIds(
         await getScenarioRequestHeaders(request, collectorTask)
       )
       const reviewerSessionIds = distinctSessionIds(
         await getScenarioRequestHeaders(request, reviewerTask)
       )
-      const synthesisSessionIds = distinctSessionIds(
-        await getScenarioRequestHeaders(request, synthesisTask)
-      )
       expect(collectorScenario.nextStep).toBe(1)
       expect(reviewerScenario.nextStep).toBe(1)
-      expect(synthesisScenario.nextStep).toBe(1)
       expect(collectorSessionIds).toHaveLength(1)
       expect(reviewerSessionIds).toHaveLength(1)
-      expect(synthesisSessionIds).toHaveLength(1)
-      const memberRuntimeSessionIds = [
-        collectorSessionIds[0],
-        reviewerSessionIds[0],
-        synthesisSessionIds[0],
-      ]
-      expect(new Set(memberRuntimeSessionIds).size).toBe(3)
+      const memberRuntimeSessionIds = [collectorSessionIds[0], reviewerSessionIds[0]]
+      expect(new Set(memberRuntimeSessionIds).size).toBe(2)
       expect(
         memberRuntimeSessionIds.every(sessionId => !managerSessionIds.includes(sessionId))
       ).toBe(true)
@@ -377,19 +314,19 @@ test.describe('Collaboration group Executor coordination', () => {
       expect(reviewerSessionIds[0]).toBe(
         `${executions[0].runtimeTaskId}-member-${firstRoundId}-reviewer-${suffix}`
       )
-      expect(synthesisSessionIds[0]).toBe(
-        `${executions[0].runtimeTaskId}-member-${secondRoundId}-synthesis-${suffix}`
-      )
 
       await page.reload()
       await expect(page.getByTestId('cloud-todo-detail-status')).toHaveValue('in_review')
       await expect(page.getByText(collectorTask, { exact: false }).first()).toBeVisible()
       await expect(page.getByText(reviewerTask, { exact: false }).first()).toBeVisible()
-      await expect(page.getByText(synthesisTask, { exact: false }).first()).toBeVisible()
-      await expect(page.getByText(finalComment, { exact: false }).first()).toBeVisible()
-      await captureEvidence(page, testInfo, '03-manager-reviewed-two-rounds')
+      await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
+        'data-value',
+        `agent:${collector.id}`
+      )
+      await expect(page.getByText(collectorEvidence, { exact: false }).first()).toBeVisible()
+      await expect(page.getByText(reviewerEvidence, { exact: false }).first()).toBeVisible()
+      await captureEvidence(page, testInfo, '03-agent-owner-awaiting-review')
     } finally {
-      await clearSynthesisScenario()
       await clearReviewerScenario()
       await clearCollectorScenario()
       await clearManagerScenario()

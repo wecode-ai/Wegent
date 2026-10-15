@@ -728,6 +728,7 @@ export function createDesktopScenario({
       // A human acknowledges their assignment activity and opens a new task.
       // Unrelated discussion must not be treated as an assignment acceptance.
       const timelineComposer = scoped('[data-testid="cloud-task-activity-composer"]')
+      await control.command('scrollIntoView', timelineComposer)
       await control.command('waitFor', timelineComposer, { visible: true, timeoutMs: uiTimeoutMs })
       await control.command('fill', timelineComposer, { value: HUMAN_TIMELINE_COMMENT })
       await control.command('press', timelineComposer, { key: 'Enter' })
@@ -750,6 +751,7 @@ export function createDesktopScenario({
       const replyComposer = scoped(
         '[data-testid="issue-reply-composer"] [data-testid="cloud-task-activity-composer"]'
       )
+      await control.command('scrollIntoView', replyComposer)
       await control.command('fill', replyComposer, { value: HUMAN_REPLY })
       await control.command('press', replyComposer, { key: 'Enter' })
       await control.command(
