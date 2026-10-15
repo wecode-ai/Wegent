@@ -148,7 +148,7 @@ async function verifyModelProxyRestartRecovery({
   const executorBeforeRestart = await waitForExecutorRuntimeEvidence(control, executorLogPath)
   const executorProcessIdBeforeRestart = executorBeforeRestart.processIds.at(-1)
   assert.ok(executorProcessIdBeforeRestart, 'The original executor process ID was not recorded')
-  const executorIdentityBeforeRestart = collectWindowsProcessIdentity(
+  const executorIdentityBeforeRestart = await collectWindowsProcessIdentity(
     executorProcessIdBeforeRestart
   )
   if (process.platform === 'win32') {
@@ -167,7 +167,9 @@ async function verifyModelProxyRestartRecovery({
   )
   const executorProcessIdAfterRestart = executorAfterRestart.processIds.at(-1)
   assert.ok(executorProcessIdAfterRestart, 'The restarted executor process ID was not recorded')
-  const executorIdentityAfterRestart = collectWindowsProcessIdentity(executorProcessIdAfterRestart)
+  const executorIdentityAfterRestart = await collectWindowsProcessIdentity(
+    executorProcessIdAfterRestart
+  )
   if (process.platform === 'win32') {
     assert.ok(
       executorIdentityAfterRestart,
@@ -181,7 +183,9 @@ async function verifyModelProxyRestartRecovery({
     false,
     'Restarting Wework reused the executor process with the old model proxy registry'
   )
-  const originalIdentityAfterRestart = collectWindowsProcessIdentity(executorProcessIdBeforeRestart)
+  const originalIdentityAfterRestart = await collectWindowsProcessIdentity(
+    executorProcessIdBeforeRestart
+  )
   const originalExecutorIsAlive =
     process.platform === 'win32'
       ? processInstanceMatches(executorIdentityBeforeRestart, originalIdentityAfterRestart)

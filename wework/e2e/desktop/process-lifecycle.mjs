@@ -1,10 +1,14 @@
-import { spawn, spawnSync } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
+import { promisify } from 'node:util'
 
 const PROCESS_STOP_TIMEOUT_MS = 10_000
 const PROCESS_GROUP_GRACE_PERIOD_MS = 1_000
 const PROCESS_GROUP_POLL_INTERVAL_MS = 25
 const DEAD_LINUX_PROCESS_STATES = new Set(['Z', 'X', 'x'])
+const execFileAsync = promisify(execFile)
+// Starting Windows PowerShell is a native process startup, not a UI action.
+const WINDOWS_PROCESS_QUERY_TIMEOUT_MS = 30_000
 
 function linuxProcessStateFromStat(stat) {
   const commandEnd = stat.lastIndexOf(')')
@@ -132,12 +136,13 @@ export function processInstanceMatches(expected, actual) {
   )
 }
 
-export function collectWindowsProcessIdentity(processId) {
+export async function collectWindowsProcessIdentity(processId) {
   if (process.platform !== 'win32') return null
   if (!Number.isInteger(processId) || processId <= 0) {
     throw new Error('Process identity diagnostics require a positive process ID')
   }
-  const result = spawnSync(
+  const startedAt = Date.now()
+  const { stdout } = await execFileAsync(
     'powershell.exe',
     [
       '-NoProfile',
@@ -145,14 +150,18 @@ export function collectWindowsProcessIdentity(processId) {
       '-Command',
       `$ErrorActionPreference = 'Stop'; @(Get-Process -Id ${processId} -ErrorAction SilentlyContinue | Select-Object Id, ProcessName, @{Name='StartedAt'; Expression={$_.StartTime.ToUniversalTime().ToString('o')}}) | ConvertTo-Json -Compress`,
     ],
-    { encoding: 'utf8', timeout: 10_000, maxBuffer: 16 * 1024, windowsHide: true }
+    {
+      encoding: 'utf8',
+      timeout: WINDOWS_PROCESS_QUERY_TIMEOUT_MS,
+      maxBuffer: 16 * 1024,
+      windowsHide: true,
+    }
   )
-  if (result.status !== 0) {
-    throw new Error(
-      `Windows process identity query failed: status=${result.status}, error=${result.error?.code ?? 'none'}`
-    )
-  }
-  const identity = result.stdout.trim() ? JSON.parse(result.stdout) : null
+  console.log('[desktop-e2e] Windows process identity query', {
+    processId,
+    elapsedMs: Date.now() - startedAt,
+  })
+  const identity = stdout.trim() ? JSON.parse(stdout) : null
   if (identity !== null) processInstanceMatches(identity, identity)
   return identity
 }

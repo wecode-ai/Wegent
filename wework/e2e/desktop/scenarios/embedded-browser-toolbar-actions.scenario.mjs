@@ -485,6 +485,10 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         'The in-page find runtime did not highlight all fixture matches'
       )
       await control.command('press', FIND_INPUT_SELECTOR, { key: 'Enter' })
+      await control.command('waitFor', FIND_COUNT_SELECTOR, {
+        text: '2 / 3',
+        timeoutMs: uiTimeoutMs,
+      })
       const nextFindState = await evaluateFindState(bridgeIdentity)
       assert.equal(nextFindState.active, 2, 'Enter did not move to the next find match')
       await control.command('click', FIND_CLOSE_SELECTOR)
