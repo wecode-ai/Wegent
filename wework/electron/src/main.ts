@@ -393,6 +393,10 @@ const appUpdateLogger = new AppUpdateLogger(join(app.getPath('logs'), 'app-updat
 const runtimeDiagnosticsLog = new RuntimeDiagnosticsLog(
   join(app.getPath('logs'), 'runtime-launch.log')
 )
+const conversationSearchDiagnosticsLog = new RuntimeDiagnosticsLog(
+  join(app.getPath('logs'), 'conversation-search.log'),
+  '[Wework] Conversation search diagnostic '
+)
 app.on('web-contents-created', (_event, contents) => {
   const logLoadEvent = (event: string) => () => {
     console.info('[renderer-load]', { event, webContentsId: contents.id })
@@ -414,6 +418,9 @@ app.on('web-contents-created', (_event, contents) => {
   contents.on('console-message', (_event, _level, message) => {
     void runtimeDiagnosticsLog.record(contents.id, message).catch(error => {
       console.warn('[Wework] Failed to write runtime diagnostics', error)
+    })
+    void conversationSearchDiagnosticsLog.record(contents.id, message).catch(error => {
+      console.warn('[Wework] Failed to write conversation search diagnostics', error)
     })
   })
 })

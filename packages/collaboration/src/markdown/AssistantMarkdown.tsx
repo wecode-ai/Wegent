@@ -455,7 +455,7 @@ function markUnclosedDiagramFence(content: string): string {
   return lines.join('\n')
 }
 
-function stripUnsupportedContentReferenceCitations(content: string): string {
+export function stripUnsupportedContentReferenceCitations(content: string): string {
   return content
     .replace(CONTENT_REFERENCE_CITATION_PATTERN, '')
     .replace(TRAILING_CONTENT_REFERENCE_CITATION_PATTERN, '')

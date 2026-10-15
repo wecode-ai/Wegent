@@ -3,7 +3,25 @@ import assert from 'node:assert/strict'
 const PRIMARY = process.platform === 'win32' ? 'Control' : 'Meta'
 const DRAFT = 'Conversation shortcut regression draft'
 
-export async function verifyConversationShortcuts(control, composerSelector) {
+export async function verifyEmptyConversationFind(control, composerSelector) {
+  await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]')
+  const draft = await control.command('getValue', composerSelector)
+  const input = '[data-testid="conversation-find-input"]'
+  await control.command('nativePress', composerSelector, { key: `${PRIMARY}+F` })
+  await control.command('waitFor', input)
+  await control.command('fill', input, { value: 'WEWORK_EMPTY_CHAT_FIND_SENTINEL' })
+  assert.equal(
+    await control.command('getAttribute', '[data-testid="conversation-find-next-button"]', {
+      value: 'disabled',
+    }),
+    ''
+  )
+  await control.command('nativePress', input, { key: 'Escape' })
+  assert.equal(Number(await control.command('getElementCount', input)), 0)
+  assert.equal(await control.command('getValue', composerSelector), draft)
+}
+
+export async function verifyConversationShortcuts(control, composerSelector, searchQuery) {
   const originalDraft = await control.command('getValue', composerSelector)
   await control.command('fill', composerSelector, { value: DRAFT })
 
@@ -36,4 +54,30 @@ export async function verifyConversationShortcuts(control, composerSelector) {
   await control.command('nativePress', composerSelector, { key: 'x' })
   assert.equal(await control.command('getValue', composerSelector), 'x')
   await control.command('fill', composerSelector, { value: originalDraft })
+
+  const input = '[data-testid="conversation-find-input"]'
+  const count = '[data-testid="conversation-find-count"]'
+  await control.command('nativePress', composerSelector, { key: `${PRIMARY}+F` })
+  await control.command('waitFor', input)
+  await control.command('fill', input, { value: searchQuery })
+  await control.command('waitFor', count, { text: '1', timeoutMs: 10_000 })
+  await control.command('nativePress', input, { key: 'Enter' })
+  await control.command('nativePress', input, { key: 'Shift+Enter' })
+  await control.command('nativePress', input, { key: `${PRIMARY}+F` })
+  assert.equal(await control.command('getValue', input), searchQuery)
+  await control.command('fill', input, { value: 'WEWORK_FIND_NO_MATCH_SENTINEL' })
+  assert.equal(
+    await control.command('getAttribute', '[data-testid="conversation-find-next-button"]', {
+      value: 'disabled',
+    }),
+    ''
+  )
+  await control.command('nativePress', input, { key: 'Escape' })
+  assert.equal(Number(await control.command('getElementCount', input)), 0)
+  assert.equal(await control.command('getValue', composerSelector), originalDraft)
+  await control.command('nativePress', composerSelector, { key: `${PRIMARY}+F` })
+  await control.command('waitFor', input)
+  assert.equal(await control.command('getValue', input), '')
+  await control.command('nativePress', input, { key: 'Escape' })
+  assert.equal(Number(await control.command('getElementCount', input)), 0)
 }

@@ -1,4 +1,8 @@
 import { getScrollViewportElement } from './scrollViewportElement'
+import {
+  createConversationSearchPerformanceCapture,
+  sanitizeSearchScriptDetail,
+} from './conversationSearchPerformance'
 export { setConversationFrameProbeEnabled } from './conversationFrameProbe'
 
 // Capture only the layout window around reader input; idle rendering does no diagnostic DOM reads.
@@ -88,9 +92,45 @@ const SAFE_DETAIL_KEYS = new Set([
   'virtualScrollOffset',
   'virtualMaximumOffset',
   'nativeMaximumOffset',
+  'queryLength',
+  'inputSequence',
+  'eventDelayMs',
+  'messageCount',
+  'matchCount',
+  'targetChanged',
+  'queryPending',
+  'historyLoading',
+  'historyIncomplete',
+  'historyPending',
+  'historyFailed',
+  'loading',
+  'loadingMoreBefore',
+  'startTime',
+  'blockingDuration',
+  'renderTailMs',
+  'styleLayoutTailMs',
+  'scriptDuration',
+  'scriptCount',
+  'forcedStyleAndLayoutDuration',
+  'frameStartTime',
+  'executionStart',
+  'sourceCharPosition',
+  'diagramContentId',
+  'diagramInstanceId',
+  'diagramRenderId',
+  'mermaid',
+  'darkTheme',
+  'fullscreen',
+  'failed',
+  'timedOut',
+  'cacheHit',
+  'layoutIsolated',
+  'phase',
+  'smooth',
 ])
 
 export type ConversationDiagnosticEventName =
+  | 'search-navigation-phase'
   | 'scroll-input'
   | 'scroll-position'
   | 'anchor-sample'
@@ -105,13 +145,38 @@ export type ConversationDiagnosticEventName =
   | 'markdown-intersection'
   | 'markdown-layout'
   | 'markdown-unmounted'
+  | 'search-delete'
+  | 'search-input'
+  | 'search-debounce'
+  | 'search-status'
+  | 'search-commit'
+  | 'search-frame'
+  | 'search-index'
+  | 'search-match'
+  | 'search-target-commit'
+  | 'search-target-effect'
+  | 'search-highlights'
+  | 'search-layout'
+  | 'search-scroll-render'
+  | 'search-virtual-render'
+  | 'search-navigation-cancel'
+  | 'search-long-task'
+  | 'search-long-frame'
+  | 'search-slow-script'
+  | 'search-diagram-activate'
+  | 'search-diagram-mount'
+  | 'search-diagram-unmount'
+  | 'search-diagram-viewer-start'
+  | 'search-diagram-viewer-result'
+  | 'search-diagram-viewer-stop'
+  | 'search-diagram-viewer-timeout'
 
 export interface ConversationDiagnosticEvent {
   sequence: number
   timestampUnixMs: number
   elapsedMs: number
   name: ConversationDiagnosticEventName
-  details: Record<string, number | boolean | null>
+  details: Record<string, number | boolean | string | null>
 }
 
 const events: ConversationDiagnosticEvent[] = []
@@ -124,6 +189,10 @@ let startedAtUnixMs = Date.now()
 let scrollerIds = new WeakMap<Element, number>()
 let nextScrollerId = 1
 let wheelInputs = new WeakMap<HTMLElement, { deltaY: number; timeMs: number }>()
+const searchPerformanceCapture = createConversationSearchPerformanceCapture(
+  recordConversationDiagnostic,
+  CAPTURE_WINDOW_MS
+)
 
 export function startConversationDiagnosticCapture(): void {
   captureUntil = performance.now() + CAPTURE_WINDOW_MS
@@ -169,8 +238,14 @@ export function recordConversationDiagnostic(
   details: Record<string, unknown> = {}
 ): void {
   if (!isConversationDiagnosticsEnabled()) return
+  if (name === 'search-input' || name === 'search-delete') searchPerformanceCapture.capture()
   const sanitized: ConversationDiagnosticEvent['details'] = {}
   for (const [key, value] of Object.entries(details)) {
+    if (name === 'search-slow-script' && typeof value === 'string') {
+      const safeValue = sanitizeSearchScriptDetail(key, value)
+      if (safeValue !== undefined) sanitized[key] = safeValue
+      continue
+    }
     if (!SAFE_DETAIL_KEYS.has(key)) continue
     if (value === null || typeof value === 'boolean') sanitized[key] = value
     if (typeof value === 'number' && Number.isFinite(value)) sanitized[key] = round(value)
@@ -188,6 +263,10 @@ export function recordConversationDiagnostic(
     events[nextEventIndex] = event
     nextEventIndex = (nextEventIndex + 1) % MAX_EVENTS
     droppedEventCount++
+  }
+  if (name.startsWith('search-')) {
+    // The Electron host persists only this sanitized diagnostic prefix.
+    console.info(`[Wework] Conversation search diagnostic ${JSON.stringify(event)}`)
   }
 }
 
@@ -239,6 +318,7 @@ export function recordConversationScrollDiagnostic(
 }
 
 export function resetConversationDiagnosticsForTest(): void {
+  searchPerformanceCapture.stop()
   events.splice(0)
   captureUntil = 0
   nextSequence = 1

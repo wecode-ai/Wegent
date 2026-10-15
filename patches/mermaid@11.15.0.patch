@@ -1,0 +1,57 @@
+diff --git a/dist/chunks/mermaid.core/chunk-KSCS5N6A.mjs b/dist/chunks/mermaid.core/chunk-KSCS5N6A.mjs
+index f707220..b20e51b 100644
+--- a/dist/chunks/mermaid.core/chunk-KSCS5N6A.mjs
++++ b/dist/chunks/mermaid.core/chunk-KSCS5N6A.mjs
+@@ -111,8 +111,9 @@ var addEdgeMarker = /* @__PURE__ */ __name((svgPath, position, arrowType, url, i
+   if (strokeColor && strokeColor.trim() !== "") {
+     const colorId = strokeColor.replace(/[^\dA-Za-z]/g, "_");
+     const coloredMarkerId = `${originalMarkerId}_${colorId}`;
+-    if (!document.getElementById(coloredMarkerId)) {
+-      const originalMarker = document.getElementById(originalMarkerId);
++    const markerRoot = svgPath.node().getRootNode();
++    if (!markerRoot.getElementById(coloredMarkerId)) {
++      const originalMarker = markerRoot.getElementById(originalMarkerId);
+       if (originalMarker) {
+         const coloredMarker = originalMarker.cloneNode(true);
+         coloredMarker.id = coloredMarkerId;
+diff --git a/dist/chunks/mermaid.core/chunk-LZXEDZCA.mjs b/dist/chunks/mermaid.core/chunk-LZXEDZCA.mjs
+index a1b799a..e07cf5e 100644
+--- a/dist/chunks/mermaid.core/chunk-LZXEDZCA.mjs
++++ b/dist/chunks/mermaid.core/chunk-LZXEDZCA.mjs
+@@ -58,6 +58,27 @@ var registerDefaultLayoutLoaders = /* @__PURE__ */ __name(() => {
+   ]);
+ }, "registerDefaultLayoutLoaders");
+ registerDefaultLayoutLoaders();
++var renderLayout = /* @__PURE__ */ __name(async (layoutRenderer, data4Layout, svg, options) => {
++  const svgElement = svg.node();
++  if (data4Layout.layoutAlgorithm !== "dagre" || !svgElement.closest("[data-file-viewer-mermaid-isolate]")) {
++    return layoutRenderer.render(data4Layout, svg, internalHelpers, options);
++  }
++  // Keep layout measurements inside the SVG's own style scope.
++  const host = svgElement.ownerDocument.createElement("div");
++  const shadowRoot = host.attachShadow({ mode: "open" });
++  svgElement.before(host);
++  try {
++    shadowRoot.append(svgElement);
++    svgElement.setAttribute("data-mermaid-layout-isolated", "true");
++    const scopedSvg = svg.selectAll(function() {
++      return [this];
++    });
++    return await layoutRenderer.render(data4Layout, scopedSvg, internalHelpers, options);
++  } finally {
++    host.before(svgElement);
++    host.remove();
++  }
++}, "renderLayout");
+ var render = /* @__PURE__ */ __name(async (data4Layout, svg) => {
+   if (!(data4Layout.layoutAlgorithm in layoutAlgorithms)) {
+     throw new Error(`Unknown layout algorithm: ${data4Layout.layoutAlgorithm}`);
+@@ -80,7 +101,7 @@ var render = /* @__PURE__ */ __name(async (data4Layout, svg) => {
+     gradient.append("svg:stop").attr("offset", "0%").attr("stop-color", gradientStart).attr("stop-opacity", 1);
+     gradient.append("svg:stop").attr("offset", "100%").attr("stop-color", gradientStop).attr("stop-opacity", 1);
+   }
+-  return layoutRenderer.render(data4Layout, svg, internalHelpers, {
++  return renderLayout(layoutRenderer, data4Layout, svg, {
+     algorithm: layoutDefinition.algorithm
+   });
+ }, "render");
