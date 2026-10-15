@@ -1,5 +1,6 @@
 import { isValidFileSize, MAX_FILE_SIZE } from '@/api/attachments'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { getNativeFilePath } from '@/desktop/nativeFilePaths'
 import type { Attachment } from '@/types/api'
 
 export interface LocalAttachmentApi {
@@ -93,7 +94,7 @@ export function createLocalAttachmentApi(): LocalAttachmentApi {
         throw new Error(`File size exceeds ${MAX_FILE_SIZE / (1024 * 1024)} MB`)
       }
       onProgress?.(0)
-      const localPath = await saveElectronAttachment(file, onProgress)
+      const localPath = getNativeFilePath(file) ?? (await saveElectronAttachment(file, onProgress))
       onProgress?.(100)
 
       const textLength = await maybeTextLength(file)
@@ -111,8 +112,8 @@ export function createLocalAttachmentApi(): LocalAttachmentApi {
       }
     },
     async deleteAttachment() {
-      // Draft files are intentionally left in place so already-sent runtime tasks
-      // can continue to resolve the absolute paths stored in their transcript.
+      // Source files belong to the user. Generated draft files remain available
+      // to runtime tasks through the paths stored in their transcript.
     },
   }
 }
