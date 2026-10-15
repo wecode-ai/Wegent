@@ -25,7 +25,6 @@ from app.schemas.model import (
 )
 from app.services import model_credential_service
 from app.services.adapters import public_model_service
-from app.services.chat.config.model_resolver import extract_and_process_model_config
 from app.services.model_aggregation_service import ModelType, model_aggregation_service
 from app.services.model_connection_service import _test_llm_connection
 
@@ -551,23 +550,14 @@ async def test_model_connection(
         custom_headers = {}
 
     try:
-        model_spec = {
-            "modelConfig": {
-                "env": {
-                    "model": provider_type,
-                    "model_id": model_id,
-                    "api_key": api_key,
-                }
+        # Caller-controlled connection URLs must never select server credentials.
+        if isinstance(api_key, str) and "${" in api_key:
+            return {
+                "success": False,
+                "message": "Connection tests require a literal API key",
             }
-        }
-        config = extract_and_process_model_config(
-            model_spec, current_user.id, current_user.user_name or ""
-        )
-        config = model_credential_service.with_model_api_key_template(
-            config, model_spec
-        )
-        resolved_key = await model_credential_service.resolve_model_provider_api_key(
-            config, current_user, require_api_key=True
+        resolved_key = model_credential_service.validate_model_api_key(
+            api_key, required=True
         )
         return await run_in_threadpool(
             _test_llm_connection,

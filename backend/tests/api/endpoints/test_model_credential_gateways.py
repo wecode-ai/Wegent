@@ -53,23 +53,8 @@ def add_model(db: Session, category: str, protocol: str) -> Kind:
     return model
 
 
-def call_gateway(
-    client: TestClient, token: str, model: Kind, surface: str
-) -> httpx.Response:
+def call_gateway(client: TestClient, token: str, model: Kind) -> httpx.Response:
     headers = {"Authorization": f"Bearer {token}"}
-    if surface == "connection":
-        env = model.json["spec"]["modelConfig"]["env"]
-        return client.post(
-            "/api/models/test-connection",
-            headers=headers,
-            json={
-                "provider_type": model.json["spec"]["protocol"],
-                "model_category_type": model.json["spec"]["modelType"],
-                "api_key": env["api_key"],
-                "model_id": env["model_id"],
-                "base_url": env["base_url"],
-            },
-        )
     if model.json["spec"]["modelType"] == "decision":
         catalog = client.get("/api/models/decisions", headers=headers)
         assert catalog.status_code == 200, catalog.text
@@ -99,7 +84,7 @@ def call_gateway(
 
 
 def mock_provider(
-    monkeypatch: pytest.MonkeyPatch, category: str, protocol: str, surface: str
+    monkeypatch: pytest.MonkeyPatch, category: str, protocol: str
 ) -> list[httpx.Request]:
     requests = []
 
@@ -111,7 +96,7 @@ def mock_provider(
                 stream=httpx.ByteStream(b"data: ok\n\n"),
                 headers={"content-type": "text/event-stream"},
             )
-        name = "connected" if surface == "connection" else "urgent"
+        name = "urgent"
         answers = (
             {name: {"type": "noul", "noul": 0.9}}
             if protocol == "systemone"
@@ -134,15 +119,13 @@ def mock_provider(
 
 
 @pytest.mark.parametrize(
-    ("category", "protocol", "surface"),
+    ("category", "protocol"),
     [
-        ("llm", "openai-responses", "execution"),
-        ("llm", "openai", "execution"),
-        ("llm", "claude", "execution"),
-        ("decision", "systemone", "execution"),
-        ("decision", "openai", "execution"),
-        ("decision", "systemone", "connection"),
-        ("decision", "openai", "connection"),
+        ("llm", "openai-responses"),
+        ("llm", "openai"),
+        ("llm", "claude"),
+        ("decision", "systemone"),
+        ("decision", "openai"),
     ],
 )
 def test_gateways_use_request_user_keys_without_persisting_them(
@@ -155,10 +138,9 @@ def test_gateways_use_request_user_keys_without_persisting_them(
     monkeypatch: pytest.MonkeyPatch,
     category: str,
     protocol: str,
-    surface: str,
 ) -> None:
     model = add_model(test_db, category, protocol)
-    requests = mock_provider(monkeypatch, category, protocol, surface)
+    requests = mock_provider(monkeypatch, category, protocol)
 
     async def lookup(template: str, user: User) -> str:
         assert template == TEMPLATE
@@ -167,10 +149,8 @@ def test_gateways_use_request_user_keys_without_persisting_them(
     resolver = AsyncMock(side_effect=lookup)
     model_credential_service.register_model_api_key_resolver(resolver)
     for token in (test_token, test_admin_token):
-        response = call_gateway(test_client, token, model, surface)
+        response = call_gateway(test_client, token, model)
         assert response.status_code == 200, response.text
-        if surface == "connection":
-            assert response.json()["success"] is True, response.text
         assert "synthetic-user-key" not in response.text
     header = "x-api-key" if protocol == "claude" else "authorization"
     prefix = "" if protocol == "claude" else "Bearer "
@@ -185,10 +165,7 @@ def test_gateways_use_request_user_keys_without_persisting_them(
     assert model.json["spec"]["modelConfig"]["env"]["api_key"] == TEMPLATE
 
 
-@pytest.mark.parametrize(
-    ("category", "surface"),
-    [("llm", "execution"), ("decision", "execution"), ("decision", "connection")],
-)
+@pytest.mark.parametrize("category", ["llm", "decision"])
 @pytest.mark.parametrize("failure", ["exception", "empty"])
 def test_credential_failure_blocks_transport_and_environment_fallback(
     test_client: TestClient,
@@ -196,7 +173,6 @@ def test_credential_failure_blocks_transport_and_environment_fallback(
     test_token: str,
     monkeypatch: pytest.MonkeyPatch,
     category: str,
-    surface: str,
     failure: str,
 ) -> None:
     model = add_model(test_db, category, "openai" if category == "llm" else "systemone")
@@ -209,15 +185,8 @@ def test_credential_failure_blocks_transport_and_environment_fallback(
     async_factory, sync_factory = MagicMock(), MagicMock()
     monkeypatch.setattr(httpx, "AsyncClient", async_factory)
     monkeypatch.setattr(httpx, "Client", sync_factory)
-    response = call_gateway(test_client, test_token, model, surface)
-    if surface == "connection":
-        assert response.status_code == 200
-        assert response.json() == {
-            "success": False,
-            "message": "Model credentials unavailable",
-        }
-    else:
-        assert response.status_code == 503, response.text
+    response = call_gateway(test_client, test_token, model)
+    assert response.status_code == 503, response.text
     assert "private-lookup-details" not in response.text
     assert "synthetic-global-key" not in response.text
     async_factory.assert_not_called()
@@ -239,6 +208,63 @@ def test_decision_total_deadline_includes_credential_lookup(
     monkeypatch.setattr(decision_model_service, "DECISION_REQUEST_TIMEOUT", 0.01)
     factory = MagicMock()
     monkeypatch.setattr(httpx, "AsyncClient", factory)
-    response = call_gateway(test_client, test_token, model, "execution")
+    response = call_gateway(test_client, test_token, model)
     assert response.status_code == 504, response.text
     factory.assert_not_called()
+
+
+@pytest.mark.parametrize("api_key", [TEMPLATE, "${SECRET_KEY}", "key\r\ninjected"])
+def test_connection_cannot_resolve_submitted_keys_to_caller_controlled_endpoints(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    api_key: str,
+) -> None:
+    resolver = AsyncMock(return_value="synthetic-user-secret")
+    model_credential_service.register_model_api_key_resolver(resolver)
+    probe = MagicMock(return_value={"success": True, "message": "Connected"})
+    monkeypatch.setattr("app.api.endpoints.adapter.models._test_llm_connection", probe)
+
+    response = test_client.post(
+        "/api/models/test-connection",
+        headers={"Authorization": f"Bearer {test_token}"},
+        json={
+            "provider_type": "systemone",
+            "model_category_type": "decision",
+            "model_id": "provider-model",
+            "api_key": api_key,
+            "base_url": "https://caller-controlled.example/v1",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is False
+    assert "synthetic-user-secret" not in response.text
+    resolver.assert_not_awaited()
+    probe.assert_not_called()
+
+
+def test_connection_uses_only_the_submitted_literal_key(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolver = AsyncMock(return_value="synthetic-user-secret")
+    model_credential_service.register_model_api_key_resolver(resolver)
+    probe = MagicMock(return_value={"success": True, "message": "Connected"})
+    monkeypatch.setattr("app.api.endpoints.adapter.models._test_llm_connection", probe)
+
+    response = test_client.post(
+        "/api/models/test-connection",
+        headers={"Authorization": f"Bearer {test_token}"},
+        json={
+            "provider_type": "systemone",
+            "model_id": "provider-model",
+            "api_key": "  submitted-literal-key  ",
+            "base_url": "https://caller-controlled.example/v1",
+        },
+    )
+
+    assert response.json()["success"] is True
+    resolver.assert_not_awaited()
+    assert probe.call_args.kwargs["api_key"] == "submitted-literal-key"

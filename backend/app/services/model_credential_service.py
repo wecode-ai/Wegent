@@ -42,7 +42,8 @@ def with_model_api_key_template(
     return result
 
 
-def _validated_api_key(value: Any, *, required: bool) -> str:
+def validate_model_api_key(value: Any, *, required: bool) -> str:
+    """Validate a supplied key without resolving deployment credentials."""
     if not isinstance(value, str):
         raise ModelCredentialError()
     key = value.strip()
@@ -78,5 +79,5 @@ async def resolve_model_provider_api_key(
         except Exception:
             raise ModelCredentialError() from None
         if resolved is not None:
-            return _validated_api_key(resolved, required=True)
-    return _validated_api_key(key, required=require_api_key)
+            return validate_model_api_key(resolved, required=True)
+    return validate_model_api_key(key, required=require_api_key)

@@ -57,7 +57,9 @@ in source code or Smart App environment variables.
 - A handled template must produce a usable key. Empty results, exceptions and
   timeouts block forwarding without falling back to a global key.
 
-LLM forwarding, decision execution and model connection checks share this entry.
+LLM forwarding and decision execution share this entry. Connection checks accept
+only caller-supplied literal keys; they resolve no server placeholders and do
+not invoke deployment credential resolvers.
 Decision execution requires a nonempty key and applies a Python 3.10-compatible
 30-second total deadline including credential lookup and the provider request.
 Credential resolution is bounded to 30 seconds, does not cache user keys and
