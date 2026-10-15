@@ -1,4 +1,10 @@
 {
+  "search": {
+    "label": "Find in chat",
+    "placeholder": "Search chat…",
+    "loading": "Searching history…",
+    "history_failed": "History unavailable · Retry"
+  },
   "history": {
     "load_failed": "Could not load conversation history",
     "retry": "Retry"

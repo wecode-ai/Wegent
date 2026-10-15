@@ -101,6 +101,41 @@ describe('conversation diagnostics', () => {
     })
   })
 
+  test('retains bounded script attribution without raw URLs, DOM labels or message text', () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {})
+    startConversationDiagnosticCapture()
+    recordConversationDiagnostic('search-slow-script', {
+      sourceAsset: 'tooltip-abc12345.js',
+      sourceFunctionName: 'captureUserViewportAnchor',
+      invokerType: 'event-listener',
+      sourceCharPosition: 123,
+      sourceURL: 'https://example.test/assets/tooltip-abc12345.js?token=private',
+      invoker: 'INPUT#private.onkeydown',
+      content: 'private transcript',
+    })
+    recordConversationDiagnostic('search-slow-script', {
+      sourceAsset: '/private/workspace/bundle.js',
+      sourceFunctionName: '<input private>',
+      invokerType: 'private DOM label',
+    })
+    recordConversationDiagnostic('markdown-layout', {
+      sourceAsset: 'tooltip-abc12345.js',
+      sourceFunctionName: 'captureUserViewportAnchor',
+    })
+    const snapshot = getConversationDiagnosticsSnapshot()!
+    expect(snapshot.events.map(event => event.details)).toEqual([
+      {
+        sourceAsset: 'tooltip-abc12345.js',
+        sourceFunctionName: 'captureUserViewportAnchor',
+        invokerType: 'event-listener',
+        sourceCharPosition: 123,
+      },
+      {},
+      {},
+    ])
+    expect(JSON.stringify(snapshot)).not.toMatch(/private|https:|onkeydown/)
+  })
+
   test('correlates externally scrolled rows, Markdown, and anchors with their visible viewport', () => {
     const viewport = document.createElement('div')
     viewport.dataset.scrollOrigin = 'bottom'
