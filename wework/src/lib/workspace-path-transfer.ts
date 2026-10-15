@@ -2,6 +2,7 @@ import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { isDesktopRuntime, isElectronRuntime } from './runtime-environment'
 import type { NativeWorkspacePath } from './native-workspace-path-picker'
 import { readDroppedFiles } from '@/desktop/droppedFiles'
+import { getNativeFilePath, rememberNativeFilePath } from '@/desktop/nativeFilePaths'
 
 const FILE_URI_CLIPBOARD_TYPES = ['text/uri-list', 'public.file-url'] as const
 export const WORKSPACE_PATH_DRAG_TYPE = 'application/x-wework-workspace-paths'
@@ -48,23 +49,13 @@ export function hasWorkspacePathDragData(dataTransfer: DataTransfer): boolean {
   return Array.from(dataTransfer.types ?? []).includes(WORKSPACE_PATH_DRAG_TYPE)
 }
 
-declare global {
-  interface Window {
-    weworkElectronFiles?: {
-      getPathForFile: (file: File) => string
-    }
-  }
-}
-
 function electronDataTransferFilePaths(dataTransfer: DataTransfer): string[] {
   if (!isElectronRuntime() || typeof window === 'undefined') return []
-  const getPathForFile = window.weworkElectronFiles?.getPathForFile
-  if (!getPathForFile) return []
 
   const paths: string[] = []
   for (const file of Array.from(dataTransfer.files)) {
     try {
-      const path = getPathForFile(file).trim()
+      const path = getNativeFilePath(file)?.trim()
       if (path && !paths.includes(path)) paths.push(path)
     } catch {
       // Synthetic files and browser-created blobs do not have native paths.
@@ -152,7 +143,7 @@ async function resolveNativeWorkspaceTransfer(
   const attachmentFiles = files.filter(file => {
     let nativePath = ''
     try {
-      nativePath = window.weworkElectronFiles?.getPathForFile(file) ?? ''
+      nativePath = getNativeFilePath(file) ?? ''
     } catch {
       // Browser-created files have no native path; match clipboard URI entries by name.
     }
@@ -162,7 +153,10 @@ async function resolveNativeWorkspaceTransfer(
         : entry.path.split(/[\\/]/).at(-1) === file.name
     )
     if (index < 0) return true
-    return !remainingEntries.splice(index, 1)[0].isDirectory
+    const entry = remainingEntries.splice(index, 1)[0]
+    if (entry.isDirectory) return false
+    rememberNativeFilePath(file, entry.path)
+    return true
   })
   const unreadPaths = remainingEntries.filter(entry => !entry.isDirectory).map(entry => entry.path)
   if (unreadPaths.length) attachmentFiles.push(...(await readDroppedFiles(unreadPaths)))
@@ -190,7 +184,12 @@ export async function resolveDataTransferWorkspacePaths(
   }
 
   const files = Array.from(dataTransfer.files)
-  if (!isDesktopRuntime() || (files.length > 0 && files.every(isWorkspaceImageFile))) {
+  if (
+    !isDesktopRuntime() ||
+    (files.length > 0 &&
+      files.every(isWorkspaceImageFile) &&
+      dataTransferFallbackPaths(dataTransfer).length === 0)
+  ) {
     return { attachmentFiles: files, referenceEntries: [] }
   }
 

@@ -330,37 +330,42 @@ describe('prepareRuntimeAttachmentsForDevice', () => {
     })
   })
 
-  test('uploads local attachments before sending to a cloud device', async () => {
-    const localAttachment = attachment()
-    const uploadedAttachment = attachment({ id: 42, local_path: undefined })
-    const existingAttachment = attachment({
-      id: 8,
-      local_path: '/cloud/attachment.png',
-      local_preview_url: '/cloud/attachment.png',
-    })
-    const upload = vi.fn().mockResolvedValue(uploadedAttachment)
+  test.each(['cloud', 'remote'] as const)(
+    'uploads a source file before sending to a %s device',
+    async deviceType => {
+      const localAttachment = attachment({
+        local_path: 'C:\\Users\\alice\\Downloads\\screenshot.png',
+      })
+      const uploadedAttachment = attachment({ id: 42, local_path: undefined })
+      const existingAttachment = attachment({
+        id: 8,
+        local_path: '/cloud/attachment.png',
+        local_preview_url: '/cloud/attachment.png',
+      })
+      const upload = vi.fn().mockResolvedValue(uploadedAttachment)
 
-    await expect(
-      prepareRuntimeAttachmentsForDevice(
-        'cloud-device',
-        [device('cloud-device', 'cloud')],
-        [7],
-        [localAttachment, existingAttachment],
-        upload
-      )
-    ).resolves.toEqual({
-      attachmentIds: [7, 8, 42],
-      attachments: [
-        attachment({
-          id: 8,
-          local_path: undefined,
-          local_preview_url: undefined,
-        }),
-        uploadedAttachment,
-      ],
-    })
-    expect(upload).toHaveBeenCalledWith(localAttachment)
-  })
+      await expect(
+        prepareRuntimeAttachmentsForDevice(
+          'cloud-device',
+          [device('cloud-device', deviceType)],
+          [7],
+          [localAttachment, existingAttachment],
+          upload
+        )
+      ).resolves.toEqual({
+        attachmentIds: [7, 8, 42],
+        attachments: [
+          attachment({
+            id: 8,
+            local_path: undefined,
+            local_preview_url: undefined,
+          }),
+          uploadedAttachment,
+        ],
+      })
+      expect(upload).toHaveBeenCalledWith(localAttachment)
+    }
+  )
 
   test('reuses positive backend attachment ids even when transcript metadata has a path', async () => {
     const upload = vi.fn()

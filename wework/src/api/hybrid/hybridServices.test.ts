@@ -1212,7 +1212,10 @@ describe('createHybridWorkbenchServices', () => {
     expect(mocks.cloudRuntimeIpcReconnect).toHaveBeenCalledTimes(1)
   })
 
-  it('reads a local attachment through the Electron host before uploading it to cloud', async () => {
+  it.each([
+    '/Users/me/Downloads/screenshot.png',
+    '/Users/me/.wework/workspace/attachments/draft/screenshot.png',
+  ])('uploads a local attachment from %s through the existing cloud API', async localPath => {
     const services = createServices()
 
     const uploaded = await services.attachmentApi?.uploadLocalAttachmentToCloud?.({
@@ -1223,12 +1226,10 @@ describe('createHybridWorkbenchServices', () => {
       status: 'ready',
       file_extension: '.png',
       created_at: '2026-08-11T00:00:00.000Z',
-      local_path: '/Users/me/.wework/workspace/attachments/draft/screenshot.png',
+      local_path: localPath,
     })
 
-    expect(mocks.readElectronLocalFile).toHaveBeenCalledWith(
-      '/Users/me/.wework/workspace/attachments/draft/screenshot.png'
-    )
+    expect(mocks.readElectronLocalFile).toHaveBeenCalledWith(localPath)
     const file = mocks.cloudUploadAttachment.mock.calls[0][0] as File
     expect(Array.from(new Uint8Array(await file.arrayBuffer()))).toEqual([1, 2, 3, 4])
     expect(uploaded?.id).toBe(42)
