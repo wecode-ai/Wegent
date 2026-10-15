@@ -120,11 +120,19 @@ async def execute_subscription_unified(
     if not request:
         return
 
-    if await _execute_with_stale_session_retry(
+    stale_error = await _execute_subscription_request(
         request=request,
         execution_data=execution_data,
-    ):
+    )
+    if not stale_error or not execution_data.preserve_history:
         return
+
+    logger.warning(
+        "[execute_subscription_unified] Stale native session for "
+        "subscription_id=%s execution_id=%s; retrying with a new session",
+        execution_data.subscription_id,
+        execution_data.execution_id,
+    )
 
     request = await _build_subscription_execution_request(
         execution_data,
@@ -139,39 +147,10 @@ async def execute_subscription_unified(
     )
 
 
-async def _execute_with_stale_session_retry(
-    request: Any,
-    execution_data: SubscriptionExecutionData,
-) -> bool:
-    """Execute a request once, retrying only a stale native session.
-
-    Returns True when the execution, including any retry, has completed.
-    """
-    stale_error = None
-    try:
-        await _execute_subscription_request(
-            request=request,
-            execution_data=execution_data,
-        )
-        return True
-    except Exception as exc:
-        if STALE_SESSION_ERROR not in str(exc) or not execution_data.preserve_history:
-            raise
-        stale_error = str(exc)
-
-    logger.warning(
-        "[execute_subscription_unified] Stale native session for "
-        "subscription_id=%s execution_id=%s; retrying with a new session",
-        execution_data.subscription_id,
-        execution_data.execution_id,
-    )
-    return False
-
-
 async def _execute_subscription_request(
     request: Any,
     execution_data: SubscriptionExecutionData,
-) -> None:
+) -> Optional[str]:
     """Route and execute one subscription request."""
     from app.services.execution import CommunicationMode, ExecutionRouter
 
@@ -186,11 +165,11 @@ async def _execute_subscription_request(
 
     if target.mode == CommunicationMode.SSE:
         # SSE mode (Chat Shell) - synchronous execution
-        await _execute_sse_sync(request=request, execution_data=execution_data)
+        return await _execute_sse_sync(request=request, execution_data=execution_data)
     else:
         # HTTP+Callback mode (ClaudeCode/Agno/Dify) - asynchronous execution
         # Task completion will be handled by /internal/callback publishing TaskCompletedEvent
-        await _execute_http_callback(
+        return await _execute_http_callback(
             request=request,
             execution_data=execution_data,
         )
@@ -295,7 +274,7 @@ def _load_subscription_execution_objects(
 async def _execute_sse_sync(
     request: Any,
     execution_data: SubscriptionExecutionData,
-) -> None:
+) -> Optional[str]:
     """Execute subscription via SSE mode (synchronous).
 
     Waits for the AI response to complete. TaskCompletedEvent is published
@@ -310,6 +289,9 @@ async def _execute_sse_sync(
 
     from app.services.execution import execution_dispatcher
     from app.services.execution.emitters import SSEResultEmitter
+    from app.services.execution.emitters.status_updating import (
+        RETRYABLE_ERROR_MARKERS_ATTR,
+    )
     from shared.models import EventType
 
     logger.info(
@@ -325,6 +307,12 @@ async def _execute_sse_sync(
             task_id=execution_data.task_id,
             subtask_id=execution_data.subtask_id,
         )
+        if execution_data.preserve_history:
+            setattr(
+                emitter,
+                RETRYABLE_ERROR_MARKERS_ATTR,
+                (STALE_SESSION_ERROR,),
+            )
 
         logger.info(
             f"[_execute_sse_sync] Created SSEResultEmitter, starting dispatch: "
@@ -348,16 +336,17 @@ async def _execute_sse_sync(
             if final_event is not None and final_event.type == EventType.ERROR.value
             else None
         )
-        if final_error and STALE_SESSION_ERROR in final_error:
-            raise RuntimeError(final_error)
 
         # Wait for dispatch task to complete
         try:
             await dispatch_task
         except Exception as exc:
             if STALE_SESSION_ERROR in str(exc):
-                raise
+                return str(exc)
             pass  # Error already handled via emitter
+
+        if final_error and STALE_SESSION_ERROR in final_error:
+            return final_error
 
         logger.info(
             f"[_execute_sse_sync] SSE sync completed: "
@@ -366,6 +355,7 @@ async def _execute_sse_sync(
         )
 
         # TaskCompletedEvent is published by StatusUpdatingEmitter
+        return None
 
     except Exception as e:
         logger.error(
@@ -374,14 +364,15 @@ async def _execute_sse_sync(
             exc_info=True,
         )
         if STALE_SESSION_ERROR in str(e):
-            raise
+            return str(e)
         # TaskCompletedEvent with FAILED status is published by StatusUpdatingEmitter
+        return None
 
 
 async def _execute_http_callback(
     request: Any,
     execution_data: SubscriptionExecutionData,
-) -> None:
+) -> Optional[str]:
     """Execute subscription via HTTP+Callback mode (asynchronous).
 
     Dispatches the task and waits for completion. TaskCompletedEvent is published
@@ -399,6 +390,9 @@ async def _execute_http_callback(
 
     from app.services.execution import execution_dispatcher
     from app.services.execution.emitters import SSEResultEmitter
+    from app.services.execution.emitters.status_updating import (
+        RETRYABLE_ERROR_MARKERS_ATTR,
+    )
     from shared.models import EventType
 
     logger.info(
@@ -413,6 +407,12 @@ async def _execute_http_callback(
         task_id=execution_data.task_id,
         subtask_id=execution_data.subtask_id,
     )
+    if execution_data.preserve_history:
+        setattr(
+            emitter,
+            RETRYABLE_ERROR_MARKERS_ATTR,
+            (STALE_SESSION_ERROR,),
+        )
 
     try:
         # Dispatch task with our thread-safe emitter
@@ -432,16 +432,17 @@ async def _execute_http_callback(
             if final_event is not None and final_event.type == EventType.ERROR.value
             else None
         )
-        if final_error and STALE_SESSION_ERROR in final_error:
-            raise RuntimeError(final_error)
 
         # Wait for dispatch task to complete
         try:
             await dispatch_task
         except Exception as exc:
             if STALE_SESSION_ERROR in str(exc):
-                raise
+                return str(exc)
             pass  # Error already handled via emitter
+
+        if final_error and STALE_SESSION_ERROR in final_error:
+            return final_error
 
         logger.info(
             f"[_execute_http_callback] HTTP+Callback completed: "
@@ -456,6 +457,7 @@ async def _execute_http_callback(
         )
 
         # TaskCompletedEvent is published by StatusUpdatingEmitter
+        return None
 
     except Exception as e:
         logger.error(
@@ -464,8 +466,9 @@ async def _execute_http_callback(
             exc_info=True,
         )
         if STALE_SESSION_ERROR in str(e):
-            raise
+            return str(e)
         # TaskCompletedEvent with FAILED status is published by StatusUpdatingEmitter
+        return None
 
 
 def extract_subscription_execution_data(

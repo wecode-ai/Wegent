@@ -178,7 +178,8 @@ async def test_preserved_history_stale_session_retries_with_new_session():
 
     async def fake_execute(request, execution_data):
         if request is build_calls[0]:
-            raise stale_error
+            return str(stale_error)
+        return None
 
     async def fake_build(*args, **kwargs):
         request = object()
@@ -231,17 +232,18 @@ async def test_sse_error_event_propagates_stale_session():
     )
     fake_emitters_module = SimpleNamespace(SSEResultEmitter=_FakeStaleEventEmitter)
 
-    with (
-        patch.dict(
-            sys.modules,
-            {
-                "app.services.execution": fake_execution_module,
-                "app.services.execution.emitters": fake_emitters_module,
-            },
-        ),
-        pytest.raises(RuntimeError, match=STALE_SESSION_ERROR),
+    with patch.dict(
+        sys.modules,
+        {
+            "app.services.execution": fake_execution_module,
+            "app.services.execution.emitters": fake_emitters_module,
+        },
     ):
-        await _execute_sse_sync(request=object(), execution_data=execution_data)
+        result = await _execute_sse_sync(
+            request=object(), execution_data=execution_data
+        )
+
+    assert result == STALE_SESSION_ERROR
 
 
 @pytest.mark.asyncio
