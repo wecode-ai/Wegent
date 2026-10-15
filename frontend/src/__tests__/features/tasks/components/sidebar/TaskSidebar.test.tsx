@@ -285,6 +285,7 @@ describe('TaskSidebar scroll structure', () => {
   ] as const)(
     'opens search from the %s sidebar without page search props',
     async (pageType, index) => {
+      mockTaskSessionContext.personalTasks = [createTask({ id: 1, title: 'Existing conversation' })]
       const setMobileSidebarOpen = jest.fn()
       render(
         <TaskSidebar
@@ -294,7 +295,8 @@ describe('TaskSidebar scroll structure', () => {
         />
       )
 
-      fireEvent.click(screen.getAllByTestId('task-sidebar-search-button')[index])
+      expect(screen.queryByTestId('task-sidebar-search-button')).not.toBeInTheDocument()
+      fireEvent.click(screen.getAllByTestId('task-history-search-button')[index])
 
       expect(await screen.findByRole('dialog')).toBeVisible()
       expect(screen.getAllByRole('dialog')).toHaveLength(1)
