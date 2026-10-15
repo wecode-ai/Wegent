@@ -1851,6 +1851,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     case 'requestMainWindowClose':
       return ''
+    case 'requestStartupSplashClose':
+      return ''
     case 'reloadMainWindow': {
       if (command.value === 'capture') return captureDesktopControlScreenshot(command.selector)
       const storageInput = reloadMainWindowLocalStorageInput(command)
@@ -3209,6 +3211,8 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
           await invokeDesktopHost('e2e.hideMainWindow')
         } else if (command.action === 'requestMainWindowClose') {
           await invokeDesktopHost('e2e.closeMainWindow')
+        } else if (command.action === 'requestStartupSplashClose') {
+          await invokeDesktopHost('e2e.closeStartupSplash')
         } else if (command.action === 'restartCoreDsh') {
           // A Core DSH restart replaces this renderer, so acknowledge the
           // command before starting it. The scenario verifies the replacement
