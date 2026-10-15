@@ -134,6 +134,126 @@ async def test_subscription_request_includes_selected_device_id():
 
 
 @pytest.mark.asyncio
+async def test_preserved_history_stale_session_retries_with_new_session():
+    """History-preserving subscriptions self-heal when the native session is stale."""
+    execution_data = SubscriptionExecutionData(
+        subscription_id=88,
+        execution_id=2,
+        task_id=544,
+        subtask_id=670,
+        user_id=2,
+        team_id=73,
+        user_subtask_id=669,
+        device_id=None,
+        prompt="hello",
+        model_override_name=None,
+        preserve_history=True,
+        history_message_count=10,
+        subscription_name="echo",
+        subscription_display_name="Echo",
+        team_display_name="Team",
+        trigger_type="cron",
+        trigger_reason="Scheduled",
+    )
+    stale_error = RuntimeError(
+        "Existing task session is missing or ambiguous; "
+        "refusing to start a new conversation"
+    )
+    build_calls = []
+
+    async def fake_execute(request, execution_data):
+        if request is build_calls[0]:
+            raise stale_error
+
+    async def fake_build(*args, **kwargs):
+        request = object()
+        build_calls.append(request)
+        return request
+
+    published_events = []
+
+    class FakeEventBus:
+        async def publish(self, event):
+            published_events.append(event)
+
+    fake_events_module = SimpleNamespace(
+        TaskCompletedEvent=lambda **kwargs: SimpleNamespace(**kwargs),
+        get_event_bus=lambda: FakeEventBus(),
+    )
+
+    with (
+        patch(
+            "app.services.subscription.unified_executor._build_subscription_execution_request",
+            side_effect=fake_build,
+        ),
+        patch(
+            "app.services.subscription.unified_executor._execute_subscription_request",
+            side_effect=fake_execute,
+        ),
+        patch.dict(
+            sys.modules,
+            {"app.core.events": fake_events_module},
+        ),
+    ):
+        await execute_subscription_unified(execution_data)
+
+    assert len(build_calls) == 2
+    assert len(published_events) == 1
+    event = published_events[0]
+    assert event.status == "COMPLETED"
+    assert event.result["session_recovery_fallback"] is True
+    assert event.result["value"] == "历史会话已失效，已自动新建会话"
+
+
+@pytest.mark.asyncio
+async def test_other_subscription_errors_do_not_retry_new_session():
+    """Only the stale native-session failure triggers subscription self-healing."""
+    execution_data = SubscriptionExecutionData(
+        subscription_id=88,
+        execution_id=2,
+        task_id=544,
+        subtask_id=670,
+        user_id=2,
+        team_id=73,
+        user_subtask_id=669,
+        device_id=None,
+        prompt="hello",
+        model_override_name=None,
+        preserve_history=True,
+        history_message_count=10,
+        subscription_name="echo",
+        subscription_display_name="Echo",
+        team_display_name="Team",
+        trigger_type="cron",
+        trigger_reason="Scheduled",
+    )
+    build_calls = []
+
+    async def fake_build(*args, **kwargs):
+        request = object()
+        build_calls.append(request)
+        return request
+
+    async def fake_execute(request, execution_data):
+        raise RuntimeError("model unavailable")
+
+    with (
+        patch(
+            "app.services.subscription.unified_executor._build_subscription_execution_request",
+            side_effect=fake_build,
+        ),
+        patch(
+            "app.services.subscription.unified_executor._execute_subscription_request",
+            side_effect=fake_execute,
+        ),
+        pytest.raises(RuntimeError, match="model unavailable"),
+    ):
+        await execute_subscription_unified(execution_data)
+
+    assert len(build_calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_unified_executor_closes_loader_session_before_sse_execution(
     fake_orm_session_factory,
 ):

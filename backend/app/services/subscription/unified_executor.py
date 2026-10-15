@@ -30,6 +30,11 @@ from app.stores.tasks import subtask_store, task_store
 
 logger = logging.getLogger(__name__)
 
+STALE_SESSION_ERROR = (
+    "Existing task session is missing or ambiguous; refusing to start a new conversation"
+)
+STALE_SESSION_FALLBACK_MESSAGE = "历史会话已失效，已自动新建会话"
+
 
 @dataclass
 class SubscriptionExecutionData:
@@ -118,7 +123,62 @@ async def execute_subscription_unified(
     if not request:
         return
 
-    # Determine communication mode
+    if await _execute_with_stale_session_retry(
+        request=request,
+        execution_data=execution_data,
+    ):
+        return
+
+    request = await _build_subscription_execution_request(
+        execution_data,
+        force_new_session=True,
+    )
+    if not request:
+        return
+
+    await _execute_subscription_request(
+        request=request,
+        execution_data=execution_data,
+    )
+
+
+async def _execute_with_stale_session_retry(
+    request: Any,
+    execution_data: SubscriptionExecutionData,
+) -> bool:
+    """Execute a request once, retrying only a stale native session.
+
+    Returns True when the execution, including any retry, has completed.
+    """
+    stale_error = None
+    try:
+        await _execute_subscription_request(
+            request=request,
+            execution_data=execution_data,
+        )
+        return True
+    except Exception as exc:
+        if STALE_SESSION_ERROR not in str(exc) or not execution_data.preserve_history:
+            raise
+        stale_error = str(exc)
+
+    logger.warning(
+        "[execute_subscription_unified] Stale native session for "
+        "subscription_id=%s execution_id=%s; retrying with a new session",
+        execution_data.subscription_id,
+        execution_data.execution_id,
+    )
+    await _record_stale_session_fallback(execution_data, stale_error)
+    return False
+
+
+async def _execute_subscription_request(
+    request: Any,
+    execution_data: SubscriptionExecutionData,
+) -> None:
+    """Route and execute one subscription request."""
+    from app.services.execution import CommunicationMode, ExecutionRouter
+
     router = ExecutionRouter()
     task_device_id = execution_data.device_id
     target = router.route(request, device_id=task_device_id)
@@ -129,22 +189,49 @@ async def execute_subscription_unified(
     )
 
     if target.mode == CommunicationMode.SSE:
-        # SSE mode (Chat Shell) - synchronous execution
-        await _execute_sse_sync(
-            request=request,
-            execution_data=execution_data,
-        )
+        await _execute_sse_sync(request=request, execution_data=execution_data)
     else:
-        # HTTP+Callback mode (ClaudeCode/Agno/Dify) - asynchronous execution
-        # Task completion will be handled by /internal/callback publishing TaskCompletedEvent
         await _execute_http_callback(
             request=request,
             execution_data=execution_data,
         )
 
 
+async def _record_stale_session_fallback(
+    execution_data: SubscriptionExecutionData,
+    original_error: str,
+) -> None:
+    """Record that a history-preserving subscription restarted with a new session."""
+    from app.core.events import TaskCompletedEvent, get_event_bus
+
+    try:
+        event_bus = get_event_bus()
+        await event_bus.publish(
+            TaskCompletedEvent(
+                task_id=execution_data.task_id,
+                subtask_id=execution_data.subtask_id,
+                user_id=execution_data.user_id,
+                status="COMPLETED",
+                result={
+                    "value": STALE_SESSION_FALLBACK_MESSAGE,
+                    "session_recovery_fallback": True,
+                    "original_error": original_error,
+                },
+                error=None,
+            )
+        )
+    except Exception:
+        logger.exception(
+            "[execute_subscription_unified] Failed to record stale session fallback: "
+            "subscription_id=%s execution_id=%s",
+            execution_data.subscription_id,
+            execution_data.execution_id,
+        )
+
+
 async def _build_subscription_execution_request(
     execution_data: SubscriptionExecutionData,
+    force_new_session: bool = False,
 ) -> Optional[Any]:
     """Build the dispatch request using a short-lived ORM session."""
     from app.services.chat.trigger.unified import build_execution_request
@@ -173,7 +260,11 @@ async def _build_subscription_execution_request(
             else None
         ),
         is_subscription=True,
-        new_session=not execution_data.preserve_history,
+        new_session=(
+            True
+            if force_new_session
+            else not execution_data.preserve_history
+        ),
         enable_tools=True,
         enable_deep_thinking=True,
         preload_skills=(
