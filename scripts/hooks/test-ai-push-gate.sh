@@ -219,7 +219,7 @@ if ! grep -qE 'Running focused renderer unit tests with 2 workers' "$WEWORK_TEST
     exit 1
 fi
 
-STATIC_CHECK_LINE=$(grep -n 'Running static checks and unit tests in parallel' "$WEWORK_TEST_OUT" | cut -d: -f1)
+STATIC_CHECK_LINE=$(grep -n 'Running static checks before unit tests' "$WEWORK_TEST_OUT" | cut -d: -f1)
 UNIT_TEST_LINE=$(grep -n 'Running focused renderer unit tests with 2 workers' "$WEWORK_TEST_OUT" | cut -d: -f1)
 if [ -z "$STATIC_CHECK_LINE" ] || [ -z "$UNIT_TEST_LINE" ] ||
     [ "$STATIC_CHECK_LINE" -ge "$UNIT_TEST_LINE" ]; then
