@@ -31,7 +31,6 @@ from app.services.group_permission import check_group_permission
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.skill_binding_service import skill_binding_service
 from app.services.skill_resolution import build_skill_ref_meta
-from shared.models.db.kind import utc_now_naive
 from shared.utils.crypto import encrypt_sensitive_data, is_data_encrypted
 
 logger = logging.getLogger(__name__)
@@ -1396,15 +1395,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             flag_modified(ghost, "json")
             db.add(ghost)
 
-        # Update timestamps
-        bot.updated_at = utc_now_naive()
-        if ghost:
-            ghost.updated_at = utc_now_naive()
-        # Note: shell is now a reference to user's custom shell or public shell,
-        # we don't update its timestamp as it's not owned by this bot
-        if model and hasattr(model, "updated_at"):
-            model.updated_at = utc_now_naive()
-
+        # Timestamps are maintained by the ORM onupdate hook (database clock).
         db.commit()
         db.refresh(bot)
         if ghost:

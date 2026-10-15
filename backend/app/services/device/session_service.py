@@ -54,7 +54,9 @@ SESSION_DISABLED_MESSAGES = {
 LOOPBACK_SESSION_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 CloudSessionHostResolver = Callable[[str], Awaitable[Any]]
+DeviceSessionUrlRewriter = Callable[[str, str, DeviceType], str]
 _cloud_session_host_resolver: CloudSessionHostResolver | None = None
+_device_session_url_rewriter: DeviceSessionUrlRewriter | None = None
 
 
 class DeviceSessionError(RuntimeError):
@@ -202,6 +204,11 @@ class LocalDeviceSessionService:
         access_token = payload["access_token"]
         result = _ensure_session_url_token(result, access_token)
         result = await _rewrite_device_session_url(result, device_kind, online_info)
+        result = _apply_device_session_url_rewriter(
+            result,
+            route_identity.logical_device_id,
+            device_kind_type(device_kind),
+        )
         result.setdefault("transport", "url")
         return result
 
@@ -372,6 +379,54 @@ def register_cloud_session_host_resolver(
     if _cloud_session_host_resolver is not None:
         raise RuntimeError("Cloud session host resolver is already registered")
     _cloud_session_host_resolver = resolver
+
+
+def register_device_session_url_rewriter(
+    rewriter: DeviceSessionUrlRewriter,
+) -> None:
+    """Register a distribution-owned browser URL policy for IDE sessions."""
+    global _device_session_url_rewriter
+    if _device_session_url_rewriter is not None:
+        raise RuntimeError("Device session URL rewriter is already registered")
+    _device_session_url_rewriter = rewriter
+
+
+def _apply_device_session_url_rewriter(
+    result: dict[str, Any],
+    device_id: str,
+    device_type: DeviceType,
+) -> dict[str, Any]:
+    """Apply the registered distribution URL policy without exposing secrets."""
+    url = result.get("url")
+    if _device_session_url_rewriter is None or not isinstance(url, str) or not url:
+        return result
+
+    try:
+        rewritten_url = _device_session_url_rewriter(url, device_id, device_type)
+    except DeviceSessionError:
+        raise
+    except Exception as exc:
+        raise DeviceSessionError("Failed to build IDE session URL") from exc
+    if not isinstance(rewritten_url, str) or not _is_valid_browser_session_url(
+        rewritten_url
+    ):
+        raise DeviceSessionError("Failed to build IDE session URL")
+
+    rewritten = dict(result)
+    rewritten["url"] = rewritten_url
+    return rewritten
+
+
+def _is_valid_browser_session_url(url: str) -> bool:
+    """Return whether a rewritten session URL is safe for browser navigation."""
+    if url != url.strip() or any(character.isspace() for character in url):
+        return False
+    try:
+        parsed = urlsplit(url)
+        _ = parsed.port
+    except ValueError:
+        return False
+    return parsed.scheme in {"http", "https"} and bool(parsed.hostname)
 
 
 def _extract_cloud_session_host(value: Any) -> str:
