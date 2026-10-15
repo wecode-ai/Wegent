@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawn } from 'node:child_process'
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { delimiter, dirname, join, resolve } from 'node:path'
 
 const PROFILE_NAME = 'wework-core'
@@ -354,7 +354,7 @@ export async function createDesktopScenario({
           2
         )}\n`
       )
-      await verifyWindowsProfileDirectoryLinks(electronUserDataDirectory)
+      await verifyWindowsProfileOwnedAssets(electronUserDataDirectory)
       await verifyEmbeddedNodeSkillRuntime(electronUserDataDirectory, resultDir)
       await control.command('waitFor', 'body[data-native-dsh-provider-loaded]', {
         timeoutMs: uiTimeoutMs,
@@ -400,7 +400,7 @@ export async function createDesktopScenario({
   }
 }
 
-async function verifyWindowsProfileDirectoryLinks(userDataDirectory) {
+async function verifyWindowsProfileOwnedAssets(userDataDirectory) {
   if (process.platform !== 'win32') return
   const assets = join(
     userDataDirectory,
@@ -413,26 +413,14 @@ async function verifyWindowsProfileDirectoryLinks(userDataDirectory) {
     'web',
     'assets'
   )
-  const linkType = await captureCommand(
-    'powershell.exe',
-    [
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      '[Console]::Out.Write((Get-Item -LiteralPath $env:WEWORK_E2E_PROFILE_ASSETS -Force).LinkType)',
-    ],
-    {
-      env: {
-        ...process.env,
-        WEWORK_E2E_PROFILE_ASSETS: assets,
-      },
-    }
-  )
+  const metadata = await lstat(assets)
+  assert.equal(metadata.isDirectory(), true, 'Windows Core DSH profile assets must be a directory')
   assert.equal(
-    linkType.trim(),
-    'Junction',
-    'Windows Core DSH profile assets must use a junction that does not require symlink privilege'
+    metadata.isSymbolicLink(),
+    false,
+    'Windows Core DSH profile assets must own their files so pnpm cannot delete shared resources'
   )
+  assert.ok((await readdir(assets)).length > 0, 'Windows Core DSH profile assets must not be empty')
 }
 
 async function verifyEmbeddedNodeSkillRuntime(userDataDirectory, resultDir) {
@@ -448,31 +436,6 @@ async function verifyEmbeddedNodeSkillRuntime(userDataDirectory, resultDir) {
     /^electron-node:\d+\.\d+\.\d+$/m,
     'A Codex skill TypeScript script did not run through Electron embedded Node'
   )
-}
-
-function captureCommand(command, args, options = {}) {
-  return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, {
-      ...options,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true,
-    })
-    let stdout = ''
-    let stderr = ''
-    child.stdout.setEncoding('utf8')
-    child.stderr.setEncoding('utf8')
-    child.stdout.on('data', chunk => {
-      stdout += String(chunk)
-    })
-    child.stderr.on('data', chunk => {
-      stderr += String(chunk)
-    })
-    child.once('error', reject)
-    child.once('close', code => {
-      if (code === 0) resolvePromise(stdout)
-      else reject(new Error(`${command} exited with code ${code ?? 'unknown'}: ${stderr.trim()}`))
-    })
-  })
 }
 
 function runNodeSkill(script, binDirectory) {

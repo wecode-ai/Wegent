@@ -1093,12 +1093,15 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
           return (
             <div
               key={tab}
-              className={cn('min-h-0 flex-1 flex-col', activeView === tab ? 'flex' : 'hidden')}
+              className={cn(
+                'min-h-0 min-w-0 flex-1 flex-col',
+                activeView === tab ? 'flex' : 'hidden'
+              )}
             >
               {developmentPreview ? (
                 <section
                   data-testid="smart-app-development-preview"
-                  className="flex min-h-0 flex-1 flex-col"
+                  className="flex min-h-0 min-w-0 flex-1 flex-col"
                 >
                   <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border bg-muted/30 px-3">
                     <div className="flex min-w-0 flex-1 items-center gap-3">

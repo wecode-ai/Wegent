@@ -42,6 +42,7 @@ export function VersionBadge({
             <TooltipTrigger asChild>
               <Badge
                 variant="info"
+                data-testid="device-upgrade-badge"
                 onClick={onUpgrade}
                 className={cn(
                   'border-amber-400 text-amber-600 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-600 dark:text-amber-400 px-1.5 py-0',

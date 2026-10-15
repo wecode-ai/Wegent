@@ -160,6 +160,10 @@ Backend pins `runtimeInstanceId` when a Cloud or Remote device first registers. 
 
 ### Adding a Remote Docker Device
 
+Upgrade Wework devices in Wework. When a remote Docker device reports an available update, pull the new image and recreate the container with its existing data volumes and device identity. Device images include an SSH client and use the `Asia/Shanghai` timezone. Generated Docker commands explicitly set `WEGENT_WORKBENCH_HOME=/home/wegent/.wegent/workbench`; host-process startup does not use this container path.
+
+The Wework cloud connection page counts both online and offline cloud and remote devices returned by the server, excluding local devices and Wework app registrations.
+
 Remote Docker devices are for connecting a self-managed server or container host to Wegent. They receive work through the same device WebSocket protocol as cloud devices and support terminal and code-server sessions. The difference is lifecycle ownership: users start, stop, restart, and remove the Docker container themselves; Wegent does not provision or destroy it.
 
 Each user can create at most one cloud device. If a cloud device already exists, the add-device dialog disables cloud device creation while still allowing remote Docker command generation.

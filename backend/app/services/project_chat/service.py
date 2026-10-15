@@ -1327,57 +1327,17 @@ class ProjectChatService:
     ) -> ProjectChatMessage | None:
         """Return the open streaming AI message for one runtime task."""
 
-        rows = (
-            db.query(ProjectChatMessage)
-            .filter(
-                ProjectChatMessage.runtime_device_id.in_(
-                    device_ids or [runtime_device_id]
-                ),
-                ProjectChatMessage.runtime_task_id == runtime_task_id,
-                ProjectChatMessage.sender_type == "agent",
-                ProjectChatMessage.status.in_(["pending", "streaming"]),
-                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
-            )
-            .with_for_update()
-            .all()
+        from app.services.project_chat.runtime_activity import (
+            streaming_activity_for_runtime,
         )
-        from app.services.project_chat.runtime_turn import RuntimeTurn
 
-        identity = RuntimeTurn.from_event(event_payload or {})
-        matches = []
-        for row in rows:
-            metadata = row.metadata_json or {}
-            if metadata.get("kind") == "task_ai_subagent" or not identity.matches(
-                trigger_id=row.trigger_message_id,
-                turn_id=metadata.get("runtime_turn_id"),
-                followup=bool(metadata.get("runtime_followup")),
-            ):
-                continue
-            if (
-                not identity.trigger_id
-                and not metadata.get("runtime_turn_id")
-                and metadata.get("dispatch_role") == "member"
-            ):
-                from app.schemas.project_chat import ProjectChatCommentExecution
-                from app.services.project_chat.runtime_binding import (
-                    collaboration_member_assignment,
-                )
-
-                try:
-                    collaboration_member_assignment(
-                        db,
-                        ProjectChatCommentExecution(
-                            project_id=row.project_id,
-                            task_id=row.task_id,
-                            trigger_message_id=row.message_id,
-                        ),
-                        row,
-                        require_current_assignment=False,
-                    )
-                except HTTPException:
-                    continue
-            matches.append(row)
-        return matches[0] if len(matches) == 1 else None
+        return streaming_activity_for_runtime(
+            db,
+            runtime_device_id,
+            runtime_task_id,
+            device_ids=device_ids,
+            event_payload=event_payload,
+        )
 
     def _open_activity_from_execution(
         self,

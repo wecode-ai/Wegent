@@ -1,4 +1,5 @@
 import { isAppDevice, isCloudDevice, isRemoteDevice } from './device-capabilities'
+import { getLocalRuntimeSourceIdentity } from './local-runtime-sidebar-identity'
 import type {
   DeviceInfo,
   DeviceRuntimeRoute,
@@ -59,10 +60,39 @@ export function resolveLocalWorkbenchDeviceId(
   return defaultDevice?.device_id ?? normalized
 }
 
+/** Resolve the current native IPC address only when its source proves the runtime. */
+export function findNativeLocalWorkbenchDevice(
+  devices: DeviceInfo[],
+  deviceId: string | null | undefined
+) {
+  if (!deviceId) return null
+
+  const normalized = deviceId.trim()
+  const nativeLocalDevices = devices.filter(device => {
+    const identity = getLocalRuntimeSourceIdentity(device)
+    return (
+      device.device_type === 'local' &&
+      identity?.provenance === 'local-ipc' &&
+      identity.deviceId === normalized &&
+      device.device_id === identity.deviceId &&
+      Boolean(identity.runtimeInstanceId) &&
+      device.runtime_instance_id === identity.runtimeInstanceId
+    )
+  })
+  return nativeLocalDevices.length === 1 ? nativeLocalDevices[0] : null
+}
+
 export function findWorkbenchDevice(devices: DeviceInfo[], deviceId: string | null | undefined) {
   if (!deviceId) return null
 
-  const resolved = createWorkbenchDeviceResolver(devices).resolve(deviceId)
+  let resolved: DeviceInfo | null
+  try {
+    resolved = createWorkbenchDeviceResolver(devices).resolve(deviceId.trim())
+  } catch (error) {
+    // Ambiguous addresses are unavailable in the UI; writes keep the strict resolver.
+    if (error instanceof AmbiguousExecutorIdentityError) return null
+    throw error
+  }
   if (resolved) return resolved
 
   if (!isLocalWorkbenchDeviceAlias(deviceId)) return null
@@ -170,19 +200,34 @@ export function mergeDeviceLists(
   primaryDevices: DeviceInfo[],
   secondaryDevices: DeviceInfo[]
 ): DeviceInfo[] {
-  const merged: DeviceInfo[] = []
+  return mergeRuntimeDeviceGroups(primaryDevices, secondaryDevices).map(group => group.device)
+}
+
+interface RuntimeDeviceGroup {
+  device: DeviceInfo
+  sources: DeviceInfo[]
+}
+
+function mergeRuntimeDeviceGroups(
+  primaryDevices: DeviceInfo[],
+  secondaryDevices: DeviceInfo[]
+): RuntimeDeviceGroup[] {
+  const merged: RuntimeDeviceGroup[] = []
 
   const upsertDevice = (device: DeviceInfo) => {
-    let candidate = withRuntimeRoutes(device)
+    let candidate: RuntimeDeviceGroup = { device: withRuntimeRoutes(device), sources: [device] }
     let insertionIndex = merged.length
     let index = 0
     while (index < merged.length) {
-      if (!workbenchDevicesShareRuntimeIdentity(merged[index], candidate)) {
+      if (!workbenchDevicesShareRuntimeIdentity(merged[index].device, candidate.device)) {
         index += 1
         continue
       }
       insertionIndex = Math.min(insertionIndex, index)
-      candidate = mergeRuntimeDeviceRecord(merged[index], candidate)
+      candidate = {
+        device: mergeRuntimeDeviceRecord(merged[index].device, candidate.device),
+        sources: [...merged[index].sources, ...candidate.sources],
+      }
       merged.splice(index, 1)
       index = 0
     }
@@ -237,12 +282,13 @@ export function workbenchDevicesShareRuntimeIdentity(left: DeviceInfo, right: De
       left.runtime_instance_id && left.runtime_instance_id === right.runtime_instance_id
     )
   }
-  const leftIds = new Set(getWorkbenchDeviceIds(left))
-  if (leftIds.size === 0) return false
-  for (const candidate of getWorkbenchDeviceIds(right)) {
-    if (leftIds.has(candidate)) return true
-  }
-  return false
+  return Boolean(
+    Number.isSafeInteger(left.id) &&
+    Number.isSafeInteger(right.id) &&
+    left.id === right.id &&
+    left.device_id.trim() &&
+    left.device_id.trim() === right.device_id.trim()
+  )
 }
 
 function runtimeRouteFromDevice(device: DeviceInfo): DeviceRuntimeRoute {
@@ -288,23 +334,49 @@ export interface WorkbenchDeviceResolver {
   identityKey: (deviceId: string) => string
 }
 
+export class AmbiguousExecutorIdentityError extends Error {
+  readonly details: { candidates: Record<string, unknown>[] }
+
+  constructor(deviceId: string, candidates: DeviceInfo[]) {
+    super(`ambiguous-executor-identity:${deviceId}`)
+    this.name = 'AmbiguousExecutorIdentityError'
+    this.details = {
+      candidates: candidates.map(device => ({
+        recordId: device.id,
+        type: device.device_type ?? null,
+        status: device.status,
+        device_id: device.device_id,
+        app_device_id: device.app_device_id ?? null,
+        socket_device_id: device.socket_device_id ?? null,
+        runtime_instance_id: device.runtime_instance_id ?? null,
+        routeKind: runtimeRouteKind(device),
+      })),
+    }
+  }
+}
+
 /** Resolve transport aliases once; keep execution addresses separate from equality keys. */
 export function createWorkbenchDeviceResolver(devices: DeviceInfo[]): WorkbenchDeviceResolver {
   const aliases = new Map<string, Set<DeviceInfo>>()
-  const canonical = mergeDeviceLists(devices, [])
-  for (const source of [...canonical, ...devices]) {
-    const device = canonical.find(candidate =>
-      workbenchDevicesShareRuntimeIdentity(candidate, source)
-    )!
-    for (const alias of getWorkbenchDeviceIds(source)) {
-      const matches = aliases.get(alias) ?? new Set<DeviceInfo>()
-      matches.add(device)
-      aliases.set(alias, matches)
+  for (const group of mergeRuntimeDeviceGroups(devices, [])) {
+    for (const source of [group.device, ...group.sources]) {
+      for (const alias of getWorkbenchDeviceIds(source)) {
+        const matches = aliases.get(alias) ?? new Set<DeviceInfo>()
+        matches.add(group.device)
+        aliases.set(alias, matches)
+      }
     }
   }
   const resolve = (deviceId: string): DeviceInfo | null => {
     const matches = [...(aliases.get(deviceId.trim()) ?? [])]
-    if (matches.length > 1) throw new Error(`ambiguous-executor-identity:${deviceId}`)
+    if (matches.length > 1) {
+      const error = new AmbiguousExecutorIdentityError(deviceId, matches)
+      console.warn('[Wework] Ambiguous executor identity', {
+        deviceId: deviceId.trim(),
+        candidates: error.details.candidates,
+      })
+      throw error
+    }
     return matches[0] ?? null
   }
   return {

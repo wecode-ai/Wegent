@@ -90,6 +90,7 @@ ARG CODE_SERVER_HTTPS_PROXY=
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV WEGENT_EXECUTOR_VERSION=${APP_VERSION}
+ENV TZ=Asia/Shanghai
 
 LABEL org.opencontainers.image.version=${APP_VERSION} \
       org.opencontainers.image.revision=${VCS_REF}
@@ -113,8 +114,10 @@ RUN if [ -n "$DEVICE_APT_MIRROR" ]; then \
     curl \
     file \
     git \
+    openssh-client \
     python3 \
     python3-pip \
+    tzdata \
     util-linux \
     xz-utils \
     && case "$DEVICE_IMAGE_PLATFORM" in \
@@ -126,6 +129,8 @@ RUN if [ -n "$DEVICE_APT_MIRROR" ]; then \
       "${NODE_DIST_MIRROR%/}/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${node_arch}.tar.xz" \
       | tar -xJ --strip-components=1 -C /usr/local \
     && ln -sf /usr/bin/python3 /usr/bin/python \
+    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
+    && echo "$TZ" > /etc/timezone \
     && rm -rf /var/lib/apt/lists/*
 
 # Install the agent CLIs from the selected npm registry.
@@ -304,6 +309,9 @@ if [ "$WEGENT_EXECUTOR_HOME" != "$EXPECTED_EXECUTOR_HOME" ] && [ "$WEGENT_EXECUT
     echo "WEGENT_EXECUTOR_HOME must remain at the stable mount path $EXPECTED_EXECUTOR_HOME" >&2
     exit 1
 fi
+# Keep project state and app-server configuration in the same persisted home.
+export CODEX_HOME="${CODEX_HOME:-${WEGENT_CODEX_HOME:-$WEGENT_EXECUTOR_HOME/codex}}"
+export WEGENT_CODEX_HOME="${WEGENT_CODEX_HOME:-$CODEX_HOME}"
 case "$LOCAL_WORKSPACE_ROOT/" in
     "$EXPECTED_DATA_ROOT/workspace/"* | "$WEGENT_EXECUTOR_HOME/workspace/"*) ;;
     *)

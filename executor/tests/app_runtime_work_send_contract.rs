@@ -2825,7 +2825,7 @@ async fn runtime_tasks_create_rejects_missing_execution_request() {
 }
 
 #[tokio::test]
-async fn runtime_tasks_send_rejects_missing_execution_request() {
+async fn runtime_tasks_send_without_execution_request_rejects_missing_original_task() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
         "WEGENT_EXECUTOR_HOME",
@@ -2852,10 +2852,10 @@ async fn runtime_tasks_send_rejects_missing_execution_request() {
             }
         }))
         .await
-        .expect_err("send without executionRequest should fail fast");
+        .expect_err("send without executionRequest requires the original task");
 
-    assert_eq!(error.code, "bad_request");
-    assert_eq!(error.message, "executionRequest is required");
+    assert_eq!(error.code, "task_not_found");
+    assert_eq!(error.message, "The original Runtime task was not found");
 }
 
 #[tokio::test]

@@ -52,6 +52,7 @@ import {
   startLocalTerminal,
 } from '@/lib/local-terminal'
 import { configuredWorkspacePath, executionDeviceId } from '@/lib/project-workspace'
+import { qualifyLocalRuntimeSource } from '@/lib/local-runtime-sidebar-identity'
 import { setActiveKeybindings } from '@/lib/keybindings'
 import { queueSmartAppDevelopmentPreview } from '@/features/harness-apps/smartAppDevelopmentPreview'
 import { preloadDefaultDshUiTestModules } from '@/test/setup'
@@ -610,17 +611,22 @@ vi.mock('@pierre/trees/react', async () => {
 
   interface MockTreeModel {
     paths: string[]
+    expandedPaths: Set<string>
     search: string | null
     selectedPaths: string[]
     onSelectionChange?: (paths: string[]) => void
     getItem: (path: string) => {
       expand: () => void
+      isDirectory: () => boolean
+      isExpanded: () => boolean
       select: () => void
       deselect: () => void
-    }
+    } | null
     getSelectedPaths: () => string[]
     scrollToPath: () => void
-    subscribe: () => () => void
+    subscribe: (listener: () => void) => () => void
+    notify: () => void
+    resetPaths: (paths: string[], options?: { initialExpandedPaths?: string[] }) => void
     selectPath: (path: string) => void
     setSearch: (query: string | null) => void
   }
@@ -630,10 +636,13 @@ vi.mock('@pierre/trees/react', async () => {
 
     model.selectedPaths = [path]
     model.onSelectionChange?.([path])
+    model.notify()
   }
 
   return {
     FileTree: ({ model, ...props }: { model: MockTreeModel; [key: string]: unknown }) => {
+      const [, rerender] = React.useReducer((version: number) => version + 1, 0)
+      React.useEffect(() => model.subscribe(rerender), [model])
       const visiblePaths = model.search
         ? model.paths.filter(path => path.toLowerCase().includes(model.search!.toLowerCase()))
         : model.paths
@@ -653,7 +662,7 @@ vi.mock('@pierre/trees/react', async () => {
                 type="button"
                 data-testid={testId}
                 data-depth={depth.toString()}
-                aria-expanded={isDirectory ? 'true' : undefined}
+                aria-expanded={isDirectory ? model.expandedPaths.has(path) : undefined}
                 className={selected ? 'ring-1 ring-primary' : undefined}
                 onClick={() => model.selectPath(path)}
               >
@@ -668,10 +677,12 @@ vi.mock('@pierre/trees/react', async () => {
       )
     },
     useFileTree: ({
+      initialExpandedPaths,
       initialSelectedPaths,
       onSelectionChange,
       paths,
     }: {
+      initialExpandedPaths?: string[]
       initialSelectedPaths?: string[]
       onSelectionChange?: (paths: string[]) => void
       paths: string[]
@@ -679,33 +690,53 @@ vi.mock('@pierre/trees/react', async () => {
       const modelRef = React.useRef<MockTreeModel | null>(null)
 
       if (!modelRef.current) {
+        const listeners = new Set<() => void>()
         modelRef.current = {
           paths,
+          expandedPaths: new Set(initialExpandedPaths),
           search: null,
           selectedPaths: initialSelectedPaths ?? [],
           onSelectionChange,
-          getItem: (path: string) => ({
-            expand: vi.fn(),
-            select: () => selectModelPath(modelRef.current!, path),
-            deselect: () => {
-              modelRef.current!.selectedPaths = modelRef.current!.selectedPaths.filter(
-                selected => selected !== path
-              )
-            },
-          }),
+          getItem: (path: string) => {
+            const model = modelRef.current!
+            if (!model.paths.includes(path)) return null
+            return {
+              expand: () => {
+                model.expandedPaths.add(path)
+                model.notify()
+              },
+              isDirectory: () => path.endsWith('/'),
+              isExpanded: () => model.expandedPaths.has(path),
+              select: () => selectModelPath(model, path),
+              deselect: () => {
+                model.selectedPaths = model.selectedPaths.filter(selected => selected !== path)
+                model.notify()
+              },
+            }
+          },
           getSelectedPaths: () => modelRef.current!.selectedPaths,
           scrollToPath: vi.fn(),
-          subscribe: () => () => {},
+          subscribe: listener => {
+            listeners.add(listener)
+            return () => {
+              listeners.delete(listener)
+            }
+          },
+          notify: () => listeners.forEach(listener => listener()),
+          resetPaths(nextPaths, options) {
+            this.paths = nextPaths
+            this.expandedPaths = new Set(options?.initialExpandedPaths)
+            this.selectedPaths = this.selectedPaths.filter(path => nextPaths.includes(path))
+            this.notify()
+          },
           selectPath: (path: string) => selectModelPath(modelRef.current!, path),
           setSearch(query: string | null) {
+            if (this.search === query) return
             this.search = query
+            this.notify()
           },
         }
       }
-
-      modelRef.current.paths = paths
-      modelRef.current.onSelectionChange = onSelectionChange
-      modelRef.current.selectedPaths = initialSelectedPaths ?? modelRef.current.selectedPaths
 
       return { model: modelRef.current }
     },
@@ -5736,6 +5767,57 @@ describe('DesktopWorkbenchLayout', () => {
     expect(usagePanel).not.toHaveClass('pl-12')
     expect(within(usagePanel).queryByRole('progressbar')).not.toBeInTheDocument()
   })
+
+  test.each(['online', 'offline'] as const)(
+    'keeps project creation and the composer mounted when a %s historical runtime shares the current IPC address',
+    async status => {
+      const identity = {
+        deviceId: 'current-app-ipc',
+        runtimeInstanceId: 'current-runtime',
+        provenance: 'local-ipc' as const,
+      }
+      const localDevice = qualifyLocalRuntimeSource(
+        {
+          ...createLocalSkillDevice(),
+          device_id: identity.deviceId,
+          runtime_instance_id: identity.runtimeInstanceId,
+        },
+        identity
+      )
+      const state = {
+        ...baseProps.state,
+        standaloneDeviceId: identity.deviceId,
+        devices: [localDevice],
+      }
+      const view = render(<DesktopWorkbenchLayout {...baseProps} state={state} />)
+      expect(screen.getByTestId('projects-create-button')).toBeInTheDocument()
+
+      view.rerender(
+        <DesktopWorkbenchLayout
+          {...baseProps}
+          state={{
+            ...state,
+            devices: [
+              {
+                ...localDevice,
+                id: 77,
+                name: 'Historical remote alias',
+                device_type: 'remote',
+                is_default: false,
+                status,
+                runtime_instance_id: 'historical-runtime',
+              },
+              localDevice,
+            ],
+          }}
+        />
+      )
+
+      expect(screen.getByTestId('desktop-empty-composer-frame')).toBeInTheDocument()
+      await userEvent.click(screen.getByTestId('projects-create-button'))
+      expect(screen.getByTestId('project-create-remote-option')).toBeInTheDocument()
+    }
+  )
 
   test('opens the project create dialog with grouped local and cloud choices', async () => {
     const onRefreshDevices = vi.fn().mockResolvedValue(undefined)

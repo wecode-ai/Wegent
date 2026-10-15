@@ -67,6 +67,8 @@ export interface RuntimeProjectRef {
   kind?: 'local' | 'remote' | string
   source?: 'legacy_root' | 'local_project' | 'remote_project' | string
   stateDeviceId?: string | null
+  ownerDeviceId?: string | null
+  ownerProjectKey?: string | null
   roots?: RuntimeProjectRoot[]
   sidebarOrder?: number | null
   pinned?: boolean

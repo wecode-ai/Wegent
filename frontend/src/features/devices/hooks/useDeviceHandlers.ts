@@ -138,6 +138,12 @@ export function useDeviceHandlers(): DeviceHandlers {
   const handleUpgradeDevice = useCallback(
     async (device: DeviceInfo) => {
       // Check if executor version supports auto-upgrade (>= 1.6.5)
+      if (device.device_type === 'app' || device.device_type === 'remote') {
+        toast.info(
+          t(device.device_type === 'app' ? 'version.upgradeInWework' : 'version.repullRemoteImage')
+        )
+        return
+      }
       if (
         device.executor_version &&
         !isVersionAtLeast(device.executor_version, MIN_AUTO_UPGRADE_VERSION)

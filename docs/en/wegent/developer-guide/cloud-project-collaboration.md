@@ -345,6 +345,8 @@ flowchart TD
 
 Clients send project, Issue, saved comment, and attachment references through `wework:project_chat:comment:execute`, without device credentials. Comment locks and existing response records prevent duplicate executions. Follow-up activity retains dispatch, round, and assignment identity. First executions use the configuration builder; continuations append only input and attachments while the Executor restores the saved execution profile. Errors are surfaced without resending saved comments.
 
+Runtime events first identify a unique activity by input and turn identity, then lock its existing primary key, refresh the record, and recheck its turn. Missing or ambiguous matches do not select another activity. Empty lookups cannot gap-lock other tasks' first inserts, and concurrent updates to one activity preserve both results.
+
 Focused checks cover hidden admin Agents, independent root Runs, reassignment, duplicate requests, comment-only behavior, and cross-project, read-only, and other-author rejection. Desktop regression coverage belongs to the existing `collaboration-shared-core` scenario; E2E runs require an explicit request.
 
 ### Reading project execution sessions

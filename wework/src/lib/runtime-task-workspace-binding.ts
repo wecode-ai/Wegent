@@ -1,3 +1,4 @@
+import { getRuntimeProjectOwner, isDeviceRuntimeProject } from '@/lib/runtime-project-state'
 import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
 import type {
   RuntimeDeviceWorkspace,
@@ -28,12 +29,23 @@ function executionDeviceId(workspace: RuntimeDeviceWorkspace): string {
 
 function selectedWorkspace(
   workspaces: RuntimeDeviceWorkspace[],
-  deviceWorkspaceId?: number | null
+  deviceWorkspaceId?: number | null,
+  primaryRoot?: string
 ): RuntimeDeviceWorkspace | null {
   const available = workspaces.filter(workspace => workspace.available)
   if (deviceWorkspaceId != null) {
     return available.find(workspace => workspace.id === deviceWorkspaceId) ?? null
   }
+  if (primaryRoot)
+    return (
+      available.find(
+        workspace =>
+          !workspace.worktreeId &&
+          workspace.workspaceKind !== 'worktree' &&
+          normalizeRuntimeWorkspacePath(workspace.workspacePath) ===
+            normalizeRuntimeWorkspacePath(primaryRoot)
+      ) ?? null
+    )
   return available.length === 1 ? available[0] : null
 }
 
@@ -54,12 +66,14 @@ export function resolveRuntimeTaskWorkspaceBinding({
   )
   if (!projectWork) return null
 
-  const workspace = selectedWorkspace(projectWork.deviceWorkspaces, deviceWorkspaceId)
+  const workspace = selectedWorkspace(
+    projectWork.deviceWorkspaces,
+    deviceWorkspaceId,
+    isDeviceRuntimeProject(projectWork.project) ? projectWork.project.roots?.[0]?.path : undefined
+  )
   if (!workspace) return null
 
-  const isDeviceProject =
-    projectWork.project.source === 'local_project' ||
-    projectWork.project.source === 'remote_project'
+  const isDeviceProject = isDeviceRuntimeProject(projectWork.project)
   const backendProjectId =
     workspace.projectId ?? (!isDeviceProject ? projectWork.project.id : undefined)
   if (backendProjectId != null) {
@@ -69,7 +83,7 @@ export function resolveRuntimeTaskWorkspaceBinding({
     }
   }
 
-  const runtimeProjectKey = projectWork.project.key?.trim()
+  const runtimeProjectKey = getRuntimeProjectOwner(projectWork).projectKey
   if (!runtimeProjectKey) return null
   return {
     deviceId: executionDeviceId(workspace),
@@ -114,7 +128,7 @@ export function runtimeTaskProjectUiId(
   if (!runtimeProjectKey || !deviceId) return null
   const projectWork = runtimeWork?.projects.find(
     item =>
-      item.project.key === runtimeProjectKey &&
+      getRuntimeProjectOwner(item).projectKey === runtimeProjectKey &&
       item.deviceWorkspaces.some(workspace => executionDeviceId(workspace) === deviceId)
   )
   return projectWork ? runtimeProjectUiId(projectWork.project) : null

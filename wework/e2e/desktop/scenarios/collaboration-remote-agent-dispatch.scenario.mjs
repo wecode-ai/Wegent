@@ -355,13 +355,18 @@ async function verifyManualSessionReply(
     timeoutMs
   )
   const content = scoped(`[data-testid="task-activity-content-${replyId}"]`)
-  await control.command('waitFor', content, { text: CONTINUATION_RESULT, timeoutMs })
-  assert.equal((await control.command('getText', content)).trim(), CONTINUATION_RESULT)
   await control.command(
     'waitFor',
     scoped(`[data-testid="cloud-task-activity-execution-badge-${replyId}"]`),
     { text: '已完成', timeoutMs }
   )
+  // Read the settled reply in the same command that observes its final text.
+  const replyText = await control.command('waitFor', content, {
+    text: CONTINUATION_RESULT,
+    stableMs: 300,
+    timeoutMs,
+  })
+  assert.equal(replyText.trim(), CONTINUATION_RESULT)
   const replyMessages = await readProjectChatMessages(cloud, issueId, timeoutMs)
   const continuedResponse = replyMessages.find(message => message.messageId === replyId)
   assert.equal(continuedResponse?.rootMessageId, userRoot.messageId)

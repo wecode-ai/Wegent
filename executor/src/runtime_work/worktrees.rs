@@ -1086,15 +1086,11 @@ fn add_git_worktree(source: &Path, target: &Path, git_ref: Option<&str>) -> Resu
 }
 
 fn remove_git_worktree(path: &Path) -> Result<(), String> {
+    ensure_concrete_absolute_path(path, "Worktree path")?;
     let value = path.to_str().ok_or("Invalid worktree path")?;
     let common_dir = git_common_dir(path)?;
-    let mut command = Command::new("git");
-    command
-        .arg("--git-dir")
-        .arg(common_dir)
-        .args(["worktree", "remove", "--force", value]);
-    command.env_remove("GIT_DIR").env_remove("GIT_WORK_TREE");
-    crate::process::hide_windows_console(&mut command);
+    let mut command = git_common_dir_command(&common_dir);
+    command.args(["worktree", "remove", "--force", value]);
     let output = command.output().map_err(|error| error.to_string())?;
     command_result(output).map(|_| ())
 }
@@ -1125,35 +1121,51 @@ fn remove_empty_directory(path: &Path) -> Result<(), String> {
 }
 
 fn restore_git_worktree(git_common_dir: &Path, path: &Path, reference: &str) -> Result<(), String> {
+    ensure_concrete_absolute_path(path, "Worktree path")?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    let mut command = Command::new("git");
+    let mut command = git_common_dir_command(git_common_dir);
     command
-        .arg("--git-dir")
-        .arg(git_common_dir)
         .args(["worktree", "add", "--detach"])
         .arg(path)
         .arg(reference);
-    crate::process::hide_windows_console(&mut command);
     let output = command.output().map_err(|error| error.to_string())?;
     command_result(output).map(|_| ())
 }
 
 fn delete_snapshot_ref(git_common_dir: &Path, reference: &str) -> Result<(), String> {
-    let mut command = Command::new("git");
-    command
-        .arg("--git-dir")
-        .arg(git_common_dir)
-        .args(["update-ref", "-d", reference]);
-    crate::process::hide_windows_console(&mut command);
+    let mut command = git_common_dir_command(git_common_dir);
+    command.args(["update-ref", "-d", reference]);
     let output = command.output().map_err(|error| error.to_string())?;
     command_result(output).map(|_| ())
 }
 
-fn git_output(path: &Path, args: &[&str], envs: Option<&[(&str, &str)]>) -> Result<String, String> {
+fn git_common_dir_command(common_dir: &Path) -> Command {
+    let mut command = git_command();
+    // Git rejects an explicit GIT_DIR longer than PATH_MAX - 40 before loading
+    // core.longpaths. Enter the directory and identify it with a short name.
+    command.current_dir(common_dir).args(["--git-dir", "."]);
+    command
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_COMMON_DIR");
+    #[cfg(windows)]
+    command.env("GIT_COMMON_DIR", strip_windows_verbatim_prefix(common_dir));
+    command
+}
+
+fn git_command() -> Command {
     let mut command = Command::new("git");
+    #[cfg(windows)]
+    command.args(["-c", "core.longpaths=true"]);
     crate::process::hide_windows_console(&mut command);
+    command
+}
+
+fn git_output(path: &Path, args: &[&str], envs: Option<&[(&str, &str)]>) -> Result<String, String> {
+    let mut command = git_command();
+    configure_git_common_dir(&mut command, path);
     command
         .arg("-c")
         .arg("core.bare=false")
@@ -1168,11 +1180,34 @@ fn git_output(path: &Path, args: &[&str], envs: Option<&[(&str, &str)]>) -> Resu
     command_result(output)
 }
 
+fn configure_git_common_dir(command: &mut Command, _path: &Path) {
+    command.env_remove("GIT_COMMON_DIR");
+    #[cfg(windows)]
+    if let Some((_, _, common_dir)) = super::util::git_metadata_directories(_path) {
+        // Git for Windows disables long paths until repository config is loaded.
+        // Its checkout child must find shared objects before reading commondir.
+        // Git appends slash-separated config paths, which verbatim Windows
+        // paths do not normalize. Pass the ordinary path to its path layer.
+        command.env("GIT_COMMON_DIR", strip_windows_verbatim_prefix(&common_dir));
+    }
+}
+
 fn command_result(output: std::process::Output) -> Result<String, String> {
     if output.status.success() {
         return Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned());
     }
-    Err(String::from_utf8_lossy(&output.stderr).trim().to_owned())
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    crate::logging::log_executor_event(
+        "runtime worktree git command failed",
+        &[
+            ("exit_code", output.status.to_string()),
+            (
+                "stderr",
+                crate::agents::git_workspace::git_output_summary(&stderr),
+            ),
+        ],
+    );
+    Err(stderr.trim().to_owned())
 }
 
 #[derive(Clone, Debug)]
@@ -1468,8 +1503,7 @@ fn git_ref_exists(repo_root: &Path, git_ref: &str) -> Result<bool, String> {
         return Ok(false);
     }
     let commit = format!("{git_ref}^{{commit}}");
-    let mut command = Command::new("git");
-    crate::process::hide_windows_console(&mut command);
+    let mut command = git_command();
     command
         .arg("-c")
         .arg("core.bare=false")
@@ -2922,8 +2956,8 @@ mod tests {
     }
 
     fn run_git(path: &Path, args: &[&str]) {
-        let mut command = Command::new("git");
-        crate::process::hide_windows_console(&mut command);
+        let mut command = git_command();
+        configure_git_common_dir(&mut command, path);
         command
             .arg("-c")
             .arg("core.bare=false")
@@ -2940,6 +2974,55 @@ mod tests {
             args.join(" "),
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+
+    #[test]
+    fn worktree_metadata_can_exceed_the_windows_max_path_limit() {
+        let root = tempfile::tempdir().unwrap();
+        // Match the CI boundary: HEAD fits MAX_PATH but commondir does not.
+        let source = root
+            .path()
+            .join("r".repeat(226 - root.path().to_string_lossy().len() - 1));
+        initialize_repository(&source);
+        run_git(&source, &["config", "core.longpaths", "true"]);
+        let worktree = root.path().join("managed/workspace");
+        fs::create_dir_all(worktree.parent().unwrap()).unwrap();
+
+        // Production preflight canonicalizes paths, adding a verbatim prefix
+        // on Windows. Exercise that path through repository config discovery.
+        let repository = repository_info(&source).unwrap();
+        add_git_worktree(&repository.repo_root, &worktree, None).unwrap();
+
+        assert!(
+            source
+                .join(".git/worktrees/workspace/commondir")
+                .to_string_lossy()
+                .len()
+                > 260
+        );
+        assert_eq!(
+            fs::read_to_string(worktree.join("tracked.txt")).unwrap(),
+            "base\n"
+        );
+        git_output(&worktree, &["status", "--porcelain"], None).unwrap();
+        assert_eq!(
+            repository_info(&worktree).unwrap().git_common_dir,
+            repository.git_common_dir
+        );
+        remove_git_worktree(&worktree).unwrap();
+        assert!(!worktree.exists());
+
+        let reference = "refs/wegent/long-path-regression";
+        git_output(&source, &["update-ref", reference, "HEAD"], None).unwrap();
+        restore_git_worktree(&repository.git_common_dir, &worktree, reference).unwrap();
+        assert_eq!(
+            fs::read_to_string(worktree.join("tracked.txt")).unwrap(),
+            "base\n"
+        );
+        delete_snapshot_ref(&repository.git_common_dir, reference).unwrap();
+        assert!(!git_ref_exists(&source, reference).unwrap());
+        remove_git_worktree(&worktree).unwrap();
+        assert!(!worktree.exists());
     }
 
     fn initialize_repository(path: &Path) {

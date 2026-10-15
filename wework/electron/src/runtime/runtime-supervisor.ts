@@ -168,6 +168,7 @@ export class RuntimeSupervisor extends EventEmitter<RuntimeSupervisorEvents> {
       ])
     } finally {
       clearTimeout(timeout)
+      controller.abort()
     }
   }
 

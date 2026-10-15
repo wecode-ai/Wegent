@@ -110,7 +110,6 @@ import {
   verifyPluginLifecycle,
   verifySkillMentionRendering,
   verifyStartupIgnoresBlockedCodexNetwork,
-  waitForBundledMarketplaceRegistration,
 } from './plugin-flows.mjs'
 
 import {
@@ -133,6 +132,8 @@ import {
 } from './resilience-flows.mjs'
 
 import { matrixCaseId } from './response-protocol.mjs'
+import { collectWindowsNetworkDiagnostics } from './windows-network-diagnostics.mjs'
+import { collectCodexSqliteDiagnostics } from './codex-sqlite-diagnostics.mjs'
 
 import {
   ACTIVE_COMPOSER_SELECTOR,
@@ -1150,6 +1151,8 @@ async function main() {
     await createPluginMarketplaceFixture(marketplacePluginPath)
   }
   await runChecked('git', ['init'], { cwd: workspacePath })
+  // Fixture assertions compare exact bytes after Git snapshot restoration.
+  await runChecked('git', ['config', 'core.autocrlf', 'false'], { cwd: workspacePath })
   await runChecked('git', ['config', 'user.name', 'Wework Desktop E2E'], { cwd: workspacePath })
   await runChecked('git', ['config', 'user.email', 'desktop-e2e@wework.local'], {
     cwd: workspacePath,
@@ -1172,6 +1175,7 @@ async function main() {
   })
   const modelSwitchVerification = []
   let app
+  const applicationProcessHistory = []
   let appBundlePath
   let blockingNetworkProxy
   let cloudEnvironment
@@ -1195,6 +1199,8 @@ async function main() {
       standalone: DESKTOP_SCENARIO_ONLY,
       uiTimeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       modelResponseTimeoutMs: Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000),
+      recordScenarioRequest: (scenario, request) =>
+        control.recordScenarioRequest(scenario, request),
       workbenchReadyTimeoutMs: WORKBENCH_READY_TIMEOUT_MS,
       workspacePath,
     })
@@ -1308,6 +1314,7 @@ async function main() {
       CODEX_BIN: resolvedAppCodexBinary,
       CODEX_SQLITE_HOME: codexSqliteHome,
       HOME: homePath,
+      WORKSPACE_ROOT: join(homePath, '.wegent', 'workspace'),
       WEGENT_STANDALONE_WORKSPACE_ROOT: join(homePath, 'Documents', 'Codex'),
       WEGENT_CODEX_HOME: codexHome,
       WEGENT_EXECUTOR_HOME: executorHome,
@@ -1369,6 +1376,9 @@ async function main() {
       'WEGENT_RUNTIME_AUTH_TOKEN',
       'WEGENT_TASK_ID',
       'WEGENT_TASK_WORKSPACE',
+      'WEGENT_WORKSPACE_ROOT',
+      'LOCAL_WORKSPACE_ROOT',
+      'WEGENT_EXECUTOR_PROJECTS_DIR',
       'WEGENT_WORKBENCH_HOME',
       'WEGENT_CAPABILITIES_HOME',
       'WEGENT_CLAUDE_HOME',
@@ -1397,7 +1407,12 @@ async function main() {
     appEnvironment.WEWORK_APP_IDENTIFIER = appIdentifier
     await desktopScenario?.prepareApp?.({ appBinary, appEnvironment, codexHome, control })
     const electronLaunchArguments = resolveElectronLaunchArguments({
-      extraArguments: desktopScenario?.electronLaunchArguments ?? [],
+      extraArguments: [
+        ...(process.platform === 'win32'
+          ? ['--enable-logging=file', `--log-file=${join(resultDir, 'electron.log')}`]
+          : []),
+        ...(desktopScenario?.electronLaunchArguments ?? []),
+      ],
     })
     const launchWorkingDirectory = desktopScenario?.launchWorkingDirectory ?? weworkDir
     if (desktopScenario?.launchWorkingDirectory) {
@@ -1410,6 +1425,15 @@ async function main() {
         env: activeAppEnvironment,
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
+      })
+      const processState = { pid: child.pid, launchedAt: new Date().toISOString() }
+      applicationProcessHistory.push(processState)
+      child.once('error', error => {
+        processState.error = error.message
+        control.fail(error)
+      })
+      child.once('exit', (code, signal) => {
+        Object.assign(processState, { code, signal, exitedAt: new Date().toISOString() })
       })
       await markDesktopE2EResultActive(resultDir, {
         applicationProcessId: child.pid,
@@ -1547,14 +1571,17 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         )
       await verifyStartupIgnoresBlockedCodexNetwork({
         blockingNetworkProxy,
+        bundledMarketplacePath: join(
+          executorHome,
+          'capabilities',
+          'bundled-marketplaces',
+          'wework-personal'
+        ),
+        codexHome,
         configureCodex,
         control,
         restartDesktopApp,
       })
-      await waitForBundledMarketplaceRegistration(
-        codexHome,
-        join(executorHome, 'capabilities', 'bundled-marketplaces', 'wework-personal')
-      )
     }
     if (SYSTEM_DRAG_PANEL_ONLY) {
       phase = 'system-drag-panel-layout'
@@ -1722,6 +1749,13 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     await triggerModelReloadUntilCloudFailure(control)
     control.restoreCloudModels()
     await control.command('dispatchLocalModelSettingsChanged', '')
+    // The composer mounts before native Codex initialization finishes. Establish
+    // the configured local catalog prerequisite before inspecting model options.
+    await control.command(
+      'waitFor',
+      '[data-testid="model-selector-button"][data-model-provider-id]:not([data-model-provider-id=""])',
+      { timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
+    )
     const canonicalModelOption = `model-option-${DEFAULT_MODEL_ID}`
     const synthesizedModelOption = `model-option-codex-${DEFAULT_MODEL_ID}`
     const publicModelOption = `model-option-${CLOUD_PUBLIC_MODEL_NAME}`
@@ -2723,11 +2757,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         )
       )
       phase = 'initial-task'
-      await sendPrompt(control, composerSelector, TASK_PROMPT)
-      const initialTaskRequest = await withTimeout(
-        control.awaitScenarioRequest('initial'),
-        DEFAULT_STEP_TIMEOUT_MS,
-        'The model service did not receive the initial task request'
+      const initialTaskRequest = await sendPromptUntilScenarioRequest(
+        control,
+        composerSelector,
+        TASK_PROMPT,
+        'initial'
       )
       const runningTaskSnapshot = await waitForSnapshot(
         control,
@@ -4461,6 +4495,19 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     console.log(`Wework desktop task-flow E2E passed. Diagnostics: ${resultDir}`)
   } catch (error) {
     testFailed = true
+    const networkDiagnostics = collectWindowsNetworkDiagnostics()
+    await writeFile(
+      join(resultDir, 'codex-sqlite-diagnostics.json'),
+      `${JSON.stringify(await collectCodexSqliteDiagnostics(codexSqliteHome), null, 2)}\n`,
+      'utf8'
+    )
+    if (networkDiagnostics) {
+      await writeFile(
+        join(resultDir, 'windows-network-diagnostics.json'),
+        `${JSON.stringify(networkDiagnostics, null, 2)}\n`,
+        'utf8'
+      )
+    }
     await writeFile(
       join(resultDir, 'model-requests.json'),
       `${JSON.stringify(control.modelRequests, null, 2)}\n`,
@@ -4471,6 +4518,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       `${JSON.stringify(
         {
           phase,
+          applicationProcessHistory,
           scenario: control.scenario,
           modelStage: control.modelStage,
           localProtocolStates: Object.fromEntries(
@@ -4506,17 +4554,29 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       'utf8'
     )
     try {
-      const [snapshot, composerDiagnostics, composerFocus, workbenchDebug] = await Promise.all([
+      const [
+        snapshot,
+        composerDiagnostics,
+        composerFocus,
+        workbenchDebug,
+        conversationDiagnostics,
+      ] = await Promise.all([
         control.command('snapshot', 'body', { timeoutMs: 5000 }),
         control.command('getComposerDiagnosticsSnapshot', 'body', { timeoutMs: 5000 }),
         control.command('getComposerFocusSnapshot', 'body', { timeoutMs: 5000 }),
         control.command('getWorkbenchDebugSnapshot', 'body', { timeoutMs: 5000 }),
+        control.command('getConversationDiagnosticsSnapshot', 'body', { timeoutMs: 5000 }),
       ])
       await Promise.all([
         writeFile(join(resultDir, 'ui-snapshot.json'), `${snapshot}\n`, 'utf8'),
         writeFile(join(resultDir, 'composer-diagnostics.json'), `${composerDiagnostics}\n`, 'utf8'),
         writeFile(join(resultDir, 'composer-focus.json'), `${composerFocus}\n`, 'utf8'),
         writeFile(join(resultDir, 'workbench-debug.json'), `${workbenchDebug}\n`, 'utf8'),
+        writeFile(
+          join(resultDir, 'conversation-diagnostics.json'),
+          `${conversationDiagnostics}\n`,
+          'utf8'
+        ),
       ])
     } catch {
       // Preserve the original test failure when the WebView can no longer answer diagnostics.

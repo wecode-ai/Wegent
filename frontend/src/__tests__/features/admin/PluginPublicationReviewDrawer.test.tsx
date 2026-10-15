@@ -4,7 +4,7 @@
 
 import '@testing-library/jest-dom'
 import React from 'react'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import {
   adminPluginPublicationApis,
@@ -213,8 +213,20 @@ const mockedPublicationApis = adminPluginPublicationApis as jest.Mocked<
 >
 
 describe('PluginPublicationReviewDrawer', () => {
+  async function renderLoadedRequest() {
+    await act(async () => {
+      render(
+        <PluginPublicationReviewDrawer
+          requestId={41}
+          onOpenChange={jest.fn()}
+          onRequestUpdated={jest.fn()}
+        />
+      )
+    })
+  }
+
   beforeEach(() => {
-    jest.clearAllMocks()
+    jest.resetAllMocks()
     mockedPublicationApis.getPublicationRequest.mockImplementation(
       async (_requestId, _signal, revision) =>
         revision === 2 ? historicalDetailFixture : detailFixture
@@ -228,13 +240,7 @@ describe('PluginPublicationReviewDrawer', () => {
   })
 
   it('requires warning acknowledgement and accepts only the current revision', async () => {
-    render(
-      <PluginPublicationReviewDrawer
-        requestId={41}
-        onOpenChange={jest.fn()}
-        onRequestUpdated={jest.fn()}
-      />
-    )
+    await renderLoadedRequest()
 
     const acceptButton = await screen.findByTestId('plugin-publication-accept')
     expect(acceptButton).toBeDisabled()
@@ -262,7 +268,9 @@ describe('PluginPublicationReviewDrawer', () => {
     expect(screen.getByTestId('plugin-publication-accept-target-directory')).toHaveTextContent(
       'plugins/sina-email'
     )
-    fireEvent.click(screen.getByTestId('plugin-publication-accept-confirm'))
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('plugin-publication-accept-confirm'))
+    })
 
     await waitFor(() =>
       expect(mockedPublicationApis.acceptPublicationRequest).toHaveBeenCalledWith(41, {
@@ -273,13 +281,7 @@ describe('PluginPublicationReviewDrawer', () => {
   })
 
   it('requires actionable return fields and submits one change per line', async () => {
-    render(
-      <PluginPublicationReviewDrawer
-        requestId={41}
-        onOpenChange={jest.fn()}
-        onRequestUpdated={jest.fn()}
-      />
-    )
+    await renderLoadedRequest()
 
     fireEvent.click(await screen.findByTestId('plugin-publication-return'))
     const confirmButton = screen.getByTestId('plugin-publication-return-confirm')
@@ -295,7 +297,9 @@ describe('PluginPublicationReviewDrawer', () => {
       },
     })
     expect(confirmButton).toBeEnabled()
-    fireEvent.click(confirmButton)
+    await act(async () => {
+      fireEvent.click(confirmButton)
+    })
 
     await waitFor(() =>
       expect(mockedPublicationApis.returnPublicationRequest).toHaveBeenCalledWith(41, {
@@ -329,7 +333,11 @@ describe('PluginPublicationReviewDrawer', () => {
         blockedReasons: ['compatibility.windows_native'],
       },
     }
-    mockedPublicationApis.getPublicationRequest.mockResolvedValueOnce(blockedDetail)
+    let resolveDetail!: (detail: AdminPluginPublicationRequestDetail) => void
+    const detailResponse = new Promise<AdminPluginPublicationRequestDetail>(resolve => {
+      resolveDetail = resolve
+    })
+    mockedPublicationApis.getPublicationRequest.mockReturnValueOnce(detailResponse)
     mockedPublicationApis.returnPublicationRequest.mockResolvedValueOnce(blockedDetail)
 
     render(
@@ -340,14 +348,21 @@ describe('PluginPublicationReviewDrawer', () => {
       />
     )
 
-    fireEvent.click(await screen.findByTestId('plugin-publication-return'))
+    expect(screen.getByTestId('plugin-publication-detail-loading')).toBeInTheDocument()
+    await act(async () => {
+      resolveDetail(blockedDetail)
+      await detailResponse
+    })
+    fireEvent.click(screen.getByTestId('plugin-publication-return'))
     expect(
       screen.getByTestId('plugin-publication-return-check-compatibility.windows_native')
     ).toBeChecked()
     fireEvent.change(screen.getByTestId('plugin-publication-return-reason'), {
       target: { value: 'Native compatibility failed' },
     })
-    fireEvent.click(screen.getByTestId('plugin-publication-return-confirm'))
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('plugin-publication-return-confirm'))
+    })
 
     await waitFor(() =>
       expect(mockedPublicationApis.returnPublicationRequest).toHaveBeenCalledWith(41, {
@@ -361,15 +376,11 @@ describe('PluginPublicationReviewDrawer', () => {
   })
 
   it('reconciles GitLab state for the current revision', async () => {
-    render(
-      <PluginPublicationReviewDrawer
-        requestId={41}
-        onOpenChange={jest.fn()}
-        onRequestUpdated={jest.fn()}
-      />
-    )
+    await renderLoadedRequest()
 
-    fireEvent.click(await screen.findByTestId('plugin-publication-reconcile'))
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('plugin-publication-reconcile'))
+    })
 
     await waitFor(() =>
       expect(mockedPublicationApis.reconcilePublicationRequest).toHaveBeenCalledWith(
@@ -383,13 +394,7 @@ describe('PluginPublicationReviewDrawer', () => {
   })
 
   it('switches revision and reloads that revision checks, events, and GitLab evidence', async () => {
-    render(
-      <PluginPublicationReviewDrawer
-        requestId={41}
-        onOpenChange={jest.fn()}
-        onRequestUpdated={jest.fn()}
-      />
-    )
+    await renderLoadedRequest()
 
     expect(await screen.findByTestId('plugin-publication-manifest')).toHaveTextContent('1.2.0')
     expect(screen.getByTestId('plugin-publication-package-entries')).toHaveTextContent(
@@ -398,7 +403,9 @@ describe('PluginPublicationReviewDrawer', () => {
     expect(screen.getByTestId('plugin-publication-capabilities')).toHaveTextContent('Write')
     expect(screen.getByText('2026-08-29 09:00:00')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByTestId('plugin-publication-revision-2'))
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('plugin-publication-revision-2'))
+    })
 
     await waitFor(() =>
       expect(mockedPublicationApis.getPublicationRequest).toHaveBeenCalledWith(41, undefined, 2)
@@ -417,7 +424,9 @@ describe('PluginPublicationReviewDrawer', () => {
     expect(screen.getByText('wework/publication-41-r2')).toBeInTheDocument()
     expect(screen.queryByTestId('plugin-publication-accept')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByTestId('plugin-publication-return-current-revision'))
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('plugin-publication-return-current-revision'))
+    })
     await waitFor(() =>
       expect(mockedPublicationApis.getPublicationRequest).toHaveBeenCalledWith(41, undefined, 3)
     )
@@ -454,13 +463,7 @@ describe('PluginPublicationReviewDrawer', () => {
       },
     })
 
-    render(
-      <PluginPublicationReviewDrawer
-        requestId={41}
-        onOpenChange={jest.fn()}
-        onRequestUpdated={jest.fn()}
-      />
-    )
+    await renderLoadedRequest()
 
     expect(await screen.findByTestId('plugin-publication-event-failures-901')).toHaveTextContent(
       'wework-linux · verify'

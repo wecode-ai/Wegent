@@ -101,6 +101,122 @@ describe('WorkspaceFileTree', () => {
     scroll.mockRestore()
   })
 
+  test('preserves directory browsing and collapsed folders while entries load or refresh', async () => {
+    const scroll = vi.spyOn(PierreFileTree.prototype, 'scrollToPath')
+    const source = { name: 'src', path: '/fixture/repo/src', isDirectory: true, size: 0 }
+    const other = { name: 'other', path: '/fixture/repo/other', isDirectory: true, size: 0 }
+    const file = { name: 'a.py', path: '/fixture/repo/src/a.py', isDirectory: false, size: 1 }
+    const child = { name: 'b.py', path: '/fixture/repo/other/b.py', isDirectory: false, size: 1 }
+    const entriesByPath = { '/fixture/repo': [source, other], '/fixture/repo/src': [file] }
+    const props = {
+      rootPath: '/fixture/repo',
+      activeDirectoryPath: '/fixture/repo/src',
+      entriesByPath,
+      expandedPaths: new Set([source.path]),
+      selectedPath: file.path,
+      loadingPaths: new Set<string>(),
+      error: null,
+      onOpenDirectory: vi.fn(),
+      onOpenFile: vi.fn(),
+      onRefresh: vi.fn(),
+    }
+    const { rerender } = render(<WorkspaceFileTree {...props} />)
+    const tree = screen.getByTestId('workspace-file-tree-pierre')
+    const row = async (path: string) =>
+      waitFor(() => {
+        const element = tree.shadowRoot?.querySelector<HTMLElement>(`[data-item-path="${path}"]`)
+        expect(element).not.toBeNull()
+        return element!
+      })
+    await waitFor(() => expect(scroll).toHaveBeenCalledWith('src/a.py', expect.anything()))
+    fireEvent.click(await row('src/'))
+    await waitFor(async () => expect(await row('src/')).toHaveAttribute('aria-expanded', 'false'))
+    fireEvent.click(await row('other/'))
+    expect(props.onOpenDirectory).toHaveBeenCalledWith(other)
+    scroll.mockClear()
+    const browsingProps = {
+      ...props,
+      activeDirectoryPath: other.path,
+      expandedPaths: new Set([source.path, other.path]),
+    }
+    rerender(<WorkspaceFileTree {...browsingProps} />)
+    const loadedEntries = { ...entriesByPath, [other.path]: [child] }
+    rerender(<WorkspaceFileTree {...browsingProps} entriesByPath={loadedEntries} />)
+    await row('other/b.py')
+    expect(screen.getByTestId('workspace-file-tree-pierre')).toBe(tree)
+    expect(await row('other/')).toHaveAttribute('data-item-selected', 'true')
+    expect(await row('src/')).toHaveAttribute('aria-expanded', 'false')
+    expect(scroll).not.toHaveBeenCalled()
+    expect(props.onOpenFile).not.toHaveBeenCalled()
+
+    const refreshedChild = { ...child, name: 'c.py', path: '/fixture/repo/other/c.py' }
+    rerender(
+      <WorkspaceFileTree
+        {...browsingProps}
+        entriesByPath={{ ...entriesByPath, [other.path]: [refreshedChild] }}
+      />
+    )
+    await row('other/c.py')
+    expect(tree.shadowRoot?.querySelector('[data-item-path="other/b.py"]')).toBeNull()
+    expect(await row('other/')).toHaveAttribute('data-item-selected', 'true')
+    expect(await row('src/')).toHaveAttribute('aria-expanded', 'false')
+    expect(scroll).not.toHaveBeenCalled()
+    scroll.mockRestore()
+  })
+
+  test('reveals a pending file once after its entries load and updates active search matches', async () => {
+    const scroll = vi.spyOn(PierreFileTree.prototype, 'scrollToPath')
+    const directory = { name: 'src', path: '/fixture/repo/src', isDirectory: true, size: 0 }
+    const other = { ...directory, name: 'other', path: '/fixture/repo/other' }
+    const file = { name: 'a.py', path: '/fixture/repo/src/a.py', isDirectory: false, size: 1 }
+    const otherFile = { ...file, name: 'b.py', path: '/fixture/repo/other/b.py' }
+    const props = {
+      rootPath: '/fixture/repo',
+      activeDirectoryPath: directory.path,
+      entriesByPath: { '/fixture/repo': [directory, other], [other.path]: [otherFile] },
+      expandedPaths: new Set([directory.path]),
+      selectedPath: file.path,
+      loadingPaths: new Set<string>(),
+      error: null,
+      onOpenDirectory: vi.fn(),
+      onOpenFile: vi.fn(),
+      onRefresh: vi.fn(),
+    }
+    const { rerender } = render(<WorkspaceFileTree {...props} />)
+    expect(scroll).not.toHaveBeenCalled()
+    const loadedEntries = { ...props.entriesByPath, [directory.path]: [file] }
+    rerender(<WorkspaceFileTree {...props} entriesByPath={loadedEntries} />)
+    await waitFor(() => expect(scroll).toHaveBeenCalledWith('src/a.py', expect.anything()))
+    scroll.mockClear()
+    fireEvent.change(screen.getByTestId('workspace-file-search-input'), {
+      target: { value: 'b.py' },
+    })
+    const child = { ...file, name: 'b.py', path: '/fixture/repo/src/b.py' }
+    rerender(
+      <WorkspaceFileTree
+        {...props}
+        entriesByPath={{ ...loadedEntries, [directory.path]: [file, child] }}
+      />
+    )
+    const tree = screen.getByTestId('workspace-file-tree-pierre')
+    await waitFor(() =>
+      expect(tree.shadowRoot?.querySelector('[data-item-path="src/b.py"]')).not.toBeNull()
+    )
+    expect(screen.getByTestId('workspace-file-search-input')).toHaveValue('b.py')
+    fireEvent.change(screen.getByTestId('workspace-file-search-input'), {
+      target: { value: '' },
+    })
+    await waitFor(() =>
+      expect(tree.shadowRoot?.querySelector('[data-item-path="other/"]')).toHaveAttribute(
+        'aria-expanded',
+        'false'
+      )
+    )
+    expect(scroll).not.toHaveBeenCalled()
+    expect(props.onOpenFile).not.toHaveBeenCalled()
+    scroll.mockRestore()
+  })
+
   test.each([
     ['/fixture/repo', '/fixture/repo/src/api/a.py', ['/fixture/repo/src', '/fixture/repo/src/api']],
     ['/fixture/repo', '/fixture/repo/a.py', []],

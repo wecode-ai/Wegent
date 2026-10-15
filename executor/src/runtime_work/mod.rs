@@ -60,6 +60,12 @@ pub(crate) fn runtime_features() -> serde_json::Value {
             "codeServer": gateway_enabled && env_enabled("DEVICE_CODE_SERVER_ENABLED", true),
             "terminal": env_enabled("DEVICE_TERMINAL_ENABLED", true),
         },
+        "projectEditing": {
+            "multiRoots": true,
+            "aiSettings": true,
+            "defaultProjectSpace": true,
+            "plugins": true,
+        },
         "worktrees": worktrees::WorktreeManager::capabilities_from_env(),
     })
 }
@@ -83,4 +89,21 @@ pub(crate) fn codex_workspace_roots() -> Vec<std::path::PathBuf> {
         .flat_map(|project| project.roots.iter())
         .map(std::path::PathBuf::from)
         .collect()
+}
+
+#[cfg(test)]
+mod project_editing_feature_tests {
+    #[test]
+    fn advertises_independent_project_editing_capabilities() {
+        let features = super::runtime_features();
+        assert_eq!(
+            features["projectEditing"],
+            serde_json::json!({
+                "multiRoots": true,
+                "aiSettings": true,
+                "defaultProjectSpace": true,
+                "plugins": true,
+            })
+        );
+    }
 }

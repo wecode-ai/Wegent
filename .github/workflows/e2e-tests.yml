@@ -484,6 +484,19 @@ jobs:
           ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
           ETCD_DATA_DIR: /etcd
 
+      # Start storage before Milvus: the runner pulls and starts services sequentially.
+      minio:
+        image: bitnamilegacy/minio:2025.7.23-debian-12-r0
+        env:
+          MINIO_ROOT_USER: wegent-e2e
+          MINIO_ROOT_PASSWORD: wegent-e2e-secret
+        options: >-
+          --health-cmd="curl -f http://localhost:9000/minio/health/live"
+          --health-interval=2s
+          --health-timeout=5s
+          --health-start-period=5s
+          --health-retries=30
+
       milvus:
         image: milvusdb/milvus:v2.5.4
         command: milvus run standalone
@@ -501,18 +514,6 @@ jobs:
 
       qdrant:
         image: qdrant/qdrant:v1.15.4
-
-      minio:
-        image: bitnamilegacy/minio:2025.7.23-debian-12-r0
-        env:
-          MINIO_ROOT_USER: wegent-e2e
-          MINIO_ROOT_PASSWORD: wegent-e2e-secret
-        options: >-
-          --health-cmd="curl -f http://localhost:9000/minio/health/live"
-          --health-interval=2s
-          --health-timeout=5s
-          --health-start-period=5s
-          --health-retries=30
 
     steps:
       - name: Generate internal service token
@@ -631,6 +632,14 @@ jobs:
           DEVICE_REGISTRATION_TEST_MYSQL_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
           PYTHONPATH: ..:.
         run: uv run --no-sync python tests/integration/device_registration_mysql.py
+
+      - name: Verify MySQL Runtime activity concurrency
+        if: matrix.shardIndex == 1
+        working-directory: ./backend
+        env:
+          RUNTIME_ACTIVITY_TEST_MYSQL_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          PYTHONPATH: ..:.
+        run: uv run --no-sync python tests/integration/runtime_activity_mysql.py
 
       - name: Start backend server
         env:

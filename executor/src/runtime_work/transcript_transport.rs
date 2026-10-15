@@ -57,12 +57,19 @@ pub(super) fn encode(directory: &Path, response: Value) -> Result<Value, AppIpcE
     let id = format!("{:x}", Sha256::digest(&bytes));
     if bytes.len() > CHUNK_BYTES {
         fs::create_dir_all(directory).map_err(transport_error)?;
-        remove_expired_snapshots(directory)?;
-        // Atomic publication permits concurrent loads of identical snapshots.
-        let mut file = tempfile::NamedTempFile::new_in(directory).map_err(transport_error)?;
+        // tempfile passes paths directly to Win32 when publishing. Canonicalize
+        // the existing directory so long snapshot paths retain the verbatim prefix.
+        let directory = directory.canonicalize().map_err(transport_error)?;
+        remove_expired_snapshots(&directory)?;
+        // Content-addressed snapshots are immutable. Reuse an existing publication
+        // instead of replacing a file another request may already be reading.
+        let mut file = tempfile::NamedTempFile::new_in(&directory).map_err(transport_error)?;
         file.write_all(&bytes).map_err(transport_error)?;
-        file.persist(directory.join(format!("{id}.gz")))
-            .map_err(transport_error)?;
+        if let Err(error) = file.persist_noclobber(directory.join(format!("{id}.gz"))) {
+            if error.error.kind() != std::io::ErrorKind::AlreadyExists {
+                return Err(transport_error(error));
+            }
+        }
     }
     Ok(chunk(
         &id,

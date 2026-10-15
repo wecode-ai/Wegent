@@ -746,6 +746,14 @@ impl RuntimeWorkRpcHandler {
 
     fn mark_deferred_worktree_failed(&self, turn: &SpawnTurnRequest, error: &AppIpcError) {
         let local_task_id = &turn.local_task_id;
+        log_executor_event(
+            "runtime turn preparation failed",
+            &[
+                ("local_task_id", local_task_id.clone()),
+                ("code", error.code.clone()),
+                ("error", error.message.clone()),
+            ],
+        );
         self.persist_failed_assistant_message(local_task_id, &turn.request, &error.message);
         self.store
             .update_task(local_task_id, |link| apply_local_task_failure(link, error));
