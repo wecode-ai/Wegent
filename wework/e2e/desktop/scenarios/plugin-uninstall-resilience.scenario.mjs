@@ -51,6 +51,50 @@ export async function createDesktopScenario({
       [1, item.installedId, CLOUD_DEVICE_ID]
     )
 
+  async function catalogSourceFailure(control) {
+    const item = await fixture('catalog-source')
+    await openPlugin(control, item)
+    const startIndex = apiProxy.requests.length
+    apiProxy.rule = request =>
+      request.method === 'GET' && request.path === '/api/plugins/installed' ? 'disconnect' : null
+    try {
+      await control.command('click', testId('plugins-refresh-button'))
+      await control.command('waitFor', testId('plugin-operation-notice'))
+      await control.command('waitFor', testId(`plugin-marketplace-actions-${item.pluginId}`), {
+        enabled: true,
+      })
+      assert.ok(apiProxy.requests.slice(startIndex).some(request => request.fault === 'disconnect'))
+      await assertInventory(control, item.slug, true)
+      await control.command('click', testId('plugins-manage-button'))
+      await control.command('waitFor', testId('plugin-operation-notice'))
+      await control.command('waitFor', testId('plugin-management-installed-list'))
+      assert.ok(
+        (await control.command('getText', testId('plugin-management-page-content'))).includes(
+          item.slug
+        ),
+        'A failed cloud read erased healthy local or cached installed rows'
+      )
+      await captureScreenshot(control, 'plugin-catalog-source-failure.png', 'body')
+    } finally {
+      apiProxy.rule = () => null
+    }
+    const recoveryIndex = apiProxy.requests.length
+    await openPlugin(control, item)
+    await control.command('click', testId('plugins-refresh-button'))
+    await until(
+      () => apiProxy.requests.slice(recoveryIndex),
+      requests =>
+        requests.some(
+          request => request.path === '/api/plugins/installed' && request.status === 200
+        ),
+      'Explicit refresh did not recover the real installed source'
+    )
+    await assertSurfaces(control, item, true)
+    await uninstallInUi(control, item)
+    await assertInstallButton(control, item)
+    evidence.push({ case: 'catalog-source-failure-and-refresh-recovery' })
+  }
+
   async function lostResponse(control) {
     const item = await fixture('lost-response')
     const startIndex = apiProxy.requests.length
@@ -271,6 +315,7 @@ export async function createDesktopScenario({
         'Remote device bypassed fault proxy'
       )
       try {
+        await catalogSourceFailure(control)
         await lostResponse(control)
         await unknownResult(control)
         await restartRecovery(control)

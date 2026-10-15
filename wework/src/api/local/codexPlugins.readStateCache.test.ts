@@ -115,6 +115,7 @@ describe('local codex plugin readState cache', () => {
     mocks.runtime.electron = true
     mocks.knownDeviceId = 'local-device'
     mocks.requestLocalExecutor.mockReset()
+    mocks.getInitializedBundledPluginMarketplace.mockReset().mockReturnValue(null)
     mocks.pauseBundledUpdates.mockReset()
     mocks.resumeBundledUpdates.mockReset()
     mocks.ensureLocalExecutorStarted.mockReset()
@@ -1091,7 +1092,7 @@ describe('local codex plugin readState cache', () => {
     expect(peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })).toBeNull()
   })
 
-  test('retains the cached OpenAI catalog when a refresh omits that marketplace', async () => {
+  test('clears the cached OpenAI catalog when a successful full refresh omits it', async () => {
     const openAiMarketplace = {
       name: 'openai-curated-remote',
       path: 'openai-curated-remote',
@@ -1126,23 +1127,22 @@ describe('local codex plugin readState cache', () => {
     const api = createLocalCodexPluginApi()
     await api.readState({ mergeAllMarketplaces: true })
 
-    // A just-resumed app-server can return a successful but partial list before
-    // its remote OpenAI marketplace has been restored.
+    // Successful full responses own the remote slice, including an empty result.
     listMarketplaces = []
     const refreshed = await api.readState({ mergeAllMarketplaces: true, refresh: true })
 
-    expect(refreshed.marketplaceItems.map(item => item.name)).toEqual(['gmail'])
-    expect(refreshed.marketplaces.map(marketplace => marketplace.id)).toContain(
+    expect(refreshed.marketplaceItems).toEqual([])
+    expect(refreshed.marketplaces.map(marketplace => marketplace.id)).not.toContain(
       'openai-curated-remote'
     )
     expect(
       peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.marketplaceItems.map(
         item => item.name
       )
-    ).toEqual(['gmail'])
+    ).toEqual([])
   })
 
-  test('retains the cached OpenAI catalog when the refreshed marketplace is temporarily empty', async () => {
+  test('clears cached entries when a successful marketplace response is empty', async () => {
     const openAiMarketplace = {
       name: 'openai-curated-remote',
       path: 'openai-curated-remote',
@@ -1175,12 +1175,12 @@ describe('local codex plugin readState cache', () => {
     listMarketplaces = [{ ...openAiMarketplace, plugins: [] }]
     const refreshed = await api.readState({ mergeAllMarketplaces: true, refresh: true })
 
-    expect(refreshed.marketplaceItems.map(item => item.name)).toEqual(['gmail'])
+    expect(refreshed.marketplaceItems).toEqual([])
     expect(
       peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.marketplaceItems.map(
         item => item.name
       )
-    ).toEqual(['gmail'])
+    ).toEqual([])
   })
 
   test('keeps the durable OpenAI catalog after an idempotent personal plugin reconcile', async () => {
@@ -1219,6 +1219,9 @@ describe('local codex plugin readState cache', () => {
           method?: string
         }
       ) => {
+        if (method === 'executor.plugins.store.list') return { plugins: [] }
+        if (method === 'executor.plugins.links.list') return []
+        if (method === 'executor.plugins.personal.ensure') return { migrated: false }
         if (method !== 'codex.app_server_request') {
           throw new Error(`Unexpected executor method ${method}`)
         }
@@ -2037,6 +2040,7 @@ describe('local codex plugin readState cache', () => {
           }
           return { storePath: '/tmp/store/plugins', plugins: [] }
         }
+        if (method === 'executor.plugins.links.list') return []
         if (method !== 'codex.app_server_request') {
           throw new Error(`Unexpected executor method ${method}`)
         }
@@ -2602,6 +2606,7 @@ describe('local codex plugin readState cache', () => {
           method?: string
         }
       ) => {
+        if (method === 'executor.plugins.store.list') return { plugins: [] }
         if (method !== 'codex.app_server_request') {
           throw new Error(`Unexpected executor method ${method}`)
         }
@@ -3019,6 +3024,7 @@ describe('local codex plugin readState cache', () => {
         if (method === 'executor.plugins.store.list') {
           return { storePath: '/tmp/store', plugins: [] }
         }
+        if (method === 'executor.plugins.links.list') return []
         if (method !== 'codex.app_server_request') {
           throw new Error(`Unexpected executor method ${method}`)
         }
@@ -3175,6 +3181,7 @@ describe('local codex plugin readState cache', () => {
         if (method === 'executor.plugins.store.list') {
           return { storePath: '/tmp/store', plugins: [] }
         }
+        if (method === 'executor.plugins.links.list') return []
         if (method !== 'codex.app_server_request') {
           throw new Error(`Unexpected executor method ${method}`)
         }
