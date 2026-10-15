@@ -185,10 +185,11 @@ async def _execute_subscription_request(
     )
 
     if target.mode == CommunicationMode.SSE:
-        # Chat Shell executes synchronously.
+        # SSE mode (Chat Shell) - synchronous execution
         await _execute_sse_sync(request=request, execution_data=execution_data)
     else:
-        # Native agents use HTTP+Callback; completion is handled by the callback.
+        # HTTP+Callback mode (ClaudeCode/Agno/Dify) - asynchronous execution
+        # Task completion will be handled by /internal/callback publishing TaskCompletedEvent
         await _execute_http_callback(
             request=request,
             execution_data=execution_data,
