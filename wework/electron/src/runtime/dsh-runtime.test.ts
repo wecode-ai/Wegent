@@ -46,7 +46,7 @@ describe('DSH runtime readiness', () => {
             const url = 'http://127.0.0.1:' + server.address().port
             const credential = () => fs.writeSync(5, JSON.stringify({url: url + '/?token=private-test-token'}) + '\\n')
             if (${JSON.stringify(order)} === 'before') credential()
-            console.log('dsh web: ' + url)
+            console.log('dsh web: ' + url + '/?token=private-test-token')
             if (${JSON.stringify(order)} === 'after') setImmediate(credential)
           })
         `,

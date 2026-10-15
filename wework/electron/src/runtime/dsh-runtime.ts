@@ -145,7 +145,7 @@ function waitForListeningUrl(
       reject(signal.reason)
     }
     lines.on('line', line => {
-      const match = /^dsh web: (http:\/\/127\.0\.0\.1:(\d+))(?:\s|$)/.exec(line)
+      const match = /^dsh web: (http:\/\/127\.0\.0\.1:(\d+))(?:[/?]|\s|$)/.exec(line)
       if (!match || Number(match[2]) < 1 || Number(match[2]) > 65535) return
       cleanUp()
       resolve(match[1])
