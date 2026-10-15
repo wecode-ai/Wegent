@@ -55,7 +55,7 @@ export function IssueArchiveDrawer({
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto p-4">
           {error ? (
-            <p className="mb-3 text-xs text-red-600" role="alert">
+            <p className="mb-3 text-xs text-destructive" role="alert">
               {error}
             </p>
           ) : null}

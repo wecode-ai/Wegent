@@ -21,13 +21,14 @@ import {
   memo,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
 } from 'react'
-import type { ComponentType, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
+import type { ComponentType, KeyboardEvent as ReactKeyboardEvent, ReactNode, Ref } from 'react'
 import {
   FileChangesReviewPanel,
   type FileChangesReviewViewOption,
@@ -67,7 +68,6 @@ import {
 import type { DeviceInfo, ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
 import type { GitPatchAction } from '@/api/environment'
 import type { DesktopReviewMode } from '../desktopWorkbenchPaneTypes'
-import { shouldIgnoreWorkbenchShortcut } from '@/lib/keybindings'
 import {
   FileWorkspacePanel,
   type FileWorkspacePanelHandle,
@@ -102,7 +102,7 @@ import {
 } from './rightWorkspaceDshSidebar'
 
 function getRightWorkspaceShortcuts(platform: ReturnType<typeof getPlatform>) {
-  if (platform === 'win') {
+  if (platform !== 'mac') {
     return {
       review: 'Alt+Ctrl+R',
       browser: 'Ctrl+T',
@@ -215,7 +215,10 @@ interface RightWorkspaceReviewState {
   reviewMode?: DesktopReviewMode
 }
 
+export type RightWorkspacePanelHandle = FileWorkspacePanelHandle
+
 interface RightWorkspacePanelProps {
+  ref?: Ref<RightWorkspacePanelHandle>
   showWorkbenchBackground?: boolean
   visible: boolean
   renderTabsInAppTitlebar?: boolean
@@ -541,6 +544,7 @@ function SmartAppDevelopmentVerification({
 }
 
 export const RightWorkspacePanel = memo(function RightWorkspacePanel({
+  ref,
   showWorkbenchBackground = false,
   visible,
   renderTabsInAppTitlebar = true,
@@ -632,6 +636,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
     if (filePanelRef.current) filePanelRef.current.navigate(action)
     else action()
   }, [])
+  useImperativeHandle(ref, () => ({ navigate: navigateFromFile }), [navigateFromFile])
   const registeredExtensionTabs = useSyncExternalStore(
     rightWorkspaceDshSidebar.subscribe,
     rightWorkspaceDshSidebar.getTabs,
@@ -712,56 +717,6 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
       }
     }
   }, [availableExtensionTabIds, currentProjectKind, extensionTabs, onCloseTab, openTabs])
-
-  useEffect(() => {
-    if (!visible) return
-
-    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.defaultPrevented || shouldIgnoreWorkbenchShortcut(event)) return
-
-      const key = event.key.toLowerCase()
-      const primaryPressed =
-        platform === 'win'
-          ? event.ctrlKey && !event.metaKey && !event.shiftKey
-          : event.metaKey && !event.shiftKey
-
-      if (primaryPressed && !event.altKey && key === 't') {
-        event.preventDefault()
-        event.stopPropagation()
-        onSelectBrowser()
-        return
-      }
-
-      if (!primaryPressed || !event.altKey) return
-
-      if (key === 'r' && canOpenReview) {
-        event.preventDefault()
-        event.stopPropagation()
-        onSelectReview()
-      } else if (key === 's' && allowTemporaryChat) {
-        event.preventDefault()
-        event.stopPropagation()
-        onSelectChat()
-      } else if (key === 'f' && canBrowseFiles) {
-        event.preventDefault()
-        event.stopPropagation()
-        onSelectFiles()
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown, true)
-    return () => window.removeEventListener('keydown', handleKeyDown, true)
-  }, [
-    allowTemporaryChat,
-    canBrowseFiles,
-    canOpenReview,
-    onSelectBrowser,
-    onSelectChat,
-    onSelectFiles,
-    onSelectReview,
-    platform,
-    visible,
-  ])
 
   const closeTab = (tab: RightWorkspacePanelTab) => {
     if (tab === activeView) navigateFromFile(() => onCloseTab(tab))

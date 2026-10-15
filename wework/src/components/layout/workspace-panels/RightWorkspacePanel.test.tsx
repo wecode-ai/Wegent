@@ -83,6 +83,35 @@ function renderPanel(overrides: Partial<ComponentProps<typeof RightWorkspacePane
 }
 
 describe('RightWorkspacePanel workspace target errors', () => {
+  test.each([
+    { userAgent: 'Macintosh', review: '⌥⌘R', browser: '⌘T', chat: '⌥⌘S', files: '⌥⌘F' },
+    {
+      userAgent: 'Windows',
+      review: 'Alt+Ctrl+R',
+      browser: 'Ctrl+T',
+      chat: 'Alt+Ctrl+S',
+      files: 'Alt+Ctrl+F',
+    },
+    {
+      userAgent: 'Linux',
+      review: 'Alt+Ctrl+R',
+      browser: 'Ctrl+T',
+      chat: 'Alt+Ctrl+S',
+      files: 'Alt+Ctrl+F',
+    },
+  ])('shows platform shortcuts for $userAgent', ({ userAgent, review, browser, chat, files }) => {
+    const platform = vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(userAgent)
+    try {
+      renderPanel({ activeView: 'launcher', openTabs: [], allowTemporaryChat: true })
+      expect(screen.getByTestId('right-workspace-review-option')).toHaveTextContent(review)
+      expect(screen.getByTestId('right-workspace-browser-option')).toHaveTextContent(browser)
+      expect(screen.getByTestId('right-workspace-chat-option')).toHaveTextContent(chat)
+      expect(screen.getByTestId('right-workspace-file-option')).toHaveTextContent(files)
+    } finally {
+      platform.mockRestore()
+    }
+  })
+
   test.each(['pnpm dev', '/opt/homebrew/bin/zsh -lc "pnpm dev"'])(
     'keeps an exited background terminal open with its actual command title: %s',
     command => {
