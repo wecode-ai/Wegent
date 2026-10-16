@@ -97,7 +97,9 @@ WORKDIR /app
 # Verify Node.js is available (already installed in base image)
 RUN node --version && npm --version
 
-# Install system packages for document generation and Redis
+# Install system packages for document generation and embedded services.
+# AlmaLinux MySQL requests CAP_SYS_NICE as an effective file capability.
+# Default Docker containers exclude it, so execve rejects mysqld with EPERM.
 RUN dnf install -y \
     # LibreOffice for document conversion and PDF operations
     libreoffice-core libreoffice-writer libreoffice-calc libreoffice-impress \
@@ -110,12 +112,15 @@ RUN dnf install -y \
     # Public reverse proxy for the bundled frontend applications
     nginx \
     # Development environment and runtime diagnostics
-    procps-ng iproute lsof less tree unzip ripgrep \
+    procps-ng iproute lsof less tree unzip ripgrep libcap \
     # Redis server for standalone mode (embedded)
     redis \
     # MySQL server for standalone mode (embedded)
     mysql-server \
     && npm install -g @anthropic-ai/claude-code@2.1.277 @openai/codex@0.155.1 \
+    && { ! getcap /usr/libexec/mysqld | grep -q . || setcap -r /usr/libexec/mysqld; } \
+    && test -z "$(getcap /usr/libexec/mysqld)" \
+    && /usr/sbin/mysqld --version \
     && dnf clean all \
     && rm -rf /var/cache/dnf/*
 
