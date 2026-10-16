@@ -763,22 +763,29 @@ vi.mock('./workspace-panels/RemoteTerminal', () => ({
   ),
 }))
 
+const localTerminalExitCallbacks = vi.hoisted(() => new Map<string, () => void>())
+
 vi.mock('./workspace-panels/EmbeddedLocalTerminal', () => ({
   EmbeddedLocalTerminal: ({
     active,
     sessionId,
+    onExit,
     testIdsEnabled = true,
   }: {
     active: boolean
     sessionId: string
+    onExit?: () => void
     testIdsEnabled?: boolean
-  }) => (
-    <div
-      data-testid={testIdsEnabled ? 'embedded-local-terminal' : undefined}
-      data-session-id={sessionId}
-      hidden={!active}
-    />
-  ),
+  }) => {
+    if (onExit) localTerminalExitCallbacks.set(sessionId, onExit)
+    return (
+      <div
+        data-testid={testIdsEnabled ? 'embedded-local-terminal' : undefined}
+        data-session-id={sessionId}
+        hidden={!active}
+      />
+    )
+  },
 }))
 
 const createDeviceApiMock = vi.mocked(createDeviceApi)
@@ -984,6 +991,7 @@ describe('DesktopWorkbenchLayout', () => {
     })
     Element.prototype.scrollIntoView = vi.fn()
     Element.prototype.scrollTo = vi.fn()
+    localTerminalExitCallbacks.clear()
     isLocalTerminalAvailableMock.mockReturnValue(false)
     isLocalHarnessAvailableMock.mockImplementation(() => isLocalTerminalAvailableMock())
     listLocalHarnessesMock.mockResolvedValue([])
@@ -5456,11 +5464,18 @@ describe('DesktopWorkbenchLayout', () => {
       'local-harness-persisted'
     )
     expect(screen.getByTestId('workbench-pane-task-title')).toHaveTextContent('重启后继续修复')
+
+    act(() => localTerminalExitCallbacks.get('local-harness-persisted')!())
+
+    expect(screen.getByTestId('central-harness-terminal')).toBeVisible()
+    expect(screen.queryByTestId('local-harness-session-resuming')).not.toBeInTheDocument()
+    expect(startLocalHarnessMock).toHaveBeenCalledTimes(1)
   })
 
-  test('waits for Wework models before resuming a persisted OpenCode session', async () => {
+  test('resumes a persisted OpenCode session across model refreshes during workspace and launch checks', async () => {
     isLocalTerminalAvailableMock.mockReturnValue(true)
-    localPathExistsMock.mockResolvedValue(true)
+    const workspaceCheck = createDeferred<boolean>()
+    localPathExistsMock.mockReturnValue(workspaceCheck.promise)
     listLocalHarnessesMock.mockResolvedValue([
       {
         id: 'opencode',
@@ -5474,7 +5489,7 @@ describe('DesktopWorkbenchLayout', () => {
         session_id: 'local-harness-model-loading',
         harness_id: 'opencode',
         title: '等待模型加载',
-        cwd: '/workspace/github_wegent',
+        cwd: '/workspace/persisted-model-refresh',
         created_at: 1234,
         is_primary: true,
         project_id: 1,
@@ -5483,7 +5498,8 @@ describe('DesktopWorkbenchLayout', () => {
         plugin_roots: [],
       },
     ])
-    startLocalHarnessMock.mockResolvedValue('local-harness-model-loading')
+    const harnessLaunch = createDeferred<string>()
+    startLocalHarnessMock.mockReturnValue(harnessLaunch.promise)
 
     const { rerender } = render(
       <DesktopWorkbenchLayout
@@ -5514,6 +5530,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(startLocalHarnessMock).not.toHaveBeenCalled()
 
+    localPathExistsMock.mockClear()
     rerender(
       <DesktopWorkbenchLayout
         {...baseProps}
@@ -5526,6 +5543,21 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await waitFor(() =>
+      expect(localPathExistsMock).toHaveBeenCalledWith('/workspace/persisted-model-refresh')
+    )
+    rerender(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        projectChat={{
+          ...baseProps.projectChat,
+          models: [{ ...harnessTestModel }],
+          isModelSelectionReady: true,
+        }}
+      />
+    )
+    await act(async () => workspaceCheck.resolve(true))
+
+    await waitFor(() =>
       expect(resolveLocalHarnessLaunchMock).toHaveBeenCalledWith(
         'opencode',
         expect.objectContaining({ label: 'Test Model' })
@@ -5535,12 +5567,25 @@ describe('DesktopWorkbenchLayout', () => {
       expect(startLocalHarnessMock).toHaveBeenCalledWith(
         expect.objectContaining({
           harnessId: 'opencode',
-          cwd: '/workspace/github_wegent',
+          cwd: '/workspace/persisted-model-refresh',
           modelKey: 'wework:runtime:::local-model%3Atest',
           resumeSessionId: 'local-harness-model-loading',
         })
       )
     )
+    rerender(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        projectChat={{
+          ...baseProps.projectChat,
+          models: [{ ...harnessTestModel }],
+          isModelSelectionReady: true,
+        }}
+      />
+    )
+    await act(async () => harnessLaunch.resolve('local-harness-model-loading'))
+    expect(resolveLocalHarnessLaunchMock).toHaveBeenCalledTimes(1)
+    expect(startLocalHarnessMock).toHaveBeenCalledTimes(1)
     expect(await screen.findByTestId('central-harness-terminal')).toBeVisible()
   })
 

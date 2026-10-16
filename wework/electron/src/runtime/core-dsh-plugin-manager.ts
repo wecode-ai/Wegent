@@ -26,6 +26,7 @@ const SNAPSHOT_FILES = [
 export const IMMUTABLE_CORE_DSH_PLUGINS = new Set([
   '@deepseek-ai/dsh-base',
   '@deepseek-ai/dsh-web-app',
+  '@wework/dsh-browser-auth',
   '@wegent/dsh-app-wework',
   '@wegent/dsh-electron-host',
   '@wegent/dsh-executor-runtime',
@@ -432,6 +433,8 @@ export class CoreDshPluginManager {
 
   private async writeDevelopmentPatch(sourceRoot: string): Promise<void> {
     const patch = [
+      '- id: client-hmr',
+      '  disabled: false',
       '- id: hmr',
       '  disabled: false',
       '  config:',

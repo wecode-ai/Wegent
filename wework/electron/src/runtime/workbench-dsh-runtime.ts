@@ -10,7 +10,13 @@ import {
   type CommandRunner,
 } from './core-dsh-runtime.js'
 
-export const WORKBENCH_DSH_VERSION = '0.1.0-rc.8'
+export const WORKBENCH_DSH_VERSION = '0.2.0-rc.2'
+
+export function workbenchClientRendererPackage(versionRequirement: string): string {
+  return semver.satisfies(WORKBENCH_DSH_VERSION, versionRequirement, { includePrerelease: true })
+    ? '@deepseek-ai/dsh-client-ui-renderer'
+    : '@deepseek-ai/dsh-client-runtime'
+}
 
 export interface WorkbenchAppManifest {
   name: string
@@ -136,6 +142,18 @@ export async function prepareWorkbenchDshLaunch(
     environment,
     run
   )
+  if (runtime.version === WORKBENCH_DSH_VERSION) {
+    environment.WEWORK_DSH_BROWSER_AUTH = '1'
+    await installPlugins(
+      runtime,
+      dshHome,
+      options.manifest.entry.profile,
+      [join(runtime.pluginsRoot, 'wework-browser-auth')],
+      nodeCommand,
+      environment,
+      run
+    )
+  }
   if (options.includeElectronHostBridge !== false) {
     // The workbench is an isolated harness profile. Without the electron-host
     // plugin its DSH client has no route to the scoped host pipe, so calling

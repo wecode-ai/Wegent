@@ -7,10 +7,19 @@ import {
   reconcileProfileBundles,
   resolveWorkbenchProjectPnpmCommand,
   WORKBENCH_DSH_VERSION,
+  workbenchClientRendererPackage,
 } from './workbench-dsh-runtime.js'
 import { temporaryDirectory } from './test-helpers.js'
 
 describe('workbench DSH runtime', () => {
+  test('selects client modules for both current and legacy app requirements', () => {
+    expect(workbenchClientRendererPackage('0.2.0-rc.2')).toBe('@deepseek-ai/dsh-client-ui-renderer')
+    expect(workbenchClientRendererPackage('>=0.1.0-rc.8')).toBe(
+      '@deepseek-ai/dsh-client-ui-renderer'
+    )
+    expect(workbenchClientRendererPackage('0.1.0-rc.8')).toBe('@deepseek-ai/dsh-client-runtime')
+  })
+
   test('replaces an empty YAML patch list when injecting the selected model', () => {
     expect(injectModelProviderPatch('[]\n')).toBe(
       [
