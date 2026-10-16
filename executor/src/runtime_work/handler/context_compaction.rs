@@ -4,25 +4,6 @@
 
 use super::*;
 
-pub(super) fn context_compaction_request(
-    link: &RuntimeTaskLink,
-    payload: &Value,
-) -> Result<ExecutionRequest, AppIpcError> {
-    let mut request = runtime_event_request_from_link(link);
-    if let Some(model_config) = payload.get("modelConfig") {
-        if !model_config.is_object() || model_config.as_object().is_some_and(Map::is_empty) {
-            return Err(AppIpcError::new(
-                "bad_request",
-                "modelConfig must be a non-empty object",
-            ));
-        }
-        // The stored profile intentionally has no credentials or default headers.
-        // Model-consuming actions receive a freshly materialized configuration.
-        request.model_config = model_config.clone();
-    }
-    Ok(request)
-}
-
 pub(super) async fn wait_for_context_compaction(
     mut route_notification: impl FnMut(&Value),
     mut notifications: broadcast::Receiver<Value>,
@@ -182,8 +163,7 @@ mod tests {
         );
         let mut fresh_config = original.model_config.clone();
         fresh_config["api_key"] = json!("new-token");
-        let request =
-            context_compaction_request(&link, &json!({"modelConfig": fresh_config})).unwrap();
+        let request = runtime_model_request(&link, &json!({"modelConfig": fresh_config})).unwrap();
         assert_eq!(request.model_config, fresh_config);
         assert_eq!(request.task_id, "task-1");
         assert_eq!(request.subtask_id, "task-1-context-compact");
@@ -205,14 +185,14 @@ mod tests {
             Value::Null,
         );
         assert_eq!(
-            context_compaction_request(&link, &json!({}))
+            runtime_model_request(&link, &json!({}))
                 .unwrap()
                 .model_config,
             runtime_event_request_from_link(&link).model_config
         );
         for config in [json!(null), json!({}), json!("invalid")] {
             assert_eq!(
-                context_compaction_request(&link, &json!({"modelConfig": config}))
+                runtime_model_request(&link, &json!({"modelConfig": config}))
                     .unwrap_err()
                     .code,
                 "bad_request"

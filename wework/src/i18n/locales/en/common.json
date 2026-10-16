@@ -39,6 +39,7 @@
   },
   "workbench": {
     "reply_prediction_generating": "Generating a suggestion…",
+    "reply_prediction_failed": "Could not generate a reply suggestion. Check the current model’s connection and authentication settings.",
     "reply_prediction_accept": "Accept suggestion",
     "reply_prediction_title": "Reply suggestions",
     "reply_prediction_enable": "Predict the next reply",
