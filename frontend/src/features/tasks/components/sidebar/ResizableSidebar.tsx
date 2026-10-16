@@ -140,12 +140,10 @@ export default function ResizableSidebar({
       className={`hidden lg:flex relative ${isInitialized ? 'transition-all duration-200' : ''} pl-3 z-20`}
       style={{ width: `${sidebarWidth}px`, overflow: 'visible' }}
     >
-      {/* Sidebar content container - hidden when collapsed */}
-      {!isCollapsed && (
-        <div ref={sidebarRef} className="flex flex-col w-full h-full">
-          {children}
-        </div>
-      )}
+      {/* Keep children mounted so global shortcuts remain available when collapsed. */}
+      <div ref={sidebarRef} className={isCollapsed ? 'hidden' : 'flex flex-col w-full h-full'}>
+        {children}
+      </div>
 
       {/* Resizer handle - disabled when collapsed */}
       {!isCollapsed && (

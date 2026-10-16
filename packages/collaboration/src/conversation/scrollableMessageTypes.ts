@@ -13,6 +13,7 @@ import type {
 } from '@wegent/chat-core/runtime-conversation'
 import type { MarkdownFileOpenOptions as WorkspaceFileOpenOptions } from '../markdown/MarkdownServices'
 import { type MessageListProps } from './MessageList'
+import type { ConversationSearchTarget } from './useConversationSearchTarget'
 
 import type { RequestUserInputPayload } from './RequestUserInputCard'
 import type { AssistantPlanOpenRequest } from './AssistantPlanCard'
@@ -117,6 +118,8 @@ export interface ScrollableMessageAreaProps extends Pick<
   onAddSelectionToConversation?: (text: string) => void
   onAskSelectionInSidebar?: (text: string) => void
   autoScrollSuspended?: boolean
+  searchTarget?: ConversationSearchTarget | null
+  searchNavigationPaused?: boolean
   onLoadMoreBefore?: () => Promise<void> | void
   onLoadTurnNavigationItem?: (item: RuntimeTurnNavigationItem) => Promise<void> | void
   onLoadTranscriptGap?: (gap: RuntimeTranscriptGap) => Promise<void> | void
@@ -208,6 +211,10 @@ export function areScrollableMessageAreaPropsEqual(
       ? 'onAskSelectionInSidebar'
       : null,
     previous.autoScrollSuspended !== next.autoScrollSuspended ? 'autoScrollSuspended' : null,
+    previous.searchTarget !== next.searchTarget ? 'searchTarget' : null,
+    previous.searchNavigationPaused !== next.searchNavigationPaused
+      ? 'searchNavigationPaused'
+      : null,
     previous.onLoadMoreBefore !== next.onLoadMoreBefore ? 'onLoadMoreBefore' : null,
     previous.onLoadTurnNavigationItem !== next.onLoadTurnNavigationItem
       ? 'onLoadTurnNavigationItem'

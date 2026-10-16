@@ -104,6 +104,7 @@ start_container() {
         -e DEVICE_TYPE=remote \
         -e DEVICE_ID="$DEVICE_ID" \
         -e EXECUTOR_MODE=local \
+        -e WEGENT_EXECUTOR_HOME="$EXECUTOR_HOME" \
         -e WEGENT_EXECUTOR_HOME_ID="$DEVICE_ID" \
         -e WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED=true \
         -e WEGENT_ACCEPTANCE_INSTANCE_ID="$instance_id" \

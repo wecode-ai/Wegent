@@ -177,7 +177,7 @@ def test_project_task_list_includes_device_and_execution_workspace_source(
                     }
                 },
             },
-            "status": {"phase": "COMPLETED"},
+            "status": {"status": "COMPLETED"},
         },
     )
     test_db.add(task)
@@ -191,6 +191,7 @@ def test_project_task_list_includes_device_and_execution_workspace_source(
     )
 
     assert len(items) == 1
+    assert items[0].task_status == "COMPLETED"
     assert items[0].device_id == "device-1"
     assert items[0].execution_workspace_source == "git_worktree"
     assert items[0].execution_workspace_path == "/workspace/worktrees/1386/Wegent"
@@ -670,7 +671,7 @@ async def test_list_project_worktrees_scans_each_online_project_device_once(
                     }
                 },
             },
-            "status": {"phase": "RUNNING"},
+            "status": {"status": "RUNNING"},
         },
         is_active=TaskResource.STATE_ACTIVE,
     )

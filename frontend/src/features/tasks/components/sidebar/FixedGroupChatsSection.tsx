@@ -9,6 +9,7 @@ import { ChevronDown, ChevronUp } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useProjectContext } from '@/features/projects'
+import { isTaskInProject } from '@/features/projects/utils/projectClassification'
 import { isTaskUnread } from '@/utils/taskViewStatus'
 import type { Task } from '@/types/api'
 import TaskListSection from './TaskListSection'
@@ -39,11 +40,14 @@ export default function FixedGroupChatsSection({
   setIsMobileSidebarOpen,
 }: FixedGroupChatsSectionProps) {
   const { t } = useTranslation()
-  const { projectTaskIds } = useProjectContext()
+  const { projects, projectTaskIds, isWorkspaceEnabled } = useProjectContext()
 
   const filteredGroupTasks = useMemo(
-    () => groupTasks.filter(task => !projectTaskIds.has(task.id)),
-    [groupTasks, projectTaskIds]
+    () =>
+      groupTasks.filter(
+        task => !isTaskInProject(task, projects, projectTaskIds, isWorkspaceEnabled)
+      ),
+    [groupTasks, projects, projectTaskIds, isWorkspaceEnabled]
   )
 
   const unreadGroupChats = filteredGroupTasks.filter(isTaskUnread)

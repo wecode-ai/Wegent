@@ -309,6 +309,21 @@ if [ "$WEGENT_EXECUTOR_HOME" != "$EXPECTED_EXECUTOR_HOME" ] && [ "$WEGENT_EXECUT
     echo "WEGENT_EXECUTOR_HOME must remain at the stable mount path $EXPECTED_EXECUTOR_HOME" >&2
     exit 1
 fi
+# Reuse a mounted legacy Executor Home through its canonical path. This keeps
+# the persisted identity without making the active Executor Home a symlink.
+if [ "$WEGENT_EXECUTOR_HOME" = "$EXPECTED_EXECUTOR_HOME" ] && mountpoint -q "$LEGACY_EXECUTOR_HOME"; then
+    if [ -L "$EXPECTED_EXECUTOR_HOME" ]; then
+        if [ "$(realpath -m -- "$EXPECTED_EXECUTOR_HOME")" != "$LEGACY_EXECUTOR_HOME" ]; then
+            echo "Unified Executor Home points to a different volume" >&2
+            exit 1
+        fi
+    elif [ -e "$EXPECTED_EXECUTOR_HOME" ]; then
+        echo "Both legacy and unified Executor Homes exist; refusing to merge identities" >&2
+        exit 1
+    fi
+    WEGENT_EXECUTOR_HOME="$LEGACY_EXECUTOR_HOME"
+    export WEGENT_EXECUTOR_HOME
+fi
 # Keep project state and app-server configuration in the same persisted home.
 export CODEX_HOME="${CODEX_HOME:-${WEGENT_CODEX_HOME:-$WEGENT_EXECUTOR_HOME/codex}}"
 export WEGENT_CODEX_HOME="${WEGENT_CODEX_HOME:-$CODEX_HOME}"
@@ -354,29 +369,6 @@ case "${WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED-true}" in
         exit 1
         ;;
 esac
-
-# Reuse the existing device volume through a canonical path. Never copy its
-# installation identity into a second writable home during an image upgrade.
-if [ "$WEGENT_EXECUTOR_HOME" = "$EXPECTED_EXECUTOR_HOME" ] && [ -L "$EXPECTED_EXECUTOR_HOME" ]; then
-    if ! mountpoint -q "$LEGACY_EXECUTOR_HOME" || [ "$(realpath -m -- "$EXPECTED_EXECUTOR_HOME")" != "$LEGACY_EXECUTOR_HOME" ]; then
-        echo "Unified Executor Home requires its original legacy volume; refusing to reset identity" >&2
-        exit 1
-    fi
-fi
-if [ "$WEGENT_EXECUTOR_HOME" = "$EXPECTED_EXECUTOR_HOME" ] && mountpoint -q "$LEGACY_EXECUTOR_HOME"; then
-    if [ -L "$EXPECTED_EXECUTOR_HOME" ]; then
-        if [ "$(realpath -m -- "$EXPECTED_EXECUTOR_HOME")" != "$LEGACY_EXECUTOR_HOME" ]; then
-            echo "Unified Executor Home points to a different volume" >&2
-            exit 1
-        fi
-    elif [ -e "$EXPECTED_EXECUTOR_HOME" ]; then
-        echo "Both legacy and unified Executor Homes exist; refusing to merge identities" >&2
-        exit 1
-    else
-        mkdir -p "$(dirname "$EXPECTED_EXECUTOR_HOME")"
-        ln -s "$LEGACY_EXECUTOR_HOME" "$EXPECTED_EXECUTOR_HOME"
-    fi
-fi
 
 # A named volume mounted at WEGENT_EXECUTOR_HOME may contain an older binary.
 # Refresh only the binary from the current image and preserve the remaining data.

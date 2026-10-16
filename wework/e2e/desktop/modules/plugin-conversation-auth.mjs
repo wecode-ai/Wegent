@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { ACTIVE_COMPOSER_SELECTOR } from './shared.mjs'
+import { ACTIVE_COMPOSER_SELECTOR, ACTIVE_WORKBENCH_SELECTOR } from './shared.mjs'
 import { testId } from './plugin-regression-fixture.mjs'
 import { assistantMessage, latestModelInputText } from './response-protocol.mjs'
 
@@ -67,8 +67,12 @@ export function createConversationAuthModelFixture({ slug, qrPrompt, ghResumePro
 export async function sendOrdinaryChat({ control, ordinaryPrompt, getOrdinaryRequests }) {
   const before = getOrdinaryRequests()
   const message = `${ordinaryPrompt} #${before + 1}`
+  const newMessageSelector = await newConversationMessageSelector(control)
   await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: message })
   await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+  await control.command('waitFor', newMessageSelector, {
+    text: `${message} completed`,
+  })
   await control.command('waitFor', 'body', {
     text: `${message} completed`,
     // Observe beyond the real provider's one-second polling interval.
@@ -270,4 +274,26 @@ export async function verifyConversationQrAuthorization({
     await rm(healthFailure, { force: true })
     await logout()
   }
+}
+
+async function newConversationMessageSelector(control) {
+  const selector =
+    '[data-workspace-tab-content][aria-hidden="false"] ' +
+    `${ACTIVE_WORKBENCH_SELECTOR}[data-active-workbench-pane="true"] ` +
+    '[data-testid="message-assistant"][data-message-id]'
+  const { location } = JSON.parse(await control.command('snapshot', 'body'))
+  const { searchParams } = new URL(location)
+  const deviceId = searchParams.get('deviceId')
+  const taskId = searchParams.get('taskId')
+  if (!deviceId || !taskId) return selector
+  const messages = JSON.parse(
+    await control.command('getRuntimeConversationMessages', 'body', {
+      value: JSON.stringify({ deviceId, taskId }),
+    })
+  )
+  // Prior turns can contain the same completion text as the next request.
+  return messages.reduce(
+    (current, message) => `${current}:not([data-message-id=${JSON.stringify(message.id)}])`,
+    selector
+  )
 }

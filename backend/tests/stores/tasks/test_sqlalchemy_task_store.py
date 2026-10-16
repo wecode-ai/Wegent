@@ -203,7 +203,11 @@ def test_task_store_project_and_workspace_helpers(test_db: Session) -> None:
         workspace_ids=[workspace.id, inactive_workspace.id],
     ) == [workspace]
     assert store.count_active_project_tasks(test_db, project_id=500) == 1
-    assert store.list_active_project_tasks(test_db, project_id=500) == [task]
+    summaries = store.list_active_project_tasks(test_db, project_id=500)
+    assert len(summaries) == 1
+    assert summaries[0].id == task.id
+    assert summaries[0].project_id == 500
+    assert summaries[0].json == {"spec": {}, "status": {"status": "PENDING"}}
 
 
 def test_create_task_resource_persists_task_without_preallocated_id(

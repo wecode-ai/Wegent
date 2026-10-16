@@ -1,7 +1,19 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { flushSync } from 'react-dom'
 import { isOversizedAtomicMarkdownChunk } from './assistantMarkdownWindowing'
-import { useMarkdownWindowingScope, type MarkdownWindowingScope } from './MarkdownWindowingScope'
+import {
+  MarkdownWindowingDisabledContext,
+  useMarkdownWindowingScope,
+  type MarkdownWindowingScope,
+} from './MarkdownWindowingScope'
 import { getScrollViewportElement } from '../conversation/scrollViewportElement'
 import {
   getConversationDiagnosticContext,
@@ -30,9 +42,11 @@ export function WindowedMarkdownChunk({
   children: ReactNode
 }) {
   const scope = useMarkdownWindowingScope()
+  const windowingDisabled = useContext(MarkdownWindowingDisabledContext)
   const chunkRef = useRef<HTMLDivElement>(null)
   // Keep indivisible long chunks mounted across streaming completion and reopening.
-  const effectiveEager = eager || isOversizedAtomicMarkdownChunk(content)
+  // Search expands chunks in place so existing Markdown and code DOM stay mounted.
+  const effectiveEager = eager || windowingDisabled || isOversizedAtomicMarkdownChunk(content)
   const [nearViewport, setNearViewport] = useState(
     () => typeof IntersectionObserver === 'undefined' || effectiveEager
   )

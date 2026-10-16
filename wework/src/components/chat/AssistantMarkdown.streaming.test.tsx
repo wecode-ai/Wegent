@@ -2,6 +2,7 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import '@/styles/globals.css'
 import { AssistantMarkdown } from './AssistantMarkdown'
+import { MarkdownWindowingDisabledContext } from '../../../../packages/collaboration/src/markdown/MarkdownWindowingScope'
 import {
   getConversationDiagnosticsSnapshot,
   resetConversationDiagnosticsForTest,
@@ -239,6 +240,38 @@ describe('AssistantMarkdown streaming stability', () => {
     expect(screen.getByTestId('markdown-code-block')).toBe(codeBlock)
     expect(screen.getByTestId('markdown-code-block').querySelector('code')).toBe(code)
     expect(scrollContainer).toHaveAttribute('data-syntax-highlighted', 'true')
+  })
+
+  test('keeps Markdown chunks and code DOM mounted when search expands and releases a message', () => {
+    runtimeMock.electron = true
+    const content = [
+      'Before code.',
+      fencedCode(40),
+      ...Array.from(
+        { length: 5 },
+        (_, index) => `### Section ${index + 1}\n\n${'Windowed content. '.repeat(100)}`
+      ),
+    ].join('\n\n')
+    const markdown = (searching: boolean) => (
+      <MarkdownWindowingDisabledContext.Provider value={searching}>
+        <AssistantMarkdown content={content} />
+      </MarkdownWindowingDisabledContext.Provider>
+    )
+    const { container, rerender } = render(markdown(false))
+    const chunks = Array.from(container.querySelectorAll('[data-markdown-window-chunk]'))
+    const codeBlock = screen.getByTestId('markdown-code-block')
+    const code = codeBlock.querySelector('code')
+    expect(chunks.length).toBeGreaterThan(1)
+
+    for (const searching of [true, false]) {
+      rerender(markdown(searching))
+
+      const nextChunks = container.querySelectorAll('[data-markdown-window-chunk]')
+      expect(nextChunks).toHaveLength(chunks.length)
+      chunks.forEach((chunk, index) => expect(nextChunks[index]).toBe(chunk))
+      expect(screen.getByTestId('markdown-code-block')).toBe(codeBlock)
+      expect(codeBlock.querySelector('code')).toBe(code)
+    }
   })
 
   test('keeps code DOM mounted when growing content enters Markdown windowing', async () => {

@@ -165,7 +165,7 @@ fn unambiguous_device(matches: Vec<DeviceKindRow>) -> Option<DeviceKindRow> {
 /// Returns the resolved device row, or `None` when no unambiguous match
 /// exists. Mirrors the SQLAlchemy filter exactly: `user_id`, `kind='Device'`,
 /// `namespace='default'`, `is_active=true`.
-async fn resolve_owned_device_alias<M>(
+pub(crate) async fn resolve_owned_device_alias<M>(
     mysql: &M,
     user_id: i64,
     device_id: &str,

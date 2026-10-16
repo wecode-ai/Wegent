@@ -23,7 +23,7 @@ import {
   TaskStatusPayload,
   TaskAppUpdatePayload,
 } from '@/types/socket'
-import { PROJECT_DELETED_EVENT } from '@/features/projects/events'
+import { PROJECT_DELETED_EVENT, PROJECT_TASKS_CHANGED_EVENT } from '@/features/projects/events'
 
 export type TaskPuller = {
   tasks: Task[]
@@ -403,12 +403,16 @@ export function useTaskPuller(): TaskPuller {
   refreshTasksRef.current = refreshTasks
 
   useEffect(() => {
-    const handleProjectDeleted = () => {
+    const handleProjectsChanged = () => {
       refreshTasksRef.current?.()
     }
 
-    window.addEventListener(PROJECT_DELETED_EVENT, handleProjectDeleted)
-    return () => window.removeEventListener(PROJECT_DELETED_EVENT, handleProjectDeleted)
+    window.addEventListener(PROJECT_DELETED_EVENT, handleProjectsChanged)
+    window.addEventListener(PROJECT_TASKS_CHANGED_EVENT, handleProjectsChanged)
+    return () => {
+      window.removeEventListener(PROJECT_DELETED_EVENT, handleProjectsChanged)
+      window.removeEventListener(PROJECT_TASKS_CHANGED_EVENT, handleProjectsChanged)
+    }
   }, [])
 
   // Monitor task status changes and send notifications
@@ -470,6 +474,7 @@ export function useTaskPuller(): TaskPuller {
       updated_at: data.created_at,
       completed_at: '',
       is_group_chat: isGroupChat,
+      project_id: data.project_id,
     }
 
     // Initialize view status for the new task
@@ -483,8 +488,8 @@ export function useTaskPuller(): TaskPuller {
         if (exists) return prev
         return [newTask, ...prev]
       })
-    } else {
-      // Add to personal tasks for non-group chats
+    } else if (!data.project_id) {
+      // Match the standalone personal task API before project metadata loads.
       setPersonalTasks(prev => {
         const exists = prev.some(task => task.id === data.task_id)
         if (exists) return prev

@@ -1508,6 +1508,18 @@ function desktopControlComposerDisplayValue(element: HTMLElement, value: string)
   return displayValue
 }
 
+function applyDesktopControlTextSelection(range: Range, target: Element): void {
+  const activeElement = desktopControlDeepActiveElement()
+  if (activeElement && !activeElement.contains(range.commonAncestorContainer)) {
+    activeElement.blur()
+  }
+  const selection = window.getSelection()
+  selection?.removeAllRanges()
+  selection?.addRange(range)
+  document.dispatchEvent(new Event('selectionchange'))
+  target.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+}
+
 function selectDesktopControlText(selector: string, value: string): string {
   const elements = findDesktopControlElements(selector)
   const wholeElement = value
@@ -1516,11 +1528,7 @@ function selectDesktopControlText(selector: string, value: string): string {
   if (wholeElement) {
     const range = document.createRange()
     range.selectNodeContents(wholeElement)
-    const selection = window.getSelection()
-    selection?.removeAllRanges()
-    selection?.addRange(range)
-    document.dispatchEvent(new Event('selectionchange'))
-    document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    applyDesktopControlTextSelection(range, wholeElement)
     return value
   }
   let selectedNode: Node | null = null
@@ -1558,11 +1566,7 @@ function selectDesktopControlText(selector: string, value: string): string {
   const range = document.createRange()
   range.setStart(selectedNode, start)
   range.setEnd(selectedNode, start + selectedValue.length)
-  const selection = window.getSelection()
-  selection?.removeAllRanges()
-  selection?.addRange(range)
-  document.dispatchEvent(new Event('selectionchange'))
-  document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+  applyDesktopControlTextSelection(range, selectedNode.parentElement!)
   return selectedValue
 }
 
