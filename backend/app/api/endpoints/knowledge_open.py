@@ -23,7 +23,6 @@ from app.schemas.knowledge import (
     BatchDocumentIds,
     BatchDocumentMoveRequest,
     BatchOperationResult,
-    DocumentContentReadResponse,
     DocumentContentUpdate,
     DocumentContentUpdateResponse,
     DocumentMoveRequest,
@@ -45,7 +44,6 @@ from app.schemas.rag import RetrieveResponse
 from app.services.knowledge import KnowledgeFolderService, KnowledgeService
 from app.services.knowledge.orchestrator import (
     DEFAULT_KNOWLEDGE_LIST_LIMIT,
-    MAX_DOCUMENT_READ_LIMIT,
     MAX_KNOWLEDGE_LIST_LIMIT,
     knowledge_orchestrator,
 )
@@ -322,56 +320,6 @@ def delete_folder_open(
 
 # ---------------------------------------------------------------------------
 # GET /knowledge/documents/{document_id}/content  — read document content
-# ---------------------------------------------------------------------------
-
-
-# MIGRATION-CANDIDATE(api="GET /api/knowledge/documents/{document_id}/content"): remove after final confirmation.
-# @router.get(
-#     "/documents/{document_id}/content",
-#     response_model=DocumentContentReadResponse,
-# )
-@trace_sync("get_document_content_open", "knowledge.api")
-def get_document_content_open(
-    document_id: int,
-    offset: int = Query(0, ge=0, description="Read start offset (characters)"),
-    limit: int = Query(
-        MAX_DOCUMENT_READ_LIMIT,
-        ge=1,
-        le=MAX_DOCUMENT_READ_LIMIT,
-        description="Maximum number of characters to return",
-    ),
-    auth_context: AuthContext = Depends(get_auth_context),
-    db: Session = Depends(get_db),
-) -> DocumentContentReadResponse:
-    """
-    Get raw document content with pagination.
-
-    Returns the extracted text content of the document along with
-    pagination metadata and the current indexing status.
-
-    When the document has not been indexed yet (index_status='not_indexed'
-    or 'indexing'), the content field may be empty or incomplete.
-
-    Authentication:
-        - Personal API key: Returns content for documents accessible to the key owner
-        - Service API key: Requires wegent-username header to specify the target user
-    """
-    current_user = auth_context.user
-
-    try:
-        return knowledge_orchestrator.read_document_content(
-            db=db,
-            user=current_user,
-            document_id=document_id,
-            offset=offset,
-            limit=limit,
-        )
-    except ValueError as exc:
-        _raise_open_knowledge_http_error(exc)
-
-
-# ---------------------------------------------------------------------------
-# POST /knowledge/documents  — create a document
 # ---------------------------------------------------------------------------
 
 

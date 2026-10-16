@@ -4,7 +4,7 @@
 
 """Schemas for generic DSH plugin storage."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any, List
 
 from pydantic import BaseModel, Field
 
@@ -22,14 +22,6 @@ class DshStorageRecordWrite(DshStorageDescriptor):
 
 class DshStorageGlobalWrite(DshStorageDescriptor):
     value: Any
-
-
-class DshStorageSnapshot(BaseModel):
-    version: int
-    tables: Dict[str, Dict[str, Any]]
-    global_value: Optional[Any] = Field(default=None, alias="global")
-
-    model_config = {"populate_by_name": True}
 
 
 class DshSharedStorageRecord(BaseModel):

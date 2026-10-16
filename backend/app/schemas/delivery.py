@@ -16,7 +16,7 @@ from pydantic import (
     model_validator,
 )
 
-from app.schemas.cloud_project import CloudProjectResponse, SnowflakeId
+from app.schemas.cloud_project import SnowflakeId
 from app.schemas.issue_workflow import IssueWorkflowInstance, WorkflowExecutionConfig
 from app.schemas.runner_routing import RunnerSelection
 from app.schemas.runtime_work import RuntimeModelSelection
@@ -521,11 +521,6 @@ class LoopItemPageResponse(BaseModel):
     items: list[LoopItemResponse]
     task_bindings: list[LoopItemTaskBindingResponse]
     next_cursor: str | None = None
-
-
-class CloudTaskContextResponse(LoopItemTaskBindingResponse):
-    project: CloudProjectResponse
-    loop_item: LoopItemResponse | None = None
 
 
 class DeliveryChatSelection(BaseModel):
