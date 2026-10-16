@@ -8,7 +8,7 @@ $connections = @(Get-NetTCPConnection)
 @{
   states = @($connections | Group-Object State | Select-Object Name, Count)
   processes = @($connections | Group-Object OwningProcess | Sort-Object Count -Descending | Select-Object -First 10 Name, Count)
-  runtimeProcesses = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^(WeWork|codex|node|claude|bash|sh|wegent-executor|powershell)\\.exe$' } | Select-Object ProcessId, ParentProcessId, Name, CreationDate, KernelModeTime, UserModeTime, WorkingSetSize)
+  runtimeProcesses = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^(WeWork|codex|node|claude|bash|sh|wegent-executor|powershell|pwsh)\\.exe$' } | Select-Object ProcessId, ParentProcessId, Name, CreationDate, KernelModeTime, UserModeTime, WorkingSetSize)
 } | ConvertTo-Json -Depth 4
 `
   const result = spawnSync('pwsh.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
