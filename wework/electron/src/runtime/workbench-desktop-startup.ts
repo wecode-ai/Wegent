@@ -7,7 +7,6 @@ interface DesktopDataStartupOptions {
   app: Pick<App, 'getPath' | 'setPath' | 'requestSingleInstanceLock' | 'releaseSingleInstanceLock'>
   source: string
   desktop: string
-  updaterCache: string
   additionalData: Record<string, unknown>
   acquireLock: WorkbenchMigrationLockAdapter
   platform?: NodeJS.Platform
@@ -49,7 +48,6 @@ function initializeUnderMigrationLock(
       source,
       desktop,
       logs: app.getPath('logs'),
-      updaterCache: options.updaterCache,
     })
     // Retain the legacy lexical path as the singleton identity, including for older builds.
     // If an older build started during the handoff, notify it and stop before opening stores.
