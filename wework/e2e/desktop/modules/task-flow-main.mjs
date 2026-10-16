@@ -1113,6 +1113,16 @@ async function main() {
     `${JSON.stringify({ telemetryConsentAsked: false, telemetryEnabled: false })}\n`,
     { flag: 'wx', mode: 0o600 }
   )
+  // Background update dialogs steal focus from unrelated keyboard scenarios.
+  // Update scenarios still exercise explicit checks and downloads.
+  await writeFile(
+    join(electronUserDataDirectory, 'renderer-local-storage.json'),
+    `${JSON.stringify({
+      version: 1,
+      entries: { 'wework:autoDownloadUpdates': 'false' },
+    })}\n`,
+    { flag: 'wx', mode: 0o600 }
+  )
   await writeFile(join(homePath, '.zshrc'), '# Wework desktop E2E shell\n')
   await Promise.all([
     writeFile(join(workspacePath, GIT_SEED_NAME), GIT_SEED_CONTENT),
