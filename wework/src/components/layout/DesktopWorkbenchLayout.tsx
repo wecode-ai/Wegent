@@ -541,7 +541,7 @@ export function DesktopWorkbenchLayout({
     },
     [localHarnessSessions, services?.localHarnessModelApi]
   )
-  const markLocalHarnessSessionInactive = useCallback(
+  const handleLocalHarnessSessionExit = useCallback(
     (sessionId: string) => {
       const proxyToken = localHarnessSessions.find(
         session => session.sessionId === sessionId
@@ -549,11 +549,10 @@ export function DesktopWorkbenchLayout({
       if (proxyToken) {
         void services?.localHarnessModelApi?.unregisterProxy(proxyToken)
       }
+      // DSH retains exited terminal snapshots until the user closes the session.
       setLocalHarnessSessions(current =>
         current.map(session =>
-          session.sessionId === sessionId
-            ? { ...session, active: false, proxyToken: undefined }
-            : session
+          session.sessionId === sessionId ? { ...session, proxyToken: undefined } : session
         )
       )
     },
@@ -1474,7 +1473,7 @@ export function DesktopWorkbenchLayout({
                 activeLocalHarnessSessionId={activeLocalHarnessSessionId}
                 onLocalHarnessSessionStarted={registerLocalHarnessSession}
                 onLocalHarnessSessionClose={closeLocalHarnessSession}
-                onLocalHarnessSessionExit={markLocalHarnessSessionInactive}
+                onLocalHarnessSessionExit={handleLocalHarnessSessionExit}
               />
             </div>
           ) : null}
