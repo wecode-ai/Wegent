@@ -93,6 +93,7 @@ from app.services.loop_items.access import (
     related_item_filter,
     visible_item_filter,
 )
+from app.services.loop_items.task_bindings import active_task_binding_query
 from app.services.project_automation_domain import runnable_wegent_team
 from app.services.project_chat.service import ProjectChatService, bot_config
 from app.stores.tasks import task_store
@@ -2612,17 +2613,16 @@ class LoopItemService:
             values.wegent_team_id,
             values.model_selection is not None,
         )
-        active = (
-            db.query(LoopItemTaskBinding)
-            .filter(
-                LoopItemTaskBinding.task_user_id == user_id,
-                LoopItemTaskBinding.device_id == values.device_id,
-                LoopItemTaskBinding.task_id == values.task_id,
-                loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
-            )
-            .with_for_update()
-            .first()
-        )
+        bindings = active_task_binding_query(
+            db,
+            user_id=user_id,
+            device_id=values.device_id,
+            task_id=values.task_id,
+            lock=True,
+        ).all()
+        active = bindings[0] if bindings else None
+        for duplicate in bindings[1:]:
+            duplicate.unlinked_at = self._now()
         if active is not None:
             if active.loop_item_id == item_id:
                 if values.task_title and active.task_title != values.task_title:
@@ -2679,7 +2679,16 @@ class LoopItemService:
 
         require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Viewer)
         self._validate_backend_task(db, values.backend_task_id, user_id)
-        active = self._active_task_binding(db, values, user_id, lock=True)
+        bindings = active_task_binding_query(
+            db,
+            user_id=user_id,
+            device_id=values.device_id,
+            task_id=values.task_id,
+            lock=True,
+        ).all()
+        active = bindings[0] if bindings else None
+        for duplicate in bindings[1:]:
+            duplicate.unlinked_at = self._now()
         if active is not None:
             if (
                 str(active.cloud_project_id) == str(cloud_project_id)
@@ -2750,11 +2759,7 @@ class LoopItemService:
     def unbind_cloud_context(
         self, db: Session, values: LoopItemTaskBind, user_id: int
     ) -> None:
-        binding = self._active_task_binding(db, values, user_id, lock=True)
-        if binding is None:
-            return
-        binding.unlinked_at = self._now()
-        db.commit()
+        self._unbind_task_bindings(db, values, user_id)
 
     @staticmethod
     def _validate_backend_task(
@@ -2771,23 +2776,30 @@ class LoopItemService:
         if backend_task is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Task not found")
 
-    @staticmethod
-    def _active_task_binding(
+    def _unbind_task_bindings(
+        self,
         db: Session,
         values: LoopItemTaskBind,
         user_id: int,
         *,
-        lock: bool,
-    ) -> LoopItemTaskBinding | None:
-        query = db.query(LoopItemTaskBinding).filter(
-            LoopItemTaskBinding.task_user_id == user_id,
-            LoopItemTaskBinding.device_id == values.device_id,
-            LoopItemTaskBinding.task_id == values.task_id,
-            loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
+        item_id: str | None = None,
+    ) -> None:
+        query = active_task_binding_query(
+            db,
+            user_id=user_id,
+            device_id=values.device_id,
+            task_id=values.task_id,
+            lock=True,
         )
-        if lock:
-            query = query.with_for_update()
-        return query.first()
+        if item_id is not None:
+            query = query.filter(LoopItemTaskBinding.loop_item_id == item_id)
+        bindings = query.all()
+        if not bindings:
+            return
+        now = self._now()
+        for binding in bindings:
+            binding.unlinked_at = now
+        db.commit()
 
     def list_task_bindings(
         self, db: Session, item_id: str, user_id: int
@@ -2798,6 +2810,7 @@ class LoopItemService:
             .filter(
                 LoopItemTaskBinding.loop_item_id == item_id,
                 loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
+                loop_datetime_is_unset(LoopItemTaskBinding.deleted_at),
             )
             .order_by(
                 LoopItemTaskBinding.linked_at.desc(),
@@ -2823,6 +2836,7 @@ class LoopItemService:
                 LoopItemTaskBinding.cloud_project_id == project_id,
                 LoopItemTaskBinding.loop_item_id.in_(item_ids),
                 loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
+                loop_datetime_is_unset(LoopItemTaskBinding.deleted_at),
             )
             .order_by(
                 LoopItemTaskBinding.loop_item_id.asc(),
@@ -2840,22 +2854,7 @@ class LoopItemService:
         user_id: int,
     ) -> None:
         self.get(db, item_id, user_id)
-        binding = (
-            db.query(LoopItemTaskBinding)
-            .filter(
-                LoopItemTaskBinding.loop_item_id == item_id,
-                LoopItemTaskBinding.task_user_id == user_id,
-                LoopItemTaskBinding.device_id == values.device_id,
-                LoopItemTaskBinding.task_id == values.task_id,
-                loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
-            )
-            .with_for_update()
-            .first()
-        )
-        if binding is None:
-            return
-        binding.unlinked_at = self._now()
-        db.commit()
+        self._unbind_task_bindings(db, values, user_id, item_id=item_id)
 
     def find_for_runtime_task(
         self,
@@ -2864,16 +2863,9 @@ class LoopItemService:
         device_id: str,
         task_id: str,
     ) -> LoopItem:
-        binding = (
-            db.query(LoopItemTaskBinding)
-            .filter(
-                LoopItemTaskBinding.task_user_id == user_id,
-                LoopItemTaskBinding.device_id == device_id,
-                LoopItemTaskBinding.task_id == task_id,
-                loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
-            )
-            .first()
-        )
+        binding = active_task_binding_query(
+            db, user_id=user_id, device_id=device_id, task_id=task_id
+        ).first()
         if binding is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Linked TODO not found")
         return self.get(db, binding.loop_item_id, user_id)

@@ -176,6 +176,7 @@ class ProjectChangeRequestBindingService:
                 LoopItemTaskBinding.cloud_project_id == project_id,
                 LoopItemTaskBinding.loop_item_id.isnot(None),
                 loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
+                loop_datetime_is_unset(LoopItemTaskBinding.deleted_at),
             )
             .all()
         )

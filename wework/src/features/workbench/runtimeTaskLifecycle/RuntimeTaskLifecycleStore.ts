@@ -8,7 +8,7 @@ import type {
 } from '@/types/api'
 import type { RuntimePaneTranscript } from '@/types/workbench'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
-import { getWorkbenchDeviceIds } from '@/lib/workbench-device'
+import { getUnambiguousWorkbenchDeviceAliases } from '@/lib/workbench-device'
 import {
   isRuntimeTaskAuthoritativeCompletion,
   normalizeRuntimeTaskSummary,
@@ -19,6 +19,7 @@ import { RuntimeTaskMachine, getRuntimeTaskLifecycleKey } from './RuntimeTaskMac
 import type {
   RuntimeTaskLifecycleEvent,
   RuntimeTaskLifecycleSnapshot,
+  RuntimeTaskLifecycleState,
   RuntimeTaskLifecycleStoreSnapshot,
 } from './types'
 
@@ -119,13 +120,14 @@ export class RuntimeTaskLifecycleStore {
 
   syncDevices(devices: DeviceInfo[]): void {
     let changed = false
-    for (const device of devices) {
-      const canonicalDeviceId = device.device_id.trim()
-      if (!canonicalDeviceId) continue
-      for (const alias of getWorkbenchDeviceIds(device)) {
-        if (alias === canonicalDeviceId) continue
-        changed = this.registerDeviceAlias(alias, canonicalDeviceId) || changed
-      }
+    const aliases = getUnambiguousWorkbenchDeviceAliases(devices)
+    for (const [alias, canonicalDeviceId] of aliases) {
+      if (alias !== canonicalDeviceId) continue
+      changed = this.deviceAliases.delete(alias) || changed
+    }
+    for (const [alias, canonicalDeviceId] of aliases) {
+      if (alias === canonicalDeviceId) continue
+      changed = this.registerDeviceAlias(alias, canonicalDeviceId) || changed
     }
     if (changed) this.publish()
   }
@@ -491,15 +493,13 @@ export class RuntimeTaskLifecycleStore {
     if (this.resolveDeviceId(alias) === canonical) return false
 
     this.deviceAliases.set(alias, canonical)
-    let changed = false
     for (const [key, machine] of [...this.machines]) {
       const address = machine.getState().address
       if (address.deviceId !== alias) continue
       const nextAddress = { ...address, deviceId: canonical }
       this.mergeMachineIntoAddress(key, machine, nextAddress)
-      changed = true
     }
-    return changed
+    return true
   }
 
   private mergeMachineIntoAddress(
@@ -512,13 +512,37 @@ export class RuntimeTaskLifecycleStore {
     const nextMachine = this.ensureMachine(nextAddress)
     const nextTask = nextMachine.getState().task
     const previousTask = previousState.task
-    if (!nextTask || (previousTask && shouldReplaceRuntimeTaskProjection(nextTask, previousTask))) {
+    const preferPreviousTask = Boolean(
+      !nextTask || (previousTask && shouldReplaceRuntimeTaskProjection(nextTask, previousTask))
+    )
+    if (preferPreviousTask) {
       nextMachine.dispatch({
         type: 'executor_snapshot_received',
         address: nextAddress,
         task: previousTask ?? emptyRuntimeTaskSummary(nextAddress),
       })
     }
+    if (preferPreviousTask || !previousTask) {
+      this.mergeMachineState(previousState, nextMachine)
+    }
+    if (previousState.unread) nextMachine.dispatch({ type: 'marked_unread' })
+    if (
+      this.previousRunningTaskKeys.delete(previousKey) &&
+      nextMachine.getSnapshot().derived.isRunning
+    ) {
+      this.previousRunningTaskKeys.add(nextKey)
+    }
+    if (this.deferredGoalUnreadTaskKeys.delete(previousKey)) {
+      this.deferredGoalUnreadTaskKeys.add(nextKey)
+    }
+    this.machines.delete(previousKey)
+    if (this.currentTaskKey === previousKey) this.currentTaskKey = nextKey
+  }
+
+  private mergeMachineState(
+    previousState: RuntimeTaskLifecycleState,
+    nextMachine: RuntimeTaskMachine
+  ): void {
     if (previousState.hasAuthoritativeGoalStatus) {
       nextMachine.dispatch({
         type: 'goal_status_received',
@@ -553,15 +577,6 @@ export class RuntimeTaskLifecycleStore {
         turnId: previousState.latestTurnId,
       })
     }
-    if (previousState.unread) nextMachine.dispatch({ type: 'marked_unread' })
-    if (this.previousRunningTaskKeys.delete(previousKey)) {
-      this.previousRunningTaskKeys.add(nextKey)
-    }
-    if (this.deferredGoalUnreadTaskKeys.delete(previousKey)) {
-      this.deferredGoalUnreadTaskKeys.add(nextKey)
-    }
-    this.machines.delete(previousKey)
-    if (this.currentTaskKey === previousKey) this.currentTaskKey = nextKey
   }
 
   private publish(): void {
