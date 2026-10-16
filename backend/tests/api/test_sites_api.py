@@ -132,6 +132,7 @@ def test_list_site_app_types_returns_ordered_capabilities(
                     "delete",
                     "configure_environment",
                     "manage_access",
+                    "view_analytics",
                 ],
                 "create": {
                     "plugin_name": "wegent-sites",
