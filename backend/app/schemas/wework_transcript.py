@@ -77,13 +77,6 @@ class TranscriptLeaseResponse(BaseModel):
     current_sequence: int = Field(alias="currentSequence")
 
 
-class TranscriptEncryptionKeyResponse(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    algorithm: str
-    key: str
-
-
 class TranscriptTurnResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -121,12 +114,6 @@ class TranscriptResponse(BaseModel):
     created_at: datetime = Field(alias="createdAt")
     updated_at: datetime = Field(alias="updatedAt")
     archived_at: datetime | None = Field(alias="archivedAt")
-
-
-class TranscriptListResponse(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    items: list[TranscriptResponse]
 
 
 class TranscriptTurnsResponse(BaseModel):

@@ -38,7 +38,6 @@ from .task_detail_helpers import (
     get_bots_for_subtasks,
     get_requested_skills_from_task,
 )
-from .task_skills_resolver import resolve_task_skills
 
 logger = logging.getLogger(__name__)
 
@@ -424,9 +423,3 @@ class TaskQueryMixin:
 
         refresh_task_image_download_urls(task_dict)
         return task_dict
-
-    def get_task_skills(
-        self, db: Session, *, task_id: int, user_id: int
-    ) -> Dict[str, Any]:
-        """Get all skills associated with a task."""
-        return resolve_task_skills(db, task_id=task_id, user_id=user_id)

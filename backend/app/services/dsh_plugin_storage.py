@@ -23,23 +23,6 @@ PACKAGE_NAME_RE = re.compile(r"^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$
 class DshPluginStorageService:
     """Store plugin-owned KV units without introducing plugin-specific tables."""
 
-    def load_unit(
-        self,
-        db: Session,
-        user_id: int,
-        package_name: str,
-        unit: str,
-        descriptor: DshStorageDescriptor,
-    ) -> Dict[str, Any]:
-        self.validate_identity(package_name, unit)
-        self.validate_descriptor(descriptor)
-        resource = self._resource(db, user_id, package_name, unit)
-        if resource is None:
-            return self._empty_snapshot(descriptor)
-        document = self._document(resource)
-        self._require_compatible(document, descriptor)
-        return self._public_snapshot(document)
-
     def put_record(
         self,
         db: Session,

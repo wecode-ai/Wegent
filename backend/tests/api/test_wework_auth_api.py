@@ -134,52 +134,6 @@ def test_create_wework_auth_session_uses_dedicated_authorize_base_url(
     assert data["poll_interval_seconds"] > 0
 
 
-# MIGRATION-CANDIDATE: retired Python HTTP test; this API is owned by Rust.
-# def test_legacy_wework_auth_session_works_without_a_request_body(
-#     test_client: TestClient,
-#     test_token: str,
-#     test_user,
-#     monkeypatch,
-# ):
-#     install_memory_auth_session_cache(monkeypatch)
-#     session_response = create_legacy_session(test_client)
-#
-#     assert session_response.status_code == 200
-#     session = session_response.json()
-#
-#     approve_response = test_client.post(
-#         f"/api/auth/wework/sessions/{session['session_id']}/approve",
-#         headers={"Authorization": f"Bearer {test_token}"},
-#     )
-#     assert approve_response.status_code == 200
-#
-#     poll_response = test_client.get(
-#         f"/api/auth/wework/sessions/{session['session_id']}/poll",
-#         params={"poll_token": session["poll_token"]},
-#     )
-#
-#     assert poll_response.status_code == 200
-#     credentials = poll_response.json()
-#     assert credentials["status"] == "success"
-#     assert credentials["access_token"]
-#     assert credentials["refresh_token"] is None
-#     payload = jwt.decode(
-#         credentials["access_token"],
-#         settings.SECRET_KEY,
-#         algorithms=[settings.ALGORITHM],
-#     )
-#     assert payload["sub"] == test_user.user_name
-#     assert "token_use" not in payload
-#     assert payload["exp"] - int(time.time()) > 6 * 24 * 60 * 60
-#
-#     authenticated = test_client.get(
-#         "/api/users/me",
-#         headers={"Authorization": f"Bearer {credentials['access_token']}"},
-#     )
-#     assert authenticated.status_code == 200
-#     assert authenticated.json()["user_name"] == test_user.user_name
-
-
 def test_wework_auth_session_approve_and_poll_returns_token_once(
     test_client: TestClient,
     test_token: str,
@@ -312,29 +266,3 @@ def test_wework_refresh_requires_the_bound_device_key(
         },
     )
     assert rejected.status_code == 401
-
-
-# MIGRATION-CANDIDATE: retired Python HTTP test; this API is owned by Rust.
-# def test_wework_refresh_token_cannot_authenticate_regular_api(
-#     test_client: TestClient,
-#     test_token: str,
-#     monkeypatch,
-# ):
-#     install_memory_auth_session_cache(monkeypatch)
-#     _, public_jwk = device_identity()
-#     session = create_session(test_client, public_jwk).json()
-#     test_client.post(
-#         f"/api/auth/wework/sessions/{session['session_id']}/approve",
-#         headers={"Authorization": f"Bearer {test_token}"},
-#     )
-#     credentials = test_client.get(
-#         f"/api/auth/wework/sessions/{session['session_id']}/poll",
-#         params={"poll_token": session["poll_token"]},
-#     ).json()
-#
-#     response = test_client.get(
-#         "/api/users/me",
-#         headers={"Authorization": f"Bearer {credentials['refresh_token']}"},
-#     )
-#
-#     assert response.status_code == 401
