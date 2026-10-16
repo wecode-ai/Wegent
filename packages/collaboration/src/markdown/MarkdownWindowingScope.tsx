@@ -73,6 +73,7 @@ function isPositiveFinite(value: number): boolean {
 }
 
 export const MarkdownWindowingContext = createContext<MarkdownWindowingScope | null>(null)
+export const MarkdownWindowingDisabledContext = createContext(false)
 
 export function useMarkdownWindowingScope(): MarkdownWindowingScope | null {
   return useContext(MarkdownWindowingContext)

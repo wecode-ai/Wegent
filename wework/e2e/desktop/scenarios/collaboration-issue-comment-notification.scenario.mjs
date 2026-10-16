@@ -84,6 +84,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
   let workspace = null
   let project = null
   let issue = null
+  let emptyUnreadIssue = null
 
   const ownerRequest = (pathname, options) => requestJson(backendUrl, ownerToken, pathname, options)
 
@@ -220,6 +221,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         method: 'POST',
         body: JSON.stringify({ title: ISSUE_TITLE }),
       })
+      emptyUnreadIssue = await requestJson(
+        backendUrl,
+        mentionerToken,
+        `/api/v1/cloud-projects/${project.id}/loop-items`,
+        { method: 'POST', body: JSON.stringify({ title: '打开空讨论后清除未读' }) }
+      )
+      const unread = await ownerRequest(`/api/v1/loop-items/${emptyUnreadIssue.id}`)
+      assert.equal(unread.is_unread, true, 'The other member must create a genuinely unread Issue')
     },
 
     async verify(control) {
@@ -239,6 +248,33 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         `${activeSurface} [data-testid="collaboration-platform-root"]`,
         { timeoutMs: uiTimeoutMs }
       )
+
+      // Empty discussions have no message sequence that could trigger a read.
+      // The detail must still persist the content read and update its board card.
+      await control.command('openWeworkScheme', 'body', {
+        value: `wework://boards/${project.id}/issues/${emptyUnreadIssue.id}`,
+      })
+      await control.command('waitFor', `${activeSurface} [data-testid="cloud-task-status-event-0"]`)
+      const readEmptyIssue = await waitForApiValue(
+        () => ownerRequest(`/api/v1/loop-items/${emptyUnreadIssue.id}`),
+        value => value.is_unread === false,
+        'Opening an Issue with only its creation event did not persist read state',
+        uiTimeoutMs
+      )
+      assert.equal(readEmptyIssue.activity_read_sequence, 0)
+      await control.command('click', `${activeSurface} [data-testid="cloud-todo-detail-close"]`)
+      const emptyCard = `${activeSurface} [data-testid="cloud-todo-card-${emptyUnreadIssue.id}"]`
+      const unreadDot = `${activeSurface} [data-testid="cloud-todo-card-unread-${emptyUnreadIssue.id}"]`
+      await control.command('waitFor', emptyCard)
+      await control.command('waitFor', unreadDot, { visible: false })
+      await control.command('click', emptyCard)
+      await control.command('waitFor', `${activeSurface} [data-testid="cloud-task-status-event-0"]`)
+      assert.equal(
+        (await ownerRequest(`/api/v1/loop-items/${emptyUnreadIssue.id}`)).is_unread,
+        false
+      )
+      await control.command('click', `${activeSurface} [data-testid="cloud-todo-detail-close"]`)
+      await control.command('waitFor', unreadDot, { visible: false })
 
       const message = await postMentionComment(`${CLIENT_MESSAGE_PREFIX}-${Date.now()}`)
       assert.equal(message.sender.name, MENTIONER_NAME)
@@ -287,6 +323,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await waitForFlash(control, commentSelectorFor(activeSurface, message.messageId), uiTimeoutMs)
       const linkFlashMs = Date.now() - linkStartedAt
       assertNavigationBudget('The DingTalk link', linkCommentMs, linkFlashMs)
+      const readIssue = await waitForApiValue(
+        () => ownerRequest(`/api/v1/loop-items/${issue.id}`),
+        value =>
+          value.is_unread === false && value.activity_read_sequence >= message.sequenceNumber,
+        'Arriving at the visible comment did not persist the Issue activity cursor',
+        uiTimeoutMs
+      )
+      assert.equal(readIssue.is_unread, false)
 
       // Reload restores the same mentioned comment. Let that restored highlight
       // finish so the inbox must issue a new focus request, not reuse its flash.

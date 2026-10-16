@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
@@ -36,9 +36,17 @@ test('rejects a Windows bootstrap binary that differs from the release manifest'
   await expect(verifyWindowsMigrationLock(context)).rejects.toThrow('checksum mismatch')
 })
 
-test('rejects a binary without the migration lock protocol even when its hash matches', async () => {
+test('rejects an executor without the migration lock protocol even when its hash matches', async () => {
   const { executor, manifestPath, context } = await packagedApp()
-  await copyFile(process.execPath, executor)
+  // Exercise the checksum and real child-process rejection without copying and
+  // booting the full Node binary, whose startup dominates this unit test.
+  await writeFile(
+    executor,
+    '#!/bin/sh\nprintf \'%s\\n\' \'{"protocol_version":0,"locked":false}\'\n',
+    {
+      mode: 0o755,
+    }
+  )
   const sha256 = createHash('sha256')
     .update(await readFile(executor))
     .digest('hex')

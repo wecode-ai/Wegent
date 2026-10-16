@@ -42,6 +42,33 @@ export function inProjectCreateDialog(selector = '') {
   return selector ? `${dialog} ${selector}` : dialog
 }
 
+export async function openDirectProjectCreation(
+  control,
+  contentSelector,
+  testId = 'collaboration-workspace-project-create'
+) {
+  const trigger = `${contentSelector} [data-testid="${testId}"]`
+  await control.command('waitFor', trigger, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    Number(await control.command('getElementCount', `${trigger}[aria-haspopup]`)),
+    0,
+    'A single project creation method must be a direct action'
+  )
+  await control.command('click', trigger)
+  await control.command('waitFor', inProjectCreateDialog(), {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    Number(await control.command('getElementCount', `[data-testid="${testId}-menu"]`)),
+    0,
+    'A single project creation method must not open an intermediate menu'
+  )
+}
+
 export async function selectCollaborationDomain(control, contentSelector, domain) {
   assert.ok(domain === 'local' || domain === 'cloud', `Unknown collaboration domain: ${domain}`)
   await control.command(
@@ -72,6 +99,42 @@ export async function selectCollaborationDomain(control, contentSelector, domain
     0,
     'The unified collaboration board still exposed a cloud selector'
   )
+}
+
+export async function expandCollaborationWorkspace(
+  control,
+  toggleSelector,
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
+) {
+  await control.command('waitFor', toggleSelector, { visible: true, timeoutMs })
+  const expanded = await control.command('getAttribute', toggleSelector, {
+    value: 'aria-expanded',
+  })
+  assert.ok(
+    expanded === 'true' || expanded === 'false',
+    'A workspace toggle must expose its expanded state'
+  )
+  if (expanded === 'false') await control.command('click', toggleSelector)
+  await control.command('waitFor', `${toggleSelector}[aria-expanded="true"]`, {
+    visible: true,
+    timeoutMs,
+  })
+}
+
+export async function selectCollaborationIssueAgent(
+  control,
+  triggerSelector,
+  agentId,
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
+) {
+  await control.command('click', triggerSelector)
+  const option = `[data-testid="cloud-todo-detail-assignee-option-agent:${agentId}"]`
+  await control.command('waitFor', option, { visible: true, timeoutMs })
+  await control.command('click', option)
+  await control.command('waitFor', `${triggerSelector}[data-value="agent:${agentId}"]`, {
+    visible: true,
+    timeoutMs,
+  })
 }
 
 export async function waitForTestIdByText(
@@ -213,28 +276,20 @@ export async function selectCloudAgentModel(
   )
 }
 
-export async function openProjectAgentCreator(control, addSelector, timeoutMs) {
+export async function openProjectAgentCreator(
+  control,
+  addSelector,
+  timeoutMs,
+  editorTestId = 'cloud-project-chat-agent-editor'
+) {
   await control.command('clickWhenEnabled', addSelector, { timeoutMs })
-  const editorSelector = '[data-testid="cloud-project-chat-agent-editor"]'
-  const modeSelectors = [
-    '[data-testid="project-agent-mode-create-card"]',
-    '[data-testid="project-agent-mode-create"]',
-  ]
-  const startedAt = Date.now()
-  while (Date.now() - startedAt < timeoutMs) {
-    if (Number(await control.command('getElementCount', editorSelector)) > 0) {
-      return
-    }
-    for (const modeSelector of modeSelectors) {
-      if (Number(await control.command('getElementCount', modeSelector)) > 0) {
-        await control.command('click', modeSelector)
-        await control.command('waitFor', editorSelector, { timeoutMs })
-        return
-      }
-    }
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
-  }
-  throw new Error('The project Agent creator did not open')
+  const createMode = '[data-testid="project-agent-mode-create-card"]'
+  await control.command('waitFor', createMode, { visible: true, timeoutMs })
+  await control.command('click', createMode)
+  await control.command('waitFor', `[data-testid="${editorTestId}"]`, {
+    visible: true,
+    timeoutMs,
+  })
 }
 
 export async function configureFirstProjectExecutionEnvironment(

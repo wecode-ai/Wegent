@@ -169,6 +169,21 @@ class Settings(BaseSettings):
     MAX_RUNNING_TASKS_PER_USER: int = 10
     WORKTREE_CLEANUP_RETENTION_DAYS: int = Field(default=7, ge=0)
 
+    # Names assigned only when a default source group is first created.
+    TASK_SOURCE_GROUP_NAMES: dict[str, str] = Field(
+        default_factory=lambda: {"api": "API Tasks", "dingtalk": "DingTalk"}
+    )
+
+    @field_validator("TASK_SOURCE_GROUP_NAMES")
+    @classmethod
+    def validate_task_source_group_names(cls, names: dict[str, str]) -> dict[str, str]:
+        if not {"api", "dingtalk"}.issubset(names):
+            raise ValueError("TASK_SOURCE_GROUP_NAMES must define api and dingtalk")
+        normalized = {source: name.strip() for source, name in names.items()}
+        if any(not name or len(name) > 100 for name in normalized.values()):
+            raise ValueError("Task source group names must contain 1 to 100 characters")
+        return normalized
+
     # Group entity member configuration
     # Maximum number of entity members (departments, etc.) per group
     MAX_ENTITY_MEMBERS_PER_GROUP: int = 30

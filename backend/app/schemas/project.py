@@ -57,6 +57,15 @@ class ProjectTaskResponse(BaseModel):
         from_attributes = True
 
 
+class ProjectTaskListResponse(BaseModel):
+    """Paginated active tasks in a project."""
+
+    total: int = Field(..., description="Total number of active project tasks")
+    items: list[ProjectTaskResponse] = Field(default_factory=list)
+    has_more: bool = Field(..., description="Whether another task page exists")
+    next_cursor: Optional[str] = Field(None, description="Cursor for the next page")
+
+
 class ProjectExecutionConfig(BaseModel):
     """Execution target for a workspace project."""
 
@@ -158,6 +167,9 @@ class ProjectConfig(BaseModel):
 
     mode: Optional[Literal["workspace"]] = Field(
         None, description="Project mode. workspace means executable project."
+    )
+    taskSource: Optional[Literal["api", "dingtalk"]] = Field(
+        None, description="Task source assigned to an automatically created group"
     )
     device_id: Optional[str] = Field(None, description="Legacy bound local device ID")
     execution: Optional[ProjectExecutionConfig] = None

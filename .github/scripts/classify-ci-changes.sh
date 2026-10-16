@@ -77,6 +77,14 @@ classify_path() {
       changed[wegent_cli]=true
       changed[platform_e2e]=true
       ;;
+    docs/*/wegent/developer-guide/collaboration-permissions.md)
+      changed[backend]=true
+      ;;
+    backend-rs/src/cloud_projects* | backend-rs/src/loop_item_executions/device.rs | backend-rs/config/routes.toml)
+      changed[backend]=true
+      changed[platform_e2e]=true
+      changed[wework_e2e]=true
+      ;;
     backend-rs/*)
       changed[backend_rs]=true
       changed[platform_e2e]=true

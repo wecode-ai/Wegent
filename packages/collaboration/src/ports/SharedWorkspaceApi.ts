@@ -40,7 +40,8 @@ export interface WorkspaceProjectCreateInput {
   description?: string;
   taskProvider?: "local" | "github" | "gitlab" | "dingtalk_aitable";
   visibility?: CollaborationProjectVisibility;
-  publicAccess?: { role: "Developer" | "Viewer" };
+  membershipMode?: "inherit" | "restricted";
+  publicAccess?: { role: "Viewer" };
   defaultIssueSecurity?: "open" | "related";
   providerConfig?: Record<string, unknown>;
   includeDefaultAgent?: boolean;
@@ -52,7 +53,8 @@ export interface WorkspaceProjectUpdateInput {
   description?: string;
   tags?: string[];
   visibility?: CollaborationProjectVisibility;
-  publicAccess?: { role: "Developer" | "Viewer" };
+  membershipMode?: "inherit" | "restricted";
+  publicAccess?: { role: "Viewer" };
   defaultIssueSecurity?: "open" | "related";
   providerConfig?: Record<string, unknown>;
   boardConfig?: CollaborationProject["board_config"];
@@ -546,6 +548,10 @@ export interface SharedWorkspaceAssignmentsApi {
 }
 
 export interface SharedCollaborationWorkspacesApi {
+  transferOwnership?(
+    workspaceId: string,
+    input: { userId: number; version: number },
+  ): Promise<CollaborationWorkspace>;
   registerRunner?(
     workspaceId: string,
     name: string,
@@ -848,7 +854,10 @@ export interface SharedWorkspaceRuntimeProfilesApi {
 }
 
 export interface SharedWorkspaceAgentsApi {
-  list(projectId: string): Promise<WorkspaceProjectAgent[]>;
+  list(
+    projectId: string,
+    options?: { includeArchived?: boolean },
+  ): Promise<WorkspaceProjectAgent[]>;
   create(
     projectId: string,
     input: Record<string, unknown>,

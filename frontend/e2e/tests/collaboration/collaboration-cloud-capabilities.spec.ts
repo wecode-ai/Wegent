@@ -5,7 +5,11 @@
 import { expect, test, type Browser, type Page } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
-import { webApi, writeSharedComposer } from '../../utils/collaboration-test-support'
+import {
+  openBlankProjectCreation,
+  webApi,
+  writeSharedComposer,
+} from '../../utils/collaboration-test-support'
 import { REGULAR_USER } from '../../config/test-users'
 import { buildStorageState, getJwtExpiryMs } from '../../utils/auth-state'
 import { createApiClient } from '../../utils/api-client'
@@ -140,8 +144,7 @@ async function createProjectByUi(
     `/api/v1/workspaces/${encodeURIComponent(workspaceId)}`
   )
 
-  await page.getByTestId('collaboration-workspace-project-create').click()
-  await page.getByTestId('collaboration-workspace-project-create-blank').click()
+  await openBlankProjectCreation(page)
   await page.getByTestId('collaboration-project-name-input').fill(projectName)
   await page.getByTestId('collaboration-project-create-advanced').click()
   await page
@@ -412,8 +415,7 @@ test.describe('Collaboration cloud capabilities', () => {
       expect(workspaceGroup.members).toContainEqual(workspaceGroup.leader)
 
       await page.getByTestId('collaboration-workspace-nav-projects').click()
-      await page.getByTestId('collaboration-workspace-project-create').click()
-      await page.getByTestId('collaboration-workspace-project-create-blank').click()
+      await openBlankProjectCreation(page)
       await page.getByTestId('collaboration-project-name-input').fill(projectName)
       await page.getByTestId('collaboration-project-create-add-collaborator').click()
       await page
@@ -1040,8 +1042,7 @@ test.describe('Collaboration cloud capabilities', () => {
       const workspace = await createWorkspaceByApi(page, `Permission Workspace ${suffix}`)
       workspaceId = workspace.id
       await page.goto(`/collaboration/workspaces/${encodeURIComponent(workspace.id)}`)
-      await page.getByTestId('collaboration-workspace-project-create').click()
-      await page.getByTestId('collaboration-workspace-project-create-blank').click()
+      await openBlankProjectCreation(page)
       await page.getByTestId('collaboration-project-name-input').fill(`Permissions ${suffix}`)
       await page.getByTestId('cloud-project-visibility-public').click()
       await page.getByTestId('cloud-project-public-access-viewer').click()
@@ -1100,7 +1101,10 @@ test.describe('Collaboration cloud capabilities', () => {
       await page.goto(collaborationProjectPath(workspace.id, project.id, { view: 'manage' }))
       await page.getByTestId('collaboration-project-settings-project').click()
       await page.getByTestId('cloud-project-manage-visibility-public').click()
-      await page.getByTestId('cloud-project-public-access-role').selectOption('Developer')
+      await expect(page.getByTestId('cloud-project-public-access-role')).toHaveValue('Viewer')
+      await expect(
+        page.getByTestId('cloud-project-public-access-role').locator('option[value="Developer"]')
+      ).toHaveCount(0)
       await page.getByTestId('cloud-project-default-issue-security').selectOption('related')
       await expect
         .poll(async () => {
@@ -1113,7 +1117,7 @@ test.describe('Collaboration cloud capabilities', () => {
           >(page, `/api/v1/cloud-projects/${encodeURIComponent(project.id)}`)
           return [updated.visibility, updated.public_access?.role, updated.default_issue_security]
         })
-        .toEqual(['public', 'Developer', 'related'])
+        .toEqual(['public', 'Viewer', 'related'])
       const ownerIssue = await createIssueByApi(page, project.id, `Owner only ${suffix}`)
 
       const regular = await openRegularUserProject(browser, page, workspace.id, project.id)
@@ -1134,6 +1138,12 @@ test.describe('Collaboration cloud capabilities', () => {
             `/api/v1/loop-items/${encodeURIComponent(ownerIssue.id)}`
           )
         ).toBe(404)
+
+        await expect(
+          createIssueByApi(regular.page, project.id, `Read-only public user ${suffix}`)
+        ).rejects.toThrow(/: 403 /)
+        const member = await regularUser(page)
+        await addProjectMember(page, project.id, member.id, 'Developer')
 
         const regularIssue = await createIssueByApi(
           regular.page,

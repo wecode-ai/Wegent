@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createLocalAttachmentApi } from './localAttachments'
+import { rememberNativeFilePath } from '@/desktop/nativeFilePaths'
 
 const desktopMocks = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -14,7 +15,44 @@ describe('local attachment API', () => {
     desktopMocks.invoke.mockReset()
   })
 
-  test('stores uploaded files under executor home instead of the active project workspace', async () => {
+  afterEach(() => {
+    delete window.weworkElectronFiles
+  })
+
+  test('references an Electron-selected Windows file without creating a draft copy', async () => {
+    const path = 'C:\\Users\\alice\\Downloads\\report.xlsx'
+    const file = new File(['spreadsheet'], 'report.xlsx')
+    window.weworkElectronFiles = { getPathForFile: () => path }
+    const readChunk = vi.spyOn(file, 'slice')
+    const progress = vi.fn()
+
+    const api = createLocalAttachmentApi()
+    const attachment = await api.uploadAttachment(file, progress)
+    await api.deleteAttachment(attachment.id)
+
+    expect(attachment).toMatchObject({
+      filename: 'report.xlsx',
+      local_path: path,
+      local_preview_url: path,
+      status: 'ready',
+    })
+    expect(readChunk).not.toHaveBeenCalled()
+    expect(desktopMocks.invoke).not.toHaveBeenCalled()
+    expect(progress.mock.calls).toEqual([[0], [100]])
+  })
+
+  test('references a native picker file whose source path was retained', async () => {
+    const file = new File(['# Context'], 'context.md', { type: 'text/markdown' })
+    rememberNativeFilePath(file, '/Users/alice/Documents/context.md')
+
+    const attachment = await createLocalAttachmentApi().uploadAttachment(file)
+
+    expect(attachment.local_path).toBe('/Users/alice/Documents/context.md')
+    expect(attachment.text_length).toBe(9)
+    expect(desktopMocks.invoke).not.toHaveBeenCalled()
+  })
+
+  test('stores a generated file without a source path under executor home', async () => {
     desktopMocks.invoke
       .mockResolvedValueOnce({ uploadId: 'upload-1', chunkSize: 4 })
       .mockResolvedValueOnce(3)
@@ -23,15 +61,7 @@ describe('local attachment API', () => {
     const progress = vi.fn()
 
     const api = createLocalAttachmentApi()
-    const uploadWithLegacyContext = api.uploadAttachment as (
-      file: File,
-      onProgress?: (progress: number) => void,
-      context?: { workspacePath?: string | null }
-    ) => Promise<Awaited<ReturnType<typeof api.uploadAttachment>>>
-
-    const attachment = await uploadWithLegacyContext(file, progress, {
-      workspacePath: '/Users/me/project',
-    })
+    const attachment = await api.uploadAttachment(file, progress)
 
     expect(desktopMocks.invoke).toHaveBeenNthCalledWith(1, 'attachment.begin', {
       filename: 'photo.png',

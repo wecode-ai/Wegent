@@ -11,7 +11,9 @@ import {
 } from '@wegent/collaboration/conversation'
 import { CollaborationTheme, resolveThemeVariables } from '@wegent/collaboration/theme'
 import { MarkdownServicesProvider, browserMarkdownServices } from '@wegent/collaboration/markdown'
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
+import * as composerMentions from './composer/composerMentions'
+import { useDesktopConversationPresentation } from './useDesktopConversationPresentation'
 
 const comment: CodeCommentContext = {
   id: 'comment-1',
@@ -51,6 +53,42 @@ function Preview({ getRightBoundary }: { getRightBoundary?: () => number }) {
 afterEach(() => {
   vi.restoreAllMocks()
   vi.useRealTimers()
+})
+
+describe('desktop conversation presentation', () => {
+  test('does not reparse unchanged messages while editing a search query, and refreshes for new messages', () => {
+    const parseMentions = vi.spyOn(composerMentions, 'parseComposerMentions')
+    const messages: WorkbenchMessage[] = [
+      {
+        id: 'user-1',
+        role: 'user',
+        content: 'Search this conversation',
+        status: 'done',
+        createdAt: '2026-09-17T00:00:00Z',
+      },
+    ]
+    function SearchHarness({ messages }: { messages: WorkbenchMessage[] }) {
+      const [query, setQuery] = useState('')
+      useDesktopConversationPresentation(messages)
+      return (
+        <input
+          aria-label="Search query"
+          value={query}
+          onChange={event => setQuery(event.target.value)}
+        />
+      )
+    }
+    const { rerender } = render(<SearchHarness messages={messages} />)
+    expect(parseMentions).toHaveBeenCalledTimes(1)
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Search' } })
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Searc' } })
+    expect(parseMentions).toHaveBeenCalledTimes(1)
+
+    const updatedMessages = [{ ...messages[0], content: 'Updated conversation' }]
+    rerender(<SearchHarness messages={updatedMessages} />)
+    expect(parseMentions).toHaveBeenCalledTimes(2)
+    expect(parseMentions).toHaveBeenLastCalledWith('Updated conversation')
+  })
 })
 
 describe('shared conversation presentation without desktop providers', () => {

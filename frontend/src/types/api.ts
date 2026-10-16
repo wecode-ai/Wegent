@@ -325,6 +325,7 @@ export interface TaskApp {
 }
 
 export interface TaskDetail {
+  project_id?: number | null
   id: number
   title: string
   git_url: string
@@ -452,6 +453,7 @@ export interface TaskDetailSubtask {
 
 export interface Task {
   id: number
+  project_id?: number | null
   title: string
   team_id: number
   team_name?: string | null
@@ -922,4 +924,12 @@ export interface ProjectWithTasks extends Project {
 export interface ProjectListResponse {
   total: number
   items: ProjectWithTasks[]
+}
+
+/** Paginated tasks in a project */
+export interface ProjectTaskListResponse {
+  total: number
+  items: ProjectTask[]
+  has_more: boolean
+  next_cursor: string | null
 }

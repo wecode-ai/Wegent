@@ -2,8 +2,10 @@ import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { createBoardReplyModelRegression } from '../modules/board-reply-model.mjs'
+import { createProjectOnlyNavigationRegression } from '../modules/project-only-navigation.mjs'
 import { verifyIssueConversationDrawers } from '../modules/issue-conversation-drawers.mjs'
 import { verifyCollaborationIssueHome } from '../modules/collaboration-issue-home.mjs'
+import { verifyCollaborationMemberSettings } from '../modules/collaboration-member-settings.mjs'
 import {
   verifyIssueDetailPropertyUi,
   verifyNewDiscussionComposerUi,
@@ -16,6 +18,7 @@ import {
 import { verifyCollaborationLocalProjectImport } from '../modules/collaboration-local-project-import.mjs'
 import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
 import {
+  openDirectProjectCreation,
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
 } from '../modules/workspace-flows.mjs'
@@ -80,6 +83,7 @@ export function createDesktopScenario({
   executorHome,
 }) {
   const boardReplyModel = createBoardReplyModelRegression({ executorHome, uiTimeoutMs })
+  const projectOnlyNavigation = createProjectOnlyNavigationRegression({ uiTimeoutMs })
   let backendUrl = ''
   let authToken = ''
   let owner = null
@@ -142,6 +146,7 @@ export function createDesktopScenario({
       authToken = cloud.authToken
       owner = await request('/api/users/me')
       await request('/api/admin/setup-complete', { method: 'POST' })
+      await projectOnlyNavigation.prepare(cloud, owner)
     },
 
     setCloudEnvironment(environment) {
@@ -187,6 +192,8 @@ export function createDesktopScenario({
           timeoutMs: uiTimeoutMs,
         })
         await capture(control, 'collaboration-shared-core-01-all-workspaces.png')
+        await projectOnlyNavigation.verify(control, scoped)
+        await capture(control, 'collaboration-shared-core-project-only-navigation.png')
 
         await control.command('click', scoped('[data-testid="collaboration-primary-devices"]'))
         const deviceRow = scoped(`[data-testid="collaboration-devices-row-${remoteDevice.id}"]`)
@@ -264,14 +271,7 @@ export function createDesktopScenario({
         await capture(control, 'collaboration-shared-core-02-workspace-created.png')
 
         const projectName = `${PROJECT_NAME}-${process.pid}`
-        await control.command(
-          'click',
-          scoped('[data-testid="collaboration-workspace-project-create"]')
-        )
-        await control.command(
-          'click',
-          '[data-testid="collaboration-workspace-project-create-blank"]'
-        )
+        await openDirectProjectCreation(control, ACTIVE_WORKBENCH_SELECTOR)
         await control.command(
           'waitFor',
           scoped('[data-testid="collaboration-project-name-input"]'),
@@ -323,6 +323,7 @@ export function createDesktopScenario({
           timeoutMs: uiTimeoutMs,
         })
         await capture(control, 'collaboration-shared-core-03-project-created.png')
+        await verifyCollaborationMemberSettings(control, { scoped, owner, request, project })
 
         // Creation authorizes the current runner; this recovery case needs an unassigned project.
         const initialEnvironments = await request(
@@ -742,12 +743,20 @@ export function createDesktopScenario({
           workbenchReadyTimeoutMs,
         })
       } finally {
-        await archiveFixture()
+        try {
+          await archiveFixture()
+        } finally {
+          await projectOnlyNavigation.cleanup()
+        }
       }
     },
 
     async cleanup() {
-      await archiveFixture()
+      try {
+        await archiveFixture()
+      } finally {
+        await projectOnlyNavigation.cleanup()
+      }
     },
 
     diagnostics() {

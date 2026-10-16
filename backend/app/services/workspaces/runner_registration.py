@@ -107,7 +107,12 @@ def verify_runner_token(db: Session, token: str) -> Kind | None:
 
 
 def revoke_runner(
-    db: Session, workspace_id: int, user_id: int, environment_id: int
+    db: Session,
+    workspace_id: int,
+    user_id: int,
+    environment_id: int,
+    *,
+    commit: bool = True,
 ) -> Kind:
     require_workspace_role(db, workspace_id, user_id, BaseRole.Maintainer)
     device = (
@@ -121,7 +126,25 @@ def revoke_runner(
     spec.pop("runnerCredentialHash", None)
     device.json = {**device.json, "spec": spec}
     device.is_active = False
-    db.commit()
+    if commit:
+        from app.services.collaboration_revocation import (
+            revoke_unauthorized_project_work,
+        )
+        from app.services.loop_item_executions.cancellation import (
+            request_execution_cancellations,
+        )
+        from app.services.workspaces.storage import project_ids_for_workspace
+
+        db.flush()
+        pending = [
+            run
+            for pid in project_ids_for_workspace(db, workspace_id)
+            for run in revoke_unauthorized_project_work(db, pid)
+        ]
+        db.commit()
+        request_execution_cancellations(pending)
+    else:
+        db.flush()
     return device
 
 

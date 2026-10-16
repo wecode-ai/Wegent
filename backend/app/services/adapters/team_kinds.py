@@ -57,7 +57,11 @@ from app.services.adapters.task_kinds.running_tasks import get_running_tasks_for
 from app.services.base import BaseService
 from app.services.readers.kinds import KindType, kindReader
 from app.services.readers.users import userReader
-from app.services.team_access_policy import TEAM_USE_ROLE, team_usage_summary
+from app.services.team_access_policy import (
+    TEAM_USE_ROLE,
+    can_edit_team,
+    team_usage_summary,
+)
 from app.stores.tasks import task_store
 from shared.telemetry.decorators import trace_sync
 from shared.utils.crypto import decrypt_sensitive_data, is_data_encrypted
@@ -1255,6 +1259,13 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         if not team:
             # Fallback: check group namespace permission for group teams
             team = kindReader.get_by_id(db, KindType.TEAM, team_id)
+            logger.warning(
+                "[TeamDetail] Configuration access unresolved: "
+                "team_id=%s viewer_user_id=%s resource_exists=%s",
+                team_id,
+                user_id,
+                team is not None,
+            )
             if not team:
                 raise HTTPException(status_code=404, detail="Team not found")
             if team.namespace != "default":
@@ -1347,19 +1358,13 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             raise HTTPException(status_code=404, detail="Team not found")
 
         # Check permissions
-        if team.namespace != "default":
-            # Group team - check permission
-            if not check_group_permission(
-                db, user_id, team.namespace, GroupRole.Developer
-            ):
+        if not can_edit_team(db, team, user_id):
+            if team.namespace != "default":
                 raise HTTPException(
                     status_code=403,
                     detail=f"You need at least Developer role in group '{team.namespace}' to update this team",
                 )
-        else:
-            # Personal team - check ownership
-            if team.user_id != user_id:
-                raise HTTPException(status_code=403, detail="Access denied")
+            raise HTTPException(status_code=403, detail="Access denied")
 
         update_data = obj_in.model_dump(exclude_unset=True)
         old_name = team.name

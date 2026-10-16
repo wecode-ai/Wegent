@@ -6,7 +6,10 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { verifyDwsCloudAccount } from '../modules/dws-account-auth.mjs'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
-import { verifyConversationQrAuthorization } from '../modules/plugin-conversation-auth.mjs'
+import {
+  createConversationAuthModelFixture,
+  verifyConversationQrAuthorization,
+} from '../modules/plugin-conversation-auth.mjs'
 import {
   createGithubManageConnectionFixture,
   verifyGithubManageConnectionConsent,
@@ -21,6 +24,7 @@ import {
 import {
   assistantMessage,
   functionCall,
+  latestModelInputText,
   readRequestBody,
   responseCompleted,
   responseCreated,
@@ -95,7 +99,7 @@ export async function createDesktopScenario({
   let command
   let businessWorkspace
   let toolResult = null
-  const qrRequests = { preflight: 0, resume: 0 }
+  const authModel = createConversationAuthModelFixture({ slug, qrPrompt, ghResumePrompt })
   let ordinaryRequests = 0
   const qrApproval = join(homePath, 'conversation-qr-approved')
   const fixtureRoot = join(resultDir, slug)
@@ -125,6 +129,8 @@ print(json.dumps({"status":"ok" if sys.argv[1] != "health" or source.exists() el
 from pathlib import Path
 approval = Path.home() / "conversation-qr-approved"
 action = sys.argv[1]
+with (Path.home() / "conversation-qr-events.jsonl").open("a") as log:
+    log.write(json.dumps({"action": action, "revision": sys.argv[2] if len(sys.argv) > 2 else "original"}) + "\\n")
 if action == "health":
     result = {"status": "error", "hint": "E2E_QR_HEALTH_FAILED"} if (Path.home() / "conversation-qr-health-fail").exists() else {"status": "ok" if approval.exists() else "need_login"}
 elif action == "logout":
@@ -488,25 +494,12 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
       const id = `account-auth-${Date.now()}`
       let events
       const requestText = JSON.stringify(body)
-      if (requestText.includes(ordinaryPrompt)) {
+      const authEvents = await authModel.respond(body)
+      if (authEvents) {
+        events = authEvents
+      } else if (latestModelInputText(body).includes(ordinaryPrompt)) {
         ordinaryRequests += 1
         events = [assistantMessage(`${ordinaryPrompt} completed`)]
-      } else if (requestText.includes(ghResumePrompt)) {
-        events = [
-          assistantMessage(
-            'connector_auth_required\n\n- `pluginKey`: `github`\n- `connectorSlug`: `wework-github-cli`\n\nGitHub CLI login is required.'
-          ),
-        ]
-      } else if (requestText.includes(qrPrompt)) {
-        const mode = requestText.includes(`${qrPrompt} resume`) ? 'resume' : 'preflight'
-        qrRequests[mode] += 1
-        events = [
-          assistantMessage(
-            mode === 'resume' && qrRequests.resume === 1
-              ? `connector_auth_required\npluginKey=${slug}\nconnectorSlug=conversation-qr`
-              : `${qrPrompt} ${mode} completed`
-          ),
-        ]
       } else if (requestText.includes(prompt) && command) {
         const result = accountCommandResult(body.input, callId)
         if (result?.sessionId) {
@@ -841,13 +834,13 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
       await verifyConversationQrAuthorization({
         control,
         slug,
-        qrPrompt,
         ordinaryPrompt,
-        qrRequests,
+        authModel,
         getOrdinaryRequests: () => ordinaryRequests,
         qrApproval,
         captureScreenshot,
         homePath,
+        waitForValue,
         pluginRoots: await (async () => {
           const manifest = JSON.parse(
             await readFile(join(executorHome, 'capabilities/manifest-v2.json'), 'utf8')
@@ -882,15 +875,23 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
       for (const action of ['cancel', 'ordinary', 'resume']) {
         await control.command('click', '[data-testid="new-chat-button"]')
         await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR)
-        const ghDraft =
+        const reference =
           action === 'resume'
-            ? ghResumePrompt
+            ? ''
             : action === 'cancel'
-              ? '[$GitHub](plugin://github@openai-curated-remote) List my repositories'
-              : '[$GitHub](app://connector_account_specific_id) List my repositories'
+              ? '[$GitHub](plugin://github@openai-curated-remote) '
+              : '[$GitHub](app://connector_account_specific_id) '
+        const ghDraft = `${reference}${ghResumePrompt} ${action}`
+        const previousRequests = authModel.getGithubRequests()
         await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: ghDraft })
         await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
         await control.command('waitFor', '[data-testid="github-cli-login"]')
+        assert.equal(
+          authModel.getGithubRequests(),
+          previousRequests + 1,
+          'GitHub authorization blocked sending instead of responding to the runtime error'
+        )
+        assert.equal(await control.command('getValue', ACTIVE_COMPOSER_SELECTOR), '')
         const pendingGh = JSON.parse(await control.command('snapshot', 'body'))
         assert.ok(
           !pendingGh.testIds.includes('github-cli-device-code'),
@@ -898,18 +899,10 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
         )
         if (action === 'cancel') {
           await control.command('click', '[data-testid="connector-auth-cancel"]')
-          const pluginChipSelector = '[data-testid="composer-plugin-chip-github"]'
-          await control.command('waitFor', pluginChipSelector)
-          // getValue returns display text; verify the serialized reference separately.
           assert.equal(
             await control.command('getValue', ACTIVE_COMPOSER_SELECTOR),
-            'GitHub List my repositories'
-          )
-          assert.equal(
-            await control.command('getAttribute', pluginChipSelector, {
-              value: 'data-composer-skill-reference',
-            }),
-            '[$GitHub](plugin://github@openai-curated-remote)'
+            '',
+            'Cancelling GitHub authorization restored an already sent message'
           )
           const cancelledGh = JSON.parse(await control.command('snapshot', 'body'))
           assert.ok(
@@ -923,7 +916,7 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
         const recovered = JSON.parse(await control.command('snapshot', 'body'))
         assert.ok(
           !recovered.testIds.includes('github-cli-auth'),
-          'gh preflight blocked ordinary chat'
+          'Runtime GitHub authorization blocked ordinary chat'
         )
       }
       await captureScreenshot(control, 'github-cli-ordinary-chat-recovered.png', 'body')
@@ -973,10 +966,13 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
             legacyManagedHealth: true,
             localLogoutDisconnectsCloud: true,
             originalLoginReconnectsCloud: true,
-            managedConversationQrPreflight: true,
-            managedConversationQrResume: true,
+            managedConversationPluginSendsBeforeAuth: true,
+            managedConversationQrOnUse: true,
+            conversationAuthContinuesWithoutReplay: true,
+            conversationAuthPreservesDraft: true,
+            conversationAuthCancellationNeverContinues: true,
             conversationAuthMetadataReplacement: true,
-            conversationAuthHealthErrorPreservesDraft: true,
+            conversationAuthHealthErrorAllowsNewMessage: true,
             dwsOfficialSourceStoreAutomaticMigration: true,
             dwsUnrelatedAccountPreserved: true,
             dwsCloudExecution: true,

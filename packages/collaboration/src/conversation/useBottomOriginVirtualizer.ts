@@ -80,7 +80,18 @@ export function useBottomOriginVirtualizer<
           scrolling: isScrolling,
         })
       }
+      const startedAt = isConversationDiagnosticsEnabled() ? performance.now() : null
       callback(offset, isScrolling)
+      if (startedAt === null) return
+      const elapsedMs = performance.now() - startedAt
+      if (elapsedMs >= 16) {
+        recordConversationDiagnostic('search-virtual-render', {
+          elapsedMs,
+          scrolling: isScrolling,
+          rangeStart: instance.range?.startIndex,
+          rangeEnd: instance.range?.endIndex,
+        })
+      }
     })
     return () => {
       if (observedOffsetCallbackRef.current === callback) {

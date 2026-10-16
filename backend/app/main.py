@@ -269,6 +269,7 @@ async def _application_lifespan(app: FastAPI):
                     logger.info("✓ Alembic migrations completed successfully")
                 except subprocess.CalledProcessError as e:
                     logger.error(f"✗ Error running Alembic migrations: {e}")
+                    raise
                 except Exception as e:
                     logger.error(f"✗ Unexpected error running Alembic migrations: {e}")
                     raise

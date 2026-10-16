@@ -33,7 +33,7 @@ from app.models.user import User
 from app.schemas.base_role import BaseRole, has_permission
 from app.schemas.delivery import LoopItemCreate, LoopItemUpdate
 from app.schemas.project_chat import LoopItemApproval, LoopItemAssign
-from app.services.cloud_project_visibility import explicit_project_member_ids
+from app.services.cloud_project_visibility import project_participant_ids
 from app.services.cloud_projects.access import (
     CloudProjectAccess,
     IssueAction,
@@ -336,7 +336,9 @@ class ExternalLoopItemProvider:
             )
             db.commit()
         elif values.assignee_team_id:
-            team = runnable_wegent_team(db, user_id, values.assignee_team_id)
+            team = runnable_wegent_team(
+                db, user_id, values.assignee_team_id, project_id=project.id
+            )
             self._ensure_index_row(
                 db,
                 item_id=item_id,
@@ -1002,10 +1004,14 @@ class ExternalLoopItemProvider:
                 )
             return self._assignee_label("group", str(group["id"]), str(group["name"]))
         if values.assignee_team_id:
-            team = runnable_wegent_team(db, user_id, values.assignee_team_id)
+            team = runnable_wegent_team(
+                db, user_id, values.assignee_team_id, project_id=project.id
+            )
             return self._assignee_label("team", str(team.id), team.name)
         if values.assignee_user_id:
-            if values.assignee_user_id not in explicit_project_member_ids(db, project):
+            if values.assignee_user_id not in project_participant_ids(
+                db, project, required_role=BaseRole.Developer
+            ):
                 raise HTTPException(422, "Assignee is not a member of this project")
             target = db.get(User, values.assignee_user_id)
             return self._assignee_label(
@@ -1095,7 +1101,9 @@ class ExternalLoopItemProvider:
                     priority=priority,
                 )
         elif values.assignee_team_id:
-            team = runnable_wegent_team(db, user_id, values.assignee_team_id)
+            team = runnable_wegent_team(
+                db, user_id, values.assignee_team_id, project_id=project.id
+            )
             self._ensure_index_row(
                 db,
                 item_id=item_id,
@@ -1260,7 +1268,9 @@ class ExternalLoopItemProvider:
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "User assignee id must be numeric",
                 ) from exc
-            if target_user_id not in explicit_project_member_ids(db, project):
+            if target_user_id not in project_participant_ids(
+                db, project, required_role=BaseRole.Developer
+            ):
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "Assignee is not a member of this project",
@@ -1280,7 +1290,9 @@ class ExternalLoopItemProvider:
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "Team assignee id must be numeric",
                 ) from exc
-            team = runnable_wegent_team(db, user_id, target_team_id)
+            team = runnable_wegent_team(
+                db, user_id, target_team_id, project_id=project.id
+            )
             assignee_label = self._assignee_label("team", str(team.id), team.name)
             assignee_name = team.name
         elif values.assignee_type == "group":
@@ -1318,6 +1330,7 @@ class ExternalLoopItemProvider:
                 resolve_routing(
                     db,
                     config=config,
+                    agent_id=agent.id,
                     project_id=str(project.id),
                     issue_id=item_id,
                     user_id=user_id,
@@ -1562,6 +1575,7 @@ class ExternalLoopItemProvider:
                 metadata, user_id, "user", assignee_id or None, assignee_name
             )
         row.metadata_json = metadata
+        db.flush()
         return row
 
     def _dispatch_collaboration_group(

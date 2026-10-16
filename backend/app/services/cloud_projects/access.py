@@ -23,6 +23,7 @@ from app.services.cloud_project_visibility import (
 class CloudProjectAccess:
     project: CloudProject
     role: BaseRole
+    sources: tuple[dict, ...] = ()
 
     @property
     def is_viewer(self) -> bool:
@@ -103,12 +104,10 @@ def issue_permissions(
     """
 
     is_developer = has_permission(access.role, BaseRole.Developer)
-    # The Issue creator keeps control of their own assignee regardless of role.
-    is_creator = issue_creator_user_id is not None and issue_creator_user_id == user_id
     return IssuePermissions(
         edit_content=is_developer,
         comment=is_developer,
-        assign=is_developer or is_creator,
+        assign=is_developer,
         execute=is_developer,
     )
 
@@ -135,12 +134,16 @@ def require_cloud_project_role(
     user_id: int,
     required_role: BaseRole = BaseRole.Viewer,
 ) -> CloudProjectAccess:
-    result = project_access_query(db, user_id, cloud_project_id).first()
-    if result is None:
+    from app.services.collaboration_permissions import collaboration_permission_service
+
+    decision = collaboration_permission_service.check(
+        db, user_id, "read", cloud_project_id
+    )
+    if decision.role is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Cloud project not found")
-    project, priority = result
-    role = ROLES_BY_PRIORITY[priority]
+    project = db.get(CloudProject, str(cloud_project_id))
+    role = decision.role
 
     if not has_permission(role, required_role):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
-    return CloudProjectAccess(project=project, role=role)
+    return CloudProjectAccess(project=project, role=role, sources=decision.sources)

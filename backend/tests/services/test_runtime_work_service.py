@@ -2753,7 +2753,7 @@ def test_team_runtime_compilation_reuses_canonical_builder_without_task_rows(
     monkeypatch.setattr(
         project_automation_domain,
         "runnable_wegent_team",
-        lambda db, user_id, team_id: team,
+        lambda db, user_id, team_id, *, project_id: team,
     )
     execution_request = SimpleNamespace(workspace={}, subtask_id=123456)
     builder = MagicMock()

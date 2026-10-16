@@ -85,9 +85,7 @@ export function useProjectCreateController({
   const [taskProvider, setTaskProvider] =
     useState<ProjectCreateProvider>("local");
   const [visibility, setVisibility] = useState<ProjectVisibility>("private");
-  const [publicAccessRole, setPublicAccessRole] = useState<
-    "Viewer" | "Developer"
-  >("Viewer");
+  const [publicAccessRole, setPublicAccessRole] = useState<"Viewer">("Viewer");
   const [defaultIssueSecurity, setDefaultIssueSecurity] = useState<
     "open" | "related"
   >("open");

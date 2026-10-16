@@ -43,6 +43,10 @@ from app.schemas.project_chat import (
     ProjectChatWorkspaceBindingView,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.collaboration_permissions import (
+    project_agent_visible,
+    require_project_agent_visibility,
+)
 from app.services.device.identity import (
     device_identity_ids,
     record_id_from_route,
@@ -168,7 +172,7 @@ BOT_RUNTIME_PROFILE_ID_KEY = "default_runtime_profile_id"
 BOT_PLUGINS_KEY = "plugins"
 BOT_ADDITIONAL_SKILLS_KEY = "additional_skills"
 BOT_MCP_SERVERS_KEY = "mcp_servers"
-BOT_DEFAULT_VISIBILITY = "creator_admin"
+BOT_DEFAULT_VISIBILITY = "public"
 BOT_DEFAULT_EXECUTION_ENVIRONMENT = "local"
 BOT_DEFAULT_EXECUTION_MODE = "auto"
 BOT_DEFAULT_CAPABILITY_MODE = "follow_device"
@@ -219,7 +223,11 @@ def bot_config(row: ProjectChatAgent) -> dict[str, object]:
     return {
         "runtime": bot_runtime(row),
         "wegent_team_id": metadata.get(BOT_WEGENT_TEAM_ID_KEY),
-        "visibility": metadata.get(BOT_VISIBILITY_KEY, BOT_DEFAULT_VISIBILITY),
+        "visibility": (
+            metadata.get("visibility")
+            if metadata.get("visibility") in {"public", "creator_admin", "private"}
+            else BOT_DEFAULT_VISIBILITY
+        ),
         "execution_environment": metadata.get(
             BOT_EXECUTION_ENVIRONMENT_KEY, BOT_DEFAULT_EXECUTION_ENVIRONMENT
         ),
@@ -228,6 +236,7 @@ def bot_config(row: ProjectChatAgent) -> dict[str, object]:
         ),
         "capability_mode": capability_mode,
         "execution_device_id": row.device_id,
+        "permission_migration_reason": metadata.get("permission_migration_reason"),
         "routing_configuration_required": metadata.get(
             "routing_configuration_required", False
         ),
@@ -281,7 +290,7 @@ def compiled_bot_config(
     )
     from app.services.project_automation_domain import wegent_team
 
-    team = wegent_team(db, binding_user_id, team_id)
+    team = wegent_team(db, binding_user_id, team_id, project_id=row.cloud_project_id)
     resolved_execution_user_id = int(execution_user_id or binding_user_id)
     try:
         validate_team_execution_readiness(
@@ -477,14 +486,23 @@ class ProjectChatService:
     """Read and append messages in a project's single shared chat."""
 
     def list_agents(
-        self, db: Session, *, user_id: int, project_id: str
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        project_id: str,
+        include_archived: bool = False,
     ) -> list[ProjectChatAgentView]:
         access = require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
+        if include_archived:
+            require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
         rows = (
             db.query(ProjectChatAgent)
             .filter(
                 ProjectChatAgent.cloud_project_id == project_id,
-                ProjectChatAgent.status == "active",
+                ProjectChatAgent.status.in_(
+                    ["active", "archived"] if include_archived else ["active"]
+                ),
                 loop_datetime_is_unset(ProjectChatAgent.deleted_at),
             )
             .order_by(ProjectChatAgent.created_at.asc())
@@ -493,7 +511,7 @@ class ProjectChatService:
         return [
             self.agent_to_view(row, db=db, viewer_user_id=user_id)
             for row in rows
-            if self._agent_visible_to_user(row, user_id, access.role)
+            if project_agent_visible(row, user_id)
         ]
 
     def create_agent(
@@ -522,9 +540,22 @@ class ProjectChatService:
             runtime=request.runtime,
         )
         if request.runtime == "wegent":
+            self._authorize_team_binding(
+                db,
+                project,
+                user_id,
+                request.wegent_team_id,
+                request.share_with_workspace,
+            )
             from app.services.project_automation_domain import runnable_wegent_team
 
-            runnable_wegent_team(db, user_id, request.wegent_team_id)
+            runnable_wegent_team(
+                db,
+                user_id,
+                request.wegent_team_id,
+                project_id=project_id,
+                require_binding=False,
+            )
         elif request.default_runtime_profile_id:
             from app.services.runtime_profiles import runtime_profile_service
 
@@ -612,7 +643,20 @@ class ProjectChatService:
             ),
             metadata_json=metadata,
         )
+        row.metadata_json = {
+            **(row.metadata_json or metadata),
+            "authorization_version": 2,
+        }
         db.add(row)
+        db.flush()
+        if request.runtime != "wegent":
+            from app.services.collaboration_permissions import (
+                collaboration_permission_service,
+            )
+
+            collaboration_permission_service.share_project_agent(
+                db, project, row, user_id
+            )
         self._commit(db)
         db.refresh(row)
         return self.agent_to_view(row, db=db, viewer_user_id=user_id)
@@ -628,6 +672,7 @@ class ProjectChatService:
     ) -> ProjectChatAgentView:
         require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
         row = self._agent_row(db, project_id=project_id, agent_id=agent_id)
+        require_project_agent_visibility(row, user_id)
         if row.version != request.version:
             raise HTTPException(status.HTTP_409_CONFLICT, "Project chat AI changed")
         if (
@@ -648,10 +693,20 @@ class ProjectChatService:
             if "wegent_team_id" in request.model_fields_set
             else metadata.get(BOT_WEGENT_TEAM_ID_KEY)
         )
-        if runtime == "wegent":
+        if runtime == "wegent" and request.status != "archived":
             from app.services.project_automation_domain import runnable_wegent_team
 
-            runnable_wegent_team(db, row.created_by_user_id or user_id, team_id)
+            project = db.get(CloudProject, project_id)
+            self._authorize_team_binding(
+                db, project, user_id, team_id, request.share_with_workspace
+            )
+            runnable_wegent_team(
+                db,
+                user_id,
+                team_id,
+                project_id=project_id,
+                require_binding=False,
+            )
             row.device_id = None
             row.local_project_id = None
             metadata[BOT_RUNTIME_PROFILE_ID_KEY] = None
@@ -702,6 +757,31 @@ class ProjectChatService:
                 model_policy=ModelPolicy.model_validate(metadata["model_policy"]),
                 runtime=metadata.get("runtime"),
             )
+        if request.status == "active" and not metadata.get(BOT_WEGENT_TEAM_ID_KEY):
+            from app.services.collaboration_permissions import (
+                collaboration_permission_service,
+            )
+
+            project = db.get(CloudProject, project_id)
+            if request.share_with_workspace:
+                collaboration_permission_service.share_project_agent(
+                    db, project, row, user_id
+                )
+            row.status = "active"
+            collaboration_permission_service.require_project_agent(
+                db, project_id, row.id
+            )
+            metadata.pop("permission_migration_reason", None)
+        if request.status == "active" and metadata.get(BOT_WEGENT_TEAM_ID_KEY):
+            project = db.get(CloudProject, project_id)
+            self._authorize_team_binding(
+                db,
+                project,
+                user_id,
+                metadata[BOT_WEGENT_TEAM_ID_KEY],
+                request.share_with_workspace,
+            )
+            metadata.pop("permission_migration_reason", None)
         if request.capability_mode is not None:
             metadata[BOT_CAPABILITY_MODE_KEY] = request.capability_mode
         if request.visibility is not None:
@@ -791,7 +871,17 @@ class ProjectChatService:
             row.status = request.status
         row.updated_by_user_id = user_id
         row.version += 1
+        db.flush()
+        from app.services.collaboration_revocation import (
+            revoke_unauthorized_project_work,
+        )
+        from app.services.loop_item_executions.cancellation import (
+            request_execution_cancellations,
+        )
+
+        pending = revoke_unauthorized_project_work(db, row.cloud_project_id)
         self._commit(db)
+        request_execution_cancellations(pending)
         db.refresh(row)
         return self.agent_to_view(row, db=db, viewer_user_id=user_id)
 
@@ -990,6 +1080,7 @@ class ProjectChatService:
             agent_id=request.agent_id,
             active_only=True,
         )
+        require_project_agent_visibility(configured_agent, user_id)
         trigger = None
         if request.trigger_message_id:
             trigger = (
@@ -2163,27 +2254,30 @@ class ProjectChatService:
         )
         if row is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Project chat AI not found")
+        if active_only:
+            from app.services.collaboration_permissions import (
+                collaboration_permission_service,
+            )
+
+            collaboration_permission_service.require_project_agent(
+                db, project_id, row.id
+            )
         return row
 
     @staticmethod
-    def _agent_visible_to_user(
-        row: ProjectChatAgent, user_id: int, role: BaseRole
-    ) -> bool:
-        """Robots are project assets that follow their creator's environment.
+    def _authorize_team_binding(db, project, user_id, team_id, share_with_workspace):
+        from app.services.collaboration_permissions import (
+            collaboration_permission_service,
+        )
+        from app.services.workspaces import workspace_service
 
-        Visibility controls who can see and assign a robot: private is the
-        creator only, creator_admin is the creator plus project admins, and
-        public is every project member.
-        """
-
-        if row.created_by_user_id == user_id:
-            return True
-        visibility = bot_config(row).get("visibility")
-        if visibility == "public":
-            return True
-        if visibility == "creator_admin":
-            return role in BOT_ADMIN_ROLES
-        return False
+        if share_with_workspace:
+            workspace_service.ensure_accessible_agent_authorized(
+                db, workspace_id=project.workspace_id, user_id=user_id, team_id=team_id
+            )
+        collaboration_permission_service.require_project_team(
+            db, project.id, team_id, require_binding=False
+        )
 
     @staticmethod
     def _validate_execution_device(
@@ -2212,6 +2306,7 @@ class ProjectChatService:
     ) -> bool:
         executable_fields = {
             "runtime",
+            "visibility",
             "wegent_team_id",
             "model",
             "model_type",
@@ -2251,6 +2346,18 @@ class ProjectChatService:
         viewer_user_id: int | None = None,
     ) -> ProjectChatAgentView:
         config = bot_config(row)
+        can_edit = (
+            viewer_user_id is not None and viewer_user_id == row.created_by_user_id
+        )
+        if db is not None and config.get("wegent_team_id") is not None:
+            from app.services.team_access_policy import can_edit_team
+
+            team = db.get(Kind, int(config["wegent_team_id"]))
+            can_edit = bool(
+                team is not None
+                and viewer_user_id is not None
+                and can_edit_team(db, team, viewer_user_id)
+            )
         created_by_user_name = None
         if db is not None and row.created_by_user_id:
             from app.models.user import User
@@ -2273,6 +2380,25 @@ class ProjectChatService:
                 deviceId=row.device_id or None,
             )
         )
+        can_use = False
+        unavailable_reason = config.get("permission_migration_reason")
+        if db is not None and viewer_user_id is not None:
+            from app.services.collaboration_permissions import (
+                collaboration_permission_service,
+            )
+
+            can_use = collaboration_permission_service.check(
+                db, viewer_user_id, "execute", row.cloud_project_id
+            ).allowed
+            if row.status == "active":
+                try:
+                    collaboration_permission_service.require_project_agent(
+                        db, row.cloud_project_id, row.id
+                    )
+                except HTTPException:
+                    can_use = False
+                    unavailable_reason = "resource_authorization_revoked"
+        can_use = can_use and row.status == "active"
         return ProjectChatAgentView(
             id=row.id,
             project_id=row.cloud_project_id,
@@ -2342,6 +2468,9 @@ class ProjectChatService:
             ),
             created_by_user_id=row.created_by_user_id,
             created_by_user_name=created_by_user_name,
+            can_edit=can_edit,
+            can_use=can_use,
+            unavailable_reason=unavailable_reason,
             version=row.version,
             created_at=row.created_at.isoformat(),
             updated_at=row.updated_at.isoformat(),

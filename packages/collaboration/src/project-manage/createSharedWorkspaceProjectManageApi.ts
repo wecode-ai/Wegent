@@ -53,6 +53,7 @@ export function createSharedWorkspaceProjectManageApi(
         tags: values.tags,
         visibility: values.visibility,
         publicAccess: values.public_access,
+        membershipMode: values.membership_mode,
         defaultIssueSecurity: values.default_issue_security,
         providerConfig: values.provider_config,
         boardConfig: values.board_config,

@@ -355,7 +355,9 @@ class ProjectAutomationExecution:
             return
         if not target_id.isdigit():
             raise RuntimeError("The collaboration-group Agent is unavailable")
-        team = runnable_wegent_team(db, owner.id, int(target_id))
+        team = runnable_wegent_team(
+            db, owner.id, int(target_id), project_id=rule.cloud_project_id
+        )
         self._assign_team_target(
             db,
             owner=owner,

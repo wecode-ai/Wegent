@@ -1,5 +1,6 @@
 import type { VirtualMessageMeasurement } from '@wegent/collaboration/conversation'
 import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
+import { useMemo } from 'react'
 import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
 import { useDesktopUserMessageServices } from './useDesktopUserMessageServices'
 import { CodexInlineVisualizationHost } from './CodexInlineVisualizationHost'
@@ -24,12 +25,16 @@ export function useDesktopConversationPresentation(
   messages: WorkbenchMessage[] = [],
   workspacePath?: string
 ) {
-  const hasSkillReferences = messages.some(
-    message =>
-      message.role === 'user' &&
-      parseComposerMentions(message.content).some(
-        mention => composerSkillFilePath(mention.reference) !== null
-      )
+  const hasSkillReferences = useMemo(
+    () =>
+      messages.some(
+        message =>
+          message.role === 'user' &&
+          parseComposerMentions(message.content).some(
+            mention => composerSkillFilePath(mention.reference) !== null
+          )
+      ),
+    [messages]
   )
   const userMessageServices = useDesktopUserMessageServices(hasSkillReferences, workspacePath)
   return {

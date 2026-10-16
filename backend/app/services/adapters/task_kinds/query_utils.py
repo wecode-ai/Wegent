@@ -24,10 +24,21 @@ def get_accessible_task_ids_and_total(
 
 
 def get_owned_task_ids_and_total(
-    db: Session, *, user_id: int, skip: int, limit: int, extra_limit: int
+    db: Session,
+    *,
+    user_id: int,
+    skip: int,
+    limit: int,
+    extra_limit: int,
+    title: Optional[str] = None,
 ) -> Tuple[List[int], int]:
     return task_store.list_owned_task_ids(
-        db, user_id=user_id, skip=skip, limit=limit, extra_limit=extra_limit
+        db,
+        user_id=user_id,
+        skip=skip,
+        limit=limit,
+        extra_limit=extra_limit,
+        title=title,
     )
 
 

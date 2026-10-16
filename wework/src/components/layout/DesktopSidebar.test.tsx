@@ -6,7 +6,7 @@ import '@/i18n'
 import { DesktopSidebar } from './DesktopSidebar'
 import { applyAppearance } from '@/features/appearance/applyAppearance'
 import { defaultAppearance } from '@/features/appearance/presets'
-import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
+import type { DeviceInfo, ProjectWithTasks, RuntimeWorkListResponse } from '@/types/api'
 import type { CloudWorkStatus } from '@/types/workbench'
 import {
   CloudConnectionContext,
@@ -536,6 +536,79 @@ describe('DesktopSidebar', () => {
     })
   })
 
+  test.each([false, true])(
+    'keeps an open project menu when a refresh adds its sidebar mirror (pinned: %s)',
+    async pinned => {
+      const onSetRuntimeProjectPinned = vi.fn().mockResolvedValue(undefined)
+      const runtimeWork: RuntimeWorkListResponse = {
+        projects: [
+          {
+            project: {
+              id: 7,
+              key: '/workspace/project',
+              name: 'Cloud project',
+              stateDeviceId: 'cloud-device',
+              source: 'local_project',
+              pinned,
+            },
+            totalTasks: 0,
+            deviceWorkspaces: [
+              {
+                deviceId: 'cloud-device',
+                workspacePath: '/workspace/project',
+                available: true,
+                tasks: [],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 0,
+      }
+      const props = createSidebarProps({
+        runtimeWork,
+        onSetRuntimeProjectPinned,
+        devices: [localDevice(), localDevice({ device_id: 'cloud-device', device_type: 'remote' })],
+      })
+      const lifecycleStore = new RuntimeTaskLifecycleStore('sidebar-project-mirror-refresh')
+      const renderTree = (work: RuntimeWorkListResponse) => (
+        <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+          <DesktopSidebar {...props} runtimeWork={work} />
+        </RuntimeTaskLifecycleProvider>
+      )
+      const view = render(renderTree(runtimeWork))
+      const trigger = screen.getByTestId('project-menu-7')
+      await userEvent.click(trigger)
+      const menu = screen.getByTestId('project-menu-7-menu')
+      const sidebarStateKey = 'wegent-remote:cloud-device:%2Fworkspace%2Fproject'
+
+      view.rerender(
+        renderTree({
+          ...runtimeWork,
+          projects: runtimeWork.projects.map(work => ({
+            ...work,
+            project: {
+              ...work.project,
+              stateDeviceId: 'local-device',
+              sidebarStateKey,
+              source: 'remote_project',
+            },
+          })),
+        })
+      )
+
+      expect(screen.getByTestId('project-menu-7')).toBe(trigger)
+      expect(screen.getByTestId('project-menu-7-menu')).toBe(menu)
+      expect(trigger).toHaveAttribute('aria-expanded', 'true')
+      await userEvent.click(screen.getByTestId('pin-project-7'))
+      expect(onSetRuntimeProjectPinned).toHaveBeenCalledWith({
+        deviceId: 'local-device',
+        projectKey: sidebarStateKey,
+        pinned: !pinned,
+      })
+    }
+  )
+
   test('starts project pointer sorting only from its content-sized activator', async () => {
     const onReorderRuntimeProjects = vi.fn().mockResolvedValue(undefined)
     renderSidebar({
@@ -604,12 +677,12 @@ describe('DesktopSidebar', () => {
       onReorderRuntimeProjects,
     })
 
-    const remoteSortable = screen
-      .getByTestId('project-row-8')
-      .closest('[data-sidebar-sortable-id]') as HTMLElement
-    const localSortable = screen
-      .getByTestId('project-row-7')
-      .closest('[data-sidebar-sortable-id]') as HTMLElement
+    const remoteSortable = document.querySelector(
+      '[data-sidebar-sortable-id="project:8"]'
+    ) as HTMLElement
+    const localSortable = document.querySelector(
+      '[data-sidebar-sortable-id="project:7"]'
+    ) as HTMLElement
     const remoteActivator = screen.getByTestId('project-drag-activator-8')
     const remoteButton = remoteActivator.closest('button') as HTMLButtonElement
     const remoteMetadata = screen.getByTestId('project-device-status-8')

@@ -40,6 +40,7 @@ import { areMessageListPropsEqual } from './messageListPropsEqual'
 import {
   createMarkdownWindowingScope,
   MarkdownWindowingContext,
+  MarkdownWindowingDisabledContext,
 } from '../markdown/MarkdownWindowingScope'
 import {
   getConversationDiagnosticContext,
@@ -67,6 +68,7 @@ export interface MessageListProps {
   isWaitingForAssistant?: boolean
   disableContentVisibility?: boolean
   forceVirtualMessageId?: string | null
+  searchMessageId?: string
   devices?: Array<{ device_id: string; status: string }>
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
@@ -150,6 +152,7 @@ export const MessageList = memo(function MessageList({
   isWaitingForAssistant = false,
   disableContentVisibility = false,
   forceVirtualMessageId = null,
+  searchMessageId,
   devices = [],
   onRetryFailedMessage,
   onSwitchModelForFailedMessage,
@@ -342,9 +345,17 @@ export const MessageList = memo(function MessageList({
     const scroller = scope.scrollElementRef?.current
     if (!scroller) return
     const renderPendingChunks = () => {
+      const startedAt = isConversationDiagnosticsEnabled() ? performance.now() : null
       const renders = scope.getViewportRenders()
-      if (renders.length === 0) return
-      flushSync(() => renders.forEach(render => render()))
+      if (renders.length > 0) flushSync(() => renders.forEach(render => render()))
+      if (startedAt === null) return
+      const elapsedMs = performance.now() - startedAt
+      if (elapsedMs >= 16) {
+        recordConversationDiagnostic('search-scroll-render', {
+          elapsedMs,
+          renderedCount: renders.length,
+        })
+      }
     }
     scroller.addEventListener('scroll', renderPendingChunks, { passive: true })
     return () => scroller.removeEventListener('scroll', renderPendingChunks)
@@ -496,7 +507,18 @@ export const MessageList = memo(function MessageList({
   useEffect(() => {
     if (!useContentVisibility && (!onAddSelectionToConversation || !onAskSelectionInSidebar)) return
 
-    const updateSelectionState = (preserveCapturedSelection = false) => {
+    const updateSelectionState = (
+      preserveCapturedSelection = false,
+      eventTarget?: EventTarget | null
+    ) => {
+      if (
+        isEditableSelectionTarget(eventTarget) ||
+        isEditableSelectionTarget(document.activeElement)
+      ) {
+        setIsTextSelectionActive(false)
+        setTextSelection(null)
+        return
+      }
       const selection = document.getSelection?.()
       const root = listRef.current
       if (!selection || !root || selection.isCollapsed || selection.rangeCount === 0) {
@@ -510,7 +532,12 @@ export const MessageList = memo(function MessageList({
       const selectionTouchesList =
         isNodeInsideElement(selection.anchorNode, root) ||
         isNodeInsideElement(selection.focusNode, root)
-      setIsTextSelectionActive(useContentVisibility && selectionTouchesList)
+      if (!selectionTouchesList) {
+        setIsTextSelectionActive(false)
+        setTextSelection(null)
+        return
+      }
+      setIsTextSelectionActive(useContentVisibility)
       if (!onAddSelectionToConversation || !onAskSelectionInSidebar) return
 
       const range = selection.getRangeAt(0)
@@ -526,12 +553,20 @@ export const MessageList = memo(function MessageList({
         return
       }
       const rect = range.getBoundingClientRect()
-      setTextSelection({
+      const nextSelection: MessageTextSelection = {
         text,
         left: Math.min(Math.max(rect.left + rect.width / 2, 120), window.innerWidth - 120),
         top: Math.max(rect.top - SELECTION_ACTION_GAP, 44),
         conversationKey,
-      })
+      }
+      setTextSelection(current =>
+        current?.text === nextSelection.text &&
+        current.left === nextSelection.left &&
+        current.top === nextSelection.top &&
+        current.conversationKey === nextSelection.conversationKey
+          ? current
+          : nextSelection
+      )
     }
 
     const scheduleSelectionUpdate = () => {
@@ -545,7 +580,7 @@ export const MessageList = memo(function MessageList({
       ) {
         return
       }
-      updateSelectionState()
+      updateSelectionState(false, event.target)
     }
 
     const handleBlur = () => {
@@ -560,6 +595,7 @@ export const MessageList = memo(function MessageList({
     document.addEventListener('pointercancel', finalizeSelectionUpdate)
     document.addEventListener('mouseup', finalizeSelectionUpdate)
     document.addEventListener('keyup', finalizeSelectionUpdate)
+    document.addEventListener('focusin', finalizeSelectionUpdate)
     document.addEventListener('selectionchange', scheduleSelectionUpdate)
     window.addEventListener('scroll', handleScroll, true)
     window.addEventListener('blur', handleBlur)
@@ -569,6 +605,7 @@ export const MessageList = memo(function MessageList({
       document.removeEventListener('pointercancel', finalizeSelectionUpdate)
       document.removeEventListener('mouseup', finalizeSelectionUpdate)
       document.removeEventListener('keyup', finalizeSelectionUpdate)
+      document.removeEventListener('focusin', finalizeSelectionUpdate)
       document.removeEventListener('selectionchange', scheduleSelectionUpdate)
       window.removeEventListener('scroll', handleScroll, true)
       window.removeEventListener('blur', handleBlur)
@@ -635,6 +672,7 @@ export const MessageList = memo(function MessageList({
               'min-w-0',
               useContentVisibility &&
                 !disableContentVisibility &&
+                searchMessageId !== message.id &&
                 !isTextSelectionActive &&
                 '[content-visibility:auto]',
               message.role === 'user' && 'flex justify-end'
@@ -646,6 +684,7 @@ export const MessageList = memo(function MessageList({
               <UserMessage
                 services={userMessageServices}
                 message={message}
+                forceExpanded={searchMessageId === message.id}
                 replyQuestions={replyQuestionsByMessageId.get(message.id)}
                 onBeforeToggle={onBeforeUserMessageToggle}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
@@ -671,10 +710,9 @@ export const MessageList = memo(function MessageList({
               />
             ) : (
               <AssistantMessage
+                forceExpanded={searchMessageId === message.id}
                 imageServices={userMessageServices.images}
-                renderVisualization={
-                  renderVisualization ? part => renderVisualization(part, message) : undefined
-                }
+                renderVisualization={renderVisualization}
                 message={message}
                 runtimeTurn={
                   message.turnId && lastAssistantMessageIdByTurn.get(message.turnId) === message.id
@@ -702,15 +740,20 @@ export const MessageList = memo(function MessageList({
             )}
           </article>
         )
+        const searchableArticle = (
+          <MarkdownWindowingDisabledContext.Provider value={searchMessageId === message.id}>
+            {article}
+          </MarkdownWindowingDisabledContext.Provider>
+        )
         const gap = renderGapAfterMessage?.(message, nextMessage)
         return virtualMessages ? (
           <div key={row.key} ref={row.measureRef} data-index={index} style={row.style}>
-            {article}
+            {searchableArticle}
             {gap}
           </div>
         ) : (
           <Fragment key={row.key}>
-            {article}
+            {searchableArticle}
             {gap}
           </Fragment>
         )
@@ -809,6 +852,17 @@ function isNodeInsideElement(node: Node | null, root: HTMLElement): boolean {
   }
 
   return Boolean(node.parentElement && root.contains(node.parentElement))
+}
+
+function isEditableSelectionTarget(target?: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    Boolean(
+      target.closest(
+        'input, textarea, [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"]'
+      )
+    )
+  )
 }
 
 function shouldRenderMessage(message: WorkbenchMessage): boolean {

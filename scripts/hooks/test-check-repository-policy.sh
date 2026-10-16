@@ -50,4 +50,34 @@ if ! grep -Fq "Found 1 unapproved repository policy match(es)." <<< "$OUTPUT"; t
     exit 1
 fi
 
+rm "$TARGET_REPO/unsafe.txt"
+printf '.live-architecture/\n' > "$TARGET_REPO/.gitignore"
+mkdir -p "$TARGET_REPO/.live-architecture"
+printf 'local evidence\n' > "$TARGET_REPO/.live-architecture/ledger.jsonl"
+
+run_policy() {
+    REPOSITORY_POLICY_ROOT="$TARGET_REPO" \
+    REPOSITORY_POLICY_PATTERN_B64="$PATTERN_B64" \
+    REPOSITORY_POLICY_APPROVED_B64="$APPROVED_B64" \
+    bash "$PROJECT_ROOT/scripts/hooks/check-repository-policy.sh"
+}
+
+# Ignored local records remain usable without being published.
+run_policy
+
+# Force-adding ignored records must still be rejected.
+git -C "$TARGET_REPO" add -f .live-architecture/ledger.jsonl
+set +e
+OUTPUT="$(run_policy 2>&1)"
+STATUS=$?
+set -e
+if [ "$STATUS" -ne 1 ] || ! grep -Fq 'Local architecture records must not be tracked' <<< "$OUTPUT"; then
+    echo "Expected tracked architecture records to be rejected."
+    echo "$OUTPUT"
+    exit 1
+fi
+
+git -C "$TARGET_REPO" rm --cached -q .live-architecture/ledger.jsonl
+run_policy
+
 echo "repository policy regression tests passed"

@@ -279,6 +279,10 @@ fn map_codex_notification(
 #[path = "background_terminal_tests.rs"]
 mod background_terminal_tests;
 
+#[cfg(test)]
+#[path = "subagent_event_tests.rs"]
+mod subagent_event_tests;
+
 struct EventEmitContext<'a> {
     event_tx: &'a Option<broadcast::Sender<Value>>,
     device_id: &'a str,
@@ -293,6 +297,7 @@ pub(crate) struct CodexNotificationEventMapper {
     subagent_item_ids: BTreeSet<String>,
     subagent_parent_ids: BTreeMap<String, String>,
     subagent_text_block_ids: BTreeMap<String, String>,
+    subagent_thread_ids_by_path: BTreeMap<String, String>,
     root_thread_id: Option<String>,
     process_text: Option<ProcessTextStream>,
     process_text_count: usize,
@@ -609,12 +614,14 @@ impl CodexNotificationEventMapper {
                 self.emit_tool_done(&emit_context, notification.params);
             }
             "subagent/activity" => {
+                let agent_thread_id = self.subagent_activity_thread_id(notification.params);
                 emit_subagent_activity(
                     event_tx,
                     device_id,
                     local_task_id,
                     request,
                     notification.params,
+                    agent_thread_id,
                 );
             }
             "context/compaction" => {
@@ -1646,10 +1653,28 @@ impl CodexNotificationEventMapper {
                 return Some(parent_id.clone());
             }
         }
+        // Native agents can share the root thread while retaining distinct activity identities.
+        if let Some(agent_thread_id) = codex_stream_agent_path(params)
+            .and_then(|path| self.subagent_thread_ids_by_path.get(&path))
+        {
+            return Some(subagent_block_id(agent_thread_id));
+        }
         stream_thread_id(params)
             .or_else(|| codex_stream_agent_path(params))
             .filter(|identity| identity != "/root")
             .map(|identity| subagent_block_id(&identity))
+    }
+
+    fn subagent_activity_thread_id(&mut self, params: &Value) -> Option<String> {
+        let path = subagent_path(params)?;
+        let thread_id = explicit_subagent_thread_id(params)
+            .or_else(|| self.subagent_thread_ids_by_path.get(&path).cloned())
+            .or_else(|| subagent_thread_id(params));
+        if let Some(thread_id) = thread_id.as_ref() {
+            self.subagent_thread_ids_by_path
+                .insert(path, thread_id.clone());
+        }
+        thread_id
     }
 
     fn is_subagent_delta(&self, params: &Value) -> bool {
@@ -2307,6 +2332,7 @@ fn emit_subagent_activity(
     local_task_id: &str,
     request: &ExecutionRequest,
     params: &Value,
+    agent_thread_id: Option<String>,
 ) {
     let Some(agent_path) = subagent_path(params) else {
         return;
@@ -2316,7 +2342,6 @@ fn emit_subagent_activity(
     }
 
     let kind = subagent_kind(params);
-    let agent_thread_id = subagent_thread_id(params);
     let agent_id = agent_thread_id
         .clone()
         .unwrap_or_else(|| agent_path.clone());
@@ -2575,7 +2600,7 @@ fn subagent_status(kind: &str) -> &'static str {
     }
 }
 
-fn subagent_thread_id(params: &Value) -> Option<String> {
+fn explicit_subagent_thread_id(params: &Value) -> Option<String> {
     string_field(params, "agent_thread_id")
         .or_else(|| string_field(params, "agentThreadId"))
         .or_else(|| {
@@ -2590,6 +2615,10 @@ fn subagent_thread_id(params: &Value) -> Option<String> {
                     .or_else(|| string_field(turn, "agentThreadId"))
             })
         })
+}
+
+fn subagent_thread_id(params: &Value) -> Option<String> {
+    explicit_subagent_thread_id(params)
         .or_else(|| string_field(params, "thread_id"))
         .or_else(|| string_field(params, "threadId"))
         .or_else(|| string_field(params, "turn_id"))

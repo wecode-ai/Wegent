@@ -164,7 +164,9 @@ describe.each(["cloud-task-activity-card-", "collaboration-chat-card-"])(
         .mocked(window.requestAnimationFrame)
         .mock.calls.map(([callback]) => callback);
       act(() => initialFrames.forEach((callback) => callback(0)));
-      expect(scrollTo).toHaveBeenCalledWith({ top: 100, behavior: "auto" });
+      expect(
+        container.querySelector<HTMLElement>('[data-testid="list"]')!.scrollTop,
+      ).toBe(100);
       act(() => frame?.(0));
       expect(onReadSequence).toHaveBeenCalledExactlyOnceWith(2);
     });
@@ -226,3 +228,223 @@ describe.each(["cloud-task-activity-card-", "collaboration-chat-card-"])(
     });
   },
 );
+
+describe("visible Issue read state", () => {
+  let root: Root;
+  let container: HTMLDivElement;
+  let frames: Map<number, FrameRequestCallback>;
+  let nextFrame: number;
+  let viewportHeight: number;
+  let positions: Map<number, number>;
+  const messages = [message("root"), message("run")];
+  const rect = (top: number, height: number) =>
+    ({ top, bottom: top + height, height }) as DOMRect;
+
+  function Fixture({
+    items = messages,
+    loading = false,
+    issueId = "issue",
+    readSequence = 0,
+    unreadRevision,
+    onReadSequence,
+  }: {
+    items?: ProjectChatMessage[];
+    loading?: boolean;
+    issueId?: string;
+    readSequence?: number;
+    unreadRevision?: number;
+    onReadSequence: (sequence: number) => Promise<void> | void;
+  }) {
+    const { listRef } = useIssueActivityScroll({
+      messages: items,
+      loading,
+      issueId,
+      readSequence,
+      unreadRevision,
+      onReadSequence,
+      cardTestIdPrefix: "card-",
+    });
+    return (
+      <div
+        ref={(element) => {
+          listRef.current = element;
+          if (element) element.scrollTo = () => {};
+        }}
+        data-testid="list"
+      >
+        {!loading &&
+          items.map((item) => (
+            <div
+              key={item.messageId}
+              data-activity-sequence={item.sequenceNumber}
+            />
+          ))}
+      </div>
+    );
+  }
+
+  async function flushFrames() {
+    await act(async () => {
+      const pending = [...frames.values()];
+      frames.clear();
+      pending.forEach((callback) => callback(0));
+    });
+  }
+
+  beforeEach(() => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    frames = new Map();
+    nextFrame = 0;
+    viewportHeight = 400;
+    positions = new Map([
+      [1, 50],
+      [2, 600],
+    ]);
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      frames.set(++nextFrame, callback);
+      return nextFrame;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation((id) => {
+      frames.delete(id);
+    });
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function () {
+        const sequence = Number(this.dataset.activitySequence);
+        return sequence
+          ? rect(positions.get(sequence) ?? 600, 100)
+          : rect(0, viewportHeight);
+      },
+    );
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.restoreAllMocks();
+  });
+
+  it("persists an empty unread Issue only after loading and avoids duplicate requests", async () => {
+    const onReadSequence = vi.fn().mockResolvedValue(undefined);
+    const props = { items: [], unreadRevision: 1, onReadSequence };
+    await act(async () => root.render(<Fixture {...props} loading />));
+    await flushFrames();
+    expect(onReadSequence).not.toHaveBeenCalled();
+    await act(async () => root.render(<Fixture {...props} />));
+    await flushFrames();
+    expect(onReadSequence).toHaveBeenCalledExactlyOnceWith(0);
+    act(() => container.firstElementChild!.dispatchEvent(new Event("scroll")));
+    await flushFrames();
+    expect(onReadSequence).toHaveBeenCalledOnce();
+  });
+
+  it("keeps hidden empty Issues unread", async () => {
+    viewportHeight = 0;
+    const onReadSequence = vi.fn();
+    await act(async () =>
+      root.render(
+        <Fixture
+          items={[]}
+          unreadRevision={1}
+          onReadSequence={onReadSequence}
+        />,
+      ),
+    );
+    await flushFrames();
+    expect(onReadSequence).not.toHaveBeenCalled();
+  });
+
+  it("reads visible activity and leaves offscreen replies unread until scrolling", async () => {
+    const onReadSequence = vi.fn().mockResolvedValue(undefined);
+    await act(async () =>
+      root.render(<Fixture onReadSequence={onReadSequence} />),
+    );
+    await flushFrames();
+    expect(onReadSequence).toHaveBeenCalledExactlyOnceWith(1);
+    positions.set(2, 200);
+    act(() => container.firstElementChild!.dispatchEvent(new Event("scroll")));
+    await flushFrames();
+    expect(onReadSequence).toHaveBeenLastCalledWith(2);
+  });
+
+  it("retries a failed read when activity becomes visible again", async () => {
+    const onReadSequence = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValue(undefined);
+    await act(async () =>
+      root.render(<Fixture onReadSequence={onReadSequence} />),
+    );
+    await flushFrames();
+    act(() => container.firstElementChild!.dispatchEvent(new Event("scroll")));
+    await flushFrames();
+    expect(onReadSequence).toHaveBeenNthCalledWith(1, 1);
+    expect(onReadSequence).toHaveBeenNthCalledWith(2, 1);
+  });
+
+  it("reads a visible incoming message without a scroll event", async () => {
+    const onReadSequence = vi.fn().mockResolvedValue(undefined);
+    await act(async () =>
+      root.render(
+        <Fixture
+          items={[messages[0]!]}
+          readSequence={1}
+          onReadSequence={onReadSequence}
+        />,
+      ),
+    );
+    await flushFrames();
+    expect(onReadSequence).not.toHaveBeenCalled();
+    positions.set(2, 200);
+    await act(async () =>
+      root.render(<Fixture readSequence={1} onReadSequence={onReadSequence} />),
+    );
+    await flushFrames();
+    expect(onReadSequence).toHaveBeenCalledExactlyOnceWith(2);
+  });
+
+  it("reads changed Issue content even when its activity cursor has not advanced", async () => {
+    const onReadSequence = vi.fn().mockResolvedValue(undefined);
+    for (const unreadRevision of [2, 3]) {
+      await act(async () =>
+        root.render(
+          <Fixture
+            readSequence={1}
+            unreadRevision={unreadRevision}
+            onReadSequence={onReadSequence}
+          />,
+        ),
+      );
+      await flushFrames();
+    }
+    expect(onReadSequence.mock.calls).toEqual([[1], [1]]);
+  });
+
+  it("deduplicates pending reads and isolates a new Issue from a late read response", async () => {
+    let finishFirst!: () => void;
+    const firstRead = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishFirst = resolve;
+        }),
+    );
+    const secondRead = vi.fn().mockResolvedValue(undefined);
+    await act(async () => root.render(<Fixture onReadSequence={firstRead} />));
+    await flushFrames();
+    act(() => container.firstElementChild!.dispatchEvent(new Event("scroll")));
+    await flushFrames();
+    expect(firstRead).toHaveBeenCalledExactlyOnceWith(1);
+
+    await act(async () =>
+      root.render(<Fixture issueId="other" onReadSequence={secondRead} />),
+    );
+    await flushFrames();
+    expect(secondRead).toHaveBeenCalledExactlyOnceWith(1);
+    await act(async () => finishFirst());
+    act(() => container.firstElementChild!.dispatchEvent(new Event("scroll")));
+    await flushFrames();
+    expect(secondRead).toHaveBeenCalledOnce();
+  });
+});
