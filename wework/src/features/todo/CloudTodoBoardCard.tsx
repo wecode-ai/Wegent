@@ -16,6 +16,7 @@ import { TemporaryChatPanel } from '@/components/layout/workspace-panels/Tempora
 import { Tooltip } from '@/components/ui/tooltip'
 import {
   getRuntimeConversationTurns,
+  runtimeConversationKey,
   subscribeRuntimeConversation,
 } from '@/features/workbench/runtimeConversationCache'
 import type { RuntimeLiveActivity } from '@/features/workbench/runtimeThinking'
@@ -160,8 +161,22 @@ export function CloudTodoBoardCard({
   const t = useBoardTranslate()
   const editable = canEditProjectSpaceIssue(item)
   const hasActiveTask = isLoopItemExecutionActive(item)
-  const runningTaskBindings = taskBindings.filter(binding => binding.running)
-  const currentTaskBinding = runningTaskBindings[0] ?? taskBindings[0]
+  const taskBindingsByConversation = new Map<string, CloudTodoBoardTaskBinding>()
+  for (const binding of taskBindings) {
+    const key = runtimeConversationKey({
+      deviceId: binding.device_id,
+      taskId: binding.task_id,
+    })
+    const existing = taskBindingsByConversation.get(key)
+    if (!existing) {
+      taskBindingsByConversation.set(key, binding)
+    } else if (binding.running && !existing.running) {
+      taskBindingsByConversation.set(key, { ...existing, running: true })
+    }
+  }
+  const conversationTaskBindings = [...taskBindingsByConversation.values()]
+  const runningTaskBindings = conversationTaskBindings.filter(binding => binding.running)
+  const currentTaskBinding = runningTaskBindings[0] ?? conversationTaskBindings[0]
   const changeRequestSnapshot = useTaskChangeRequest(
     changeRequestMonitor,
     currentTaskBinding?.changeRequestTarget ?? null

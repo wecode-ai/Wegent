@@ -173,13 +173,19 @@ describe('createHttpClient', () => {
     })
   })
 
-  test('deduplicates concurrent get requests for the same endpoint and token', async () => {
+  test('keeps concurrent reads of the same endpoint independent', async () => {
     localStorage.setItem('auth_token', 'token-1')
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      json: async () => ({ items: [1, 2, 3] }),
-    })
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ items: [1] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ items: [2] }),
+      })
 
     const client = createHttpClient({ baseUrl: '/api' })
     const [firstResult, secondResult] = await Promise.all([
@@ -187,9 +193,9 @@ describe('createHttpClient', () => {
       client.get<{ items: number[] }>('/projects'),
     ])
 
-    expect(firstResult).toEqual({ items: [1, 2, 3] })
-    expect(secondResult).toEqual({ items: [1, 2, 3] })
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(firstResult).toEqual({ items: [1] })
+    expect(secondResult).toEqual({ items: [2] })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(fetchMock).toHaveBeenCalledWith('/api/projects', {
       method: 'GET',
       headers: {
@@ -200,7 +206,23 @@ describe('createHttpClient', () => {
     })
   })
 
-  test('clears get dedupe after the request settles', async () => {
+  test('preserves headers on concurrent reads of the same endpoint', async () => {
+    fetchMock.mockImplementation(async (_url: string, init: RequestInit) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ language: new Headers(init.headers).get('Accept-Language') }),
+    }))
+    const client = createHttpClient({ baseUrl: '/api' })
+
+    const results = await Promise.all([
+      client.get('/projects', { headers: { 'Accept-Language': 'zh-CN' } }),
+      client.get('/projects', { headers: { 'Accept-Language': 'en' } }),
+    ])
+
+    expect(results).toEqual([{ language: 'zh-CN' }, { language: 'en' }])
+  })
+
+  test('fetches a new response for each sequential read', async () => {
     fetchMock
       .mockResolvedValueOnce({
         ok: true,

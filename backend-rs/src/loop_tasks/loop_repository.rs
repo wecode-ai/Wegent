@@ -9,6 +9,8 @@
 //! (`'task'`), and execution/binding (`'execution'`) rows.
 use crate::board_snapshot::repository::ProjectRow as BoardProjectRow;
 use crate::cloud_projects::{LOOP_ITEMS_COLUMNS, ProjectListRow};
+use crate::device_identity::owned_device_identity_ids;
+use crate::sql_support::StatementArg;
 use brz_json::JsonProjection;
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 use chrono::NaiveDateTime;
@@ -252,6 +254,21 @@ const CLOUD_CONTEXT_COLUMNS: &str = "loop_items.id AS loop_items_id, \
      loop_items.completed_at AS loop_items_completed_at, \
      loop_items.delivered_at AS loop_items_delivered_at, \
      loop_items.deleted_at AS loop_items_deleted_at";
+
+fn cloud_context_binding_statement(
+    user_id: i32,
+    device_ids: &[String],
+    task_id: &str,
+) -> (String, Vec<StatementArg>) {
+    let placeholders = vec!["?"; device_ids.len()].join(", ");
+    let sql = include_str!("cloud_context_binding.sql")
+        .replace("{columns}", CLOUD_CONTEXT_COLUMNS)
+        .replace("{device_ids}", &placeholders);
+    let mut args = vec![StatementArg::Int(i64::from(user_id))];
+    args.extend(device_ids.iter().cloned().map(StatementArg::Str));
+    args.push(StatementArg::Str(task_id.to_owned()));
+    (sql, args)
+}
 
 /// `db.get(LoopItem, item_id)` row: the source's full 60-column labeled
 /// `loop_items` projection (`resource_type='task'`). The typed row consumes
@@ -620,7 +637,7 @@ impl<'a, M: Mysql> LoopItemRepository<'a, M> {
     }
 
     /// `LoopItemService.find_cloud_context`: the active runtime-task binding
-    /// for `(task_user_id, device_id, task_id)`. `Ok(None)` maps to the
+    /// for `(task_user_id, owned device identity, task_id)`. `Ok(None)` maps to the
     /// `Cloud context not found` 404.
     ///
     /// The projection mirrors the source SQLAlchemy `db.query(LoopItemTaskBinding)`
@@ -635,20 +652,10 @@ impl<'a, M: Mysql> LoopItemRepository<'a, M> {
         device_id: &str,
         task_id: &str,
     ) -> MysqlResult<Option<CloudContextBindingRow>> {
-        self.mysql
-            .fetch_optional(
-                &format!(
-                    "SELECT {CLOUD_CONTEXT_COLUMNS} \nFROM loop_items \n\
-                     WHERE loop_items.task_user_id = ? \
-                     AND loop_items.device_id = ? \
-                     AND loop_items.task_id = ? \
-                     AND (loop_items.unlinked_at IS NULL OR loop_items.unlinked_at IN \
-                         ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) \
-                     AND loop_items.resource_type IN ('execution') \n LIMIT 1",
-                ),
-                (user_id, device_id, task_id),
-            )
-            .await
+        let device_ids =
+            owned_device_identity_ids(self.mysql, i64::from(user_id), device_id).await?;
+        let (sql, args) = cloud_context_binding_statement(user_id, &device_ids, task_id);
+        self.mysql.fetch_optional(sql, args).await
     }
 
     /// `db.get(LoopItem, item_id)` (`find_cloud_context`'s item lookup and
