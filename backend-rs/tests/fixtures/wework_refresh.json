@@ -1,0 +1,668 @@
+{
+  "now": 1800000000,
+  "secret": "wework-refresh-public-test-secret",
+  "cases": [
+    {
+      "name": "valid",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.d_R2JMgaVrjMpAPSQ3_4vwfo9bIvZV0mugGv-Vlb_ys",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJPV0czdDQ0RFl3eTV3SjN0N1VIYW1yQ1NxbXJ0N2drUlc4TFhDMGZHS24wIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.PKKW6LjnwDWhiGBvyVpyAKeWYHeQAd0YJ2KkEShBXkIDEOJY8YVa-kuuIBvN376F7jGrFg8IB81_tsywtigSzA"
+      },
+      "expected": {
+        "status": 200
+      }
+    },
+    {
+      "name": "hs384",
+      "algorithm": "HS384",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzM4NCIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.OziVXHeaGFrh0RahzajR4unBAPar53y4tJAKDsnsE0YGokzAKtrJ7jjmfedpDDT9",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJ3VW84dGJQR1dfVXJjNFhSN3lBN1lkZWI4Y2pCTnV6UXE5SWVMcUk5NDdvIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.eOIqoCv2jHtpgXC_Fk9ApjHYm1FA47tgHQvWYlQon1Hbbyp4U7j-OlOq_676h4aIT9fqrUzNJUcIW3io4yQxUw"
+      },
+      "expected": {
+        "status": 200
+      }
+    },
+    {
+      "name": "hs512",
+      "algorithm": "HS512",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.eSE8tEDZdDwjPnrR8sSFXP7xxssATilavA5nIVwipF8AZYXiTul43IU3rlllzwaIWzxKviboT6FUEEqb5bQo5w",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJzd2VuUXdKM2hVTi1PbnlvWEpWVjU4RFBuX3J0U0NaRjNGN19OV2s0MjBFIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.z4TcNBHM4XvXl9obFa7mGuP8qEpN6iiu7UrIsmr8UDzFajCqQNsAYRed66Kco5NuzBbIeIDGFIjujKflfQ6OcQ"
+      },
+      "expected": {
+        "status": 200
+      }
+    },
+    {
+      "name": "wrong_signing_key",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.jERwjeK1Uw_th0ozBY9S59tX1eYUI14VZzEretle3mc",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJwSXBJTGpEQmJNalhtRkdRWUVUcENMQVhzbE5jYzdhTEtJemFCUkZicUNNIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.CQ6E-0Anl1sz_p8XfSDNJeYCsrebc4Aq5lEjRlgFXHGgEDwDotQwOfZY1t_bILLX9cz2QiVsKZ7DgOjmh08fXw"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Desktop login has expired"
+      }
+    },
+    {
+      "name": "missing_exp",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSJ9.9H-Q3-kKu6QQQYah_yZw41QOsYa4-eRcmWXF0YbT8R4",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJOcmhkdVRiZkx5NlhTRFBTdjJLcnhIeC1KdWpmc0hmSnI4TzZMd0Z2VGQ4IiwianRpIjoicHJvb2YtZml4dHVyZSJ9.gFJHpOX_8qtydDGT8X39fowj0jYVMEc4XnmZHL6WufnafbaFxLSYRBR1XciGqMKhEGXrhNE47jnt0HBEJJOBEw"
+      },
+      "expected": {
+        "status": 200
+      }
+    },
+    {
+      "name": "missing_subject",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.IqBT8qRiqd8MAoJK7JYoboeWf97sBxY4cbKI8GmiVi0",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJpVXdZM2VZTk5UUEJRNVpKVVJVQkM4dkZ0TFlLQ216N1IyVF9ZZFE1Mlg0IiwianRpIjoicHJvb2YtZml4dHVyZSJ9.6-8gwaOrk8RtzOk2y435YDG02QXaxa8MxSmenjNj8etGkoB_EeSrZKEB4Fz_TKf3KKgylPkuMr0o5BTmlXvexg"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Invalid desktop refresh token"
+      }
+    },
+    {
+      "name": "wrong_device_signature",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.d_R2JMgaVrjMpAPSQ3_4vwfo9bIvZV0mugGv-Vlb_ys",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJPV0czdDQ0RFl3eTV3SjN0N1VIYW1yQ1NxbXJ0N2drUlc4TFhDMGZHS24wIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.dlnFKlYAMlSpybM9jr-4We8ttnHMY8JkHd2Xnn-2NrpFbVQq9NxEBUBJHsVusMQTnZ6PgT5uidRuCjS5E0bV3A"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Invalid desktop device proof"
+      }
+    },
+    {
+      "name": "refresh_token_use_0",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfYWNjZXNzIiwiY25mIjp7ImprdCI6Inh4MEJjQS13TW9odzhhdFlESk9lNnBlR01vZGtsRzJ3UkhCbFhITXZsME0ifSwianRpIjoicmVmcmVzaC1maXh0dXJlIiwiZXhwIjoxODAwMDAzNjAwfQ.xApv4RhUK_wUON6NVqsz9jAWgEpIfruVPNWwphwj3xA",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJiSlBFdHpobHVzMjFZSGZOZjlIaGxkM3NHY0hDeGZCaWZ1aEhEeFMtdWtjIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.0alKGDNpThv2PQJJWUL9Nhgtoy6nMH73VWLHmJ6Y1TSAnoKfi1wow4dyD4b3Djemwq3FN6ZW5JBdu4NFtSjwFw"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Invalid desktop refresh token"
+      }
+    },
+    {
+      "name": "refresh_cnf_0",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6e30sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.kkIiF6no_4F_sVoMUEF0jUsOS9LgrHGJaH_yKoRpy04",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJZNjRjOGJycTEySW5DTUxueGdqMEVsQ2JmbkpDZWhidnNJc3R4VW1UVXdzIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.SwuKwKrqPingja7ejw5oF8DqO8A3jNUVHq2f1f2eHQTmSTZJJbMIvaQ6vSfhSxX-reb57btYYt_N6mJ65EOgAA"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Invalid desktop refresh token"
+      }
+    },
+    {
+      "name": "refresh_cnf_1",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiIifSwianRpIjoicmVmcmVzaC1maXh0dXJlIiwiZXhwIjoxODAwMDAzNjAwfQ.oUGfDeKg9_7pEt-pbo8YBXzgQvh9WcZeGT08WBB6XyQ",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJWTERnekVhSmFWTW1xZzlmbEdDaFZYbWp2MnNpcW5zUGpqQnptSUw5UXMwIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.YFVe_ewNXD9qYIQrWpv1mUcUMQL5CAcg_JSJeDNhhJtr9JxiPkG_H3lTyqZb78jHVz1CDInfzusNMyUVw92knQ"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Invalid desktop refresh token"
+      }
+    },
+    {
+      "name": "refresh_cnf_2",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOjF9LCJqdGkiOiJyZWZyZXNoLWZpeHR1cmUiLCJleHAiOjE4MDAwMDM2MDB9.yw7O9uc5bv4wPGdi3gwF_CTEV5T4yVMsS7FbTkgbCvY",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJ4VGNOSjd1bUVtXzVZcy0tellnbmZBWnRvaC1RMUpiWnlxaXJsaG5fenFJIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.8LTqAeLfPsIj9Cra3VjYuri3BNXmNlwMQNryb8HaRm6Mp5PKh8Lu4F0RqnFohkPGbGp88oihShkjMF5DPEsZKA"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Invalid desktop refresh token"
+      }
+    },
+    {
+      "name": "refresh_cnf_3",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJvdGhlciJ9LCJqdGkiOiJyZWZyZXNoLWZpeHR1cmUiLCJleHAiOjE4MDAwMDM2MDB9.4QGCz7NSQRG7_83C13k662uXT1VeqlwTHsAP_hf1bjM",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJwc2ZyNENydVJxazNxZ1I1ZTBBR2ZXWjhldEFkYkEzWjh3VHpEaDg0VzdJIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.qcClYqVAu47Il6yrGvuCNLf9Gyrr9bp--gABbF5YLkV_xFy9SXjDCgTxw_2pBeqPE771p9AOEipeoDSACAEISg"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Desktop device proof does not match this login"
+      }
+    },
+    {
+      "name": "refresh_exp_0",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMDAwMH0.JUFIh9LZSzb7AoQOVl306D57g8ATdsojgnvlCOcfrH4",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJlRUNrSTgxMGhkWGNQaDliTmZvVHJDQURRX3Q1T0NfaEpLdUNnWmw1U0NnIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.5cDR9pjJJux20WVMgfyo1_aWUxSCUQQ41_HWOUq62pDzit6luhlNpemkQXR5GtRVj2-LI33UnBRCOzYdYpS9Zg"
+      },
+      "expected": {
+        "status": 200
+      }
+    },
+    {
+      "name": "refresh_exp_1",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTc5OTk5OTk5OX0.az20ZwbizOidS9Cepd45SLze9eUI-nYnMNJkUJNIbYQ",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJ0bUxEdWo0Q2lVdFBOT29yMUJ0UlgtWFpabkFqT2pHbmVsMUZubndzdU9nIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.hK43KrQI_7jVKqhSY5LwtEfL2m8ozmDffFTbXrDkRJ_-uDF8zmXBOqV2WTdQJlQIi1NWRh6bw1wbVMnkgbcO6w"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Desktop login has expired"
+      }
+    },
+    {
+      "name": "refresh_exp_2",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6LTF9.ChNsrNfzkJnR517V93CVoe2VUqX1_1mQxEAqFV3m8jQ",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJkSkxkNVdzS1dLaE1NRVlpc3lIZWUwbTNBUGZKbXk3V0dEc3poN2tCa3lRIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.ZtLUjhhEZrdFIw9JLf1GFJVRlzw1QXB8Lb9p8Cbm8STAWn36RNcPZQB0dARrKNXsWUb41-nAE62Ltpp2tZu1zQ"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Desktop login has expired"
+      }
+    },
+    {
+      "name": "refresh_exp_3",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6ImludmFsaWQifQ.0gd77obZCyJl0R5kn4YnxiUfUQ71kYAMDxznB1QP978",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJiOW13S1RKT3F6M1lhUk5xM3l1Rm1TZmROWTloRUg4RG1HTk43eGF2YjBBIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.v19HravAXrt2p36Jk9pk224acQYakAkFi5IRTyLRBG4z6xxFBe5IlUEerp_hL0ZF5PlT1XdxMn1yu83FVOQBKA"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Desktop login has expired"
+      }
+    },
+    {
+      "name": "refresh_exp_4",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6IjE3OTk5OTk5OTkifQ._weAPSEXyy3T-xHD_yrejBkyaA-kOgCOK-lP-v1Idfg",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJBaWhpNC1rTjRwUEpKYnBBLS1Qc1Faa0Zac2hEcDlUSHdDTG1UYTZkWjNrIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.zAil55piKkPm0vRXWxc33xmof-Z5aGWZ9IzFX20CcPEQtbyaimIs-RSyP-Rrj95MHDHK2jhlKsyZORYtXjLIpw"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Desktop login has expired"
+      }
+    },
+    {
+      "name": "refresh_exp_5",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6IjE4MDAwMDM2MDAifQ.a8M-52eQt7ffeQPLiXihUkvPQt1G1Ilj8Tllu1pCrt8",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJlc3FrUGJqOWJkcXIwQUpIMl9qeTlHYUpEaUhQQm50QzlEYUJTVmNJSzU0IiwianRpIjoicHJvb2YtZml4dHVyZSJ9.VcHRC6Im668Jy3YPbPBCQDZeET1-f86kPsfO_xk103O-jtgswUlsw3vgOeNMRK4haaH4ZtKcFj29Y0VNS_loOA"
+      },
+      "expected": {
+        "status": 200
+      }
+    },
+    {
+      "name": "refresh_exp_6",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMDAwMC45fQ.tG_DIvtiUEeKxBTmmY-tpVa2KMNW-S2slm3iL1vhSuQ",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiIyLVY1UWo4WEFFM1JodTdsdGtnb2JxMFVEaGd4QzRsNDl2S3hPaVkyVGVZIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.TlvCEyodexDUp_wkmKF6nKt8T9SPA-YsjYHf8hBQ60xkf1-RqvstFbQYg5Rd0S8WJVLeKGqdSUvL_toPyB31QQ"
+      },
+      "expected": {
+        "status": 200
+      }
+    },
+    {
+      "name": "refresh_nbf_0",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMCwibmJmIjoxODAwMDAwMDAwfQ.JuE3YZ3G7Z2jI-YiYMrqi2Vw6kOodG4a_s7v7HTGJY0",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJhX2tKSDdIbmh5dEx3OWFPUDAycExzMFZaQVk5Y3plSzE1MXAtcjZheHRzIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.wCZTX3wzCe-BnsyV8tYQnqqXalmAfj6XjNUj4aXiyBRGVKhvd8zVZAzY_7d7CJ33LixOYseHm908HdqplLA-XA"
+      },
+      "expected": {
+        "status": 200
+      }
+    },
+    {
+      "name": "refresh_nbf_1",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMCwibmJmIjoxODAwMDAwMDAxfQ.FKRFe0BlUuQoU9rMdYb_B_3_Av9h05jfeeoNB1Deacs",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJCT21ES2xKY1NCUjVNOUZPaG4xNE1oeXFSTVdzOGZEOW5ON0xuRXpsQ1lVIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.eJKVqryN_2uyQkzTWG0ZyZgO5_wYiLMoGTU8yCbm8hcg3mxPtDZQFX8PK_xiv7ckDP3cppJmzOex3aQe8aP5mg"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Desktop login has expired"
+      }
+    },
+    {
+      "name": "refresh_nbf_2",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMCwibmJmIjoiaW52YWxpZCJ9.j5kZR4Z64vSPgSFS_J6duMijYexKIMDVkAQ0kG64ETo",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJETjBCVXgxalhZSXlNZXNiaUYwb1plYlFRM3VaemRCV3RRVmtxRGpRUW5rIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.acV5UBuTh398-u0mAx1hHVCQNBdjnMg0TfgrWcuHukMNvHBY5f-JgX8aG6sy3UBMK0MiqToulp4fP8qhoiDlgg"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Desktop login has expired"
+      }
+    },
+    {
+      "name": "refresh_nbf_3",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMCwibmJmIjoiMTgwMDAwMDAwMSJ9.p1Svtp_6xIAl5GbkciOOE0eM4CJJWhQxSPzF1qj_7YY",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJRZ1ViUFBYaDRhMzJLNndqUUtJbzd6VU9TMWlyX0ZWdk9PTE1iYlBsdWRJIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.jyb8fPwRj9xf9T0ofR1YGn66HjQu82xjDyTKtXvNxTQnPon3GJe4W_PCx5IAy8K3UBb7AEKgxMRP08VxuHDKaQ"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Desktop login has expired"
+      }
+    },
+    {
+      "name": "refresh_iat_0",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMCwiaWF0IjoiaW52YWxpZCJ9.8V8HVkbjH31JazcrcjJuKVwkrNH-4ItWYOW3wcgoS-I",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJ2ZGx0djdCUWxfcHBFNWo0MHhKenFUbU1OdEVqenIwNkhFd1ZEenFONEVnIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.Hz2yn729pQhYPOFBmuST2UByuj3GBa85OK0yFJCjELJBd_PlxwW7QK3fh1hjrCIK4lgRw3sifjpDvwhZLCiYPw"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Desktop login has expired"
+      }
+    },
+    {
+      "name": "refresh_aud_0",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMCwiYXVkIjoib3RoZXItc2VydmljZSJ9._cc9Wn2KhSVxtrmbmE684E6h0vqisJO4qDvyvgVbnFk",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJxM2F1ZUp5ZzFLbjZPeWhJeEg2cURyaTdCU0NsZlQ5b05PTnp4WXVCTWVjIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.v9v5EBqUzOtwhwoiZokxDwhqpBz16uxoVeaeOjUJ9AeF1oyhPTpX33EL4oZ1_1la-6AvSHO7NcMIcbXM--96lw"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Desktop login has expired"
+      }
+    },
+    {
+      "name": "refresh_aud_1",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMCwiYXVkIjpbXX0.YSqGOZvSS2utPF2fVudnItY4hGmy2ONPcoODX3fZXH0",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiItblpKY1FwT0k5VDFkdHRTd0R5NF8zZ0hucHVKOGpmODlUTWd2czh1QlcwIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.L9uuyFnOAGDGfYXGdeQxFZYR_qVR03prJMa8-3U_iQRTAz-8baCV3HCBzVPhTfxI61b4s7S4A_IDEvtp2AAJcA"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Desktop login has expired"
+      }
+    },
+    {
+      "name": "refresh_sub_0",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjcsInVzZXJfaWQiOjcsInRva2VuX3VzZSI6Indld29ya19yZWZyZXNoIiwiY25mIjp7ImprdCI6Inh4MEJjQS13TW9odzhhdFlESk9lNnBlR01vZGtsRzJ3UkhCbFhITXZsME0ifSwianRpIjoicmVmcmVzaC1maXh0dXJlIiwiZXhwIjoxODAwMDAzNjAwfQ.vOkIi3dNyrJtc92M5gsK1JxPWsoRFfohWH12xyOW_6o",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiItZldlWGxyUTQtVTBPZ090OHdFaWs0OTZrb09JVC1mQllVcVd0bEVSNzlZIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.kmyDiGF8PGUCS0VgbsEOWan5elWf9QFnlTGurhzjaBRcdaCB-lS-Zb1bFL-w49lBmopZjhF9N3-j3cJ0LnBtuQ"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Desktop login has expired"
+      }
+    },
+    {
+      "name": "refresh_jti_0",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6NywiZXhwIjoxODAwMDAzNjAwfQ.pV28wrxQ0j3dYmJ67ZUmDgHnQPSTXpHf6qGdAXtqyak",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiI4NFo5VzMtbG9WM0xtOUdUMHRsR0xjeGJXVmNqd0lxWEo5TDJaU29rYjI4IiwianRpIjoicHJvb2YtZml4dHVyZSJ9.6UZ5jLbrlhb_5gVdjIvjw04yRkwTBrz445_u5M0g97zVpxxscMABxH9hCT_vsKammyj16X-15SZS0m5NIZklxA"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Desktop login has expired"
+      }
+    },
+    {
+      "name": "refresh_at_hash_0",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMCwiYXRfaGFzaCI6Im90aGVyIn0.HyzFFsY2EOWmtDa_sccz3EWiPQbG_IXLBqygMRCBar8",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiItMG5WWkx0RzlUdGZia1pnUENwQTNwWjZZSnV3TXVQbFRoRWppRkhUWXQ4IiwianRpIjoicHJvb2YtZml4dHVyZSJ9.09_EzcNZpvp2aDkUZzsTIkIwp5pucXkOG9ij3per0wYaROZojrmJSWDj1EKO50CMeJHItz57JVmuq7_0hMsTGQ"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Desktop login has expired"
+      }
+    },
+    {
+      "name": "proof_iat_0",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.d_R2JMgaVrjMpAPSQ3_4vwfo9bIvZV0mugGv-Vlb_ys",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMzAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJPV0czdDQ0RFl3eTV3SjN0N1VIYW1yQ1NxbXJ0N2drUlc4TFhDMGZHS24wIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.5OYtSC_k7Dl76DJwxSY_C_i7fl5_2Qyy1oG0C7MIvH6qhj6Q99wJyIwD1rAXBSv3FXwt8X5_eZbDaEcm-2Pbhw"
+      },
+      "expected": {
+        "status": 200
+      }
+    },
+    {
+      "name": "proof_iat_1",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.d_R2JMgaVrjMpAPSQ3_4vwfo9bIvZV0mugGv-Vlb_ys",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMzEsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJPV0czdDQ0RFl3eTV3SjN0N1VIYW1yQ1NxbXJ0N2drUlc4TFhDMGZHS24wIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.amDNbw74AYbFATEGRteHcUuqbOEc9jDcWI7251qrmjYM4IK3lhtYyKgDwuK_zObdM-dPa3PviGEQ4BsCXYM_XQ"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Invalid desktop device proof"
+      }
+    },
+    {
+      "name": "proof_iat_2",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.d_R2JMgaVrjMpAPSQ3_4vwfo9bIvZV0mugGv-Vlb_ys",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE3OTk5OTk3MDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJPV0czdDQ0RFl3eTV3SjN0N1VIYW1yQ1NxbXJ0N2drUlc4TFhDMGZHS24wIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.56tgYCPd1WQ50d3bZtCEaJ4R07sWnlkAu_CKNTqeHMqkQHXXP6p8LtHP5babIYlkkxuJhMLsgiMS-QKgxIvN2g"
+      },
+      "expected": {
+        "status": 200
+      }
+    },
+    {
+      "name": "proof_iat_3",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.d_R2JMgaVrjMpAPSQ3_4vwfo9bIvZV0mugGv-Vlb_ys",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE3OTk5OTk2OTksImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJPV0czdDQ0RFl3eTV3SjN0N1VIYW1yQ1NxbXJ0N2drUlc4TFhDMGZHS24wIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.-NJzTA1qT1Q_x5KHklhf-qS0wsgyMcjzko4Mu6lkDYndr0MFT0QLs2IW9YvDQLKKP1UxVLdUqNA4yJexprAoZg"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Invalid desktop device proof"
+      }
+    },
+    {
+      "name": "proof_iat_4",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.d_R2JMgaVrjMpAPSQ3_4vwfo9bIvZV0mugGv-Vlb_ys",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOiIxODAwMDAwMDAwIiwiaHRtIjoiUE9TVCIsImh0dSI6Ii9hcGkvYXV0aC93ZXdvcmsvcmVmcmVzaCIsImF0aCI6Ik9XRzN0NDREWXd5NXdKM3Q3VUhhbXJDU3FtcnQ3Z2tSVzhMWEMwZkdLbjAiLCJqdGkiOiJwcm9vZi1maXh0dXJlIn0.v1KNhTC-bW6hseToBknaNB0SH9V3jwVqRxow0CeiOd5me2HThrPNMZSa2e-YoDE_j2AT1P1dFJ_ie3KqapuYCA"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Invalid desktop device proof"
+      }
+    },
+    {
+      "name": "proof_iat_5",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.d_R2JMgaVrjMpAPSQ3_4vwfo9bIvZV0mugGv-Vlb_ys",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjEuNSwiaHRtIjoiUE9TVCIsImh0dSI6Ii9hcGkvYXV0aC93ZXdvcmsvcmVmcmVzaCIsImF0aCI6Ik9XRzN0NDREWXd5NXdKM3Q3VUhhbXJDU3FtcnQ3Z2tSVzhMWEMwZkdLbjAiLCJqdGkiOiJwcm9vZi1maXh0dXJlIn0.IwH0DAy5JN_VIRKrEcXh1JVgnAP1m2-9usAOiOfg78MdFZwlYTlG4GQblBTiNMqbl5_TR453g9cKVKASzjhBOQ"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Invalid desktop device proof"
+      }
+    },
+    {
+      "name": "proof_iat_6",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.d_R2JMgaVrjMpAPSQ3_4vwfo9bIvZV0mugGv-Vlb_ys",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjkyMjMzNzIwMzY4NTQ3NzU4MDcsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJPV0czdDQ0RFl3eTV3SjN0N1VIYW1yQ1NxbXJ0N2drUlc4TFhDMGZHS24wIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.sZ8vk-X5bjbMlsGJ7DSB-tahDMcaYFiYNkjmcOam2-XqURRsgCSgQ6a3VTaIYZbR0KsLbLWEdqYdryAazqKrNg"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Invalid desktop device proof"
+      }
+    },
+    {
+      "name": "proof_iat_7",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.d_R2JMgaVrjMpAPSQ3_4vwfo9bIvZV0mugGv-Vlb_ys",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOi05MjIzMzcyMDM2ODU0Nzc1ODA4LCJodG0iOiJQT1NUIiwiaHR1IjoiL2FwaS9hdXRoL3dld29yay9yZWZyZXNoIiwiYXRoIjoiT1dHM3Q0NERZd3k1d0ozdDdVSGFtckNTcW1ydDdna1JXOExYQzBmR0tuMCIsImp0aSI6InByb29mLWZpeHR1cmUifQ.ysHMtM66k2bnVBUxlF9tSacsFVWYbZJiVLszGTigza2z5V6UkrInJc-tObIuh-V7T99FgLNlzzFpN4NJif_i_g"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Invalid desktop device proof"
+      }
+    },
+    {
+      "name": "proof_htm_0",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.d_R2JMgaVrjMpAPSQ3_4vwfo9bIvZV0mugGv-Vlb_ys",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IkdFVCIsImh0dSI6Ii9hcGkvYXV0aC93ZXdvcmsvcmVmcmVzaCIsImF0aCI6Ik9XRzN0NDREWXd5NXdKM3Q3VUhhbXJDU3FtcnQ3Z2tSVzhMWEMwZkdLbjAiLCJqdGkiOiJwcm9vZi1maXh0dXJlIn0.g9GbKos9LSS7T2cs566_vTlj8iIsgBS721v3KZNnKusnh3RAAuwVMYKx7ugAcr1anho3lXAXlSCTNJNljVZ1bQ"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Invalid desktop device proof"
+      }
+    },
+    {
+      "name": "proof_htu_0",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.d_R2JMgaVrjMpAPSQ3_4vwfo9bIvZV0mugGv-Vlb_ys",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL290aGVyIiwiYXRoIjoiT1dHM3Q0NERZd3k1d0ozdDdVSGFtckNTcW1ydDdna1JXOExYQzBmR0tuMCIsImp0aSI6InByb29mLWZpeHR1cmUifQ.b-1ccKAznWistUowL22fYiB16pAXoSe1bfFGZVrIE6JLHTA4W7V7obV00YqfeEdVXV996qXTH6tthN9Vfp9iLg"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Invalid desktop device proof"
+      }
+    },
+    {
+      "name": "proof_ath_0",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.d_R2JMgaVrjMpAPSQ3_4vwfo9bIvZV0mugGv-Vlb_ys",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJvdGhlciIsImp0aSI6InByb29mLWZpeHR1cmUifQ._DoQo2aBJaZ2j6-Vm5Cix7hGBKRwLuGUGi4tfuFZLM1lvvOuIA6J4-SirkF-TMsGDJgzSOrguVgZAIGH2t3IKg"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Invalid desktop device proof"
+      }
+    },
+    {
+      "name": "proof_jti_0",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.d_R2JMgaVrjMpAPSQ3_4vwfo9bIvZV0mugGv-Vlb_ys",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJPV0czdDQ0RFl3eTV3SjN0N1VIYW1yQ1NxbXJ0N2drUlc4TFhDMGZHS24wIiwianRpIjoiIn0.y8SS8rwAn7IdbeXz0Gq9vo35tt2Hdc8K0sV4RwGQ43kmzwpsYxmklteEH6SoFjNcC_tuJWFJqCNvcYwlMP9MxA"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Invalid desktop device proof"
+      }
+    },
+    {
+      "name": "proof_jti_1",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.d_R2JMgaVrjMpAPSQ3_4vwfo9bIvZV0mugGv-Vlb_ys",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJPV0czdDQ0RFl3eTV3SjN0N1VIYW1yQ1NxbXJ0N2drUlc4TFhDMGZHS24wIiwianRpIjo3fQ.BTVUmtTV7gok4dA4nU8SZQLIg2mqHRRDfLdDggydPU5IZPCdZl4gESqA9gom0AMQpZd_uk344rCbRnLn7-xDLA"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Invalid desktop device proof"
+      }
+    },
+    {
+      "name": "proof_exp_0",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.d_R2JMgaVrjMpAPSQ3_4vwfo9bIvZV0mugGv-Vlb_ys",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJPV0czdDQ0RFl3eTV3SjN0N1VIYW1yQ1NxbXJ0N2drUlc4TFhDMGZHS24wIiwianRpIjoicHJvb2YtZml4dHVyZSIsImV4cCI6MTc5OTk5OTk5OX0.BJFa3pZ7pZUkG5knXXMEhitFPJnfYKJcPpLXTVHiBl1nqxa4GOOFqAue51y6KfehZ1FSLaQP27RIOqDOgbbJmQ"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Invalid desktop device proof"
+      }
+    },
+    {
+      "name": "proof_exp_1",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.d_R2JMgaVrjMpAPSQ3_4vwfo9bIvZV0mugGv-Vlb_ys",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJPV0czdDQ0RFl3eTV3SjN0N1VIYW1yQ1NxbXJ0N2drUlc4TFhDMGZHS24wIiwianRpIjoicHJvb2YtZml4dHVyZSIsImV4cCI6ImludmFsaWQifQ.dYqqvaGHSRHzXM00Ir_Fgs_7Jej5c7HwUNRQ0_BZdwCq7JYEHCAZASwDA1_99NvCr2JzPBL5SVb21IQozR6xOw"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Invalid desktop device proof"
+      }
+    },
+    {
+      "name": "proof_nbf_0",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.d_R2JMgaVrjMpAPSQ3_4vwfo9bIvZV0mugGv-Vlb_ys",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJPV0czdDQ0RFl3eTV3SjN0N1VIYW1yQ1NxbXJ0N2drUlc4TFhDMGZHS24wIiwianRpIjoicHJvb2YtZml4dHVyZSIsIm5iZiI6MTgwMDAwMDAwMX0.VAutxYRp2tqsU1KIuxCbIjVAoaQ4S8vzQm-vu2VgPuYdIngdN-V3GyGgyjNwnqgnmA12oo0q2c9V8ni9OTOdFA"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Invalid desktop device proof"
+      }
+    },
+    {
+      "name": "proof_aud_0",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.d_R2JMgaVrjMpAPSQ3_4vwfo9bIvZV0mugGv-Vlb_ys",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJPV0czdDQ0RFl3eTV3SjN0N1VIYW1yQ1NxbXJ0N2drUlc4TFhDMGZHS24wIiwianRpIjoicHJvb2YtZml4dHVyZSIsImF1ZCI6Im90aGVyLXNlcnZpY2UifQ.Pyw-OXVx_9twBdOuN2I0vschpym79E_I7qNBQ4nLa6pXg4AledngS_WlfQ9N1NOjR0hBJs1e_CQ5se2HB_UENg"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Invalid desktop device proof"
+      }
+    },
+    {
+      "name": "proof_missing_iat",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.d_R2JMgaVrjMpAPSQ3_4vwfo9bIvZV0mugGv-Vlb_ys",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJodG0iOiJQT1NUIiwiaHR1IjoiL2FwaS9hdXRoL3dld29yay9yZWZyZXNoIiwiYXRoIjoiT1dHM3Q0NERZd3k1d0ozdDdVSGFtckNTcW1ydDdna1JXOExYQzBmR0tuMCIsImp0aSI6InByb29mLWZpeHR1cmUifQ.KfmUsgb5B3gMnx22y0Ux9K8Oc6oog61at4GNaYMnQwGGPl5adnFMO71HRTI3qYh6K6UddNTrQv5qZwDc7tPlIQ"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Invalid desktop device proof"
+      }
+    },
+    {
+      "name": "proof_missing_htm",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.d_R2JMgaVrjMpAPSQ3_4vwfo9bIvZV0mugGv-Vlb_ys",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0dSI6Ii9hcGkvYXV0aC93ZXdvcmsvcmVmcmVzaCIsImF0aCI6Ik9XRzN0NDREWXd5NXdKM3Q3VUhhbXJDU3FtcnQ3Z2tSVzhMWEMwZkdLbjAiLCJqdGkiOiJwcm9vZi1maXh0dXJlIn0.gdgoprsLUWRRTcAL18ZQ8owPlmqJ2Zn7q_Gfpko4J1ElCts3B0iVtJJuyIJ0ZpRjGqoyIW_0sgrFGqD92TjCZw"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Invalid desktop device proof"
+      }
+    },
+    {
+      "name": "proof_missing_htu",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.d_R2JMgaVrjMpAPSQ3_4vwfo9bIvZV0mugGv-Vlb_ys",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJhdGgiOiJPV0czdDQ0RFl3eTV3SjN0N1VIYW1yQ1NxbXJ0N2drUlc4TFhDMGZHS24wIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.g1R0nyudYZLECYqW2__6pk5WdtT-Mm-g7k5L-TUZ_lToOENB9xR9Byj9OL3CGIY8WWeahjPkJjJPtHhIjJCS-A"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Invalid desktop device proof"
+      }
+    },
+    {
+      "name": "proof_missing_ath",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.d_R2JMgaVrjMpAPSQ3_4vwfo9bIvZV0mugGv-Vlb_ys",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJqdGkiOiJwcm9vZi1maXh0dXJlIn0.qd6Fjgtw3Nu2qoK9GHwSCJl2fnRsrjNxEfxHGswYEUZ1ABOWym3PxKa8jp7edq2KCA1Yt4VUo55qxBzJr15nvA"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Invalid desktop device proof"
+      }
+    },
+    {
+      "name": "proof_missing_jti",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.d_R2JMgaVrjMpAPSQ3_4vwfo9bIvZV0mugGv-Vlb_ys",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJPV0czdDQ0RFl3eTV3SjN0N1VIYW1yQ1NxbXJ0N2drUlc4TFhDMGZHS24wIn0.FblgA0snmYjTNAh7oc-HDI4VvibvDzoHSTv8fUHEyCogLVrMx-TxX33Axg0MKZcsJQU1GGeRKiwRzdUzMtvKeQ"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Invalid desktop device proof"
+      }
+    },
+    {
+      "name": "missing_jwk",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.d_R2JMgaVrjMpAPSQ3_4vwfo9bIvZV0mugGv-Vlb_ys",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6bnVsbCwidHlwIjoiSldUIn0.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJPV0czdDQ0RFl3eTV3SjN0N1VIYW1yQ1NxbXJ0N2drUlc4TFhDMGZHS24wIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.L7fo8IY7IZNfShujJ4mPMcrPkhvVTTIENuMSjjGGEXb9MHNMtW5vQ-EW4p-iZgG4HQBH_-cQBDmY9gjZDqt2rg"
+      },
+      "expected": {
+        "status": 400,
+        "detail": "Device public key must use EC P-256"
+      }
+    },
+    {
+      "name": "wrong_curve",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.d_R2JMgaVrjMpAPSQ3_4vwfo9bIvZV0mugGv-Vlb_ys",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTM4NCIsImt0eSI6IkVDIiwieCI6ImF4ZlI4dUVzUWtmNHZPYmxZNlJBOG5jRGZZRXQ2ek9nOUtFNVJkaVl3cFkiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJPV0czdDQ0RFl3eTV3SjN0N1VIYW1yQ1NxbXJ0N2drUlc4TFhDMGZHS24wIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.h-KPrh00x_Hn9h8TbhiPRsxmSIx8iqAUanvKGuKGvG3ChLtPtcl6QSTpx43R7nlILDaEKALo3SS-pTf4iFa7tw"
+      },
+      "expected": {
+        "status": 400,
+        "detail": "Device public key must use EC P-256"
+      }
+    },
+    {
+      "name": "short_coordinate",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.d_R2JMgaVrjMpAPSQ3_4vwfo9bIvZV0mugGv-Vlb_ys",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6IkFBIiwieSI6IlQtTkM0djRhZjV1TzUtdEtmQS1lRml2T00xZHJNVjdPeTdaQWFEZV9VZlUifSwidHlwIjoiSldUIn0.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJPV0czdDQ0RFl3eTV3SjN0N1VIYW1yQ1NxbXJ0N2drUlc4TFhDMGZHS24wIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.CKQ_5ZEQtU0on4ufJh2foTKNa5NB4l-gRQicjzG-qEPr8cMxO8GhxoRLapqNP8jaoraxEhDU4pBiWT9TCOfDxQ"
+      },
+      "expected": {
+        "status": 400,
+        "detail": "Invalid device public key"
+      }
+    },
+    {
+      "name": "non_string_coordinate",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJ4eDBCY0Etd01vaHc4YXRZREpPZTZwZUdNb2RrbEcyd1JIQmxYSE12bDBNIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.d_R2JMgaVrjMpAPSQ3_4vwfo9bIvZV0mugGv-Vlb_ys",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6MSwieSI6IlQtTkM0djRhZjV1TzUtdEtmQS1lRml2T00xZHJNVjdPeTdaQWFEZV9VZlUifSwidHlwIjoiSldUIn0.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJPV0czdDQ0RFl3eTV3SjN0N1VIYW1yQ1NxbXJ0N2drUlc4TFhDMGZHS24wIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.kDZoIr02mo04UBhsyl-CcxY7vZYN6WcX7Ly27BKmHi0knbontlDWhrv28IxDKYjFGmY0rLPjgswQkWggl47Fcw"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Invalid desktop device proof"
+      }
+    },
+    {
+      "name": "invalid_curve_point",
+      "algorithm": "HS256",
+      "request": {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXVzZXIiLCJ1c2VyX2lkIjo3LCJ0b2tlbl91c2UiOiJ3ZXdvcmtfcmVmcmVzaCIsImNuZiI6eyJqa3QiOiJwVVNhdFFMNVhFMXNFaDBPamxjOEVFbUJFY0dvbmVWaVFfZ2kySGNNMVAwIn0sImp0aSI6InJlZnJlc2gtZml4dHVyZSIsImV4cCI6MTgwMDAwMzYwMH0.XuRO119O4Kt5X13RMxuXMhKyJDbSI_3LHACioq1dDR4",
+        "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6IkFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUEiLCJ5IjoiVC1OQzR2NGFmNXVPNS10S2ZBLWVGaXZPTTFkck1WN095N1pBYURlX1VmVSJ9LCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE4MDAwMDAwMDAsImh0bSI6IlBPU1QiLCJodHUiOiIvYXBpL2F1dGgvd2V3b3JrL3JlZnJlc2giLCJhdGgiOiJ4d3NsOVZtVS1IQUFhV1lwNUJxUHdQTDl1SUhJUWxvUldOWjNhUVlrSUxFIiwianRpIjoicHJvb2YtZml4dHVyZSJ9.UWl1Pyj3LdrPpjqs7qDvw2zXkuYH11lCCl-uJtO9POOSH2TdNWm9xnwZg9yjBA40S61O6HtM2zQhri2qrpkIxQ"
+      },
+      "expected": {
+        "status": 401,
+        "detail": "Invalid desktop device proof"
+      }
+    }
+  ]
+}
