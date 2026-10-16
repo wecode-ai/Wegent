@@ -177,9 +177,11 @@ def _load_system_initialization_state(logger: logging.Logger) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Keep the cache available through startup, channel draining and shutdown.
+    from app.services.execution.chat_shell_client import chat_shell_clients
+
     await cache_manager.start()
     try:
-        async with _application_lifespan(app):
+        async with chat_shell_clients.lifespan(), _application_lifespan(app):
             yield
     finally:
         await cache_manager.aclose()
