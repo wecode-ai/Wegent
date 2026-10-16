@@ -29,6 +29,7 @@ import { TaskDescriptionEditor } from './TaskDescriptionEditor'
 import { normalizeTaskDescription } from './taskDescription'
 import { AITableTaskFields } from './AITableTaskFields'
 import { TaskActivityView } from './TaskActivityView'
+import type { StartHumanTaskFromReplyInput } from './TaskActivityView'
 import { createWeworkDeliverySharedWorkspaceApi } from '@/features/collaboration/weworkSharedWorkspaceApi'
 import { canEditProjectSpaceIssue } from './projectSpaceSelection'
 import { HumanIssueWorkPanel } from './HumanIssueWorkPanel'
@@ -113,6 +114,8 @@ export type TodoEditorProps = TodoEditorApiProps & {
   onCreateTask?: () => void
   onOpenTaskConversation?: (task: LoopItemTaskBinding) => void
   onOpenChildTask?: (task: CloudLoopItem) => void
+  /** Starts the work item a manager assigned this member, from a reply. */
+  onStartHumanTaskFromReply?: (input: StartHumanTaskFromReplyInput) => void | Promise<void>
 } & (TodoEditorCreateProps | TodoEditorEditProps)
 
 function canCreatePersonalTask(props: TodoEditorProps): boolean {
@@ -222,6 +225,7 @@ export function TodoEditor(props: TodoEditorProps) {
           projectMembers={context.members as import('@/api/deliveries').CloudProjectMember[]}
           issueTimeline={props.presentation === 'workspace-panel'}
           onOpenTask={props.onOpenTaskConversation}
+          onStartHumanTaskFromReply={props.onStartHumanTaskFromReply}
           onRefreshExecutionArtifacts={context.onExecutionArtifactsChange}
           members={context.members}
           agents={context.agents}
@@ -258,14 +262,7 @@ export function TodoEditor(props: TodoEditorProps) {
       props.mode === 'create' && props.createOptions ? () => props.createOptions : undefined,
     renderPersonalTaskAction:
       showPersonalTaskAction && props.onCreateTask
-        ? ({ tasks, onCreateTask }) => {
-            const hasCurrentUserTask = tasks.some(
-              task =>
-                task.task_user_id == null ||
-                String(task.task_user_id) === String(props.currentUserId)
-            )
-            if (hasCurrentUserTask) return null
-
+        ? ({ onCreateTask }) => {
             return (
               <section
                 className="task-detail-personal-task"
@@ -278,7 +275,11 @@ export function TodoEditor(props: TodoEditorProps) {
                   <strong>{t('todo.personal_task_title')}</strong>
                   <small>{t('todo.personal_task_description')}</small>
                 </span>
-                <button type="button" data-testid="cloud-todo-create-task" onClick={onCreateTask}>
+                <button
+                  type="button"
+                  data-testid="cloud-todo-personal-task-start"
+                  onClick={onCreateTask}
+                >
                   <Send aria-hidden="true" size={14} />
                   {t('todo.create_personal_task')}
                 </button>

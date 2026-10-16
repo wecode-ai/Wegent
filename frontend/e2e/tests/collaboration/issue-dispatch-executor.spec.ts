@@ -27,6 +27,7 @@ interface CollaborationIssue {
   id: string
   status: string
   assignee_group_id: string | null
+  assignee_agent_id: string | null
   execution_state: string | null
 }
 
@@ -323,6 +324,8 @@ test.describe('Collaboration group Executor coordination', () => {
 
       const completed = await waitForIssueStatus(request, model.token, fixture.issueId, 'in_review')
       expect(completed.execution_state).not.toBe('failed')
+      expect(completed.assignee_group_id).toBeNull()
+      expect(completed.assignee_agent_id).toBe(collector.id)
 
       const managerBodies = await getScenarioModelBodies(request, issueTitle)
       const managerHeaders = await getScenarioRequestHeaders(request, issueTitle)
@@ -386,6 +389,10 @@ test.describe('Collaboration group Executor coordination', () => {
       await expect(page.getByText(collectorTask, { exact: false }).first()).toBeVisible()
       await expect(page.getByText(reviewerTask, { exact: false }).first()).toBeVisible()
       await expect(page.getByText(synthesisTask, { exact: false }).first()).toBeVisible()
+      await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
+        'data-value',
+        `agent:${collector.id}`
+      )
       await expect(page.getByText(finalComment, { exact: false }).first()).toBeVisible()
       await captureEvidence(page, testInfo, '03-manager-reviewed-two-rounds')
     } finally {

@@ -1278,7 +1278,7 @@ describe('createHybridWorkbenchServices', () => {
     expect(onChatChunk.mock.calls.map(([payload]) => payload.content)).toEqual(['local', 'cloud'])
   })
 
-  it('routes project assignment notifications through the cloud runtime stream only', () => {
+  it('routes project assignment notifications by project storage', () => {
     const services = createServices()
     const onProjectTaskAssigned = vi.fn()
 
@@ -1294,11 +1294,22 @@ describe('createHybridWorkbenchServices', () => {
       assignerName: 'Alice',
     }
 
-    expect(localHandlers?.onProjectTaskAssigned).toBeUndefined()
+    const localPayload = {
+      ...payload,
+      projectStore: 'local' as const,
+      projectId: 'local-project',
+    }
+    localHandlers?.onProjectTaskAssigned?.(localPayload)
+    expect(onProjectTaskAssigned).toHaveBeenCalledExactlyOnceWith(localPayload)
+    cloudHandlers?.onProjectTaskAssigned?.(localPayload)
+    localHandlers?.onProjectTaskAssigned?.(payload)
+    expect(onProjectTaskAssigned).toHaveBeenCalledOnce()
     cloudHandlers?.onProjectTaskAssigned?.(payload)
 
-    expect(onProjectTaskAssigned).toHaveBeenCalledOnce()
-    expect(onProjectTaskAssigned).toHaveBeenCalledWith(payload)
+    expect(onProjectTaskAssigned.mock.calls.map(([notification]) => notification)).toEqual([
+      localPayload,
+      payload,
+    ])
   })
 
   it('loads cloud models in the background without delaying local models', async () => {

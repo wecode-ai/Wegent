@@ -68,8 +68,12 @@ def _token(user: User) -> MCPAuthInfo:
     )
 
 
+@pytest.mark.parametrize("human_round_owner", [False, True])
 def test_update_issue_status_is_scoped_to_manager_board_task(
-    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    human_round_owner: bool,
 ) -> None:
     project = _project(test_db, test_user, provider="local")
     manager = ProjectChatAgent(
@@ -129,6 +133,22 @@ def test_update_issue_status_is_scoped_to_manager_board_task(
     )
     test_db.add_all([manager, item, dispatch])
     test_db.commit()
+    if human_round_owner:
+        from app.services.collaboration_round_assignment import assign_round_owner
+
+        assign_round_owner(
+            test_db,
+            item=item,
+            assignments=[
+                {
+                    "assignee_type": "human",
+                    "human_user_id": test_user.id,
+                    "human_user_name": test_user.user_name,
+                }
+            ],
+            user_id=test_user.id,
+        )
+        test_db.commit()
     labels = {
         "source": "project_automation",
         "weworkSpaceProjectId": str(project.id),

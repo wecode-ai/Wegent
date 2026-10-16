@@ -2372,9 +2372,10 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .unwrap_or_else(|| params.clone()),
             )
             .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            let dispatch = params.get("dispatch").filter(|value| value.is_object());
             serialize_task_value(
                 runtime
-                    .bind_task(project_id, item_id, input)
+                    .bind_task(project_id, item_id, input, dispatch)
                     .await
                     .map_err(task_runtime_error)?,
             )
