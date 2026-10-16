@@ -8,6 +8,7 @@ import {
   ANTHROPIC_EMPTY_PROMPT,
   CLOUD_MODEL_CASES,
   DEFAULT_STEP_TIMEOUT_MS,
+  MODEL_REQUEST_TIMEOUT_MS,
   MODEL_SERVICE_CONNECTION_ENDPOINT,
   MODEL_SERVICE_CONNECTION_PROMPT,
   MODEL_PROXY_RESTART_FOLLOW_UP_COMPLETION_TEXT,
@@ -396,9 +397,10 @@ async function verifyModelServiceConnectionError({ composerSelector, control }) 
   )
   const titleSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-title"]`
   const descriptionSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-description"]`
+  // Codex exhausts native stream reconnects before publishing the terminal model error.
   await control.command('waitFor', titleSelector, {
     text: '无法连接模型服务',
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    timeoutMs: MODEL_REQUEST_TIMEOUT_MS,
   })
   await control.command('waitFor', descriptionSelector, {
     text: MODEL_SERVICE_CONNECTION_ENDPOINT,
