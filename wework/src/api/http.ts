@@ -152,7 +152,6 @@ async function parseError(response: Response): Promise<ApiError> {
 
 export function createHttpClient(options: HttpClientOptions): HttpClient {
   const getToken = options.getToken ?? defaultGetToken
-  const inFlightGetRequests = new Map<string, Promise<unknown>>()
 
   async function fetchWithDiagnostics(
     endpoint: string,
@@ -302,29 +301,7 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
   }
 
   function get<T>(endpoint: string, requestOptions: HttpRequestOptions = {}): Promise<T> {
-    const token = getToken()
-    const redirectKey = requestOptions.redirectOnUnauthorized === false ? 'no-redirect' : 'redirect'
-    const cacheKey = `${redirectKey}:${token ?? ''}:${endpoint}`
-    if (!requestOptions.signal) {
-      const currentRequest = inFlightGetRequests.get(cacheKey)
-      if (currentRequest) {
-        return currentRequest as Promise<T>
-      }
-    }
-
-    const nextRequest = request<T>(
-      endpoint,
-      { method: 'GET', headers: requestOptions.headers },
-      requestOptions
-    ).finally(() => {
-      if (!requestOptions.signal) {
-        inFlightGetRequests.delete(cacheKey)
-      }
-    })
-    if (!requestOptions.signal) {
-      inFlightGetRequests.set(cacheKey, nextRequest)
-    }
-    return nextRequest
+    return request<T>(endpoint, { method: 'GET', headers: requestOptions.headers }, requestOptions)
   }
 
   async function getBlob(endpoint: string): Promise<Blob> {
