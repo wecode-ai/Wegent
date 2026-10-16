@@ -213,7 +213,8 @@ describe('desktop resource migration', () => {
     expect(source).not.toContain(
       "join(sharedResourcesRoot, 'bundled-harness-runtime', 'runtimes.json')"
     )
-    expect(source).toContain('join(harnessRuntimeAssetDirectory, runtime.assetName)')
+    expect(source).toContain('new Set(packagedRuntimes.map(runtime => runtime.assetName))')
+    expect(source).toContain('join(harnessRuntimeAssetDirectory, assetName)')
     expect(harnessRuntimeSource).toContain('`wework-harness-runtime-${runtime.sourceFingerprint}`')
     expect(harnessRuntimeSource).not.toContain(
       '`wework-harness-runtime-${runtime.dshVersion}-${process.pid}`'
