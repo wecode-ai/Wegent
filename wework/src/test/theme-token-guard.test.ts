@@ -182,6 +182,35 @@ describe('theme token guard', () => {
     expect(source).toContain('border-radius: 999px;')
   })
 
+  test('WebKit scrollbar rules are not suppressed by standard scrollbar properties', () => {
+    const styles = parse(readFileSync(resolve(sourceRoot, 'styles/globals.css'), 'utf8'))
+    const overrides = new Map<string, Record<string, string>>()
+    styles.walkAtRules('supports', support => {
+      if (support.params !== 'selector(::-webkit-scrollbar)') return
+      support.walkRules(rule => {
+        const declarations: Record<string, string> = {}
+        rule.walkDecls(declaration => {
+          declarations[declaration.prop] = declaration.value
+        })
+        rule.selectors.forEach(selector => overrides.set(selector, declarations))
+      })
+    })
+
+    for (const selector of ['*', '.scrollbar-soft']) {
+      expect(overrides.get(selector)).toEqual({
+        'scrollbar-color': 'auto',
+        'scrollbar-width': 'auto',
+      })
+    }
+    const hiddenWidths: string[] = []
+    styles.walkRules('.scrollbar-none', rule => {
+      rule.walkDecls('scrollbar-width', declaration => {
+        hiddenWidths.push(declaration.value)
+      })
+    })
+    expect(hiddenWidths).toEqual(['none'])
+  })
+
   test('dark scrollbar thumbs remain distinguishable on the default app surfaces', () => {
     const source = readFileSync(resolve(sourceRoot, 'styles/globals.css'), 'utf8')
     const tokens = new Map<string, string>()

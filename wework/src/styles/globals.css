@@ -698,6 +698,15 @@ button:disabled {
   ::-webkit-scrollbar-thumb:hover {
     background-color: rgb(var(--color-scrollbar-thumb-hover));
   }
+
+  /* Non-auto standard properties suppress WebKit thumb sizing and hover styles. */
+  @supports selector(::-webkit-scrollbar) {
+    *,
+    .scrollbar-soft {
+      scrollbar-color: auto;
+      scrollbar-width: auto;
+    }
+  }
 }
 
 @layer components {
