@@ -3,9 +3,21 @@ import {
   classifyElectronProcess,
   collectDescendantProcessIds,
   parseProcessSnapshotLine,
+  parseProcessExecutables,
 } from './process-diagnostics.js'
 
 describe('Electron process diagnostics', () => {
+  it('preserves spaces in executable paths without including command arguments', () => {
+    expect([
+      ...parseProcessExecutables(
+        ' 123 /Applications/WeWork Helper.app/Contents/MacOS/WeWork Helper\n 45 /bin/bash\n'
+      ),
+    ]).toEqual([
+      [123, '/Applications/WeWork Helper.app/Contents/MacOS/WeWork Helper'],
+      [45, '/bin/bash'],
+    ])
+  })
+
   it('parses ps output without losing command arguments', () => {
     expect(
       parseProcessSnapshotLine(

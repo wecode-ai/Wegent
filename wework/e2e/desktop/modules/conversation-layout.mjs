@@ -959,10 +959,9 @@ async function captureTotalMemorySample(control, phase) {
     ),
     groups: snapshot.processMemory.groups,
     // Keep process ancestry for memory regressions without retaining command arguments.
-    processes: snapshot.processMemory.processes.map(({ command, ...processInfo }) => ({
-      ...processInfo,
-      executable: command.split(' ')[0],
-    })),
+    processes: snapshot.processMemory.processes.map(
+      ({ command: _command, ...processInfo }) => processInfo
+    ),
   }
 }
 

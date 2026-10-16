@@ -11,6 +11,7 @@ export interface ProcessDiagnosticsProcess {
   physical_footprint_kib: number
   cpu_percent: number
   command: string
+  executable: string | null
 }
 
 export interface ProcessDiagnosticsGroup {
@@ -71,6 +72,15 @@ export function collectDescendantProcessIds(
   return descendants
 }
 
+export function parseProcessExecutables(output: string): Map<number, string> {
+  const executables = new Map<number, string>()
+  for (const line of output.split('\n')) {
+    const match = line.trim().match(/^(\d+)\s+(.+)$/)
+    if (match) executables.set(Number(match[1]), match[2])
+  }
+  return executables
+}
+
 export function classifyElectronProcess(processInfo: RawProcessInfo, mainPid: number): string {
   if (processInfo.pid === mainPid) return 'main'
   if (processInfo.command.includes('wegent-executor')) return 'executor'
@@ -98,10 +108,18 @@ export async function getElectronProcessSnapshot(
     .map(parseProcessSnapshotLine)
     .filter((value): value is RawProcessInfo => value !== null)
   const relatedProcessIds = collectDescendantProcessIds(allProcesses, [mainPid])
+  const { stdout: executableOutput } = await execFileAsync('ps', [
+    '-p',
+    [...relatedProcessIds].join(','),
+    '-o',
+    'pid=,comm=',
+  ])
+  const executables = parseProcessExecutables(executableOutput)
   const processes = allProcesses
     .filter(processInfo => relatedProcessIds.has(processInfo.pid))
     .map(processInfo => ({
       ...processInfo,
+      executable: executables.get(processInfo.pid) ?? null,
       group: classifyElectronProcess(processInfo, mainPid),
       physical_footprint_kib: processInfo.rss_kib,
     }))
