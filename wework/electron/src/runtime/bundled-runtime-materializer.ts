@@ -100,11 +100,13 @@ async function runtimeMatches(root: string, runtime: RuntimeDescriptor): Promise
     const identity = JSON.parse(await readFile(join(root, 'runtime.json'), 'utf8')) as {
       dshVersion?: unknown
       role?: unknown
+      roles?: unknown
       sourceFingerprint?: unknown
     }
     return (
       identity.dshVersion === runtime.dshVersion &&
-      identity.role === runtime.role &&
+      (identity.role === runtime.role ||
+        (Array.isArray(identity.roles) && identity.roles.includes(runtime.role))) &&
       identity.sourceFingerprint === runtime.sourceFingerprint
     )
   } catch {

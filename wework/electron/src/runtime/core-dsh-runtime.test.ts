@@ -24,6 +24,41 @@ async function prepareCoreDshLaunch(
 }
 
 describe('core DSH runtime', () => {
+  test('selects the same materialized runtime for both declared roles', async () => {
+    const root = await temporaryDirectory('shared-dsh-selection-')
+    try {
+      const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
+      await writeFile(
+        join(runtime.root, 'runtime.json'),
+        JSON.stringify({
+          dshVersion: CORE_DSH_VERSION,
+          roles: ['core', 'workbench'],
+          sourceFingerprint: runtime.fingerprint,
+        })
+      )
+      await writeFile(
+        join(root.path, 'runtimes.json'),
+        JSON.stringify({
+          runtimes: ['core', 'workbench'].map(role => ({
+            role,
+            sourceFingerprint: runtime.fingerprint,
+          })),
+        })
+      )
+
+      for (const role of ['core', 'workbench']) {
+        await expect(
+          selectBundledDshRuntimeMatching(root.path, role, CORE_DSH_VERSION)
+        ).resolves.toMatchObject({ root: runtime.root, role, version: CORE_DSH_VERSION })
+      }
+      await expect(
+        selectBundledDshRuntimeMatching(root.path, 'other', CORE_DSH_VERSION)
+      ).rejects.toThrow('Bundled other DSH runtime')
+    } finally {
+      await root.remove()
+    }
+  })
+
   test('selects only the bundled core version', async () => {
     const root = await temporaryDirectory('core-dsh-selection-')
     const rc8 = await writeRuntime(root.path, '0.1.0-rc.8', '8')

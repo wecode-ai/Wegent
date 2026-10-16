@@ -163,8 +163,10 @@ async function assertReleasePackageResources() {
   )
   const currentRuntimes = catalog.runtimes.filter(runtime => runtime.dshVersion === '0.2.0-rc.2')
   assert.deepEqual(currentRuntimes.map(runtime => runtime.role).sort(), ['core', 'workbench'])
-  assert.equal(new Set(currentRuntimes.map(runtime => runtime.sourceFingerprint)).size, 2)
-  assert.equal(new Set(currentRuntimes.map(runtime => runtime.assetName)).size, 2)
+  assert.equal(new Set(currentRuntimes.map(runtime => runtime.sourceFingerprint)).size, 1)
+  assert.equal(new Set(currentRuntimes.map(runtime => runtime.assetName)).size, 1)
+  assert.equal(new Set(currentRuntimes.map(runtime => runtime.archiveSha256)).size, 1)
+  assert.equal(new Set(currentRuntimes.map(runtime => runtime.archiveBytes)).size, 1)
   assert.ok(
     catalog.runtimes.some(
       runtime => runtime.role === 'workbench' && runtime.dshVersion === '0.1.0-rc.8'
