@@ -6,7 +6,7 @@
 //!
 //! These structs describe the contract between a Wework Smart App and the
 //! Executor local decision proxy. They intentionally perform no business
-//! validation: allowlist checks, `questions` shape checks, and error mapping
+//! validation: catalog authorization, `questions` shape checks, and error mapping
 //! belong to the HTTP handler, which owns the response status codes.
 
 use serde::{Deserialize, Serialize};
@@ -15,11 +15,17 @@ use serde::{Deserialize, Serialize};
 pub(crate) const DECISION_PROXY_PROTOCOL_VERSION: u32 = 1;
 
 /// One entry of the model catalogue reported by `GET .../status`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct DecisionModel {
     pub id: String,
     #[serde(rename = "displayName")]
     pub display_name: String,
+    pub protocol: String,
+    #[serde(rename = "modelId")]
+    pub model_id: String,
+    #[serde(rename = "type")]
+    pub model_type: String,
+    pub namespace: String,
 }
 
 /// `POST .../v1/decisions` request body.
@@ -37,7 +43,7 @@ pub(crate) struct DecisionRequest {
 }
 
 /// `GET .../status` response body.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct DecisionStatusResponse {
     #[serde(rename = "protocolVersion")]
     pub protocol_version: u32,
@@ -76,6 +82,10 @@ mod tests {
             models: vec![DecisionModel {
                 id: "model-a".to_owned(),
                 display_name: "Model A".to_owned(),
+                protocol: "systemone".to_owned(),
+                model_id: "jev-latest".to_owned(),
+                model_type: "public".to_owned(),
+                namespace: "default".to_owned(),
             }],
         };
         let value = serde_json::to_value(&response).expect("serialize status response");
@@ -84,7 +94,10 @@ mod tests {
             json!({
                 "protocolVersion": 1,
                 "defaultModel": "model-a",
-                "models": [{"id": "model-a", "displayName": "Model A"}],
+                "models": [{
+                    "id": "model-a", "displayName": "Model A", "protocol": "systemone",
+                    "modelId": "jev-latest", "type": "public", "namespace": "default"
+                }],
             })
         );
     }

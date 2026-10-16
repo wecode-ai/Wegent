@@ -1393,6 +1393,8 @@
     "model_category_type_rerank": "Rerank",
     "model_category_type_video": "Video Generation",
     "model_category_type_image": "Image Generation",
+    "model_category_type_decision": "Decision Model",
+    "decision_manual_model_id": "Enter the model ID provided by the decision service",
     "image_config_title": "Image Generation Configuration",
     "image_size": "Image Size",
     "image_size_hint": "Resolution of generated images",

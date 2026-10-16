@@ -4,7 +4,7 @@
 
 from unittest.mock import MagicMock, patch
 
-from app.api.endpoints.adapter.models import _test_llm_connection
+from app.services.model_connection_service import _test_llm_connection
 
 
 @patch("openai.OpenAI")

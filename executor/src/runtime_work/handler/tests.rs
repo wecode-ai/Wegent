@@ -6835,37 +6835,18 @@ fn context_compaction_cache_preserves_started_and_completed_outcomes() {
     }
 }
 
-fn decision_proxy_handler(
-    config: crate::server::local_decision_proxy::DecisionProxyConfig,
-) -> RuntimeWorkRpcHandler {
+fn decision_proxy_handler() -> RuntimeWorkRpcHandler {
     let (event_tx, _) = broadcast::channel(1);
     RuntimeWorkRpcHandler::with_event_sender_deferred_startup_recovery(
         "device-1",
         "/bin/false",
         event_tx,
     )
-    .with_decision_proxy_config(Arc::new(config))
-}
-
-fn decision_proxy_config() -> crate::server::local_decision_proxy::DecisionProxyConfig {
-    crate::server::local_decision_proxy::DecisionProxyConfig::Enabled(
-        crate::server::local_decision_proxy::DecisionProxySettings {
-            upstream_url: url::Url::parse("https://decision-upstream.example.com/v1/decisions")
-                .expect("upstream url"),
-            default_model: "model-a".to_owned(),
-            models: vec![crate::server::local_decision_proxy::DecisionModel {
-                id: "model-a".to_owned(),
-                display_name: "Model A".to_owned(),
-            }],
-        },
-    )
 }
 
 #[tokio::test]
 async fn decision_proxy_register_requires_a_scope() {
-    let handler = decision_proxy_handler(
-        crate::server::local_decision_proxy::DecisionProxyConfig::Unconfigured,
-    );
+    let handler = decision_proxy_handler();
     for payload in [json!({}), json!({"scope": "   "}), json!({"scope": 7})] {
         let error = handler
             .dispatch("runtime.decision_proxy.register", payload.clone())
@@ -6876,22 +6857,21 @@ async fn decision_proxy_register_requires_a_scope() {
 }
 
 #[tokio::test]
-async fn decision_proxy_register_reports_a_disabled_router() {
-    let handler = decision_proxy_handler(
-        crate::server::local_decision_proxy::DecisionProxyConfig::Unconfigured,
-    );
-    let error = handler
+async fn decision_proxy_register_needs_no_environment_model_configuration() {
+    let handler = decision_proxy_handler();
+    let launch = handler
         .register_decision_proxy_at(
             json!({"scope": "smart-app:install-1:abc"}),
             "http://127.0.0.1:4567",
         )
-        .expect_err("disabled router must refuse registration");
-    assert_eq!(error.code, "decision_router_disabled");
+        .expect("catalog configuration is resolved at request time");
+    let token = launch["token"].as_str().expect("token");
+    crate::server::local_decision_proxy::unregister(token);
 }
 
 #[tokio::test]
 async fn decision_proxy_register_rejects_client_supplied_configuration() {
-    let handler = decision_proxy_handler(decision_proxy_config());
+    let handler = decision_proxy_handler();
     for field in [
         "upstream",
         "upstreamUrl",
@@ -6913,7 +6893,7 @@ async fn decision_proxy_register_rejects_client_supplied_configuration() {
 
 #[tokio::test]
 async fn decision_proxy_register_returns_a_loopback_launch() {
-    let handler = decision_proxy_handler(decision_proxy_config());
+    let handler = decision_proxy_handler();
     let launch = handler
         .register_decision_proxy_at(
             json!({"scope": "smart-app:install-2:launch"}),
@@ -6941,7 +6921,7 @@ async fn decision_proxy_register_returns_a_loopback_launch() {
 
 #[tokio::test]
 async fn decision_proxy_register_needs_a_running_http_server() {
-    let handler = decision_proxy_handler(decision_proxy_config());
+    let handler = decision_proxy_handler();
     let error = handler
         .dispatch(
             "runtime.decision_proxy.register",
@@ -6954,7 +6934,7 @@ async fn decision_proxy_register_needs_a_running_http_server() {
 
 #[tokio::test]
 async fn registration_binds_the_shared_connection_snapshot() {
-    let handler = decision_proxy_handler(decision_proxy_config());
+    let handler = decision_proxy_handler();
     let launch = handler
         .register_decision_proxy_at(
             json!({"scope": "smart-app:install-4:login"}),
@@ -6974,7 +6954,7 @@ async fn registration_binds_the_shared_connection_snapshot() {
 
 #[tokio::test]
 async fn decision_proxy_unregister_is_idempotent() {
-    let handler = decision_proxy_handler(decision_proxy_config());
+    let handler = decision_proxy_handler();
     let error = handler
         .dispatch("runtime.decision_proxy.unregister", json!({}))
         .await

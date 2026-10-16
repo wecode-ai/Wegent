@@ -583,6 +583,8 @@ class ModelAggregationService:
                     continue
                 info = self._extract_model_info_from_crd(model_data)
 
+                if shell_type and info["model_category_type"] == "decision":
+                    continue
                 if shell_type and not self._is_model_compatible_with_shell(
                     info["provider"],
                     support_model,
@@ -650,6 +652,8 @@ class ModelAggregationService:
             # Extract model category type from public model data
             public_model_category_type = model_dict.get("model_category_type", "llm")
 
+            if shell_type and public_model_category_type == "decision":
+                continue
             if shell_type and not self._is_model_compatible_with_shell(
                 provider,
                 support_model,

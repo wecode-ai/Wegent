@@ -1,0 +1,492 @@
+{
+  "cases": [
+    {
+      "protocol": "systemone",
+      "request": {
+        "model": "catalog-id",
+        "state": {
+          "comment": "请处理"
+        },
+        "questions": {
+          "urgent": {
+            "type": "noul",
+            "instructions": {
+              "question": "紧急吗？"
+            },
+            "criteria": {
+              "true": "是",
+              "false": "否"
+            }
+          },
+          "route": {
+            "type": "choice",
+            "instructions": ["请选择"],
+            "criteria": {
+              "yes": {
+                "detail": "允许"
+              },
+              "no": null
+            }
+          },
+          "priority": {
+            "type": "score",
+            "instructions": "优先级",
+            "criteria": [
+              "低",
+              {
+                "level": "高"
+              }
+            ]
+          }
+        }
+      },
+      "payload": {
+        "model": "provider-model",
+        "state": {
+          "comment": "请处理"
+        },
+        "questions": {
+          "urgent": {
+            "type": "noul",
+            "instructions": {
+              "question": "紧急吗？"
+            },
+            "criteria": {
+              "true": "是",
+              "false": "否"
+            }
+          },
+          "route": {
+            "type": "choice",
+            "instructions": ["请选择"],
+            "criteria": {
+              "yes": {
+                "detail": "允许"
+              },
+              "no": null
+            }
+          },
+          "priority": {
+            "type": "score",
+            "instructions": "优先级",
+            "criteria": [
+              "低",
+              {
+                "level": "高"
+              }
+            ]
+          }
+        }
+      },
+      "response": {
+        "answers": {
+          "urgent": {
+            "type": "noul",
+            "noul": 0.9,
+            "debug": "private"
+          },
+          "route": {
+            "type": "choice",
+            "choice": "yes",
+            "confidence": 0.8,
+            "probabilities": {
+              "yes": 0.8,
+              "no": 0.2
+            }
+          },
+          "priority": {
+            "type": "score",
+            "score": 0.5,
+            "confidence": 0.7,
+            "probabilities": {
+              "0": 0.3,
+              "1": 0.7
+            }
+          }
+        },
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": true,
+          "total_tokens": -1,
+          "secret": 5
+        },
+        "debug": "private"
+      },
+      "normalized": {
+        "model": "catalog-id",
+        "answers": {
+          "urgent": {
+            "type": "noul",
+            "noul": 0.9
+          },
+          "route": {
+            "type": "choice",
+            "confidence": 0.8,
+            "probabilities": {
+              "yes": 0.8,
+              "no": 0.2
+            },
+            "choice": "yes"
+          },
+          "priority": {
+            "type": "score",
+            "confidence": 0.7,
+            "probabilities": {
+              "0": 0.3,
+              "1": 0.7
+            },
+            "score": 0.5,
+            "legend": {
+              "0": "低",
+              "1": "{\"level\": \"高\"}"
+            }
+          }
+        },
+        "usage": {
+          "input_tokens": 3
+        }
+      }
+    },
+    {
+      "protocol": "openai",
+      "request": {
+        "model": "catalog-id",
+        "state": {
+          "comment": "请处理"
+        },
+        "questions": {
+          "urgent": {
+            "type": "noul",
+            "instructions": {
+              "question": "紧急吗？"
+            },
+            "criteria": {
+              "true": "是",
+              "false": "否"
+            }
+          },
+          "route": {
+            "type": "choice",
+            "instructions": ["请选择"],
+            "criteria": {
+              "yes": {
+                "detail": "允许"
+              },
+              "no": null
+            }
+          },
+          "priority": {
+            "type": "score",
+            "instructions": "优先级",
+            "criteria": [
+              "低",
+              {
+                "level": "高"
+              }
+            ]
+          }
+        }
+      },
+      "payload": {
+        "model": "provider-model",
+        "input": "{\"comment\": \"请处理\"}",
+        "questions": [
+          {
+            "name": "urgent",
+            "type": "predicate",
+            "instructions": "{\"instructions\": {\"question\": \"紧急吗？\"}, \"criteria\": {\"true\": \"是\", \"false\": \"否\"}}"
+          },
+          {
+            "name": "route",
+            "type": "choice",
+            "instructions": "[\"请选择\"]",
+            "choices": [
+              {
+                "value": "yes",
+                "description": "{\"detail\": \"允许\"}"
+              },
+              {
+                "value": "no",
+                "description": ""
+              }
+            ]
+          },
+          {
+            "name": "priority",
+            "type": "score",
+            "instructions": "优先级",
+            "levels": [
+              {
+                "label": "0",
+                "description": "低"
+              },
+              {
+                "label": "1",
+                "description": "{\"level\": \"高\"}"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "answers": [
+          {
+            "name": "priority",
+            "type": "score",
+            "score": 0.5,
+            "confidence": 0.7,
+            "probabilities": [
+              {
+                "value": 0,
+                "probability": 0.3
+              },
+              {
+                "value": 1,
+                "probability": 0.7
+              }
+            ]
+          },
+          {
+            "name": "urgent",
+            "type": "predicate",
+            "probability": 0.9
+          },
+          {
+            "name": "route",
+            "type": "choice",
+            "choice": "yes",
+            "confidence": 0.8,
+            "probabilities": [
+              {
+                "value": "yes",
+                "probability": 0.8
+              },
+              {
+                "value": "no",
+                "probability": 0.2
+              }
+            ]
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": true,
+          "total_tokens": -1,
+          "secret": 5
+        },
+        "debug": "private"
+      },
+      "normalized": {
+        "model": "catalog-id",
+        "answers": {
+          "urgent": {
+            "type": "noul",
+            "noul": 0.9
+          },
+          "route": {
+            "type": "choice",
+            "confidence": 0.8,
+            "probabilities": {
+              "yes": 0.8,
+              "no": 0.2
+            },
+            "choice": "yes"
+          },
+          "priority": {
+            "type": "score",
+            "confidence": 0.7,
+            "probabilities": {
+              "0": 0.3,
+              "1": 0.7
+            },
+            "score": 0.5,
+            "legend": {
+              "0": "低",
+              "1": "{\"level\": \"高\"}"
+            }
+          }
+        },
+        "usage": {
+          "input_tokens": 3
+        }
+      }
+    },
+    {
+      "protocol": "openai",
+      "request": {
+        "model": "catalog-id",
+        "state": {
+          "comment": "请处理"
+        },
+        "questions": {
+          "urgent": {
+            "type": "noul",
+            "instructions": {
+              "question": "紧急吗？"
+            },
+            "criteria": {
+              "true": "是",
+              "false": "否"
+            }
+          },
+          "route": {
+            "type": "choice",
+            "instructions": ["请选择"],
+            "criteria": {
+              "yes": {
+                "detail": "允许"
+              },
+              "no": null
+            }
+          },
+          "priority": {
+            "type": "score",
+            "instructions": "优先级",
+            "criteria": [
+              "低",
+              {
+                "level": "高"
+              }
+            ]
+          }
+        }
+      },
+      "payload": {
+        "model": "provider-model",
+        "input": "{\"comment\": \"请处理\"}",
+        "questions": [
+          {
+            "name": "urgent",
+            "type": "predicate",
+            "instructions": "{\"instructions\": {\"question\": \"紧急吗？\"}, \"criteria\": {\"true\": \"是\", \"false\": \"否\"}}"
+          },
+          {
+            "name": "route",
+            "type": "choice",
+            "instructions": "[\"请选择\"]",
+            "choices": [
+              {
+                "value": "yes",
+                "description": "{\"detail\": \"允许\"}"
+              },
+              {
+                "value": "no",
+                "description": ""
+              }
+            ]
+          },
+          {
+            "name": "priority",
+            "type": "score",
+            "instructions": "优先级",
+            "levels": [
+              {
+                "label": "0",
+                "description": "低"
+              },
+              {
+                "label": "1",
+                "description": "{\"level\": \"高\"}"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "answers": [
+          {
+            "name": "priority",
+            "type": "score",
+            "score": 0.5,
+            "confidence": 0.7,
+            "probabilities": [
+              {
+                "value": 0,
+                "probability": 0.3
+              },
+              {
+                "value": 1,
+                "probability": 0.7
+              }
+            ]
+          },
+          {
+            "name": "urgent",
+            "type": "refusal",
+            "reason": "private"
+          },
+          {
+            "name": "route",
+            "type": "choice",
+            "choice": "yes",
+            "confidence": 0.8,
+            "probabilities": [
+              {
+                "value": "yes",
+                "probability": 0.8
+              },
+              {
+                "value": "no",
+                "probability": 0.2
+              }
+            ]
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": true,
+          "total_tokens": -1,
+          "secret": 5
+        },
+        "debug": "private"
+      },
+      "normalized": {
+        "model": "catalog-id",
+        "answers": {
+          "urgent": {
+            "type": "refusal"
+          },
+          "route": {
+            "type": "choice",
+            "confidence": 0.8,
+            "probabilities": {
+              "yes": 0.8,
+              "no": 0.2
+            },
+            "choice": "yes"
+          },
+          "priority": {
+            "type": "score",
+            "confidence": 0.7,
+            "probabilities": {
+              "0": 0.3,
+              "1": 0.7
+            },
+            "score": 0.5,
+            "legend": {
+              "0": "低",
+              "1": "{\"level\": \"高\"}"
+            }
+          }
+        },
+        "usage": {
+          "input_tokens": 3
+        }
+      }
+    }
+  ],
+  "identities": [
+    {
+      "identity": ["public", "default", 0, "same"],
+      "id": "3d46e31050226c5d746d9957423e7445ee7dfa5747dbe57c293d0aef77fc6e5e"
+    },
+    {
+      "identity": ["user", "default", 17, "same"],
+      "id": "9567757ae4953a85bc221f9b5464c84a07b723872d0e667c30099f155ee61f7b"
+    },
+    {
+      "identity": ["group", "研发😀", 29, "模型"],
+      "id": "1b579adbc53223c9423e244f8532fa5dd1e57b991d43fab3863d53d90398df28"
+    }
+  ]
+}

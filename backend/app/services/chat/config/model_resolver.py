@@ -437,6 +437,14 @@ def extract_and_process_model_config(
     """
     # Step 1: Extract basic model config (handles env var placeholders and decryption)
     model_config = _extract_model_config(model_spec)
+    custom_headers = (model_spec.get("modelConfig", {}).get("env") or {}).get(
+        "custom_headers"
+    )
+    if isinstance(custom_headers, dict):
+        model_config["default_headers"] = {
+            **model_config.get("default_headers", {}),
+            **custom_headers,
+        }
 
     # Step 2: Process data source placeholders (${user.xxx}, ${agent_config.xxx}, etc.)
     model_config = _process_model_config_placeholders(
