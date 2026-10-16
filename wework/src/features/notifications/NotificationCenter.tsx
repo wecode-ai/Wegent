@@ -34,10 +34,9 @@ import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
 import { cn } from '@/lib/utils'
 import { SettingsSwitch } from '@/components/settings/settings-ui'
-import {
-  useIssueDispatchNotificationAction,
-  useNotificationTaskSource,
-} from './NotificationTaskSourceContext'
+import { requestIssueDispatch, type IssueDispatchPersonalTaskAction } from './issueDispatch'
+import { useNotificationTaskSource } from './NotificationTaskSourceContext'
+import { weworkIssueScheme } from './scheme'
 import { openWeworkScheme } from './schemeEvents'
 import {
   cacheNotificationPreferences,
@@ -65,6 +64,60 @@ const KIND_ICONS: Record<string, LucideIcon> = {
  */
 function notificationPreview(notification: WeworkNotification): string {
   return notification.body || notification.title
+}
+
+/**
+ * The personal task an assignment notification asks its reader to open.
+ *
+ * The notification names the Issue and the assignment, so the reader arrives
+ * wherever they clicked it from; anything less cannot be turned into a task.
+ */
+function issueDispatchRequest(
+  payload: WeworkNotificationPayload
+): IssueDispatchPersonalTaskAction | null {
+  const {
+    projectId,
+    itemId,
+    issueId,
+    dispatchTaskId,
+    idempotencyKey,
+    humanAssignmentId,
+    dispatchId,
+    roundId,
+    assignmentId,
+    taskTitle,
+    instructions,
+    workflowStageId,
+  } = payload
+  if (
+    !projectId ||
+    !itemId ||
+    !issueId ||
+    !dispatchTaskId ||
+    !idempotencyKey ||
+    !humanAssignmentId ||
+    !dispatchId ||
+    !roundId ||
+    !assignmentId ||
+    !taskTitle ||
+    !instructions
+  ) {
+    return null
+  }
+  return {
+    projectId,
+    itemId,
+    issueId,
+    dispatchTaskId,
+    idempotencyKey,
+    humanAssignmentId,
+    dispatchId,
+    roundId,
+    assignmentId,
+    taskTitle,
+    instructions,
+    workflowStageId,
+  }
 }
 
 function formatNotificationTime(timestamp: number): string {
@@ -288,7 +341,6 @@ function ConnectedNotificationCenter({
 }) {
   const { t } = useTranslation('common')
   const taskSource = useNotificationTaskSource()
-  const issueDispatchAction = useIssueDispatchNotificationAction()
   const api = useMemo(
     () =>
       baseUrl && token
@@ -505,50 +557,16 @@ function ConnectedNotificationCenter({
         }
       })
       if (read.payload.action === 'create_personal_task') {
-        const {
-          projectId,
-          itemId,
-          issueId,
-          dispatchTaskId,
-          idempotencyKey,
-          humanAssignmentId,
-          dispatchId,
-          roundId,
-          assignmentId,
-          taskTitle,
-          instructions,
-          workflowStageId,
-        } = read.payload
-        if (
-          !issueDispatchAction ||
-          !projectId ||
-          !itemId ||
-          !issueId ||
-          !dispatchTaskId ||
-          !idempotencyKey ||
-          !humanAssignmentId ||
-          !dispatchId ||
-          !roundId ||
-          !assignmentId ||
-          !taskTitle ||
-          !instructions
-        ) {
+        const request = issueDispatchRequest(read.payload)
+        if (!request) {
           throw new Error(t('notifications.invalid_link'))
         }
-        await issueDispatchAction({
-          projectId,
-          itemId,
-          issueId,
-          dispatchTaskId,
-          idempotencyKey,
-          humanAssignmentId,
-          dispatchId,
-          roundId,
-          assignmentId,
-          taskTitle,
-          instructions,
-          workflowStageId,
-        })
+        // The project's board answers this, so the click switches to the Issue
+        // first and leaves the dispatch waiting for the board that shows it.
+        if (!openWeworkScheme(read.url ?? weworkIssueScheme(request.projectId, request.itemId))) {
+          throw new Error(t('notifications.invalid_link'))
+        }
+        requestIssueDispatch(request)
         close()
         return
       }
