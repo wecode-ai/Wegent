@@ -73,6 +73,7 @@ function fixture(
                         updatedAt: context.revision,
                         completedAt: context.completedAt ?? 1000,
                         runtimeHandle: { lastTurnId: context.latestTurnId },
+                        modelSelection: { modelName: 'session-model', modelType: 'runtime' },
                       },
                       turn: {
                         latestId: context.latestTurnId,
@@ -104,12 +105,30 @@ function fixture(
 }
 
 describe('reply prediction provider', () => {
+  it('shows a failure without exposing provider details and clears it on the next turn', async () => {
+    const predict = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('401 secret provider details'))
+      .mockResolvedValueOnce({ suggestion: '恢复后的建议' })
+    const { rerender } = render(fixture(predict))
+    await waitFor(() => expect(screen.getByTestId('reply-prediction-error')).toBeVisible())
+    expect(screen.queryByText(/secret provider details/)).not.toBeInTheDocument()
+    expect(screen.queryByText('正在生成建议…')).not.toBeInTheDocument()
+    rerender(fixture(predict, { ...source, latestTurnId: 'turn-2' }))
+    await waitFor(() => expect(screen.getByRole('button')).toHaveTextContent('恢复后的建议'))
+    expect(screen.queryByTestId('reply-prediction-error')).not.toBeInTheDocument()
+  })
+
   it('uses the source session without loading transcripts or selecting a model', async () => {
     const predict = vi.fn(async () => ({ suggestion: '请继续' }))
     const { rerender } = render(fixture(predict))
     await waitFor(() => expect(screen.getByRole('button')).toHaveTextContent('请继续'))
     expect(predict).toHaveBeenCalledWith(
-      expect.objectContaining({ address: source.address, latestTurnId: 'turn-1' })
+      expect.objectContaining({
+        address: source.address,
+        latestTurnId: 'turn-1',
+        modelSelection: { modelName: 'session-model', modelType: 'runtime' },
+      })
     )
     rerender(fixture(predict, source, { taskModel: 'task-b' }))
     expect(predict).toHaveBeenCalledTimes(1)

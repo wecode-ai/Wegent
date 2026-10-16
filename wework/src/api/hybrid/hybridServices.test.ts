@@ -277,7 +277,8 @@ const mocks = vi.hoisted(() => {
   }
 })
 
-vi.mock('@/api/local/localServices', () => ({
+vi.mock('@/api/local/localServices', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/api/local/localServices')>()),
   createLocalAppServices: (options: { materializeRuntimeTask?: unknown } | undefined) => {
     mocks.captureLocalAppOptions(options)
     return options?.materializeRuntimeTask ? mocks.localServices : mocks.localOnlyServices
@@ -993,6 +994,30 @@ describe('execution status write-back on history reads', () => {
 })
 
 describe('createHybridWorkbenchServices', () => {
+  it('sends current cloud credentials and model identity to the remote prediction device', async () => {
+    mocks.cloudRuntimeIpcRequest.mockResolvedValue({ suggestion: '请继续' })
+    const services = createServices()
+    await services.replyPredictionApi!.predict({
+      address: { deviceId: 'cloud-device', taskId: 'cloud-task' },
+      modelSelection: {
+        modelName: 'cloud-selected',
+        modelType: 'user',
+        options: { weworkCloudModelNamespace: 'default', weworkCloudModelResourceUserId: '42' },
+      },
+    })
+    expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledWith(
+      'runtime.text.predict_reply',
+      expect.objectContaining({
+        modelConfig: expect.objectContaining({
+          model_id: 'cloud-selected',
+          api_key: 'cloud-token',
+          default_headers: expect.objectContaining({ 'X-Wegent-Model-Namespace': 'default' }),
+        }),
+      }),
+      'cloud-device'
+    )
+  })
+
   it('routes predictions and cancellation to the session device', async () => {
     const services = createServices()
     const local = { address: { deviceId: 'local-device', taskId: 'local-task' } }

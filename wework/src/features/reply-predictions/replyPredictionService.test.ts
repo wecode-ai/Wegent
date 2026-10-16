@@ -53,6 +53,7 @@ describe('reply prediction service', () => {
     const service = new ReplyPredictionService({ predict })
     expect(await service.request(source())).toBeNull()
     expect(await service.request(source())).toBeNull()
+    expect(service.hasError(source().scope)).toBe(true)
     expect(predict).toHaveBeenCalledTimes(1)
     expect(await service.request({ ...source(), scope: 'task-2' })).toBeNull()
     expect(predict).toHaveBeenCalledTimes(2)
@@ -61,6 +62,7 @@ describe('reply prediction service', () => {
     expect(await emptyService.request(source())).toBeNull()
     expect(await emptyService.request(source())).toBeNull()
     expect(empty).toHaveBeenCalledTimes(1)
+    expect(emptyService.hasError(source().scope)).toBe(false)
   })
 
   it('does not predict busy turns and cancels only after the last composer releases', async () => {

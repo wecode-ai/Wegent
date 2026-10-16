@@ -1,4 +1,4 @@
-import type { RuntimeTaskAddress } from '@/types/api'
+import type { ModelSelectionConfig, RuntimeTaskAddress } from '@/types/api'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 
 export interface ReplyPredictionSource {
@@ -6,6 +6,7 @@ export interface ReplyPredictionSource {
   revision: string
   busy: boolean
   address: RuntimeTaskAddress
+  modelSelection?: ModelSelectionConfig | null
   latestTurnId?: string | null
 }
 
@@ -27,6 +28,7 @@ export class ReplyPredictionService {
   private api: PredictionApi
   private entries = new Map<string, PredictionEntry>()
   private owners = new Map<string, number>()
+  private failedScopes = new Set<string>()
   private listeners = new Set<() => void>()
   private revision = 0
 
@@ -49,12 +51,17 @@ export class ReplyPredictionService {
     )
   }
 
+  hasError(scope: string) {
+    return this.failedScopes.has(scope)
+  }
+
   private notify() {
     this.revision += 1
     for (const listener of this.listeners) listener()
   }
 
   invalidate(scope: string) {
+    this.failedScopes.delete(scope)
     for (const [key, entry] of this.entries) {
       if (!key.startsWith(`${scope}\u0000`)) continue
       entry.controller.abort()
@@ -100,6 +107,7 @@ export class ReplyPredictionService {
         const oldest = this.entries.keys().next().value!
         this.entries.get(oldest)?.controller.abort()
         this.entries.delete(oldest)
+        this.failedScopes.delete(oldest.split('\u0000')[0])
       }
     }
     const text = await entry.promise
@@ -126,11 +134,13 @@ export class ReplyPredictionService {
     try {
       const result = await this.api.predict({
         address: source.address,
+        modelSelection: source.modelSelection,
         latestTurnId: source.latestTurnId,
         signal,
       })
       return result.suggestion?.trim() || null
     } catch {
+      if (!signal.aborted) this.failedScopes.add(source.scope)
       console.debug('[Wework] Reply prediction unavailable', {
         aborted: signal.aborted,
         durationMs: Math.round(performance.now() - started),

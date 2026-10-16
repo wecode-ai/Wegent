@@ -31,6 +31,7 @@ import {
   createAutomationApiFromIpc,
   createLocalAppServices,
   createRuntimeWorkApiFromIpc,
+  materializeCodexTaskModelConfig,
 } from '@/api/local/localServices'
 import { createRuntimeChatStream } from '@/api/runtime/runtimeChatStream'
 import { REMOTE_TEAM_BACKEND_UNSUPPORTED } from '@/api/runtimeWork'
@@ -1602,8 +1603,9 @@ export function createHybridWorkbenchServices(
         if (api === localServices.runtimeWorkApi) {
           return localServices.replyPredictionApi!.predict(data)
         }
-        return createReplyPredictionApi((method, params) =>
-          cloudRuntimeIpc.request(method, params, data.address.deviceId)
+        return createReplyPredictionApi(
+          (method, params) => cloudRuntimeIpc.request(method, params, data.address.deviceId),
+          selection => materializeCodexTaskModelConfig(selection, { cloudModelGateway }, false)
         ).predict(data)
       },
     },

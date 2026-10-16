@@ -40,6 +40,7 @@
   },
   "workbench": {
     "reply_prediction_generating": "正在生成建议…",
+    "reply_prediction_failed": "回复建议生成失败，请检查当前模型的连接和认证设置。",
     "reply_prediction_accept": "接受建议",
     "reply_prediction_title": "自动回复建议",
     "reply_prediction_enable": "预测下一条回复",

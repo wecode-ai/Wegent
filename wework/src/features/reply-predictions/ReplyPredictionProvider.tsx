@@ -55,6 +55,7 @@ export function ReplyPredictionProvider({
   const workspacePath = address?.workspacePath
   const latestTurnId = lifecycle?.turn.latestId ?? undefined
   const runtimeRevision = latestTurnId ?? ''
+  const modelSelection = lifecycle?.task?.modelSelection
   const runtimeSource = useMemo<ReplyPredictionSource | null>(() => {
     if (!deviceId || !taskId || !latestTurnId) return null
     return {
@@ -62,9 +63,10 @@ export function ReplyPredictionProvider({
       revision: runtimeRevision,
       busy: Boolean(runtimeBusy),
       address: { deviceId, taskId, workspacePath },
+      modelSelection,
       latestTurnId,
     }
-  }, [deviceId, taskId, workspacePath, runtimeRevision, runtimeBusy, latestTurnId])
+  }, [deviceId, taskId, workspacePath, runtimeRevision, runtimeBusy, latestTurnId, modelSelection])
   const target = runtimeSource
   const scope = target?.scope
   const revision = target?.revision ?? ''
@@ -127,6 +129,15 @@ export function ReplyPredictionProvider({
         }
       >
         {children}
+        {!blocked && !busy && enabled && scope && service?.hasError(scope) && (
+          <p
+            role="status"
+            className="mt-1 text-xs text-text-secondary"
+            data-testid="reply-prediction-error"
+          >
+            {t('workbench.reply_prediction_failed')}
+          </p>
+        )}
       </ComposerPredictionPendingContext.Provider>
     </ComposerPredictionContext.Provider>
   )
