@@ -120,10 +120,8 @@ import {
   prepareWorkbenchEnvironment,
   resolveWorkbenchPaths,
 } from './runtime/workbench-environment.js'
-import {
-  packagedUpdaterCache,
-  migrateDesktopControlRegistry,
-} from './runtime/workbench-desktop-data.js'
+import { migrateDesktopControlRegistry } from './runtime/workbench-desktop-data.js'
+import { packagedUpdaterCache, restoreNativeUpdaterCache } from './host/app-update-cache.js'
 import { initializeWorkbenchDesktopData } from './runtime/workbench-desktop-startup.js'
 import { executorMigrationLock } from './runtime/workbench-migration-lock.js'
 import { assertExecutorWorkbenchCompatibility } from './runtime/workbench-executor-schema.js'
@@ -249,11 +247,6 @@ if (desktopDataPaths) {
         process.env.WEWORK_EXECUTOR_PATH?.trim() ||
           join(process.resourcesPath, 'bin', 'wegent-executor.exe'),
         { wait: true }
-      ),
-      updaterCache: packagedUpdaterCache(
-        process.env.HOME?.trim() || app.getPath('home'),
-        process.resourcesPath,
-        process.env
       ),
     })
     hasSingleInstanceLock = migrated !== null
@@ -462,6 +455,16 @@ const appUpdates = new AppUpdateService({
   prepareUpdate: async (version, channel, onProgress) => {
     if (!componentUpdates) throw new Error('Component update manager is not initialized.')
     await componentUpdates.stageUpdateForApp(version, channel, false, onProgress)
+    if (desktopDataPaths) {
+      const cache = packagedUpdaterCache(
+        process.env.HOME?.trim() || app.getPath('home'),
+        process.resourcesPath,
+        process.env
+      )
+      if (restoreNativeUpdaterCache(cache, desktopDataPaths.desktop)) {
+        appUpdateLogger.info({ event: 'legacy-updater-cache-bridge-removed', directory: cache })
+      }
+    }
   },
   prepareInstall: async () => {
     await prepareApplicationShutdown()

@@ -62,23 +62,62 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
       const metadata = JSON.parse(await fs.readFile(path.join(appRoot, 'package.json'), 'utf8'));
       const runtimeRoot = path.join(appRoot, path.dirname(metadata.main), 'runtime');
       const load = name => import(pathToFileURL(path.join(runtimeRoot, name + '.js')).href);
-      const { migrateWorkbenchDesktopData, prepareDesktopDataSource, packagedUpdaterCache } = await load('workbench-desktop-data');
+      const { migrateWorkbenchDesktopData, prepareDesktopDataSource } = await load('workbench-desktop-data');
+      const { packagedUpdaterCache, restoreNativeUpdaterCache } = await load('../host/app-update-cache');
+      const updaterCacheRecoveryStates = [];
       if (metadata.weworkProductName) app.setName(metadata.weworkProductName);
       if (process.platform === 'darwin') {
         const logs = app.getPath('logs');
         assert.equal(logs, path.join(input.root, 'Library', 'Logs', metadata.weworkProductName || app.getName()));
         const updaterCache = packagedUpdaterCache(input.root, input.resources, {}, 'darwin');
         assert.equal(path.dirname(updaterCache), path.join(input.root, 'Library', 'Caches'));
-        const migration = { source: path.join(input.root, 'legacy-user-data'), desktop: path.join(input.root, 'desktop'), logs, updaterCache };
+        const migration = { source: path.join(input.root, 'legacy-user-data'), desktop: path.join(input.root, 'desktop'), logs };
         await fs.mkdir(updaterCache, { recursive: true });
         await fs.writeFile(path.join(updaterCache, 'marker'), 'before-upgrade');
         prepareDesktopDataSource(migration.source, migration.desktop);
         migrateWorkbenchDesktopData(migration);
         const journal = path.join(migration.desktop, 'migrations', 'desktop-updater-cache-v1.json');
-        const before = await fs.readFile(journal, 'utf8');
         migrateWorkbenchDesktopData(migration);
-        assert.equal(await fs.readFile(journal, 'utf8'), before);
+        await assert.rejects(fs.lstat(journal), { code: 'ENOENT' });
+        assert.equal((await fs.lstat(updaterCache)).isDirectory(), true);
         assert.equal(await fs.readFile(path.join(updaterCache, 'marker'), 'utf8'), 'before-upgrade');
+        const { migrateWorkbenchDataEntry } = await load('workbench-data-migration');
+        for (const state of ['recreated-source', 'replaced-target', 'dangling-bridge', 'invalid-journal']) {
+          const fixtureRoot = path.join(input.root, 'updater-cache-recovery', state);
+          const desktop = path.join(fixtureRoot, 'desktop');
+          const cache = { source: path.join(fixtureRoot, 'system-cache'),
+            target: path.join(desktop, 'updater-cache'),
+            journal: path.join(desktop, 'migrations', 'desktop-updater-cache-v1.json') };
+          await fs.mkdir(cache.source, { recursive: true });
+          await fs.writeFile(path.join(cache.source, 'marker'), 'retained-update');
+          migrateWorkbenchDataEntry(cache);
+          if (state === 'recreated-source') {
+            await fs.unlink(cache.source);
+            await fs.mkdir(cache.source);
+          } else if (state === 'replaced-target' || state === 'dangling-bridge') {
+            await fs.rename(cache.target, cache.target + '.backup');
+            if (state === 'replaced-target') await fs.mkdir(cache.target);
+          } else await fs.writeFile(cache.journal, 'invalid JSON');
+          const oldJournal = await fs.readFile(cache.journal, 'utf8');
+          const persistent = { source: path.join(fixtureRoot, 'user-data'), desktop,
+            logs: path.join(fixtureRoot, 'user-data', 'logs') };
+          prepareDesktopDataSource(persistent.source, desktop);
+          await fs.writeFile(path.join(persistent.source, 'preferences.json'), 'original-preferences');
+          const migrated = migrateWorkbenchDesktopData(persistent);
+          restoreNativeUpdaterCache(cache.source, desktop);
+          await fs.mkdir(path.join(cache.source, 'pending'), { recursive: true });
+          await fs.writeFile(path.join(cache.source, 'pending', 'update.zip'), 'new-update');
+          migrateWorkbenchDesktopData(persistent);
+          assert.equal(restoreNativeUpdaterCache(cache.source, desktop), false);
+          assert.equal((await fs.lstat(cache.source)).isDirectory(), true);
+          assert.equal(await fs.readFile(path.join(cache.source, 'pending', 'update.zip'), 'utf8'), 'new-update');
+          assert.equal(await fs.readFile(path.join(migrated.userData, 'preferences.json'), 'utf8'), 'original-preferences');
+          assert.equal(await fs.readFile(cache.journal, 'utf8'), oldJournal);
+          const retainedCache = state === 'replaced-target' || state === 'dangling-bridge'
+            ? cache.target + '.backup' : cache.target;
+          assert.equal(await fs.readFile(path.join(retainedCache, 'marker'), 'utf8'), 'retained-update');
+          updaterCacheRecoveryStates.push(state);
+        }
       }
       const { assertExecutorWorkbenchCompatibility } = await load('workbench-executor-schema');
       const { prepareWorkbenchEnvironment } = await load('workbench-environment');
@@ -272,6 +311,7 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
         developmentHomeIsolatedWithNativeAuthLink: true,
         emptyCodexHomeMigratedWithoutCredentials: true,
         completedFileHardlinksPreserved: process.platform === 'win32' ? true : undefined,
+        updaterCacheRecoveryStates,
       }));
       app.exit(0);
     })().catch(error => { console.error(error.stack); app.exit(1); });
@@ -297,6 +337,14 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
   if (windowsComponentPublication)
     evidence.windowsComponentPublication = windowsComponentPublication
   assert.equal(evidence.selectedComponentStateUnchanged, true)
+  if (process.platform === 'darwin') {
+    assert.deepEqual(evidence.updaterCacheRecoveryStates, [
+      'recreated-source',
+      'replaced-target',
+      'dangling-bridge',
+      'invalid-journal',
+    ])
+  }
   await writeFile(join(root, 'evidence.json'), `${JSON.stringify(evidence, null, 2)}\n`)
   return evidence
 }

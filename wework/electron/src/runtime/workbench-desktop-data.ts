@@ -1,6 +1,5 @@
-import { mkdirSync, readFileSync } from 'node:fs'
+import { mkdirSync } from 'node:fs'
 import { isAbsolute, join, relative, sep } from 'node:path'
-import { parse } from 'yaml'
 
 import {
   migrateWorkbenchDataEntry,
@@ -31,13 +30,12 @@ export function migrateDesktopControlRegistry(home: string, shared: string): voi
   migrateWorkbenchDataEntry(options)
 }
 
-// Must run synchronously before ready, stores, sessions, or update downloads.
+// Must run synchronously before ready, stores, or sessions.
 // Caller holds the Electron singleton or, during its Windows handoff, native migration locks.
 export function migrateWorkbenchDesktopData(options: {
   source: string
   desktop: string
   logs: string
-  updaterCache: string
 }): { userData: string; logs: string } {
   const { source, desktop } = options
   const migration = desktopDataMigration(source, desktop, 'user-data')
@@ -53,38 +51,6 @@ export function migrateWorkbenchDesktopData(options: {
     migrateWorkbenchDataEntry(logMigration)
     logs = logMigration.target
   }
-  const cacheMigration = desktopDataMigration(options.updaterCache, desktop, 'updater-cache')
-  recoverWorkbenchDataBridge(cacheMigration)
-  mkdirSync(options.updaterCache, { recursive: true, mode: 0o700 })
-  migrateWorkbenchDataEntry(cacheMigration)
   mkdirSync(logs, { recursive: true, mode: 0o700 })
   return { userData: migration.target, logs }
-}
-
-export function packagedUpdaterCache(
-  home: string,
-  resources: string,
-  environment: NodeJS.ProcessEnv,
-  platform = process.platform
-): string {
-  const base =
-    platform === 'darwin'
-      ? join(home, 'Library', 'Caches')
-      : platform === 'win32'
-        ? environment.LOCALAPPDATA || join(home, 'AppData', 'Local')
-        : environment.XDG_CACHE_HOME || join(home, '.cache')
-  // Use the same configuration as electron-updater; branded package names differ.
-  const name: unknown = parse(
-    readFileSync(join(resources, 'app-update.yml'), 'utf8')
-  )?.updaterCacheDirName
-  if (
-    typeof name !== 'string' ||
-    !name.trim() ||
-    name === '.' ||
-    name === '..' ||
-    /[<>:"/\\|?*]/.test(name) ||
-    Array.from(name).some(character => character.charCodeAt(0) < 32)
-  )
-    throw new Error('Invalid updater cache directory in app-update.yml')
-  return join(base, name)
 }
