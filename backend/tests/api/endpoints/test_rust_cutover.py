@@ -29,29 +29,59 @@ def _rust_owned_routes() -> list[tuple[str, str]]:
     ]
 
 
-def _python_path_template(rust_path: str) -> str:
+def _canonical_route_path(path: str) -> str:
+    """Normalize Rust and FastAPI path parameters for ownership checks."""
+
+    return "/".join(_canonical_route_segment(segment) for segment in path.split("/"))
+
+
+def _canonical_route_segment(segment: str) -> str:
+    if segment.startswith(":"):
+        return "{}"
+    if segment.startswith("*"):
+        return "{*:path}"
+    if segment.startswith("{") and segment.endswith("}"):
+        parameter = segment[1:-1]
+        return "{*:path}" if parameter.endswith(":path") else "{}"
+    return segment
+
+
+PYTHON_ROUTES = {
+    (method, _canonical_route_path(route.path))
+    for route in api_router.routes
+    if isinstance(route, APIRoute)
+    for method in route.methods
+}
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("/tasks/:task_id", "/tasks/{}"),
+        ("/tasks/{id}", "/tasks/{}"),
+        ("/tasks/{id:int}", "/tasks/{}"),
+        ("/quota/*path", "/quota/{*:path}"),
+        ("/quota/{proxy_path:path}", "/quota/{*:path}"),
+        ("/models/decisions", "/models/decisions"),
+    ],
+)
+def test_route_path_canonicalization(path: str, expected: str) -> None:
+    assert _canonical_route_path(path) == expected
+
+
+def _python_path_for_rust_route(rust_path: str) -> str:
     assert rust_path.startswith("/api")
-    path = rust_path.removeprefix("/api") or "/"
-    return "/".join(
-        (
-            f"{{{segment[1:]}}}"
-            if segment.startswith(":")
-            else f"{{{segment[1:]}:path}}" if segment.startswith("*") else segment
-        )
-        for segment in path.split("/")
-    )
+    return rust_path.removeprefix("/api") or "/"
 
 
 @pytest.mark.parametrize(("method", "path"), _rust_owned_routes())
 def test_rust_owned_route_is_not_registered_in_python(method: str, path: str) -> None:
-    python_path = _python_path_template(path)
+    python_path = _python_path_for_rust_route(path)
 
-    assert not any(
-        isinstance(route, APIRoute)
-        and route.path == python_path
-        and method in route.methods
-        for route in api_router.routes
-    ), f"{method} {path} is still registered by Python"
+    assert (
+        method,
+        _canonical_route_path(python_path),
+    ) not in PYTHON_ROUTES, f"{method} {path} is still registered by Python"
 
 
 @pytest.mark.parametrize(

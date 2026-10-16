@@ -180,26 +180,6 @@ class DshPluginStorageService:
                 detail=f"Invalid storage {label} name",
             )
 
-    def _resource(
-        self,
-        db: Session,
-        user_id: int,
-        package_name: str,
-        unit: str,
-    ) -> Kind | None:
-        return (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user_id,
-                Kind.kind == DSH_PLUGIN_DATA_KIND,
-                Kind.namespace == package_name,
-                Kind.name == unit,
-                Kind.is_active == True,
-            )
-            .order_by(Kind.id.desc())
-            .first()
-        )
-
     def _locked_resource(
         self,
         db: Session,
@@ -279,25 +259,6 @@ class DshPluginStorageService:
             "has_global": descriptor.has_global,
             "tables": {table: {} for table in descriptor.tables},
             "global": None,
-        }
-
-    def _empty_snapshot(self, descriptor: DshStorageDescriptor) -> Dict[str, Any]:
-        return self._public_snapshot(self._new_document(descriptor))
-
-    def _public_snapshot(self, document: Dict[str, Any]) -> Dict[str, Any]:
-        tables = {
-            table: {
-                key: entry.get("value")
-                for key, entry in entries.items()
-                if isinstance(entry, dict)
-            }
-            for table, entries in document.get("tables", {}).items()
-            if isinstance(entries, dict)
-        }
-        return {
-            "version": document["version"],
-            "tables": tables,
-            "global": document.get("global"),
         }
 
 
