@@ -73,7 +73,10 @@ function fixture(
                         updatedAt: context.revision,
                         completedAt: context.completedAt ?? 1000,
                         runtimeHandle: { lastTurnId: context.latestTurnId },
-                        modelSelection: { modelName: 'session-model', modelType: 'runtime' },
+                        modelSelection: context.modelSelection ?? {
+                          modelName: 'session-model',
+                          modelType: 'runtime',
+                        },
                       },
                       turn: {
                         latestId: context.latestTurnId,
@@ -105,6 +108,37 @@ function fixture(
 }
 
 describe('reply prediction provider', () => {
+  it.each(['suggestion', 'failure'])(
+    'refreshes a cached %s when the session model changes',
+    async state => {
+      const predict = vi.fn<Predict>()
+      if (state === 'failure') predict.mockRejectedValueOnce(new Error('401'))
+      else predict.mockResolvedValueOnce({ suggestion: '旧模型建议' })
+      predict.mockResolvedValueOnce({ suggestion: '新模型建议' })
+      const { rerender } = render(fixture(predict))
+      await waitFor(() =>
+        expect(
+          state === 'failure'
+            ? screen.getByTestId('reply-prediction-error')
+            : screen.getByRole('button')
+        ).toBeVisible()
+      )
+      const updated = {
+        ...source,
+        modelSelection: { modelName: 'new-session-model', modelType: 'runtime' as const },
+      }
+      rerender(fixture(predict, updated))
+      await waitFor(() => expect(screen.getByRole('button')).toHaveTextContent('新模型建议'))
+      expect(screen.queryByTestId('reply-prediction-error')).not.toBeInTheDocument()
+      expect(predict).toHaveBeenCalledTimes(2)
+      expect(predict).toHaveBeenLastCalledWith(
+        expect.objectContaining({ latestTurnId: 'turn-1', modelSelection: updated.modelSelection })
+      )
+      rerender(fixture(predict, { ...updated, modelSelection: { ...updated.modelSelection } }))
+      expect(predict).toHaveBeenCalledTimes(2)
+    }
+  )
+
   it('shows a failure without exposing provider details and clears it on the next turn', async () => {
     const predict = vi
       .fn()

@@ -16,6 +16,13 @@ export interface ReplyPredictionResult {
   isCurrent: () => boolean
 }
 
+export function replyPredictionKey(source: ReplyPredictionSource) {
+  return `${source.scope}\u0000${JSON.stringify([
+    source.latestTurnId || source.revision,
+    source.modelSelection,
+  ])}`
+}
+
 type PredictionApi = NonNullable<WorkbenchServices['replyPredictionApi']>
 interface PredictionEntry {
   controller: AbortController
@@ -89,7 +96,7 @@ export class ReplyPredictionService {
 
   async request(source: ReplyPredictionSource): Promise<ReplyPredictionResult | null> {
     if (source.busy) return null
-    const key = `${source.scope}\u0000${source.latestTurnId || source.revision}`
+    const key = replyPredictionKey(source)
     let entry = this.entries.get(key)
     if (!entry) {
       this.invalidate(source.scope)

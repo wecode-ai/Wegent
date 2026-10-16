@@ -17,6 +17,7 @@ import { RuntimeTaskLifecycleContext } from '@/features/workbench/runtimeTaskLif
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import type { RuntimeTaskAddress } from '@/types/api'
 import {
+  replyPredictionKey,
   replyPredictionService,
   type ReplyPredictionSource,
   type ReplyPredictionResult,
@@ -69,14 +70,13 @@ export function ReplyPredictionProvider({
   }, [deviceId, taskId, workspacePath, runtimeRevision, runtimeBusy, latestTurnId, modelSelection])
   const target = runtimeSource
   const scope = target?.scope
-  const revision = target?.revision ?? ''
   const busy = target?.busy ?? false
   const currentSource = useEffectEvent(() => target!)
   const [result, setResult] = useState<{
     key: string
     prediction: ReplyPredictionResult | null
   } | null>(null)
-  const resultKey = JSON.stringify([target?.scope, target?.latestTurnId || revision])
+  const resultKey = target ? replyPredictionKey(target) : ''
   useEffect(() => {
     if (!service || !scope) return
     if (busy) {
