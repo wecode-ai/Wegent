@@ -824,24 +824,24 @@ export function createDesktopScenario({
       )
       assert.equal(binding.assignment_id, HUMAN_ASSIGNMENT_ID)
       assert.equal(binding.task_title, HUMAN_TASK)
-      const runtimeTask = await requestExecutor(
-        control,
-        'runtime.tasks.get',
-        { taskId: binding.task_id },
+      const runtimeTask = await waitForValue(
+        () =>
+          requestExecutor(control, 'runtime.tasks.get', { taskId: binding.task_id }, uiTimeoutMs),
+        result => result.success === true && result.task,
+        'The bound human task must be created on the owning Runtime',
         uiTimeoutMs
       )
-      assert.equal(runtimeTask.task.title, HUMAN_TASK)
+      assert.equal(runtimeTask.title, HUMAN_TASK)
       // Task lookup returns continuation identity; the work list exposes board ownership.
-      const runtimeWork = await requestExecutor(
-        control,
-        'runtime.tasks.list',
-        { preferCached: true },
+      const assignedTask = await waitForValue(
+        () => requestExecutor(control, 'runtime.tasks.list', { preferCached: true }, uiTimeoutMs),
+        runtimeWork =>
+          runtimeWork.workspaces
+            .flatMap(workspace => workspace.tasks)
+            .find(task => task.taskId === binding.task_id),
+        'The assigned task must appear in the Runtime work list',
         uiTimeoutMs
       )
-      const assignedTask = runtimeWork.workspaces
-        .flatMap(workspace => workspace.tasks)
-        .find(task => task.taskId === binding.task_id)
-      assert.ok(assignedTask, 'The assigned task must appear in the Runtime work list')
       assert.equal(assignedTask.runtimeHandle.origin.type, 'issue_dispatch')
       assert.equal(
         assignedTask.runtimeHandle.origin.humanAssignmentId,
