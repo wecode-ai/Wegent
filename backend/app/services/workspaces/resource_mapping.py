@@ -15,6 +15,12 @@ from app.services.team_access_policy import can_edit_team
 from app.services.workspaces.storage import workspace_from_kind
 
 
+def agent_display_name(team: Kind) -> str:
+    """Resolve the user-facing Agent label without changing its resource identity."""
+    metadata = (team.json or {}).get("metadata") or {}
+    return str(metadata.get("displayName") or "").strip() or team.name
+
+
 def agent_values(
     db: Session,
     *,
@@ -35,7 +41,7 @@ def agent_values(
         "id": team.id,
         "workspace_id": grant.entity_id,
         "team_id": team.id,
-        "name": team.name,
+        "name": agent_display_name(team),
         "namespace": team.namespace,
         "owner_type": owner_type,
         "owner_id": owner_id,

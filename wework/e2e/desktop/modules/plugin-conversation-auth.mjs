@@ -64,6 +64,23 @@ export function createConversationAuthModelFixture({ slug, qrPrompt, ghResumePro
   }
 }
 
+export async function sendOrdinaryChat({ control, ordinaryPrompt, getOrdinaryRequests }) {
+  const before = getOrdinaryRequests()
+  const message = `${ordinaryPrompt} #${before + 1}`
+  const newMessageSelector = await newConversationMessageSelector(control)
+  await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: message })
+  await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+  await control.command('waitFor', newMessageSelector, {
+    text: `${message} completed`,
+  })
+  await control.command('waitFor', 'body', {
+    text: `${message} completed`,
+    // Observe beyond the real provider's one-second polling interval.
+    stableMs: 1500,
+  })
+  assert.equal(getOrdinaryRequests(), before + 1, 'Ordinary chat was blocked or sent twice')
+}
+
 export async function verifyConversationQrAuthorization({
   control,
   slug,
@@ -106,19 +123,7 @@ export async function verifyConversationQrAuthorization({
     }
   }
   const sendOrdinary = async () => {
-    const before = getOrdinaryRequests()
-    const newMessageSelector = await newConversationMessageSelector(control)
-    await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: ordinaryPrompt })
-    await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
-    await control.command('waitFor', newMessageSelector, {
-      text: `${ordinaryPrompt} completed`,
-    })
-    await control.command('waitFor', 'body', {
-      text: `${ordinaryPrompt} completed`,
-      // Observe beyond the real provider's one-second polling interval.
-      stableMs: 1500,
-    })
-    assert.equal(getOrdinaryRequests(), before + 1, 'Ordinary chat was blocked or sent twice')
+    await sendOrdinaryChat({ control, ordinaryPrompt, getOrdinaryRequests })
     assertNoContinuation()
     await assertNoCard('Stale authorization blocked ordinary chat')
   }

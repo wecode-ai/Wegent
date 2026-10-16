@@ -2,9 +2,10 @@ import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
+  inCollaborationSidebar,
+  inProjectCreateDialog,
   openDirectProjectCreation,
   openProjectAgentCreator,
-  inProjectCreateDialog,
   selectCloudAgentModel,
   selectCollaborationDomain,
   waitForTestIdByText,
@@ -39,6 +40,22 @@ async function requestJson(baseUrl, token, pathname, options = {}) {
 
 function scoped(selector) {
   return `${ACTIVE_WORKBENCH_SELECTOR} ${selector}`
+}
+
+async function openWorkspaceAgentSettings(control, workspaceId) {
+  const tree = inCollaborationSidebar(
+    `[data-testid="collaboration-workspace-tree-${workspaceId}"]`,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+  await control.command('hover', `${tree} .collaboration-workspace-row`)
+  await control.command('click', `${tree} [data-testid="collaboration-workspace-actions"]`)
+  await control.command('click', '[data-testid="collaboration-workspace-nav-settings"]')
+  await control.command('waitFor', scoped('[data-testid="workspace-settings-shell"]'))
+  await control.command('click', scoped('[data-testid="collaboration-workspace-nav-participants"]'))
+  await control.command(
+    'click',
+    scoped('[data-testid="collaboration-workspace-participants-tab-agents"]')
+  )
 }
 
 async function waitForApiValue(load, predicate, message, timeoutMs) {
@@ -568,6 +585,45 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           { visible: false, timeoutMs: uiTimeoutMs }
         )
         await capture(control, 'project-automation-07-group-deleted.png')
+
+        await openWorkspaceAgentSettings(control, workspace.id)
+        await openProjectAgentCreator(
+          control,
+          scoped('[data-testid="project-agent-add"]'),
+          uiTimeoutMs,
+          'wework-agent-resource-creator'
+        )
+        await control.command('fill', '[data-testid="wework-agent-display-name"]', {
+          value: '123',
+        })
+        await selectCloudAgentModel(control, request, selectableModels[0].name, uiTimeoutMs)
+        await control.command('clickWhenEnabled', '[data-testid="wework-agent-resource-create"]')
+        await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
+          visible: false,
+        })
+        const spaceAgent = await waitForApiValue(
+          () => request(`/api/v1/workspaces/${workspace.id}/agents`),
+          response => response.items?.find(candidate => candidate.name === '123') ?? null,
+          'The Workspace Agent lost its display name after creation',
+          uiTimeoutMs
+        )
+        const spaceAgentRow = scoped(`[data-testid="project-agent-row-${spaceAgent.team_id}"]`)
+        await control.command('waitFor', spaceAgentRow, { text: '123' })
+        const team = await request(`/api/teams/${spaceAgent.team_id}`)
+        assert.notEqual(team.name, '123', 'The display name replaced the Team resource identity')
+        const row = JSON.parse(await control.command('snapshot', spaceAgentRow))
+        assert.ok(!row.text.includes(team.name), 'The Workspace displayed the technical Agent name')
+
+        await control.command(
+          'click',
+          scoped('[data-testid="collaboration-workspace-nav-projects"]')
+        )
+        await control.command(
+          'waitFor',
+          scoped('[data-testid="collaboration-workspace-project-create"]')
+        )
+        await openWorkspaceAgentSettings(control, workspace.id)
+        await control.command('waitFor', spaceAgentRow, { text: '123' })
       } finally {
         try {
           await archiveFixture()
