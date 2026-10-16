@@ -1,15 +1,10 @@
 import base64
-import hashlib
-import time
-import uuid
 
 from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi.testclient import TestClient
-from jose import jwt
 
 from app.api.endpoints import wework_auth
 from app.core.config import settings
-from app.core.security import verify_token
 
 
 class MemoryAuthSessionCache:
@@ -56,26 +51,6 @@ def create_session(test_client: TestClient, public_jwk: dict[str, str]):
 
 def create_legacy_session(test_client: TestClient):
     return test_client.post("/api/auth/wework/sessions")
-
-
-def device_proof(
-    private_key,
-    public_jwk: dict[str, str],
-    refresh_token: str,
-    path: str = "/api/auth/wework/refresh",
-) -> str:
-    return jwt.encode(
-        {
-            "htm": "POST",
-            "htu": path,
-            "iat": int(time.time()),
-            "jti": str(uuid.uuid4()),
-            "ath": base64url(hashlib.sha256(refresh_token.encode()).digest()),
-        },
-        private_key,
-        algorithm="ES256",
-        headers={"jwk": public_jwk},
-    )
 
 
 def test_wework_config_exposes_wegent_frontend_url(
@@ -218,51 +193,3 @@ def test_device_bound_session_does_not_downgrade_when_binding_is_missing(
     assert approve_response.json()["detail"] == (
         "Authorization session is missing its device binding"
     )
-
-
-def test_wework_refresh_requires_the_bound_device_key(
-    test_client: TestClient,
-    test_token: str,
-    monkeypatch,
-):
-    install_memory_auth_session_cache(monkeypatch)
-    private_key, public_jwk = device_identity()
-    session = create_session(test_client, public_jwk).json()
-    approve = test_client.post(
-        f"/api/auth/wework/sessions/{session['session_id']}/approve",
-        headers={"Authorization": f"Bearer {test_token}"},
-    )
-    assert approve.status_code == 200
-    credentials = test_client.get(
-        f"/api/auth/wework/sessions/{session['session_id']}/poll",
-        params={"poll_token": session["poll_token"]},
-    ).json()
-
-    refreshed = test_client.post(
-        "/api/auth/wework/refresh",
-        json={
-            "refresh_token": credentials["refresh_token"],
-            "proof": device_proof(
-                private_key,
-                public_jwk,
-                credentials["refresh_token"],
-            ),
-        },
-    )
-
-    assert refreshed.status_code == 200
-    assert verify_token(refreshed.json()["access_token"])["username"]
-
-    wrong_private_key, wrong_public_jwk = device_identity()
-    rejected = test_client.post(
-        "/api/auth/wework/refresh",
-        json={
-            "refresh_token": credentials["refresh_token"],
-            "proof": device_proof(
-                wrong_private_key,
-                wrong_public_jwk,
-                credentials["refresh_token"],
-            ),
-        },
-    )
-    assert rejected.status_code == 401

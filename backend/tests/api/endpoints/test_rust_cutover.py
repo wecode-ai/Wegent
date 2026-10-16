@@ -23,9 +23,9 @@ def _rust_owned_routes() -> list[tuple[str, str]]:
         (method, rule["path"])
         for rule in config["routes"]
         for method in rule["methods"]
-        # Python keeps its loopback root probe for process diagnostics. The
-        # public listener still owns GET / through the Rust route table.
-        if rule["path"] != "/"
+        # Root and metrics are listener-level routes, not children of the
+        # Python API router verified by this test.
+        if rule["path"].startswith("/api")
     ]
 
 
