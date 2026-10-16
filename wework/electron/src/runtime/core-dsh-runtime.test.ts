@@ -167,6 +167,7 @@ describe('core DSH runtime', () => {
       dsh: {
         profile: {
           bundles: [
+            '@wework/dsh-browser-auth',
             '@deepseek-ai/dsh-base',
             '@wegent/dsh-electron-host',
             '@wegent/dsh-browser-runtime',
@@ -327,6 +328,9 @@ describe('core DSH runtime', () => {
     })
 
     const profileRoot = join(second.dshHome, 'profiles', 'wework-core')
+    expect(await readFile(join(profileRoot, 'cordis.patch.yml'), 'utf8')).toBe(
+      '- id: client-hmr\n  disabled: true\n'
+    )
     const manifest = JSON.parse(await readFile(join(profileRoot, 'package.json'), 'utf8'))
     expect(manifest.dependencies['@wegent/dsh-app-wework']).toBe(
       `file:${secondRuntime.pluginRoots['@wegent/dsh-app-wework']}`
@@ -365,6 +369,11 @@ describe('core DSH runtime', () => {
       'dsh-app-wework'
     )
     await writeFile(join(pluginCopyRoot, 'local-helper.js'), 'local')
+    const patchPath = join(launch.dshHome, 'profiles', 'wework-core', 'cordis.patch.yml')
+    await writeFile(
+      patchPath,
+      '- id: client-hmr\n  disabled: false\n- id: hmr\n  disabled: false\n'
+    )
 
     await prepareCoreDshLaunch({
       runtimeRoot: runtime.root,
@@ -374,6 +383,7 @@ describe('core DSH runtime', () => {
     })
 
     await expect(readFile(join(pluginCopyRoot, 'local-helper.js'), 'utf8')).resolves.toBe('local')
+    await expect(readFile(patchPath, 'utf8')).resolves.toBe('- id: client-hmr\n  disabled: true\n')
     await root.remove()
   })
 
@@ -586,8 +596,10 @@ describe('core DSH runtime', () => {
       '@wegent/dsh-terminal-runtime',
       '@wegent/dsh-transcript-sync',
       '@wegent/dsh-plugin-runtime',
+      '@wework/dsh-browser-auth',
     ])
     expect(manifest.dsh.profile.bundles).toEqual([
+      '@wework/dsh-browser-auth',
       '@deepseek-ai/dsh-base',
       '@wegent/dsh-electron-host',
       '@wegent/dsh-browser-runtime',
@@ -860,6 +872,7 @@ async function writeRuntime(
       ['@wegent/dsh-ui-outputs', 'wework-ui-outputs'],
     ].map(([packageName, directory]) => [packageName, join(pluginsRoot, directory)])
   )
+  pluginRoots['@wework/dsh-browser-auth'] = join(runtime, 'plugins', 'wework-browser-auth')
   await mkdir(join(packageRoot, 'lib'), { recursive: true })
   await Promise.all(Object.values(pluginRoots).map(root => mkdir(root, { recursive: true })))
   await writeFile(

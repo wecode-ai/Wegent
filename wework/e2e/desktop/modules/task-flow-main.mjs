@@ -1070,6 +1070,14 @@ async function verifyLocalModelRouting({
   })
 }
 
+async function writeLocalHarnessDiagnostics(control, resultDir) {
+  await writeFile(
+    join(resultDir, 'local-harness-diagnostics.json'),
+    `${await control.command('getLocalHarnessDiagnostics', 'body', { timeoutMs: 5000 })}\n`,
+    'utf8'
+  )
+}
+
 async function main() {
   validateDesktopSegmentOptions()
   const runsProjectPluginE2E = DESKTOP_SEGMENT === 'project-ai-settings'
@@ -1593,6 +1601,9 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     if (desktopScenario && DESKTOP_SCENARIO_ONLY) {
       phase = 'desktop-extension-scenario'
       await desktopScenario.verify(control)
+      if (DESKTOP_SEGMENT === 'local-harness') {
+        await writeLocalHarnessDiagnostics(control, resultDir)
+      }
       await writeFile(
         join(resultDir, 'model-requests.json'),
         `${JSON.stringify(control.modelRequests, null, 2)}\n`,
@@ -4465,6 +4476,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         desktopScenarioVerified = true
         await desktopScenario.verify(control)
       }
+      await writeLocalHarnessDiagnostics(control, resultDir)
       if (shouldStopAfterDesktopCheckpoint('local-harness')) {
         console.log(`Wework desktop local-harness checkpoint passed. Evidence: ${resultDir}`)
         return
@@ -4560,18 +4572,25 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         composerFocus,
         workbenchDebug,
         conversationDiagnostics,
+        localHarnessDiagnostics,
       ] = await Promise.all([
         control.command('snapshot', 'body', { timeoutMs: 5000 }),
         control.command('getComposerDiagnosticsSnapshot', 'body', { timeoutMs: 5000 }),
         control.command('getComposerFocusSnapshot', 'body', { timeoutMs: 5000 }),
         control.command('getWorkbenchDebugSnapshot', 'body', { timeoutMs: 5000 }),
         control.command('getConversationDiagnosticsSnapshot', 'body', { timeoutMs: 5000 }),
+        control.command('getLocalHarnessDiagnostics', 'body', { timeoutMs: 5000 }),
       ])
       await Promise.all([
         writeFile(join(resultDir, 'ui-snapshot.json'), `${snapshot}\n`, 'utf8'),
         writeFile(join(resultDir, 'composer-diagnostics.json'), `${composerDiagnostics}\n`, 'utf8'),
         writeFile(join(resultDir, 'composer-focus.json'), `${composerFocus}\n`, 'utf8'),
         writeFile(join(resultDir, 'workbench-debug.json'), `${workbenchDebug}\n`, 'utf8'),
+        writeFile(
+          join(resultDir, 'local-harness-diagnostics.json'),
+          `${localHarnessDiagnostics}\n`,
+          'utf8'
+        ),
         writeFile(
           join(resultDir, 'conversation-diagnostics.json'),
           `${conversationDiagnostics}\n`,

@@ -785,9 +785,8 @@ impl RuntimeWorkRpcHandler {
 
     /// Registers a local decision route for one Smart App scope.
     ///
-    /// The upstream URL, the model catalogue, and the credential are Executor
-    /// configuration. A caller may only provide the scope; every other field is
-    /// rejected so a Smart App cannot redirect or widen the route.
+    /// The backend owns the model catalog and provider configuration. A caller
+    /// only supplies scope and can never redirect or widen the route.
     pub(super) async fn register_decision_proxy(
         &self,
         payload: Value,
@@ -822,20 +821,13 @@ impl RuntimeWorkRpcHandler {
         let scope = string_field(&payload, "scope")
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| AppIpcError::new("invalid_request", "scope is required"))?;
-        if self.decision_proxy.settings().is_none() {
-            return Err(AppIpcError::new(
-                "decision_router_disabled",
-                "decision router is not configured",
-            ));
-        }
         let Some(loopback) = loopback else {
             return Err(AppIpcError::new(
                 "runtime_unavailable",
                 "Executor HTTP server is not available",
             ));
         };
-        // The route holds the shared connection snapshot; the request path
-        // trades the current login token for the upstream credential.
+        // Each request uses the current login snapshot to access the backend.
         let token = local_decision_proxy::register(&scope, Arc::clone(&self.backend_connection));
         Ok(json!({
             "token": token,

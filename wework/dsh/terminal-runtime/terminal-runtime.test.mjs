@@ -83,6 +83,7 @@ test('owns PTY sessions, snapshots, events and cleanup inside Core DSH', async (
         session_id: 'terminal-fixture',
         sequence: 1,
         data: 'terminal-ready\r\n',
+        running: true,
       }
     )
     assert.equal(events[0].event, 'terminal.output')
@@ -103,6 +104,11 @@ test('owns PTY sessions, snapshots, events and cleanup inside Core DSH', async (
     pty.emitExit(7)
     assert.equal(events[1].event, 'terminal.exit')
     assert.equal(events[1].payload.exit_code, 7)
+    const exitedSnapshot = await runtime.request('terminal.snapshot', {
+      session_id: 'terminal-fixture',
+    })
+    assert.equal(exitedSnapshot.running, false)
+    assert.equal(exitedSnapshot.data, 'terminal-ready\r\n')
     await assert.rejects(
       runtime.request('terminal.input', {
         session_id: 'terminal-fixture',

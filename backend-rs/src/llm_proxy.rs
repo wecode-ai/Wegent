@@ -35,7 +35,7 @@ use crate::auth::{SessionUser, UserRow};
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 
-mod model_config;
+pub(crate) mod model_config;
 
 use model_config::{resolve_llm_proxy_protocol, resolve_upstream_target, validate_model_access};
 

@@ -227,6 +227,12 @@ spec:
 
 ### Wework 模型选择器配置
 
+决策模型设置 `spec.modelType: decision`，并显式选择
+`spec.protocol: systemone` 或 `openai`，不设置对话用途的 `apiFormat`。
+地址、模型 ID 和凭证仍放在 `spec.modelConfig.env`，启用
+`isWeworkAvailable` 后可在智能判定工作台中选择。
+详见[决策模型与智能判定工作台](../../wework/developer-guide/wework-decision-models.md)。
+
 云端模型可以通过 `modelConfig.ui` 下发模型选择器元数据。默认模型应设置
 `defaultModel: true`，并用 `reasoningEfforts` 和
 `defaultReasoningEffort` 声明自身支持的推理强度。默认模型还可以通过

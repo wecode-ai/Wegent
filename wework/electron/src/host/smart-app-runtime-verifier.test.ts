@@ -91,7 +91,10 @@ describe('verifySmartAppRuntime', () => {
     expect(verificationEnvironment).not.toHaveProperty('DSH_CREDENTIALS_PATH')
   })
 
-  test('creates a private credentials document with a string schema version', async () => {
+  test.each([
+    ['0.1.0-rc.8', '"1"'],
+    ['0.2.0-rc.2', '1'],
+  ])('creates private credentials for DSH %s with schema version %s', async (dsh, version) => {
     let credentials = ''
     let credentialsMode = 0
     const dependencies = fixtureDependencies({
@@ -103,9 +106,11 @@ describe('verifySmartAppRuntime', () => {
       },
     })
 
-    await verifySmartAppRuntime(options(), dependencies)
+    const input = options()
+    input.manifest.requirements.dsh = dsh
+    await verifySmartAppRuntime(input, dependencies)
 
-    expect(credentials).toBe('version: "1"\n')
+    expect(credentials).toBe(`version: ${version}\n`)
     expect(credentialsMode).toBe(0o600)
   })
 

@@ -1,6 +1,9 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { WorkbenchAppManifest } from '../runtime/workbench-dsh-runtime.js'
+import {
+  workbenchClientRendererPackage,
+  type WorkbenchAppManifest,
+} from '../runtime/workbench-dsh-runtime.js'
 import type { SmartAppVerificationContract } from './smart-app-verification-types.js'
 
 export const SMART_APP_TEMPLATES = ['web', 'host', 'web-host', 'web-host-remote'] as const
@@ -110,7 +113,7 @@ async function writeBundle(
   if (capabilities.client) {
     dsh.client = {
       inject: [
-        '@deepseek-ai/dsh-client-runtime',
+        workbenchClientRendererPackage(input.dshVersion),
         ...(capabilities.remote ? ['@deepseek-ai/dsh-api-gateway'] : []),
       ],
       platform: 'web',
@@ -119,7 +122,7 @@ async function writeBundle(
   const dependencies: Record<string, string> = {}
   const peerDependencies: Record<string, string> = {}
   if (capabilities.client) {
-    peerDependencies['@deepseek-ai/dsh-client-runtime'] = input.dshVersion
+    peerDependencies[workbenchClientRendererPackage(input.dshVersion)] = input.dshVersion
     peerDependencies.react = '^18.2.0'
   }
   if (capabilities.remote) {
@@ -148,7 +151,7 @@ async function writeBundle(
   })
   await writeFile(
     join(bundle, 'cordis.patch.yml'),
-    `${capabilities.client ? disabledDefaultWebModules() : ''}- insert:\n    - id: ${input.name}\n      name: '${packageName}'\n`
+    `- insert:\n    - id: ${input.name}\n      name: '${packageName}'\n`
   )
   const indexSource = capabilities.host
     ? `import { applyHost } from './host.js'\n\nexport const name = '${input.name}'\nexport const inject = []\nexport const apply = applyHost\n`
@@ -175,18 +178,6 @@ async function writeBundle(
   }
 }
 
-function disabledDefaultWebModules(): string {
-  return [
-    'ui-conversation',
-    'ui-sidebar',
-    'ui-settings-general',
-    'ui-settings-models',
-    'ui-settings-plugin-inventory',
-  ]
-    .map(id => `- id: ${id}\n  disabled: true\n`)
-    .join('')
-}
-
 async function writeProjectTools(
   input: SmartAppScaffoldInput,
   bundlePath: string,
@@ -207,12 +198,12 @@ async function writeProjectTools(
   if (capabilities.remote) {
     await writeFile(
       join(input.path, 'scripts', 'runtime-probe.mjs'),
-      "const baseUrl = process.env.SMART_APP_BASE_URL\nif (!baseUrl) throw new Error('SMART_APP_BASE_URL is required')\nconst response = await fetch(new URL('/', baseUrl))\nif (!response.ok) throw new Error(`Smart App returned HTTP ${response.status}`)\n"
+      "const baseUrl = process.env.SMART_APP_BASE_URL\nif (!baseUrl) throw new Error('SMART_APP_BASE_URL is required')\nconst response = await fetch(new URL('/', baseUrl), { headers: process.env.SMART_APP_COOKIE ? { cookie: process.env.SMART_APP_COOKIE } : {} })\nif (!response.ok) throw new Error(`Smart App returned HTTP ${response.status}`)\n"
     )
   }
   await writeFile(
     join(input.path, 'test', 'contracts.test.mjs'),
-    generatedContractTest(bundlePath, capabilities)
+    generatedContractTest(bundlePath, capabilities, input.dshVersion)
   )
 }
 
@@ -291,11 +282,12 @@ function typertHostSource(): string {
 
 function generatedContractTest(
   bundlePath: string,
-  capabilities: ReturnType<typeof templateCapabilities>
+  capabilities: ReturnType<typeof templateCapabilities>,
+  dshVersion: string
 ): string {
   const clientInject = capabilities.client
     ? [
-        '@deepseek-ai/dsh-client-runtime',
+        workbenchClientRendererPackage(dshVersion),
         ...(capabilities.remote ? ['@deepseek-ai/dsh-api-gateway'] : []),
       ]
     : []

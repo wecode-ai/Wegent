@@ -67,6 +67,10 @@ import type {
   WeworkConversationSnapshot,
 } from '../../dsh/app-wework/client'
 import { suspendDshTerminalEventDelivery } from '@/api/dsh/terminalTransport'
+import {
+  collectLocalHarnessDiagnostics,
+  installLocalHarnessDiagnostics,
+} from './local-harness-diagnostics'
 import { requestLocalExecutor } from '@/desktop/localExecutor'
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import { checkForWeworkUpdate, downloadPendingWeworkUpdate } from '@/lib/app-updater'
@@ -511,6 +515,7 @@ export async function installWeworkAutomationBridge(
 
   if (isDesktopRuntime()) {
     await loadDesktopE2ERuntimeConfig()
+    installLocalHarnessDiagnostics()
   }
   installDesktopE2EClipboard()
   window.__WEWORK_E2E__ = createBridge()
@@ -1953,6 +1958,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       })
       return ''
     }
+    case 'activateSystemNotification':
+      await invokeDesktopHost('e2e.activateNotification', { url: command.value ?? '' })
+      return ''
     case 'openWeworkScheme':
       await invokeDesktopHost('shell.openExternal', { url: command.value ?? '' })
       return ''
@@ -2910,6 +2918,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'getWorkbenchDebugSnapshot':
       return JSON.stringify(getWorkbenchDebugSnapshot())
+    case 'getLocalHarnessDiagnostics':
+      return JSON.stringify(await collectLocalHarnessDiagnostics())
     case 'getConversationDiagnosticsSnapshot':
       return JSON.stringify(getConversationDiagnosticsSnapshot())
     case 'setConversationFrameProbeEnabled': {

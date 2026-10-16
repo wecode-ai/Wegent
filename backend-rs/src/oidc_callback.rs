@@ -521,10 +521,7 @@ mod tests {
             pub(super) frontend_url: String,
             pub(super) discovery_url: String,
         }
-        brz_http_server::registry!(
-            group = oidc_probe,
-            dependencies(cfg: OidcProbeState)
-        );
+        brz_http_server::registry!(group = oidc_probe, dependencies(cfg: OidcProbeState));
 
         #[brz_http_server::get("/api/auth/oidc/callback", group = super::probe::oidc_probe, access = public)]
         async fn callback(

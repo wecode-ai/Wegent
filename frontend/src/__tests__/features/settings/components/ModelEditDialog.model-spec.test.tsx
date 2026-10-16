@@ -90,6 +90,54 @@ describe('ModelEditDialog model spec modes', () => {
     jest.restoreAllMocks()
   })
 
+  it.each(['systemone', 'openai'])(
+    'preserves decision protocol %s without introducing a chat apiFormat',
+    async protocol => {
+      const user = userEvent.setup()
+      const onSave = jest.fn().mockResolvedValue(true)
+      const model: ModelCRD = {
+        ...existingModel,
+        spec: {
+          modelType: 'decision',
+          protocol,
+          isWeworkAvailable: true,
+          modelConfig: {
+            env: {
+              model: protocol,
+              model_id: 'decision-provider-model',
+              api_key: 'decision-test-key',
+              base_url: 'https://decision.example/v1',
+            },
+          },
+        },
+      }
+      render(
+        <ModelEditDialog open model={model} onClose={jest.fn()} toast={jest.fn()} onSave={onSave} />
+      )
+      expect(screen.getByTestId('model-category-select')).toHaveTextContent(
+        'models.model_category_type_decision'
+      )
+      expect(screen.getByTestId('model-protocol-select')).toHaveTextContent(
+        protocol === 'systemone' ? 'SystemOne' : 'OpenAI Decisions'
+      )
+      await user.click(screen.getByTestId('model-spec-json-mode-button'))
+      expect(
+        JSON.parse((screen.getByTestId('model-spec-json-editor') as HTMLTextAreaElement).value)
+          .protocol
+      ).toBe(protocol)
+      await user.click(screen.getByTestId('model-spec-form-mode-button'))
+      await user.click(screen.getByRole('button', { name: 'common:actions.save' }))
+      await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
+      expect(onSave.mock.calls[0][1].spec).toMatchObject({
+        modelType: 'decision',
+        protocol,
+        isWeworkAvailable: true,
+        modelConfig: { env: { model_id: 'decision-provider-model' } },
+      })
+      expect(onSave.mock.calls[0][1].spec).not.toHaveProperty('apiFormat')
+    }
+  )
+
   it('defaults to the visual form and exposes plaintext secrets only after opting into JSON', async () => {
     const user = userEvent.setup()
     render(<ModelEditDialog open model={existingModel} onClose={jest.fn()} toast={jest.fn()} />)

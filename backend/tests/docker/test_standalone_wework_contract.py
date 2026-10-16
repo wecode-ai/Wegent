@@ -64,6 +64,16 @@ def test_standalone_wework_builder_installs_postinstall_dependencies() -> None:
     assert "apt-get install -y --no-install-recommends unzip" in wework_builder
 
 
+def test_standalone_image_removes_mysql_sys_nice_file_capability() -> None:
+    """MySQL must remain executable with Docker's default capability set."""
+    dockerfile = STANDALONE_DOCKERFILE.read_text(encoding="utf-8")
+
+    assert "libcap" in dockerfile
+    assert "setcap -r /usr/libexec/mysqld" in dockerfile
+    assert 'test -z "$(getcap /usr/libexec/mysqld)"' in dockerfile
+    assert "/usr/sbin/mysqld --version" in dockerfile
+
+
 def test_standalone_builders_use_workspace_pnpm_version() -> None:
     """Standalone image builds should not download a second pnpm version."""
     dockerfile = STANDALONE_DOCKERFILE.read_text(encoding="utf-8")

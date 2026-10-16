@@ -23,10 +23,16 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::{response::RuntimeTaskLink, store::runtime_work_dir};
+use super::{
+    response::RuntimeTaskLink,
+    store::{atomic_write_file, runtime_work_dir},
+};
 
 mod diagnostics;
 use diagnostics::measure_stage;
+
+#[cfg(test)]
+mod persistence_tests;
 
 const STATE_VERSION: u64 = 5;
 const DEFAULT_KEEP_COUNT: usize = 15;
@@ -968,36 +974,8 @@ impl WorktreeManager {
     }
 
     fn save(&self, state: &WorktreeState) -> Result<(), String> {
-        if let Some(parent) = self.state_path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| format!("Failed to create {}: {error}", parent.display()))?;
-        }
         let payload = serde_json::to_vec_pretty(state).map_err(|error| error.to_string())?;
-        let temporary =
-            self.state_path
-                .with_extension(format!("json.{}.{}.tmp", std::process::id(), now_ms()));
-        let result = (|| {
-            let mut file = OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .open(&temporary)
-                .map_err(|error| error.to_string())?;
-            file.write_all(&payload)
-                .and_then(|_| file.sync_all())
-                .map_err(|error| error.to_string())?;
-            fs::rename(&temporary, &self.state_path).map_err(|error| error.to_string())?;
-            #[cfg(unix)]
-            if let Some(parent) = self.state_path.parent() {
-                fs::File::open(parent)
-                    .and_then(|directory| directory.sync_all())
-                    .map_err(|error| error.to_string())?;
-            }
-            Ok(())
-        })();
-        if result.is_err() {
-            let _ = fs::remove_file(&temporary);
-        }
-        result
+        atomic_write_file(&self.state_path, &payload).map_err(|error| error.to_string())
     }
 }
 

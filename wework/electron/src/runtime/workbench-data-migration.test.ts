@@ -13,7 +13,6 @@ import {
   migrateWorkbenchDesktopData,
   prepareDesktopDataSource,
   migrateDesktopControlRegistry,
-  packagedUpdaterCache,
 } from './workbench-desktop-data.js'
 
 vi.mock('node:fs', async importOriginal => {
@@ -396,61 +395,30 @@ test.each(['missing', 'incomplete', 'different-identity'])(
   }
 )
 
-test('moves browser partitions, preferences, logs and updater cache before stores open', () => {
+test('moves browser partitions, preferences and logs before stores open', () => {
   const source = join(root, 'appData/app')
   const desktop = join(root, 'workbench/wework/app')
   const logs = join(root, 'logs/app')
-  const updaterCache = join(root, 'cache/updater')
   for (const path of [
     join(source, 'Partitions/browser/Cookies'),
     join(source, 'preferences.json'),
     join(logs, 'app.log'),
-    join(updaterCache, 'pending/update.zip'),
   ])
     write(path)
   prepareDesktopDataSource(source, desktop)
-  const result = migrateWorkbenchDesktopData({ source, desktop, logs, updaterCache })
+  const result = migrateWorkbenchDesktopData({ source, desktop, logs })
   expect(result.userData).toBe(join(desktop, 'user-data'))
   expect(fs.readFileSync(join(result.userData, 'Partitions/browser/Cookies'), 'utf8')).toBe(
     'fixture'
   )
-  expect(fs.realpathSync(updaterCache)).toBe(join(desktop, 'updater-cache'))
   prepareDesktopDataSource(source, desktop)
-  expect(migrateWorkbenchDesktopData({ source, desktop, logs, updaterCache })).toEqual(result)
-})
-
-test('branded packages reuse the configured updater cache and its existing migration journal', () => {
-  const resources = join(root, 'Resources')
-  write(join(resources, 'app-update.yml'), 'updaterCacheDirName: "@fixtureexecutor-updater"\n')
-  const updaterCache = join(root, 'Library/Caches/@fixtureexecutor-updater')
-  const options = {
-    source: join(root, 'appData/branded.app'),
-    desktop: join(root, 'workbench/branded.app'),
-    logs: join(root, 'Library/Logs/Branded App'),
-    updaterCache,
-  }
-  write(join(updaterCache, 'pending/update.zip'))
-  prepareDesktopDataSource(options.source, options.desktop)
-  migrateWorkbenchDesktopData(options)
-  const journalPath = join(options.desktop, 'migrations/desktop-updater-cache-v1.json')
-  const journal = fs.readFileSync(journalPath, 'utf8')
-  const configuredCache = packagedUpdaterCache(root, resources, {}, 'darwin')
-  expect(configuredCache).toBe(updaterCache)
-  migrateWorkbenchDesktopData({ ...options, updaterCache: configuredCache })
-  expect(fs.readFileSync(journalPath, 'utf8')).toBe(journal)
-  expect(fs.readFileSync(join(configuredCache, 'pending/update.zip'), 'utf8')).toBe('fixture')
-})
-
-test.each(['../other', '/absolute', '..', ''])('rejects unsafe configured cache path %j', name => {
-  const resources = join(root, 'Resources')
-  write(join(resources, 'app-update.yml'), `updaterCacheDirName: ${JSON.stringify(name)}\n`)
-  expect(() => packagedUpdaterCache(root, resources, {}, 'darwin')).toThrow('Invalid updater cache')
+  expect(migrateWorkbenchDesktopData({ source, desktop, logs })).toEqual(result)
 })
 
 test('new installs and interrupted userData bridge publication restart safely', () => {
   const source = join(root, 'appData/app')
   const desktop = join(root, 'workbench/app')
-  const options = { source, desktop, logs: join(root, 'logs'), updaterCache: join(root, 'cache') }
+  const options = { source, desktop, logs: join(root, 'logs') }
   prepareDesktopDataSource(source, desktop)
   vi.mocked(fs.symlinkSync).mockImplementation((target, path, type) => {
     if (path === source) throw Error('interrupted')

@@ -845,6 +845,161 @@ def test_assign_to_robot_enters_queue_with_history(
     assert execution.assigner_user_id == test_user.id
 
 
+def test_assign_robot_from_inbox_starts_work_in_progress(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    assert item.status == "inbox"
+
+    updated = loop_item_service.assign(
+        test_db,
+        project_id=int(project.id),
+        item_id=item.id,
+        user_id=test_user.id,
+        values=LoopItemAssign(
+            version=item.version, assignee_type="agent", assignee_id=bot.id
+        ),
+    )
+
+    assert updated.status == "in_progress"
+    history = (updated.metadata_json or {})["status_history"]
+    assert history[-1]["trigger"] == "robot_assignment"
+    assert history[-1]["from_status"] == "inbox"
+    assert history[-1]["to_status"] == "in_progress"
+    assert _active_execution(test_db, updated) is not None
+
+
+def test_update_assignee_robot_starts_run_from_inbox(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+
+    updated = loop_item_service.update(
+        test_db,
+        item.id,
+        test_user.id,
+        LoopItemUpdate(version=item.version, assignee_agent_id=bot.id),
+    )
+
+    assert updated.status == "in_progress"
+    assert updated.assignee_agent_id == bot.id
+    history = (updated.metadata_json or {})["status_history"]
+    assert history[-1]["trigger"] == "robot_assignment"
+    execution = _active_execution(test_db, updated)
+    assert execution is not None
+    assert execution.agent_id == bot.id
+
+
+def test_update_assignee_robot_respects_explicit_status(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+
+    updated = loop_item_service.update(
+        test_db,
+        item.id,
+        test_user.id,
+        LoopItemUpdate(version=item.version, assignee_agent_id=bot.id, status="inbox"),
+    )
+
+    assert updated.status == "inbox"
+    assert _active_execution(test_db, updated) is not None
+
+
+def test_update_assignee_robot_reenters_in_progress_from_review(
+    test_db: Session, test_user: User
+) -> None:
+    """Reassigning a robot starts new work, matching the executor's board."""
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    item.status = "in_review"
+    test_db.commit()
+
+    updated = loop_item_service.update(
+        test_db,
+        item.id,
+        test_user.id,
+        LoopItemUpdate(version=item.version, assignee_agent_id=bot.id),
+    )
+
+    assert updated.status == "in_progress"
+    assert _active_execution(test_db, updated) is not None
+
+
+def test_create_robot_assignee_starts_in_progress(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+
+    item = loop_item_service.create(
+        test_db,
+        project.id,
+        test_user.id,
+        LoopItemCreate(title="Robot owned", assignee_agent_id=bot.id),
+    )
+
+    assert item.status == "in_progress"
+    assert _active_execution(test_db, item) is not None
+
+
+@pytest.mark.parametrize("target_type", ["agent", "team"])
+def test_create_completed_issue_does_not_start_execution(
+    test_db: Session, test_user: User, target_type: str
+) -> None:
+    project = _make_project(test_db, test_user)
+    if target_type == "agent":
+        bot = _make_bot(test_db, project, test_user)
+        assignment = {"assignee_agent_id": bot.id}
+    else:
+        team = create_runnable_wegent_team(
+            test_db, user_id=test_user.id, name_prefix="completed"
+        )
+        _make_bot(test_db, project, test_user, wegent_team_id=team.id)
+        assignment = {"assignee_team_id": team.id}
+
+    item = loop_item_service.create(
+        test_db,
+        project.id,
+        test_user.id,
+        LoopItemCreate(title="Already done", status="completed", **assignment),
+    )
+
+    assert item.status == "completed"
+    assert item.completed_at is not None
+    assert (
+        test_db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == item.id)
+        .count()
+        == 0
+    )
+
+
+def test_refresh_execution_configuration_starts_run_without_snapshot(
+    test_db: Session, test_user: User
+) -> None:
+    """Entering processing starts a Run even without an execution_config snapshot."""
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    item.assignee_agent_id = bot.id
+    item.status = "in_progress"
+    test_db.commit()
+
+    loop_item_service.refresh_agent_execution_configuration(
+        test_db, item=item, user_id=test_user.id
+    )
+
+    assert _active_execution(test_db, item) is not None
+
+
 def test_assign_to_wegent_runtime_robot_keeps_robot_as_queue_identity(
     test_db: Session,
     test_user: User,

@@ -181,6 +181,11 @@ export async function openRuntimeProjectEditor(control, projectId) {
   await control.command('hover', `[data-testid="project-row-${projectId}"]`)
   await control.command('click', `[data-testid="project-menu-${projectId}"]`)
   await control.command(
+    'waitFor',
+    `[data-testid="project-menu-${projectId}"][aria-expanded="true"]`,
+    { stableMs: COMPOSER_READY_STABILITY_MS }
+  )
+  await control.command(
     'clickWhenEnabled',
     `[data-testid="edit-project-${projectId}"], [data-testid="rename-project-${projectId}"]`
   )

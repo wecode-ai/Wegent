@@ -674,3 +674,22 @@ fn byte_index_for_char(text: &str, char_index: usize) -> usize {
         .map(|(byte_index, _)| byte_index)
         .unwrap_or(text.len())
 }
+
+fn runtime_model_request(
+    link: &RuntimeTaskLink,
+    payload: &Value,
+) -> Result<ExecutionRequest, AppIpcError> {
+    let mut request = runtime_event_request_from_link(link);
+    if let Some(model_config) = payload.get("modelConfig") {
+        if !model_config.is_object() || model_config.as_object().is_some_and(Map::is_empty) {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "modelConfig must be a non-empty object",
+            ));
+        }
+        // The stored profile intentionally has no credentials or default headers.
+        // Model-consuming actions receive a freshly materialized configuration.
+        request.model_config = model_config.clone();
+    }
+    Ok(request)
+}

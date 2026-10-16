@@ -280,6 +280,7 @@ assert_case() {
 all_false=$(
   cat <<'EOF'
 backend=false
+backend_rs=false
 executor=false
 executor_manager=false
 shared=false
@@ -314,6 +315,7 @@ done
 collaboration_package=$(
   cat <<'EOF'
 backend=false
+backend_rs=false
 executor=false
 executor_manager=false
 shared=false
@@ -338,6 +340,7 @@ assert_case "wework only" "$wework_expected" "wework/src/App.tsx"
 shared_expected=$(
   cat <<'EOF'
 backend=true
+backend_rs=false
 executor=false
 executor_manager=true
 shared=true
@@ -350,6 +353,12 @@ wework_e2e=false
 EOF
 )
 assert_case "shared dependencies" "$shared_expected" "shared/utils/example.py"
+
+backend_rs_expected="${all_false/backend_rs=false/backend_rs=true}"
+backend_rs_expected="${backend_rs_expected/platform_e2e=false/platform_e2e=true}"
+backend_rs_expected="${backend_rs_expected/wework_e2e=false/wework_e2e=true}"
+assert_case "Rust backend changes run Rust contracts and both E2E suites" \
+  "$backend_rs_expected" "backend-rs/src/decisions/mod.rs"
 
 all_true="${all_false//false/true}"
 assert_case "explicit all modules" "$all_true" --all
@@ -764,7 +773,7 @@ full_desktop_expected="${full_desktop_expected/\"segments\":\"resilience\"/\"seg
 full_desktop_expected="${full_desktop_expected/\"segments\":\"project-automation\"/\"segments\":\"project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,collaboration-local-group-coordinate,collaboration-human-round-resume\"}"
 full_desktop_expected="${full_desktop_expected/\"segments\":\"project-assignment-notification,split-workbench,priority-filter\"/\"segments\":\"project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention\"}"
 full_desktop_expected="${full_desktop_expected/\"segments\":\"local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome\"/\"segments\":\"local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification\"}"
-full_desktop_expected="${full_desktop_expected/temporary-chat,local-file-preview,conversation-state,reply-predictions/temporary-chat,local-file-preview,conversation-state,reply-predictions,model-settings,codex-native-catalog}"
+full_desktop_expected="${full_desktop_expected/temporary-chat,local-file-preview,conversation-state,reply-predictions/temporary-chat,local-file-preview,conversation-state,reply-predictions,reply-prediction-auth,model-settings,codex-native-catalog}"
 full_desktop_expected="${full_desktop_expected/\"segments\":\"codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery\"/\"segments\":\"codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,model-overload-recovery\"}"
 
 assert_desktop_case "drawing implementation and scenario select their desktop regression" \

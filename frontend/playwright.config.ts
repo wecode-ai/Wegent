@@ -27,7 +27,12 @@ export default defineConfig({
 
   /* Reporter to use - use blob reporter for sharded runs */
   reporter: process.env.CI
-    ? [['list'], ['blob', { outputDir: 'blob-report' }], ['html', { open: 'never' }]]
+    ? [
+        ['./e2e/utils/process-diagnostics-reporter.ts'],
+        ['list'],
+        ['blob', { outputDir: 'blob-report' }],
+        ['html', { open: 'never' }],
+      ]
     : [['html', { open: 'never' }], ['list']],
 
   /* Output directory for test artifacts */

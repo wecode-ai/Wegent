@@ -272,7 +272,7 @@ describe('Electron local terminal', () => {
         event: 'terminal.exit',
         payload: { session_id: 'terminal-2' },
       })
-      return { session_id: 'terminal-1', sequence: 2, data: 'history' }
+      return { session_id: 'terminal-1', sequence: 2, data: 'history', running: true }
     })
     const output = vi.fn()
     const exit = vi.fn()
@@ -292,5 +292,25 @@ describe('Electron local terminal', () => {
     disconnect()
     expect(unlisteners[0]).toHaveBeenCalledOnce()
     expect(unlisteners[1]).toHaveBeenCalledOnce()
+  })
+  test('replays completed terminal output and reports exit when reconnecting', async () => {
+    mocks.terminalRequest.mockResolvedValue({
+      session_id: 'terminal-completed',
+      sequence: 1,
+      data: 'completed output',
+      running: false,
+    })
+    const output = vi.fn()
+    const exit = vi.fn()
+
+    const disconnect = await connectLocalTerminal('terminal-completed', output, exit)
+
+    expect(output).toHaveBeenCalledWith(
+      expect.objectContaining({ data: 'completed output' }),
+      'snapshot'
+    )
+    expect(exit).toHaveBeenCalledWith({ session_id: 'terminal-completed' })
+    expect(output.mock.invocationCallOrder[0]).toBeLessThan(exit.mock.invocationCallOrder[0])
+    disconnect()
   })
 })

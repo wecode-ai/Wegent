@@ -1,4 +1,3 @@
-import { resolve } from 'node:path'
 import { assertExecutorWorkbenchCompatibility } from './workbench-executor-schema.js'
 import type { HostPipeServer } from '../host/host-pipe.js'
 import {
@@ -353,7 +352,7 @@ export class DesktopRuntime {
         if (this.lifecycleGeneration !== generation) return null
       }
       const developmentRoot = this.options.environment.WEWORK_PLUGIN_DEVELOPMENT_ROOT?.trim()
-      if (developmentRoot && this.developmentPlugin?.sourceRoot !== resolve(developmentRoot)) {
+      if (developmentRoot) {
         const developmentPlugin = await plugins.ensureDevelopmentPlugin(developmentRoot)
         if (this.lifecycleGeneration !== generation) return null
         this.developmentPlugin = developmentPlugin
