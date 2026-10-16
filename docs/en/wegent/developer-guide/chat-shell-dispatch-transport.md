@@ -18,7 +18,7 @@ event loops used by synchronous bridges and Celery own separate clients and clos
 them on success, failure, or cancellation, without sharing connections across loops.
 
 The pool allows up to 1000 connections and retains up to 100 idle connections.
-Timeouts are explicit:
+Timeouts and idle connection expiry are explicit:
 
 | Phase | Timeout |
 | --- | --- |
@@ -26,6 +26,12 @@ Timeouts are explicit:
 | Read | 300 seconds |
 | Write | 30 seconds |
 | Pool acquisition | 5 seconds |
+| Idle connection expiry | 2 seconds |
+
+Idle connections are retired before Chat Shell's default Uvicorn keep-alive
+timeout of five seconds, reducing races between server closure and client reuse.
+When configuring the server or an intermediary proxy, keep its idle timeout above
+the client's two-second expiry.
 
 Cancelling a request closes its response stream while keeping the shared SDK
 client available to other dispatches.
@@ -46,6 +52,10 @@ Read, write, pool, protocol, and HTTP errors are not retried. Once response head
 arrive, the request is never replayed, even before the first SSE event. An absent
 event does not prove the server has not processed the POST; replaying it could
 duplicate generation or tool side effects.
+
+SDK automatic retries are also disabled when submitting `background=true` tasks
+to the Executor Manager. Its receiver directly enqueues requests without request
+deduplication; replaying a failed POST could submit an already queued subtask again.
 
 ## Diagnostic logs
 

@@ -5,6 +5,7 @@
 """Verify actual HTTP keep-alive through the SSE dispatch path."""
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -16,8 +17,13 @@ from shared.models import ExecutionRequest
 
 
 @pytest.mark.asyncio
-async def test_sequential_dispatches_reuse_tcp_connection(monkeypatch) -> None:
+@pytest.mark.parametrize("idle_seconds, expected_connections", [(0.0, 1), (3.0, 2)])
+async def test_sequential_dispatches_retire_idle_connections(
+    monkeypatch, idle_seconds: float, expected_connections: int
+) -> None:
+    """Reuse active connections and retire idle ones before the server's 5s limit."""
     monkeypatch.setenv("NO_PROXY", "127.0.0.1")
+    idle_clock = 0.0
     connections = []
     requests = []
     handlers = set()
@@ -65,6 +71,11 @@ async def test_sequential_dispatches_reuse_tcp_connection(monkeypatch) -> None:
     target = ExecutionTarget(mode=CommunicationMode.SSE, url=f"http://127.0.0.1:{port}")
     try:
         with (
+            # Only replace HTTP/1.1's expiry clock, keeping asyncio timers real.
+            patch(
+                "httpcore._async.http11.time",
+                SimpleNamespace(monotonic=lambda: idle_clock),
+            ),
             patch("app.services.execution.chat_shell_sse.chat_shell_clients", pool),
             patch("app.services.chat.storage.session.session_manager", session),
             patch(
@@ -79,9 +90,10 @@ async def test_sequential_dispatches_reuse_tcp_connection(monkeypatch) -> None:
                         dispatcher._dispatch_sse(request, target, AsyncMock()),
                         timeout=2,
                     )
+                    idle_clock = idle_seconds
 
                 assert len(requests) == 2
-                assert len(connections) == 1
+                assert len(connections) == expected_connections
     finally:
         await dispatcher.http_client.aclose()
         for writer in connections:

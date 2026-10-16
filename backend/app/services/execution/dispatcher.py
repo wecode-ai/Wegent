@@ -674,6 +674,7 @@ class ExecutionDispatcher:
             base_url=base_url,
             api_key="dummy",  # Not used by executor_manager but required by client
             timeout=300.0,
+            max_retries=0,  # Queue submission is not idempotent; never replay it.
         ) as client:
 
             # Send request using OpenAI client with background mode

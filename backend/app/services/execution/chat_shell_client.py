@@ -29,7 +29,10 @@ logger = logging.getLogger(__name__)
 
 _MAX_CONNECT_ATTEMPTS = 3
 _TIMEOUT = httpx.Timeout(300.0, connect=5.0, write=30.0, pool=5.0)
-_LIMITS = httpx.Limits(max_connections=1000, max_keepalive_connections=100)
+# Retire idle connections before Chat Shell's default 5s server timeout.
+_LIMITS = httpx.Limits(
+    max_connections=1000, max_keepalive_connections=100, keepalive_expiry=2.0
+)
 
 
 def _build_client(base_url: str) -> AsyncOpenAI:
