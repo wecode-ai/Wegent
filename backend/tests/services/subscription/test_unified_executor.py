@@ -252,6 +252,52 @@ async def test_repeated_stale_session_does_not_retry_again():
 
 
 @pytest.mark.asyncio
+async def test_non_preserved_history_disables_stale_session_retry():
+    """History-disabled subscriptions keep the original failure path."""
+    execution_data = SubscriptionExecutionData(
+        subscription_id=88,
+        execution_id=2,
+        task_id=544,
+        subtask_id=670,
+        user_id=2,
+        team_id=73,
+        user_subtask_id=669,
+        device_id=None,
+        prompt="hello",
+        model_override_name=None,
+        preserve_history=False,
+        history_message_count=0,
+        subscription_name="echo",
+        subscription_display_name="Echo",
+        team_display_name="Team",
+        trigger_type="cron",
+        trigger_reason="Scheduled",
+    )
+    retry_flags = []
+
+    async def fake_build(*args, **kwargs):
+        return object()
+
+    async def fake_execute(request, execution_data, retry_stale_session=False):
+        retry_flags.append(retry_stale_session)
+        return STALE_SESSION_ERROR
+
+    with (
+        patch(
+            "app.services.subscription.unified_executor._build_subscription_execution_request",
+            side_effect=fake_build,
+        ),
+        patch(
+            "app.services.subscription.unified_executor._execute_subscription_request",
+            side_effect=fake_execute,
+        ),
+    ):
+        await execute_subscription_unified(execution_data)
+
+    assert retry_flags == [False]
+
+
+@pytest.mark.asyncio
 async def test_sse_error_event_propagates_stale_session():
     """A stale-session terminal event must reach the subscription retry wrapper."""
     execution_data = SubscriptionExecutionData(

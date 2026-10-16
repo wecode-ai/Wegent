@@ -124,7 +124,7 @@ async def execute_subscription_unified(
     stale_error = await _execute_subscription_request(
         request=request,
         execution_data=execution_data,
-        retry_stale_session=True,
+        retry_stale_session=execution_data.preserve_history,
     )
     if not stale_error or not execution_data.preserve_history:
         return
