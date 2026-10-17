@@ -11,7 +11,6 @@ pub mod command;
 pub mod environment_prepare;
 mod event_stream;
 pub mod git_commands;
-pub mod git_commit_message;
 pub mod harnesses;
 pub mod local_skills;
 pub mod native_git;

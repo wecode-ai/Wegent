@@ -1431,6 +1431,7 @@
     "environment_pushing_changes": "正在推送...",
     "environment_committed": "已提交",
     "environment_commit_failed": "提交失败",
+    "environment_commit_generation_unavailable": "生成提交说明需要可用模型，请在设置中选择模型或手动填写提交说明。",
     "environment_no_changes_to_commit": "没有可提交的更改",
     "environment_branch_menu": "切换分支",
     "environment_branch_search": "搜索分支",
