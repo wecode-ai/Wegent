@@ -26,6 +26,7 @@ import electronUpdater from 'electron-updater'
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
+import { mkdir } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { release } from 'node:os'
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path'
@@ -95,6 +96,12 @@ import { createTrayIcon, trayIconFilename } from './host/tray-icon.js'
 import { trayGuidForApplicationId } from './host/tray-guid.js'
 import { TrayNativeStatusController } from './host/tray-native-status.js'
 import { WindowClosePolicy, type WindowCloseDecision } from './host/window-close-policy.js'
+import {
+  ApplicationMenu,
+  EMPTY_APPLICATION_MENU_CAPABILITIES,
+  type ApplicationMenuAction,
+  type ApplicationMenuCapabilityState,
+} from './host/application-menu.js'
 import { AppUpdateService } from './host/app-update-service.js'
 import { AppUpdateLogger } from './host/app-update-logger.js'
 import { CloudCredentialError, CloudCredentialService } from './host/cloud-credential-service.js'
@@ -278,6 +285,9 @@ let mainWindow: BrowserWindow | null = null
 let startupSplashWindow: BrowserWindow | null = null
 const workspaceWindows = new Map<string, BrowserWindow>()
 const dshWindowLabels = new Map<number, string>()
+let applicationMenu: ApplicationMenu | null = null
+let lastMenuWindow: BrowserWindow | null = null
+const menuCapabilities = new Map<string, ApplicationMenuCapabilityState>()
 let primaryDshLoaded = false
 let primaryDshSecurityInstalled = false
 let desktopRuntime: DesktopRuntime | null = null
@@ -927,6 +937,8 @@ async function openWorkspaceWindow(input: {
     if (workspaceWindows.get(input.label) === workspaceWindow) {
       workspaceWindows.delete(input.label)
     }
+    menuCapabilities.delete(input.label)
+    syncApplicationMenuCapabilities()
   })
   try {
     await workspaceWindow.loadURL(target.toString(), {
@@ -1381,6 +1393,89 @@ function dispatchTrayAction(action: TrayAction): void {
   }
 }
 
+/**
+ * Resolves the workbench window a menu action should target: the focused
+ * workspace/main window, falling back to the most recently focused one.
+ */
+function applicationMenuWindow(label?: string): BrowserWindow | null {
+  if (label) return label === 'main' ? mainWindow : (workspaceWindows.get(label) ?? null)
+  const focused = BrowserWindow.getFocusedWindow()
+  if (focused && (focused === mainWindow || [...workspaceWindows.values()].includes(focused))) {
+    return focused
+  }
+  return lastMenuWindow && !lastMenuWindow.isDestroyed() ? lastMenuWindow : mainWindow
+}
+
+function menuLabelForWindow(window: BrowserWindow): string {
+  return dshWindowLabels.get(window.webContents.id) ?? 'main'
+}
+
+/** Applies the capabilities of the window that currently owns the menu. */
+function syncApplicationMenuCapabilities(): void {
+  const window = applicationMenuWindow()
+  if (!window) {
+    applicationMenu?.setCapabilities(EMPTY_APPLICATION_MENU_CAPABILITIES)
+    return
+  }
+  applicationMenu?.setCapabilities(
+    menuCapabilities.get(menuLabelForWindow(window)) ?? EMPTY_APPLICATION_MENU_CAPABILITIES
+  )
+}
+
+function installApplicationMenu(): void {
+  applicationMenu = new ApplicationMenu({
+    platform: process.platform,
+    appName: app.getName(),
+    buildMenu: template => Menu.buildFromTemplate(template),
+    setApplicationMenu: menu => {
+      Menu.setApplicationMenu(menu)
+      // Windows and Linux windows are frameless, and Electron never creates a
+      // native menu bar in a frameless window (RootView::SetMenu returns early
+      // when the window has no frame), so there is nothing to hide. The
+      // workbench exposes its own application-menu button instead, while the
+      // menu accelerators stay registered and active.
+    },
+    targetWindow: applicationMenuWindow,
+    dispatch: (action: ApplicationMenuAction, window: BrowserWindow) =>
+      desktopHostEvents.publish('application-menu.action', {
+        action,
+        windowLabel: menuLabelForWindow(window),
+      }),
+    openDevTools: window => openWindowDevTools(window),
+    openLogDirectory: openApplicationLogDirectory,
+    showMain: reactivateMainWindow,
+    quit: () => requestApplicationShutdown(() => app.quit()),
+    openExternal: url => shell.openExternal(url),
+    reportError: error => console.error('[application-menu] action failed', error),
+  })
+  // Bootstrap with the OS locale; the renderer reports the Wework language
+  // preference through applicationMenu.setLanguage once it mounts, so the menu
+  // follows the in-app language instead of the system locale.
+  applicationMenu.setLanguage(app.getLocale())
+  app.on('browser-window-created', (_event, window) => {
+    window.on('focus', () => {
+      if (window === mainWindow || [...workspaceWindows.values()].includes(window)) {
+        lastMenuWindow = window
+        syncApplicationMenuCapabilities()
+      }
+    })
+  })
+  syncApplicationMenuCapabilities()
+}
+
+function openWindowDevTools(window: BrowserWindow): void {
+  const contents = window.webContents
+  if (contents.isDestroyed()) return
+  contents.openDevTools({ mode: 'detach', activate: true })
+}
+
+async function openApplicationLogDirectory(): Promise<void> {
+  const logDirectory = app.getPath('logs')
+  await mkdir(logDirectory, { recursive: true })
+  const error = await shell.openPath(logDirectory)
+  if (error) throw new Error(error)
+}
+
 function createTrayManager(): ElectronTrayManager<Electron.Menu | null, Tray> {
   const resourcesRoot = packagedApplication ? process.resourcesPath : developmentResourcesRoot
   const iconPath = join(resourcesRoot, 'icons', trayIconFilename())
@@ -1763,6 +1858,13 @@ async function configureDesktopRuntime(): Promise<void> {
           cleanupStaleTemporaryImages,
           events: desktopHostEvents,
           feedback,
+          applicationMenu: () => applicationMenu,
+          updateApplicationMenuCapabilities: (label, capabilities) => {
+            menuCapabilities.set(label, capabilities)
+            const window = applicationMenuWindow()
+            if (window && menuLabelForWindow(window) === label) syncApplicationMenuCapabilities()
+          },
+          updateApplicationMenuLanguage: language => applicationMenu?.setLanguage(language),
           quitApplication: () => requestApplicationShutdown(() => app.quit()),
           relaunchApplication: () => {
             app.relaunch()
@@ -2160,6 +2262,9 @@ if (hasSingleInstanceLock) {
     } catch (error) {
       console.warn('[popout-window] failed to register global shortcut', error)
     }
+    // Install the menu before any window is created so the
+    // browser-window-created focus hook covers every workbench window.
+    installApplicationMenu()
     await createWindow(
       resolveStartupSplashTheme(startupPreferences.appearanceMode, nativeTheme.shouldUseDarkColors)
     )

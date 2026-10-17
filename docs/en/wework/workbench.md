@@ -4,6 +4,14 @@ sidebar_position: 5
 
 # Coding workbench
 
+## Application menu
+
+macOS uses the system menu bar. The frameless Windows and Linux windows show an application-menu button at the left of the title bar (also reachable with `Alt+F` or `F10`).
+
+The menu contains only unambiguous, genuinely useful items: the application and system roles (About, Settings, Services, Hide, Quit, the edit roles, Minimize, Close window, Show main window, Toggle full screen), File (new task tab, new project space tab, close workspace tab), Work (Tasks, Project spaces, Plugins, Scheduled, Applications), View (Search, toggle sidebar/side panel/terminal, font size), Window (Minimize, Close window, Show main window), and Help (GitHub project, report an issue, developer tools).
+
+Menu items follow the current workbench state: when an action is not available on the current surface — for example there is no closable tab, or the active surface is not a task workspace — the item is hidden instead of remaining as a clickable entry that does nothing. Menu actions reuse the controls that already exist in the interface; they never introduce a second navigation path.
+
 ## Use top-level tabs
 
 The Wework desktop app uses top-level tabs for tasks, project spaces, agents, and other product pages. Sidebar links navigate within the active tab. A new tab is created only when you select the top-bar **+** or another explicit new-tab action from a tab menu.

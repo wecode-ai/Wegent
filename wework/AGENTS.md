@@ -33,6 +33,38 @@ Before changing a Wework flow, identify the affected product area and trace its 
 - Always keep task model selector controls mounted, including initial catalog loading, refresh failures, empty catalogs, and deleted task models. Model readiness may block sending but must never hide the recovery entry.
 - In project-board hover conversations, handle self-contained actions such as sending, retrying, answering runtime input, and loading or reverting diffs inside the popup. Actions that require workbench UI, including opening files, skills, reviews, plans, or switching the retry model, must navigate to the bound Runtime task. Never render an enabled conversation action without a real handler.
 
+## Native application menu
+
+The desktop application menu is declared once and shared by the Electron host
+and the renderer. When adding menu items:
+
+- Prefer attaching a new product action to an existing top-level menu
+  (`application`, `file`, `work`, `edit`, `view`, `window`, `help`); do not add a
+  new top-level menu without discussing it first.
+- Reuse an action the UI already has. Menu items must call the same handler or
+  command as the existing control, never a second navigation or state path.
+- Only add menu items that are unambiguous and useful in every state, or that
+  declare a capability so they hide when unavailable. A menu item that looks
+  enabled but does nothing is a defect, not a fallback.
+- Ids, actions, and capabilities live in `src/desktop/applicationMenuModel.ts`
+  (renderer) and `electron/src/host/application-menu.ts` (host). A contract test
+  fails when the two declarations drift.
+- Declaring a capability is a promise that some code reports it. Only declare a
+  capability when the renderer actually reports it for the focused window, and
+  cover the item becoming _visible_ in the E2E checkpoint. An item whose
+  capability is never reported is a permanently hidden dead entry, which the
+  contract test cannot detect.
+- Hiding an item does not disable its accelerator: Electron still fires a
+  `visible: false` item whose accelerator is pressed. Never rely on the hidden
+  state to block an action — the renderer handler must guard itself against the
+  state where the action is not available.
+- Cover a new item in the `application-menu` desktop E2E checkpoint: assert it
+  exists, that its visibility matches the capability matrix, and that activating
+  it performs its action.
+
+This is a recommendation, not a requirement: a feature that only makes sense
+inside its own surface can stay without a menu entry.
+
 ## i18n
 
 - Use the local `@/hooks/useTranslation` wrapper for new Wework code.
