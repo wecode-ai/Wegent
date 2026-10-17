@@ -25,12 +25,14 @@ from app.schemas.site import (
     SiteNetwork,
     SiteResponse,
 )
+from app.schemas.site_analytics import SiteAnalyticsQuery, SiteAnalyticsResponse
 from app.services.site_application_types import (
     SITE_APPLICATION_HANDLER,
     ApplicationTypeHandler,
     InvalidApplicationProjectError,
     get_application_type_handler,
 )
+from shared.telemetry.decorators import trace_async
 
 
 class SitesNotAvailableError(RuntimeError):
@@ -225,6 +227,30 @@ class SitesService:
             headers={"X-Wegent-Username": username},
         )
         return self._parse_environment_snapshot(payload)
+
+    @trace_async(span_name="sites.get_analytics", tracer_name="app.services.sites")
+    async def get_analytics(
+        self, siteid: str, query: SiteAnalyticsQuery, *, username: str
+    ) -> SiteAnalyticsResponse:
+        payload = await self._request(
+            "GET",
+            f"/api/v1/projects/{quote(siteid, safe='')}/analytics",
+            params=query.model_dump(),
+            headers={"X-Wegent-Username": username},
+        )
+        try:
+            result = SiteAnalyticsResponse.model_validate(payload)
+            if (
+                result.project_id != siteid
+                or result.start_date != query.start_date
+                or result.end_date != query.end_date
+            ):
+                raise ValueError("Analytics response does not match request")
+            return result
+        except (ValidationError, ValueError) as exc:
+            raise SitesUpstreamUnavailableError(
+                "Sites service returned invalid analytics"
+            ) from exc
 
     async def list_collaborators(
         self, siteid: str, *, username: str
