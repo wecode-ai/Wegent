@@ -131,6 +131,162 @@ describe('installed-only management refresh', () => {
     expect(getPluginMarketplaceCache('test')).toBe(before)
   })
 
+  test('loads cloud membership even if the independent local read fails', async () => {
+    const readCloud = vi.fn().mockResolvedValue({ items: [dingtalk] })
+    await expect(
+      refreshInstalledPluginInventory({
+        cacheKey: 'test',
+        readLocal: async () => {
+          throw new Error('Local unavailable')
+        },
+        readCloud,
+        isCurrent: () => true,
+      })
+    ).rejects.toThrow('Local unavailable')
+    expect(readCloud).toHaveBeenCalledWith(undefined)
+    expect(getPluginMarketplaceCache('test')?.installedPlugins).toEqual([dingtalk])
+    expect(getPluginMarketplaceCache('test')?.installedPluginsFetchedAt).toBeUndefined()
+  })
+
+  test.each(['local', 'cloud'] as const)(
+    'clears only the successful empty source when %s fails',
+    async failedSource => {
+      const local: InstalledPlugin = {
+        ...dingtalk,
+        metadata: { ...dingtalk.metadata, name: 'local-plugin', labels: { id: 'local-plugin' } },
+        spec: {
+          ...dingtalk.spec,
+          pluginId: null,
+          origin: 'created',
+          source: { ...dingtalk.spec.source, type: 'local', pluginKey: 'local-plugin' },
+        },
+      }
+      writePluginInventory('test', 'device', { installedPlugins: [dingtalk, local] })
+      await expect(
+        refreshInstalledPluginInventory({
+          cacheKey: 'test',
+          readLocal: async () => {
+            if (failedSource === 'local') throw new Error('Source unavailable')
+            return { items: [], deviceId: 'device' }
+          },
+          readCloud: async () => {
+            if (failedSource === 'cloud') throw new Error('Source unavailable')
+            return { items: [] }
+          },
+          isCurrent: () => true,
+        })
+      ).rejects.toThrow('Source unavailable')
+      expect(getPluginMarketplaceCache('test')?.installedPlugins).toEqual(
+        failedSource === 'local' ? [local] : [dingtalk]
+      )
+    }
+  )
+
+  test('publishes partial local packages without marking membership complete', async () => {
+    await expect(
+      refreshInstalledPluginInventory({
+        cacheKey: 'test',
+        readLocal: async () => ({ items: [dingtalk], deviceId: 'device', partial: true }),
+        readCloud: async () => {
+          throw new Error('Cloud unavailable')
+        },
+        isCurrent: () => true,
+      })
+    ).rejects.toThrow('Cloud unavailable')
+    expect(getPluginMarketplaceCache('test')?.installedPlugins).toEqual([dingtalk])
+    expect(getPluginMarketplaceCache('test')?.installedPluginsFetchedAt).toBeUndefined()
+  })
+
+  test('does not reuse cached rows from another device after a failed cloud read', async () => {
+    writePluginInventory('test', 'old-device', { installedPlugins: [dingtalk] })
+    await expect(
+      refreshInstalledPluginInventory({
+        cacheKey: 'test',
+        readLocal: async () => ({ items: [], deviceId: 'new-device' }),
+        readCloud: async () => {
+          throw new Error('Cloud unavailable')
+        },
+        isCurrent: () => true,
+      })
+    ).rejects.toThrow('Cloud unavailable')
+    expect(getPluginMarketplaceCache('test')?.deviceId).toBe('new-device')
+    expect(getPluginMarketplaceCache('test')?.installedPlugins).toEqual([])
+  })
+
+  test('rejects an old local device response without requesting or reusing that device', async () => {
+    writePluginInventory('test', 'old-device', { installedPlugins: [dingtalk] })
+    const readCloud = vi.fn().mockResolvedValue({ items: [] })
+    await expect(
+      refreshInstalledPluginInventory({
+        cacheKey: 'test',
+        deviceId: 'new-device',
+        readLocal: async () => ({ items: [dingtalk], deviceId: 'old-device' }),
+        readCloud,
+        isCurrent: () => true,
+      })
+    ).rejects.toThrow('Local plugin device changed')
+    expect(readCloud).toHaveBeenCalledExactlyOnceWith('new-device')
+    expect(getPluginMarketplaceCache('test')?.deviceId).toBe('new-device')
+    expect(getPluginMarketplaceCache('test')?.installedPlugins).toEqual([])
+  })
+
+  test('treats malformed local membership as a source failure and still reads cloud rows', async () => {
+    await expect(
+      refreshInstalledPluginInventory({
+        cacheKey: 'test',
+        readLocal: async () => ({ items: [null as unknown as InstalledPlugin] }),
+        readCloud: async () => ({ items: [dingtalk] }),
+        isCurrent: () => true,
+      })
+    ).rejects.toThrow('Invalid installed plugin list')
+    expect(getPluginMarketplaceCache('test')?.installedPlugins).toEqual([dingtalk])
+  })
+
+  test('isolates malformed cloud device status while keeping healthy local rows', async () => {
+    writePluginInventory('test', 'device', { installedPlugins: [] })
+    const local: InstalledPlugin = {
+      ...dingtalk,
+      spec: { ...dingtalk.spec, pluginId: null },
+    }
+    const malformed = {
+      ...dingtalk,
+      status: { ...dingtalk.status, devices: {} },
+    } as unknown as InstalledPlugin
+    await expect(
+      refreshInstalledPluginInventory({
+        cacheKey: 'test',
+        readLocal: async () => ({ items: [local], deviceId: 'device' }),
+        readCloud: async () => ({ items: [malformed] }),
+        isCurrent: () => true,
+      })
+    ).rejects.toThrow('Invalid installed plugin list')
+    expect(getPluginMarketplaceCache('test')?.installedPlugins).toEqual([local])
+  })
+
+  test('accepts healthy component and icon changes even when cloud membership fails', async () => {
+    const local: InstalledPlugin = { ...dingtalk, spec: { ...dingtalk.spec, pluginId: null } }
+    writePluginInventory('test', 'device', { installedPlugins: [local] })
+    const updated = {
+      ...local,
+      spec: {
+        ...local.spec,
+        interface: { logo: 'data:image/png;base64,aaa' },
+        components: { ...local.spec.components, skills: [] },
+      },
+    }
+    await expect(
+      refreshInstalledPluginInventory({
+        cacheKey: 'test',
+        readLocal: async () => ({ items: [updated], deviceId: 'device' }),
+        readCloud: async () => {
+          throw new Error('Cloud unavailable')
+        },
+        isCurrent: () => true,
+      })
+    ).rejects.toThrow('Cloud unavailable')
+    expect(getPluginMarketplaceCache('test')?.installedPlugins).toEqual([updated])
+  })
+
   test.each(['mutation', 'refresh', 'device', 'unmount'] as const)(
     'does not overwrite a newer %s while cloud membership is pending',
     async change => {
@@ -726,6 +882,33 @@ describe('pluginInventory', () => {
         logoUrl: 'file:///Users/test/.codex/plugins/cache/personal/dingtalk/1/assets/icon.png',
       }),
     ])
+  })
+
+  test('isolates a failed logo detail while hydrating surviving plugins', async () => {
+    const broken: InstalledPlugin = {
+      ...dingtalk,
+      spec: { ...dingtalk.spec, interface: { logo: './broken.png' } },
+    }
+    const healthy: InstalledPlugin = {
+      ...broken,
+      metadata: { ...broken.metadata, name: 'healthy' },
+      spec: { ...broken.spec, pluginId: 2, interface: { logo: './healthy.png' } },
+    }
+    const updated = {
+      ...healthy,
+      spec: { ...healthy.spec, interface: { logo: 'data:image/png;base64,aaa' } },
+    }
+    const snapshot = writePluginInventory('test', 'device', { installedPlugins: [broken, healthy] })
+    await hydratePluginInventoryLogos(
+      'test',
+      snapshot,
+      async plugin => {
+        if (plugin === broken) throw new Error('Detail unavailable')
+        return updated
+      },
+      () => true
+    )
+    expect(getPluginMarketplaceCache('test')?.installedPlugins).toEqual([broken, updated])
   })
 
   test.each(['listCodexApps', 'readLocalInstalledPlugins', 'listCloudInstalledPlugins'] as const)(

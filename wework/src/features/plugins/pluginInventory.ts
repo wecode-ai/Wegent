@@ -3,7 +3,10 @@ import {
   appendInstalledPluginsAsComposerApps,
   enrichComposerApps,
 } from '@wegent/chat-core/composer-plugin-metadata'
-import { mergeInstalledPlugins } from '@wegent/chat-core/installed-plugin-merge'
+import {
+  isCloudManagedInstalledPlugin,
+  mergeInstalledPlugins,
+} from '@wegent/chat-core/installed-plugin-merge'
 import type { InstalledPlugin, LocalDeviceApp } from '@/types/api'
 import { pluginPresentation, overlayMarketplaceLogosOnComposerApps } from './composerPluginMetadata'
 import {
@@ -23,11 +26,20 @@ export async function hydratePluginInventoryLogos(
 ): Promise<void> {
   const candidates = snapshot.installedPlugins.filter(installedPluginHasRelativeLogo)
   if (!candidates.length) return
-  const details = await Promise.all(candidates.map(plugin => readDetail(plugin)))
+  const details = await Promise.allSettled(
+    candidates.map(plugin => Promise.resolve().then(() => readDetail(plugin)))
+  )
   if (!isCurrent()) return
   const current = getPluginMarketplaceCache(cacheKey)
   if (!current || current.deviceId !== snapshot.deviceId) return
-  const updates = new Map(candidates.map((plugin, index) => [plugin, details[index]]))
+  const updates = new Map(
+    candidates.flatMap((plugin, index) => {
+      const detail = details[index]
+      return detail.status === 'fulfilled' && detail.value?.spec?.components
+        ? [[plugin, detail.value] as const]
+        : []
+    })
+  )
   const installedPlugins = current.installedPlugins.map(plugin => {
     const detail = updates.get(plugin)
     return detail
@@ -213,12 +225,14 @@ export function hasLoadedPluginInventory(snapshot: PluginMarketplaceCacheSnapsho
 /** Management reads membership only; marketplace catalogs are not a dependency. */
 export async function refreshInstalledPluginInventory(options: {
   cacheKey: string
-  readLocal: () => Promise<{ items: InstalledPlugin[]; deviceId?: string }>
+  deviceId?: string
+  readLocal: () => Promise<{ items: InstalledPlugin[]; deviceId?: string; partial?: boolean }>
   readCloud: (deviceId: string | undefined) => Promise<{ items: InstalledPlugin[] }>
   isCurrent: () => boolean
 }): Promise<void> {
   let expected = getPluginMarketplaceCache(options.cacheKey)
-  let deviceId = expected?.deviceId || ''
+  const initial = expected
+  let deviceId = options.deviceId || expected?.deviceId || ''
   const canPublish = () => {
     const current = getPluginMarketplaceCache(options.cacheKey)
     return (
@@ -230,23 +244,106 @@ export async function refreshInstalledPluginInventory(options: {
         samePluginInstallations(current?.installedPlugins ?? [], expected?.installedPlugins ?? []))
     )
   }
-  const local = await options.readLocal()
-  deviceId = local.deviceId || deviceId
+  const validate = <T extends { items: InstalledPlugin[] }>(result: T): T => {
+    if (
+      !Array.isArray(result?.items) ||
+      result.items.some(
+        plugin =>
+          typeof plugin?.metadata?.name !== 'string' ||
+          typeof plugin.spec?.source?.pluginKey !== 'string' ||
+          !plugin.spec.components ||
+          !['skills', 'commands', 'agents', 'hooks', 'mcps', 'lsps', 'monitors', 'bins'].every(
+            key => Array.isArray(Reflect.get(plugin.spec.components, key))
+          ) ||
+          !plugin.status ||
+          (plugin.status.devices != null && !Array.isArray(plugin.status.devices)) ||
+          plugin.status.devices?.some(device => !device || typeof device.deviceId !== 'string') ||
+          (plugin.spec.version != null && typeof plugin.spec.version !== 'string')
+      )
+    ) {
+      throw new Error('Invalid installed plugin list')
+    }
+    return result
+  }
+  const initialDeviceId = deviceId
+  // A known device lets the independent cloud read proceed during a slow local read.
+  const cloudRead = deviceId
+    ? Promise.allSettled([
+        Promise.resolve()
+          .then(() => options.readCloud(initialDeviceId))
+          .then(validate),
+      ])
+    : null
+  let [local] = await Promise.allSettled([Promise.resolve().then(options.readLocal).then(validate)])
+  if (
+    local.status === 'fulfilled' &&
+    options.deviceId &&
+    local.value.deviceId &&
+    options.deviceId !== local.value.deviceId
+  ) {
+    local = { status: 'rejected', reason: new Error('Local plugin device changed during refresh') }
+  }
+  if (local.status === 'fulfilled') deviceId = local.value.deviceId || deviceId
   if (!canPublish()) return
   // A cold page can display local packages while cloud membership is pending.
   // Never mark this partial inventory complete or replace existing cached rows.
-  if (local.items.length && !expected?.installedPlugins.length) {
+  if (
+    local.status === 'fulfilled' &&
+    local.value.items.length &&
+    !expected?.installedPlugins.length
+  ) {
     expected = writePluginInventory(options.cacheKey, deviceId, {
-      installedPlugins: mergeInstalledPlugins([], local.items, deviceId),
+      installedPlugins: mergeInstalledPlugins([], local.value.items, deviceId),
     })
   }
-  const cloud = await options.readCloud(deviceId || undefined)
+  const [cloud] = await (cloudRead && initialDeviceId === deviceId
+    ? cloudRead
+    : Promise.allSettled([
+        Promise.resolve()
+          .then(() => options.readCloud(deviceId || undefined))
+          .then(validate),
+      ]))
   if (!canPublish()) return
-  publishPluginInvocationCatalog(deviceId, local.items, cloud.items)
-  writePluginInventory(options.cacheKey, deviceId, {
-    installedPlugins: mergeInstalledPlugins(cloud.items, local.items, deviceId, true),
-    installedPluginsFetchedAt: Date.now(),
-  })
+  const previous = initial?.deviceId === deviceId ? initial.installedPlugins : []
+  const localItems =
+    local.status === 'fulfilled'
+      ? local.value.partial
+        ? mergePartialInventory(
+            previous.filter(plugin => !isCloudManagedInstalledPlugin(plugin)),
+            local.value.items
+          )
+        : local.value.items
+      : previous.filter(plugin => !isCloudManagedInstalledPlugin(plugin))
+  const cloudItems =
+    cloud.status === 'fulfilled'
+      ? cloud.value.items
+      : previous.filter(isCloudManagedInstalledPlugin)
+  const complete =
+    local.status === 'fulfilled' && !local.value.partial && cloud.status === 'fulfilled'
+  const installedPlugins = mergeInstalledPlugins(
+    cloudItems,
+    localItems,
+    deviceId,
+    cloud.status === 'fulfilled'
+  )
+  if (
+    complete ||
+    (expected && expected.deviceId !== deviceId) ||
+    JSON.stringify(expected?.installedPlugins ?? []) !== JSON.stringify(installedPlugins)
+  ) {
+    writePluginInventory(options.cacheKey, deviceId, {
+      installedPlugins,
+      ...(complete ? { installedPluginsFetchedAt: Date.now() } : {}),
+    })
+  }
+  if (!complete) {
+    if (local.status === 'rejected')
+      throw local.reason ?? new Error('Local plugin list unavailable')
+    if (cloud.status === 'rejected')
+      throw cloud.reason ?? new Error('Cloud plugin list unavailable')
+    throw new Error('Local plugin inventory is incomplete')
+  }
+  publishPluginInvocationCatalog(deviceId, localItems, cloudItems)
 }
 
 /** Transport reads commit complete records before any view derives its fields. */
