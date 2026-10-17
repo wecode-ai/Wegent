@@ -34,9 +34,9 @@ from app.services.channels.callback import forward_event_to_channel_callbacks
 from app.services.channels.dingtalk import callback as _dingtalk_cb  # noqa: F401
 from app.services.channels.telegram import callback as _telegram_cb  # noqa: F401
 from app.services.chat.storage import session_manager
-from app.services.execution.dispatcher import ResponsesAPIEventParser
 from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 from app.services.execution.emitters.websocket import WebSocketResultEmitter
+from app.services.execution.response_parser import ResponsesAPIEventParser
 from app.stores.tasks import task_store
 from shared.models import EventType
 
