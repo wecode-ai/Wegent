@@ -88,7 +88,10 @@ export function worktreeWorkspaceDeviceId(
   return workspace.deviceId.trim() || null
 }
 
-function deviceMatches(device: DeviceInfo, deviceId: string): boolean {
+function deviceMatches(
+  device: Pick<DeviceInfo, 'device_id' | 'runtime_routes'>,
+  deviceId: string
+): boolean {
   if (device.device_id.trim() === deviceId) return true
   return Boolean(device.runtime_routes?.some(route => route.device_id.trim() === deviceId))
 }
@@ -120,14 +123,40 @@ function hasVerifiedPersistentStorage(
   )
 }
 
-export function deviceSupportsManagedWorktrees(
-  device: Pick<DeviceInfo, 'device_type' | 'runtime_features'>
-): boolean {
-  const capability = projectedWorktreeCapability(device)
-  return (
-    supportsManagedWorktreeCapability(capability) &&
-    hasVerifiedPersistentStorage(device, capability)
-  )
+export type ManagedWorktreeSupportApi = Pick<
+  ProjectWorktreeAvailabilityApi,
+  'getWorktreeCapabilities'
+>
+
+/**
+ * Resolve managed Worktree support by asking the device's Runtime.
+ *
+ * Device records only project this capability for cloud and remote devices; a
+ * local Executor record never carries `runtime_features`, so the Runtime RPC is
+ * the only source that covers every device.
+ */
+export async function probeDeviceManagedWorktreeSupport(
+  api: ManagedWorktreeSupportApi,
+  device: Pick<DeviceInfo, 'device_id' | 'device_type' | 'runtime_routes'>
+): Promise<boolean> {
+  try {
+    const capabilities = await api.getWorktreeCapabilities({ deviceId: device.device_id })
+    if (!capabilities.success) return false
+    if (
+      capabilities.deviceId !== device.device_id &&
+      !deviceMatches(device, capabilities.deviceId)
+    ) {
+      return false
+    }
+    const capability = capabilities.runtimeWorktrees ?? null
+    return (
+      supportsManagedWorktreeCapability(capability) &&
+      hasVerifiedPersistentStorage(device, capability)
+    )
+  } catch (error) {
+    console.error('[Wework] Worktree capability probe failed', error)
+    return false
+  }
 }
 
 function preflightFailureReason(
