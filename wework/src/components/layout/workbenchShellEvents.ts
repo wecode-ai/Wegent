@@ -5,6 +5,7 @@ import type { ProjectWithTasks } from '@/types/api'
 const OPEN_PROJECT_CREATE_EVENT = 'wework:open-project-create'
 const BIND_PROJECT_WORKSPACE_EVENT = 'wework:bind-project-workspace'
 const OPEN_CLOUD_DEVICE_SETTINGS_EVENT = 'wework:open-cloud-device-settings'
+const OPEN_TASK_SEARCH_EVENT = 'wework:open-task-search'
 
 export interface ProjectCreateRequestOptions {
   preserveCurrentSurface?: boolean
@@ -26,16 +27,22 @@ export function requestOpenCloudDeviceSettings() {
   window.dispatchEvent(new CustomEvent(OPEN_CLOUD_DEVICE_SETTINGS_EVENT))
 }
 
+export function requestOpenTaskSearch() {
+  window.dispatchEvent(new CustomEvent(OPEN_TASK_SEARCH_EVENT))
+}
+
 export function useWorkbenchShellEventHandlers({
   enabled,
   onCreateProjectMode,
   onBindProjectWorkspace,
   onOpenCloudDeviceSettings,
+  onOpenTaskSearch,
 }: {
   enabled: boolean
   onCreateProjectMode: (mode: ProjectCreateMode, options?: ProjectCreateRequestOptions) => void
   onBindProjectWorkspace: (projectId: number) => void
   onOpenCloudDeviceSettings: () => void
+  onOpenTaskSearch: () => void
 }) {
   useEffect(() => {
     if (!enabled) return
@@ -61,11 +68,19 @@ export function useWorkbenchShellEventHandlers({
     window.addEventListener(OPEN_PROJECT_CREATE_EVENT, handleOpenProjectCreate)
     window.addEventListener(BIND_PROJECT_WORKSPACE_EVENT, handleBindProjectWorkspace)
     window.addEventListener(OPEN_CLOUD_DEVICE_SETTINGS_EVENT, onOpenCloudDeviceSettings)
+    window.addEventListener(OPEN_TASK_SEARCH_EVENT, onOpenTaskSearch)
 
     return () => {
       window.removeEventListener(OPEN_PROJECT_CREATE_EVENT, handleOpenProjectCreate)
       window.removeEventListener(BIND_PROJECT_WORKSPACE_EVENT, handleBindProjectWorkspace)
       window.removeEventListener(OPEN_CLOUD_DEVICE_SETTINGS_EVENT, onOpenCloudDeviceSettings)
+      window.removeEventListener(OPEN_TASK_SEARCH_EVENT, onOpenTaskSearch)
     }
-  }, [enabled, onBindProjectWorkspace, onCreateProjectMode, onOpenCloudDeviceSettings])
+  }, [
+    enabled,
+    onBindProjectWorkspace,
+    onCreateProjectMode,
+    onOpenCloudDeviceSettings,
+    onOpenTaskSearch,
+  ])
 }
