@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { track } from '@/telemetry/client'
 import { activeRuntimeRunTraceId, mintRuntimeRunTraceId } from '@/telemetry/traceId'
-import { toKnownAiModelId, toKnownAiProvider } from '@/telemetry/modelCatalog'
+import { toKnownAiProvider, toTelemetryModelName } from '@/telemetry/modelCatalog'
 import { recordGenerationOutcome } from './runtimeGenerationOutcome'
 import { runtimeConversationKey } from './runtimeConversationCache'
 import type { RuntimeContextUsage, RuntimeTaskAddress, UnifiedModel } from '@/types/api'
@@ -9,7 +9,6 @@ import type { RuntimeContextUsage, RuntimeTaskAddress, UnifiedModel } from '@/ty
 interface UseAiGenerationTelemetryInput {
   resolveModel: (address: RuntimeTaskAddress) => UnifiedModel | null
   contextUsageByRuntimeTask: Record<string, RuntimeContextUsage>
-  knownModelIds: ReadonlySet<string>
 }
 
 interface PendingGeneration {
@@ -23,18 +22,15 @@ interface PendingGeneration {
 export function useAiGenerationTelemetry({
   resolveModel,
   contextUsageByRuntimeTask,
-  knownModelIds,
 }: UseAiGenerationTelemetryInput) {
   const pendingRef = useRef(new Map<string, PendingGeneration>())
   const resolveModelRef = useRef(resolveModel)
   const contextUsageRef = useRef(contextUsageByRuntimeTask)
-  const knownModelIdsRef = useRef(knownModelIds)
 
   useEffect(() => {
     resolveModelRef.current = resolveModel
     contextUsageRef.current = contextUsageByRuntimeTask
-    knownModelIdsRef.current = knownModelIds
-  }, [resolveModel, contextUsageByRuntimeTask, knownModelIds])
+  }, [resolveModel, contextUsageByRuntimeTask])
 
   const onAssistantStart = useCallback((address: RuntimeTaskAddress, subtaskId: string) => {
     pendingRef.current.set(generationKey(address, subtaskId), {
@@ -86,7 +82,7 @@ export function useAiGenerationTelemetry({
         $ai_generation_id: pending.generationId,
         $ai_trace_id: pending.traceId,
         $ai_parent_id: pending.traceId,
-        $ai_model: toKnownAiModelId(model?.modelId, knownModelIdsRef.current),
+        $ai_model: toTelemetryModelName(model?.name),
         $ai_provider: toKnownAiProvider(
           model?.modelId,
           model?.provider,

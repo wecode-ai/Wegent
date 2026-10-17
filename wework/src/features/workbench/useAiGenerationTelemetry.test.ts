@@ -54,8 +54,6 @@ function makeModel(overrides?: Partial<UnifiedModel>): UnifiedModel {
   } as UnifiedModel
 }
 
-const knownModelIds = new Set(['gpt-4o'])
-
 describe('useAiGenerationTelemetry', () => {
   beforeEach(() => {
     trackMock.mockReset()
@@ -67,7 +65,7 @@ describe('useAiGenerationTelemetry', () => {
     const contextUsageByRuntimeTask = { 'local-device:task-42': makeUsage() }
 
     const { result } = renderHook(() =>
-      useAiGenerationTelemetry({ resolveModel, contextUsageByRuntimeTask, knownModelIds })
+      useAiGenerationTelemetry({ resolveModel, contextUsageByRuntimeTask })
     )
 
     const beforeStart = Date.now()
@@ -103,7 +101,7 @@ describe('useAiGenerationTelemetry', () => {
     const contextUsageByRuntimeTask = {}
 
     const { result } = renderHook(() =>
-      useAiGenerationTelemetry({ resolveModel, contextUsageByRuntimeTask, knownModelIds })
+      useAiGenerationTelemetry({ resolveModel, contextUsageByRuntimeTask })
     )
 
     result.current.onAssistantStart(address, 'subtask-1')
@@ -124,7 +122,7 @@ describe('useAiGenerationTelemetry', () => {
     const contextUsageByRuntimeTask = {}
 
     const { result } = renderHook(() =>
-      useAiGenerationTelemetry({ resolveModel, contextUsageByRuntimeTask, knownModelIds })
+      useAiGenerationTelemetry({ resolveModel, contextUsageByRuntimeTask })
     )
 
     result.current.onAssistantStart(address, 'subtask-1')
@@ -142,12 +140,35 @@ describe('useAiGenerationTelemetry', () => {
     )
   })
 
-  test('collapses unrecognized model ids to other', () => {
-    const resolveModel = () => makeModel({ name: 'unknown-model', modelId: 'unknown-model' })
+  test('reports the model name the run resolved from the catalog', () => {
+    const resolveModel = () =>
+      makeModel({ name: 'ali-deepseek-v3.1(国内)', modelId: 'ali-deepseek-v3.1' })
     const contextUsageByRuntimeTask = { 'local-device:task-42': makeUsage() }
 
     const { result } = renderHook(() =>
-      useAiGenerationTelemetry({ resolveModel, contextUsageByRuntimeTask, knownModelIds })
+      useAiGenerationTelemetry({ resolveModel, contextUsageByRuntimeTask })
+    )
+
+    result.current.onAssistantStart(address, 'subtask-1')
+    result.current.onAssistantSettled(address, 'subtask-1', 'success')
+
+    expect(trackMock).toHaveBeenCalledWith(
+      '$ai_generation',
+      expect.objectContaining({
+        $ai_model: 'ali-deepseek-v3.1(国内)',
+        $ai_provider: 'openai',
+      })
+    )
+    const call = trackMock.mock.calls.find(call => call[0] === '$ai_generation')
+    expect(call?.[1]).not.toHaveProperty('$ai_cost')
+  })
+
+  test('reports other when the run has no resolvable model', () => {
+    const resolveModel = () => null
+    const contextUsageByRuntimeTask = {}
+
+    const { result } = renderHook(() =>
+      useAiGenerationTelemetry({ resolveModel, contextUsageByRuntimeTask })
     )
 
     result.current.onAssistantStart(address, 'subtask-1')
@@ -157,11 +178,9 @@ describe('useAiGenerationTelemetry', () => {
       '$ai_generation',
       expect.objectContaining({
         $ai_model: 'other',
-        $ai_provider: 'openai',
+        $ai_provider: 'other',
       })
     )
-    const call = trackMock.mock.calls.find(call => call[0] === '$ai_generation')
-    expect(call?.[1]).not.toHaveProperty('$ai_cost')
   })
 
   test('tracks concurrent subtasks independently', () => {
@@ -169,7 +188,7 @@ describe('useAiGenerationTelemetry', () => {
     const contextUsageByRuntimeTask = { 'local-device:task-42': makeUsage() }
 
     const { result } = renderHook(() =>
-      useAiGenerationTelemetry({ resolveModel, contextUsageByRuntimeTask, knownModelIds })
+      useAiGenerationTelemetry({ resolveModel, contextUsageByRuntimeTask })
     )
 
     result.current.onAssistantStart(address, 'subtask-a')
@@ -185,7 +204,7 @@ describe('useAiGenerationTelemetry', () => {
     const contextUsageByRuntimeTask = { 'local-device:task-42': makeUsage() }
 
     const { result } = renderHook(() =>
-      useAiGenerationTelemetry({ resolveModel, contextUsageByRuntimeTask, knownModelIds })
+      useAiGenerationTelemetry({ resolveModel, contextUsageByRuntimeTask })
     )
 
     result.current.onAssistantSettled(address, 'subtask-1', 'success')
@@ -198,7 +217,7 @@ describe('useAiGenerationTelemetry', () => {
     const contextUsageByRuntimeTask = { 'local-device:task-42': makeUsage() }
 
     const { result } = renderHook(() =>
-      useAiGenerationTelemetry({ resolveModel, contextUsageByRuntimeTask, knownModelIds })
+      useAiGenerationTelemetry({ resolveModel, contextUsageByRuntimeTask })
     )
 
     result.current.onAssistantStart(address, 'subtask-1')
@@ -212,7 +231,7 @@ describe('useAiGenerationTelemetry', () => {
     const contextUsageByRuntimeTask = { 'local-device:task-42': makeUsage() }
 
     const { result } = renderHook(() =>
-      useAiGenerationTelemetry({ resolveModel, contextUsageByRuntimeTask, knownModelIds })
+      useAiGenerationTelemetry({ resolveModel, contextUsageByRuntimeTask })
     )
 
     result.current.onAssistantSettled(address, 'subtask-1', 'failure')
@@ -225,7 +244,7 @@ describe('useAiGenerationTelemetry', () => {
     const contextUsageByRuntimeTask = { 'local-device:task-42': makeUsage() }
 
     const { result } = renderHook(() =>
-      useAiGenerationTelemetry({ resolveModel, contextUsageByRuntimeTask, knownModelIds })
+      useAiGenerationTelemetry({ resolveModel, contextUsageByRuntimeTask })
     )
 
     const startAt = Date.now()
@@ -244,7 +263,7 @@ describe('useAiGenerationTelemetry', () => {
     const contextUsageByRuntimeTask = { 'local-device:task-42': makeUsage() }
 
     const { result } = renderHook(() =>
-      useAiGenerationTelemetry({ resolveModel, contextUsageByRuntimeTask, knownModelIds })
+      useAiGenerationTelemetry({ resolveModel, contextUsageByRuntimeTask })
     )
 
     result.current.onAssistantStart(address, 'subtask-1')
@@ -260,7 +279,7 @@ describe('useAiGenerationTelemetry', () => {
     const contextUsageByRuntimeTask = { 'local-device:task-42': makeUsage() }
 
     const { result } = renderHook(() =>
-      useAiGenerationTelemetry({ resolveModel, contextUsageByRuntimeTask, knownModelIds })
+      useAiGenerationTelemetry({ resolveModel, contextUsageByRuntimeTask })
     )
 
     result.current.onAssistantStart(address, 'subtask-1')
