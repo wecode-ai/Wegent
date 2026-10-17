@@ -58,6 +58,7 @@ import { RotatingLog } from '../runtime/rotating-log.js'
 import { registerMicrophoneDiagnostics } from './microphone-diagnostics.js'
 import { readMacosMicrophoneChecks } from './macos-microphone-diagnostics.js'
 import type { WeworkSyncRequest } from './wework-sync-request.js'
+import type { ApplicationMenu, ApplicationMenuCapabilityState } from './application-menu.js'
 import {
   showRetainedNotification,
   type ElectronNotificationHandle,
@@ -115,6 +116,12 @@ export interface ElectronDesktopServices {
   executorHome: string
   appUpdates?: AppUpdateService
   browserAnnotations?: BrowserAnnotationController
+  applicationMenu?: () => ApplicationMenu | null
+  updateApplicationMenuCapabilities?: (
+    label: string,
+    capabilities: ApplicationMenuCapabilityState
+  ) => void
+  updateApplicationMenuLanguage?: (language: string) => void
   events: DesktopHostEventBroker
   feedback: FeedbackBundleManager
   quitApplication: () => void
@@ -599,9 +606,11 @@ export function createElectronCapabilityRouter(
       const error = await shell.openPath(logDirectory)
       if (error) throw new HostCapabilityError('open_log_directory_failed', error)
     },
-    openDevTools: () => {
-      const contents = requiredWindow(window).webContents
-      if (contents.isDestroyed()) {
+    openDevTools: windowLabel => {
+      const contents = windowLabel
+        ? e2eHost.captureTarget(windowLabel)
+        : requiredWindow(window).webContents
+      if (!contents || contents.isDestroyed()) {
         throw new HostCapabilityError('window_unavailable', 'Desktop web contents are unavailable')
       }
       contents.openDevTools({ mode: 'detach', activate: true })
@@ -1149,11 +1158,40 @@ export function registerDesktopServiceCapabilities(
   services: ElectronDesktopServices,
   developer: {
     openLogDirectory: () => void | Promise<void>
-    openDevTools: () => void | Promise<void>
+    openDevTools: (windowLabel?: string) => void | Promise<void>
   }
 ): void {
+  router.register('applicationMenu.popup', params => {
+    const menu = services.applicationMenu?.()
+    if (!menu) throw new HostCapabilityError('menu_unavailable', 'Application menu is unavailable')
+    menu.popup(optionalStringParam(params, 'windowLabel') ?? 'main')
+  })
+  router.register('applicationMenu.setCapabilities', params => {
+    const label = stringParam(params, 'windowLabel')
+    services.updateApplicationMenuCapabilities?.(label, capabilityStateParam(params))
+  })
+  router.register('applicationMenu.setLanguage', params => {
+    services.updateApplicationMenuLanguage?.(stringParam(params, 'language'))
+  })
+  const testMenu = () => {
+    if (process.env.VITE_WEWORK_E2E !== 'true') {
+      throw new HostCapabilityError('e2e_disabled', 'Application menu test controls are disabled')
+    }
+    const menu = services.applicationMenu?.()
+    if (!menu) throw new HostCapabilityError('menu_unavailable', 'Application menu is unavailable')
+    return menu
+  }
+  router.register('e2e.getApplicationMenuSnapshot', () => testMenu().snapshot())
+  router.register('e2e.activateApplicationMenu', params =>
+    testMenu().activateForTesting(
+      stringParam(params, 'id'),
+      optionalStringParam(params, 'windowLabel') ?? 'main'
+    )
+  )
   router.register('developer.openLogDirectory', () => developer.openLogDirectory())
-  router.register('developer.openDevTools', () => developer.openDevTools())
+  router.register('developer.openDevTools', params =>
+    developer.openDevTools(optionalStringParam(params, 'windowLabel'))
+  )
   router.register('maintenance.cleanupTemporaryImages', () =>
     services.cleanupStaleTemporaryImages()
   )
@@ -1603,6 +1641,26 @@ function booleanParam(params: Record<string, unknown>, key: string): boolean | u
   if (value === undefined) return undefined
   if (typeof value !== 'boolean') invalidParam(key)
   return value
+}
+
+/**
+ * Parses the capability map reported by the renderer. Unknown keys are
+ * accepted so a newer renderer can add capabilities without a host update,
+ * but every declared value must be a boolean.
+ */
+function capabilityStateParam(
+  params: Record<string, unknown>,
+  key = 'capabilities'
+): ApplicationMenuCapabilityState {
+  const value = params[key]
+  if (!value || typeof value !== 'object' || Array.isArray(value)) invalidParam(key)
+  const record = value as Record<string, unknown>
+  const state: ApplicationMenuCapabilityState = {}
+  for (const [name, entry] of Object.entries(record)) {
+    if (typeof entry !== 'boolean') invalidParam(key)
+    state[name as keyof ApplicationMenuCapabilityState] = entry
+  }
+  return state
 }
 
 function stringRecordParam(params: Record<string, unknown>, key: string): Record<string, string> {

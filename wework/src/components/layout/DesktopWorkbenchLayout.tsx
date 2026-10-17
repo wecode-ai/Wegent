@@ -833,6 +833,7 @@ export function DesktopWorkbenchLayout({
     onCreateProjectMode: openProjectFromWorkMenu,
     onBindProjectWorkspace: openProjectWorkspaceBinding,
     onOpenCloudDeviceSettings: openCloudDeviceSettings,
+    onOpenTaskSearch: () => setSearchOpen(true),
   })
 
   const loadImSessionsForDialog = useCallback(() => {

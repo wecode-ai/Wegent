@@ -5,6 +5,12 @@ export interface WorkspaceTabsContextValue {
   tabs: WorkspaceTab[]
   activeTabId: string
   activeTab: WorkspaceTab
+  /**
+   * Tabs previously closed by the user, most recent first. Surfaced so other
+   * UI surfaces (for example the application menu) can reflect whether
+   * "reopen closed tab" is currently available.
+   */
+  closedTabs: WorkspaceTab[]
   openTab: (kind: WorkspaceTabKind, overrides?: Partial<WorkspaceTab>) => WorkspaceTab
   selectTab: (
     tabId: string,
