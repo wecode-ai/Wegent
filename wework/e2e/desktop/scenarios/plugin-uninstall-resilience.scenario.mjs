@@ -3,6 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { CLOUD_DEVICE_ID } from '../modules/shared.mjs'
 import { PluginFaultProxy } from '../modules/plugin-fault-proxy.mjs'
+import { verifyPluginCatalogBoundaries } from '../modules/plugin-catalog-boundaries.mjs'
 import {
   accountPlugin,
   assertInstallButton,
@@ -22,6 +23,7 @@ import {
 // transport is faulted; no plugin responses or cache state are synthesized.
 export async function createDesktopScenario({
   captureScreenshot,
+  executorHome,
   resultDir,
   workbenchReadyTimeoutMs,
 }) {
@@ -315,6 +317,20 @@ export async function createDesktopScenario({
         'Remote device bypassed fault proxy'
       )
       try {
+        evidence.push(
+          await verifyPluginCatalogBoundaries({
+            cloud,
+            control,
+            apiProxy,
+            captureScreenshot,
+            workbenchReadyTimeoutMs,
+            resultDir,
+            deviceId: local.device_id,
+            executorHome,
+          })
+        )
+        // The same assertions run in CI; this limits local A/B comparisons to the boundary cases.
+        if (process.env.WEWORK_E2E_PLUGIN_CATALOG_BOUNDARIES_ONLY === 'true') return
         await catalogSourceFailure(control)
         await lostResponse(control)
         await unknownResult(control)

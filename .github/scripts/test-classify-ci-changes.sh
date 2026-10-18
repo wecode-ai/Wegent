@@ -492,6 +492,16 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/modules/plugin-fault-proxy.mjs" \
   "wework/scripts/plugin-fault-proxy.test.mjs"
 
+assert_desktop_case "plugin catalog boundaries run in the real cloud checkpoint" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-uninstall-resilience"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/modules/plugin-catalog-boundaries.mjs"
+
 assert_desktop_case "long plugin list selects its independent cloud checkpoint" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=false
