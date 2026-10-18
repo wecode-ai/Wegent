@@ -315,11 +315,11 @@ export default function McpProviderIntegrations({ providerId }: { providerId: st
         auth_mode: current.draftAuthMode,
       })
 
-      updateServiceState(serviceId, () => ({
+      updateServiceState(serviceId, service => ({
         ...saved,
         draftUrls: {
-          url: saved.auth_mode === 'url' ? saved.url : '',
-          oauth: saved.auth_mode === 'oauth' ? saved.url : '',
+          ...service.draftUrls,
+          [saved.auth_mode ?? 'url']: saved.url,
         },
         draftAuthMode: saved.auth_mode ?? 'url',
         connecting: false,
@@ -371,11 +371,11 @@ export default function McpProviderIntegrations({ providerId }: { providerId: st
       }
 
       const refreshed = await userApis.getMcpProviderService(providerId, serviceId)
-      updateServiceState(serviceId, () => ({
+      updateServiceState(serviceId, service => ({
         ...refreshed,
         draftUrls: {
-          url: refreshed.auth_mode === 'url' ? refreshed.url : '',
-          oauth: refreshed.auth_mode === 'oauth' ? refreshed.url : '',
+          ...service.draftUrls,
+          [refreshed.auth_mode ?? 'oauth']: refreshed.url,
         },
         draftAuthMode: refreshed.auth_mode ?? 'oauth',
         connecting: false,

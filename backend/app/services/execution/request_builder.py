@@ -2069,11 +2069,11 @@ class TaskRequestBuilder:
             return
         service_id = str(service.get("service_id") or "")
         server_name = str(service.get("server_name") or "")
+        legacy_server_name = server_name.replace("_", "-")
         server = servers.get(server_name)
         if server is None:
             # Older public Skills used hyphenated provider server names. Keep
             # OAuth working while those deployed Skill assets are upgraded.
-            legacy_server_name = server_name.replace("_", "-")
             server = servers.get(legacy_server_name)
         if not isinstance(server, dict):
             logger.warning(

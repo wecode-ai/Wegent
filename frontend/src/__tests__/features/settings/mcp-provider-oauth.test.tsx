@@ -195,4 +195,32 @@ describe('McpProviderIntegrations OAuth', () => {
     )
     expect(mockToast).not.toHaveBeenCalled()
   })
+
+  it('preserves the other authentication mode draft after saving OAuth', async () => {
+    ;(userApis.getMcpProviderServices as jest.Mock).mockResolvedValue([
+      serviceConfig({ url: API_KEY_URL, auth_mode: 'url' }),
+    ])
+    ;(userApis.updateMcpProviderService as jest.Mock).mockResolvedValue(
+      serviceConfig({ url: OAUTH_URL, auth_mode: 'oauth' })
+    )
+
+    render(<McpProviderIntegrations providerId="dingtalk" />)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('dingtalk-ai_table-url-input')).toHaveValue(API_KEY_URL)
+    )
+    fireEvent.click(screen.getByTestId('dingtalk-ai_table-auth-mode-oauth'))
+    fireEvent.change(screen.getByTestId('dingtalk-ai_table-url-input'), {
+      target: { value: OAUTH_URL },
+    })
+    fireEvent.click(screen.getByTestId('save-dingtalk-ai_table-button'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('save-dingtalk-ai_table-saved')).toBeInTheDocument()
+    )
+    expect(screen.getByTestId('dingtalk-ai_table-url-input')).toHaveValue(OAUTH_URL)
+
+    fireEvent.click(screen.getByTestId('dingtalk-ai_table-auth-mode-url'))
+    expect(screen.getByTestId('dingtalk-ai_table-url-input')).toHaveValue(API_KEY_URL)
+  })
 })
