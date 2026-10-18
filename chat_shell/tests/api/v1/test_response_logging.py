@@ -10,6 +10,7 @@ def test_metadata_log_summary_excludes_sensitive_values() -> None:
         "user_name": "alice",
         "auth_token": "raw-auth-token",
         "skill_identity_token": "raw-skill-token",
+        "mcp_token": "raw-mcp-token",
         "user": {
             "git_token": "github_pat_SECRET",
             "sina_mail": {"token": "mail-secret"},
@@ -68,8 +69,10 @@ def test_metadata_log_summary_excludes_sensitive_values() -> None:
         "knowledge_base_scope_count": 0,
         "has_auth_token": True,
         "has_skill_identity_token": True,
+        "has_mcp_token": True,
         "has_task_data": True,
     }
     assert "raw-auth-token" not in str(summary)
+    assert "raw-mcp-token" not in str(summary)
     assert "github_pat_SECRET" not in str(summary)
     assert "secret" not in str(summary)
