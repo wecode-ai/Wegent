@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { CheckCircle2, ExternalLink, Loader2 } from 'lucide-react'
 
 import { userApis } from '@/apis/user'
@@ -49,6 +49,9 @@ export function McpProviderConfigDialog({
   const [authMode, setAuthMode] = useState<McpAuthMode>('oauth')
   const [connecting, setConnecting] = useState(false)
   const [saved, setSaved] = useState(false)
+  const oauthRunRef = useRef<{ id: number; active: boolean } | null>(null)
+  const oauthRunIdRef = useRef(0)
+  const oauthWindowRef = useRef<Window | null>(null)
 
   const resolvedServiceName = useMemo(() => {
     const translated = t(`${providerId}.services.${serviceId}.default_name`)
@@ -71,7 +74,7 @@ export function McpProviderConfigDialog({
         setSaved(false)
         const config = await userApis.getMcpProviderService(providerId, serviceId)
         setService(config)
-        setDraftUrl(config.url)
+        setDraftUrl(config.auth_mode === 'oauth' ? '' : config.url)
         setDraftOAuthUrl(config.auth_mode === 'oauth' ? config.url : '')
         setAuthMode(
           config.oauth_supported && !config.enabled ? 'oauth' : (config.auth_mode ?? 'url')
@@ -88,6 +91,24 @@ export function McpProviderConfigDialog({
 
     loadConfig()
   }, [open, providerId, serviceId, toast, t])
+
+  useEffect(() => {
+    if (open) return
+
+    if (oauthRunRef.current) oauthRunRef.current.active = false
+    oauthWindowRef.current?.close()
+    oauthWindowRef.current = null
+    setConnecting(false)
+  }, [open])
+
+  useEffect(
+    () => () => {
+      if (oauthRunRef.current) oauthRunRef.current.active = false
+      oauthWindowRef.current?.close()
+      oauthWindowRef.current = null
+    },
+    []
+  )
 
   const handleSave = async () => {
     try {
@@ -113,10 +134,38 @@ export function McpProviderConfigDialog({
   const handleConnect = async () => {
     if (!service?.oauth_supported) return
 
+    if (oauthRunRef.current) oauthRunRef.current.active = false
+    const run = { id: ++oauthRunIdRef.current, active: true }
+    oauthRunRef.current = run
+    const isCurrentRun = () => oauthRunRef.current?.id === run.id
+    const isActiveRun = () => isCurrentRun() && run.active
+    const previous = { ...service }
+    let authorizationSucceeded = false
+    let session: Awaited<ReturnType<typeof userApis.createMcpProviderOAuthSession>> | null = null
+
+    const restorePreviousConfiguration = async () => {
+      if (authorizationSucceeded || !isCurrentRun()) return
+      await userApis
+        .updateMcpProviderService(providerId, serviceId, {
+          enabled: previous.enabled,
+          url: previous.url,
+          auth_mode: previous.auth_mode,
+        })
+        .then(restored => {
+          if (!isActiveRun()) return
+          setService(restored)
+          setDraftUrl(restored.auth_mode === 'oauth' ? '' : restored.url)
+          setDraftOAuthUrl(restored.auth_mode === 'oauth' ? restored.url : '')
+          setAuthMode(restored.auth_mode ?? 'url')
+        })
+        .catch(() => undefined)
+    }
+
     // Keep the authorization window tied to this click. The OAuth URL must be
     // persisted before session discovery, so open a placeholder immediately.
     const popup = window.open('/mcp-oauth-pending.html', '_blank')
     if (popup) popup.opener = null
+    let authorizationWindow: Window | null = popup
 
     try {
       setConnecting(true)
@@ -125,39 +174,81 @@ export function McpProviderConfigDialog({
         url: draftOAuthUrl,
         auth_mode: 'oauth',
       })
-      const session = await userApis.createMcpProviderOAuthSession(providerId, serviceId)
-      if (popup) {
-        popup.location.replace(session.authorize_url)
-      } else {
-        window.open(session.authorize_url, '_blank', 'noopener,noreferrer')
+      if (!isActiveRun()) {
+        await restorePreviousConfiguration()
+        return
       }
 
-      const deadline = Math.min(session.expires_at * 1000, Date.now() + 10 * 60 * 1000)
-      let result = await userApis.pollMcpProviderOAuthSession(providerId, serviceId, session)
-      while (result.status === 'pending' && Date.now() < deadline) {
-        await new Promise(resolve =>
-          setTimeout(resolve, Math.max(1, session.poll_interval_seconds) * 1000)
+      session = await userApis.createMcpProviderOAuthSession(providerId, serviceId)
+      if (!isActiveRun()) {
+        await restorePreviousConfiguration()
+        return
+      }
+
+      const oauthSession = session
+      if (popup) {
+        popup.location.replace(oauthSession.authorize_url)
+      } else {
+        authorizationWindow = window.open(
+          oauthSession.authorize_url,
+          '_blank',
+          'noopener,noreferrer'
         )
-        result = await userApis.pollMcpProviderOAuthSession(providerId, serviceId, session)
+      }
+      oauthWindowRef.current = authorizationWindow
+
+      const deadline = Math.min(oauthSession.expires_at * 1000, Date.now() + 10 * 60 * 1000)
+      let result = await userApis.pollMcpProviderOAuthSession(providerId, serviceId, oauthSession)
+      while (result.status === 'pending' && Date.now() < deadline) {
+        if (!isActiveRun()) {
+          result = await userApis.pollMcpProviderOAuthSession(providerId, serviceId, oauthSession)
+          if (result.status === 'success') {
+            authorizationSucceeded = true
+            break
+          }
+          await restorePreviousConfiguration()
+          return
+        }
+        if (authorizationWindow?.closed) {
+          result = await userApis.pollMcpProviderOAuthSession(providerId, serviceId, oauthSession)
+          break
+        }
+        await new Promise(resolve =>
+          setTimeout(resolve, Math.max(1, oauthSession.poll_interval_seconds) * 1000)
+        )
+        if (!isActiveRun()) {
+          result = await userApis.pollMcpProviderOAuthSession(providerId, serviceId, oauthSession)
+          if (result.status === 'success') {
+            authorizationSucceeded = true
+            break
+          }
+          await restorePreviousConfiguration()
+          return
+        }
+        result = await userApis.pollMcpProviderOAuthSession(providerId, serviceId, oauthSession)
       }
       if (result.status !== 'success') {
         throw new Error(result.error || t(`${providerId}.oauth_failed`))
       }
+      authorizationSucceeded = true
 
       const refreshed = await userApis.getMcpProviderService(providerId, serviceId)
+      if (!isActiveRun()) return
       setService(refreshed)
       setDraftOAuthUrl(refreshed.url)
       setAuthMode('oauth')
       setSaved(false)
       toast({ title: t(`${providerId}.oauth_connect_success`) })
     } catch (error) {
-      popup?.close()
+      authorizationWindow?.close()
+      await restorePreviousConfiguration()
+      if (!isActiveRun()) return
       toast({
         variant: 'destructive',
         title: (error as Error)?.message || t(`${providerId}.oauth_failed`),
       })
     } finally {
-      setConnecting(false)
+      if (isActiveRun()) setConnecting(false)
     }
   }
 
