@@ -323,13 +323,17 @@ describe('McpProviderConfigDialog', () => {
 
   it('keeps reconnect disabled until a cancelled OAuth attempt finishes rollback', async () => {
     const popup = { close: jest.fn(), location: { replace: jest.fn() } }
+    let resolveRollback!: (value: ReturnType<typeof serviceConfig>) => void
+    const rollbackPromise = new Promise<ReturnType<typeof serviceConfig>>(resolve => {
+      resolveRollback = resolve
+    })
     window.open = jest.fn().mockReturnValue(popup)
     ;(userApis.getMcpProviderService as jest.Mock).mockResolvedValue(
       serviceConfig({ url: OAUTH_URL, auth_mode: 'oauth' })
     )
     ;(userApis.updateMcpProviderService as jest.Mock)
       .mockResolvedValueOnce(serviceConfig({ url: OAUTH_URL, auth_mode: 'oauth' }))
-      .mockResolvedValueOnce(serviceConfig({ url: OAUTH_URL, auth_mode: 'oauth' }))
+      .mockReturnValueOnce(rollbackPromise)
     ;(userApis.createMcpProviderOAuthSession as jest.Mock).mockResolvedValue({
       session_id: 'session-1',
       poll_token: 'poll-token',
@@ -375,6 +379,9 @@ describe('McpProviderConfigDialog', () => {
       expect(screen.getByTestId('dingtalk-ai_table-oauth-connect')).toBeDisabled()
     )
     await waitFor(() => expect(userApis.updateMcpProviderService).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('dingtalk-ai_table-oauth-connect')).toBeDisabled()
+
+    resolveRollback(serviceConfig({ url: OAUTH_URL, auth_mode: 'oauth' }))
     await waitFor(() => expect(screen.getByTestId('dingtalk-ai_table-oauth-connect')).toBeEnabled())
   })
 
