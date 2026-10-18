@@ -276,6 +276,8 @@ describe('McpProviderConfigDialog', () => {
     )
     expect(userApis.updateMcpProviderService).toHaveBeenCalledTimes(2)
     expect(popup.close).toHaveBeenCalled()
+    expect(input).toHaveValue(OAUTH_URL)
+    expect(screen.getByTestId('dingtalk-ai_table-oauth-connect')).toBeEnabled()
   })
 
   it('polls once more when the authorization window is closed', async () => {

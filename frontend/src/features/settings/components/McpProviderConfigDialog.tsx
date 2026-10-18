@@ -154,9 +154,6 @@ export function McpProviderConfigDialog({
         .then(restored => {
           if (!isActiveRun()) return
           setService(restored)
-          setDraftUrl(restored.auth_mode === 'oauth' ? '' : restored.url)
-          setDraftOAuthUrl(restored.auth_mode === 'oauth' ? restored.url : '')
-          setAuthMode(restored.auth_mode ?? 'url')
         })
         .catch(() => undefined)
     }
