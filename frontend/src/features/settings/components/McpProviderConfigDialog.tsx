@@ -98,7 +98,6 @@ export function McpProviderConfigDialog({
     if (oauthRunRef.current) oauthRunRef.current.active = false
     oauthWindowRef.current?.close()
     oauthWindowRef.current = null
-    setConnecting(false)
   }, [open])
 
   useEffect(
@@ -152,7 +151,7 @@ export function McpProviderConfigDialog({
           auth_mode: previous.auth_mode,
         })
         .then(restored => {
-          if (!isActiveRun()) return
+          if (!isCurrentRun()) return
           setService(restored)
         })
         .catch(() => undefined)
@@ -245,7 +244,7 @@ export function McpProviderConfigDialog({
         title: (error as Error)?.message || t(`${providerId}.oauth_failed`),
       })
     } finally {
-      if (isActiveRun()) setConnecting(false)
+      if (isCurrentRun()) setConnecting(false)
     }
   }
 
