@@ -535,6 +535,10 @@ The following skills provide specialized guidance for specific tasks. When your 
 
         parts = []
         for skill_name, prompt in self._loaded_skill_prompts.items():
+            # Backend already included active configuration guidance in the
+            # system prompt. Keep the Skill loaded without repeating its text.
+            if self.skill_metadata.get(skill_name, {}).get("prompt_in_system_prompt"):
+                continue
             # Include skill path for model reference (e.g., for read_file tool)
             skill_path = f"~/.claude/skills/{skill_name}"
             # Wrap each skill's instructions in XML tags to avoid model confusion
@@ -559,6 +563,8 @@ The following skills provide specialized guidance for specific tasks. When your 
                 f"</{safe_tag_name}>"
             )
 
+        if not parts:
+            return ""
         return (
             "\n\n## Loaded Skill Instructions\n\nThe following skills have been loaded. "
             "Each skill's instructions are wrapped in XML tags for clarity."
