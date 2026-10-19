@@ -10,11 +10,8 @@ import time
 import uuid
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from jose import JWTError, jwt
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.api.dependencies import get_db
 from app.core import security
 from app.core.cache import cache_manager
 from app.core.config import settings
@@ -26,8 +23,6 @@ from app.schemas.user import (
     WeworkAuthSessionCreateRequest,
     WeworkAuthSessionCreateResponse,
     WeworkAuthSessionPollResponse,
-    WeworkTokenRefreshRequest,
-    WeworkTokenRefreshResponse,
     WeworkWebConfigResponse,
 )
 
@@ -36,7 +31,6 @@ router = APIRouter()
 SESSION_TTL_SECONDS = 5 * 60
 POLL_INTERVAL_SECONDS = 2
 SESSION_KEY_PREFIX = "wework_auth_session:"
-DEVICE_PROOF_MAX_AGE_SECONDS = 5 * 60
 LEGACY_ACCESS_AUTH_MODE = "legacy_access"
 DEVICE_BOUND_REFRESH_AUTH_MODE = "device_bound_refresh"
 
@@ -182,14 +176,6 @@ def _device_key_thumbprint(public_key: dict[str, str]) -> str:
     )
 
 
-def _token_hash(token: str) -> str:
-    return (
-        base64.urlsafe_b64encode(hashlib.sha256(token.encode()).digest())
-        .rstrip(b"=")
-        .decode()
-    )
-
-
 def _create_wework_access_token(user: User) -> str:
     return create_access_token(
         data={
@@ -223,73 +209,8 @@ def _create_wework_refresh_token(user: User, device_thumbprint: str) -> str:
     )
 
 
-def _decode_refresh_token(refresh_token: str) -> dict:
-    try:
-        payload = jwt.decode(
-            refresh_token,
-            settings.SECRET_KEY,
-            algorithms=[settings.ALGORITHM],
-        )
-    except JWTError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Desktop login has expired",
-        ) from exc
-    if payload.get("token_use") != WEWORK_REFRESH_TOKEN_USE:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid desktop refresh token",
-        )
-    return payload
-
-
-def _verify_device_proof(
-    proof: str,
-    refresh_token: str,
-    expected_thumbprint: str,
-    expected_path: str,
-) -> None:
-    try:
-        header = jwt.get_unverified_header(proof)
-        public_key = _validated_device_public_key(header.get("jwk") or {})
-        if header.get("alg") != "ES256":
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid desktop device proof",
-            )
-        if _device_key_thumbprint(public_key) != expected_thumbprint:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Desktop device proof does not match this login",
-            )
-        payload = jwt.decode(proof, public_key, algorithms=["ES256"])
-    except HTTPException:
-        raise
-    except (JWTError, ValueError, TypeError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid desktop device proof",
-        ) from exc
-
-    issued_at = payload.get("iat")
-    now = int(time.time())
-    if (
-        not isinstance(issued_at, int)
-        or issued_at > now + 30
-        or now - issued_at > DEVICE_PROOF_MAX_AGE_SECONDS
-        or payload.get("htm") != "POST"
-        or payload.get("htu") != expected_path
-        or payload.get("ath") != _token_hash(refresh_token)
-        or not isinstance(payload.get("jti"), str)
-        or not payload["jti"]
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid desktop device proof",
-        )
-
-
-@router.get("/config", response_model=WeworkWebConfigResponse)
+# MIGRATION-CANDIDATE(api="GET /api/auth/wework/config"): remove after final confirmation.
+# @router.get("/config", response_model=WeworkWebConfigResponse)
 async def get_wework_web_config() -> WeworkWebConfigResponse:
     """Return public Web and Socket.IO URLs associated with this Backend."""
     socket_url = settings.WEGENT_SOCKET_URL.strip().rstrip("/")
@@ -299,7 +220,8 @@ async def get_wework_web_config() -> WeworkWebConfigResponse:
     )
 
 
-@router.post("/sessions", response_model=WeworkAuthSessionCreateResponse)
+# MIGRATION-CANDIDATE(api="POST /api/auth/wework/sessions"): remove after final confirmation.
+# @router.post("/sessions", response_model=WeworkAuthSessionCreateResponse)
 async def create_wework_auth_session(
     request: WeworkAuthSessionCreateRequest | None = None,
 ) -> WeworkAuthSessionCreateResponse:
@@ -345,7 +267,8 @@ async def create_wework_auth_session(
     )
 
 
-@router.get("/sessions/{session_id}/poll", response_model=WeworkAuthSessionPollResponse)
+# MIGRATION-CANDIDATE(api="GET /api/auth/wework/sessions/:session_id/poll"): remove after final confirmation.
+# @router.get("/sessions/{session_id}/poll", response_model=WeworkAuthSessionPollResponse)
 async def poll_wework_auth_session(
     session_id: str,
     poll_token: str = Query(...),
@@ -439,53 +362,6 @@ async def approve_wework_auth_session(
         )
     await _write_session(session_id, session_data)
     return WeworkAuthSessionActionResponse(status="approved")
-
-
-@router.post("/refresh", response_model=WeworkTokenRefreshResponse)
-async def refresh_wework_access_token(
-    body: WeworkTokenRefreshRequest,
-    request: Request,
-    db: Session = Depends(get_db),
-) -> WeworkTokenRefreshResponse:
-    """Issue a desktop access token after proving possession of its device key."""
-    payload = _decode_refresh_token(body.refresh_token)
-    confirmation = payload.get("cnf")
-    expected_thumbprint = (
-        confirmation.get("jkt") if isinstance(confirmation, dict) else None
-    )
-    if not isinstance(expected_thumbprint, str) or not expected_thumbprint:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid desktop refresh token",
-        )
-    _verify_device_proof(
-        body.proof,
-        body.refresh_token,
-        expected_thumbprint,
-        request.url.path,
-    )
-
-    username = payload.get("sub")
-    user_id = payload.get("user_id")
-    if not isinstance(username, str):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid desktop refresh token",
-        )
-    user = db.query(User).filter(User.user_name == username).first()
-    if (
-        user is None
-        or not user.is_active
-        or (isinstance(user_id, int) and user.id != user_id)
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Desktop login is no longer valid",
-        )
-    return WeworkTokenRefreshResponse(
-        access_token=_create_wework_access_token(user),
-        expires_in=settings.WEWORK_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-    )
 
 
 @router.post(

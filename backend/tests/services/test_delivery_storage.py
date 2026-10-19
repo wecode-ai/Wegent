@@ -12,6 +12,7 @@ from minio.error import S3Error
 from app.services.delivery.storage import (
     DeliveryObjectNotFoundError,
     DeliveryStorage,
+    DeliveryStorageUnavailableError,
 )
 
 
@@ -63,3 +64,12 @@ def test_get_bytes_retries_a_transient_missing_minio_object() -> None:
     assert client.get_object.call_count == 2
     response.close.assert_called_once_with()
     response.release_conn.assert_called_once_with()
+
+
+def test_unconfigured_delivery_storage_is_service_unavailable(monkeypatch) -> None:
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "ATTACHMENT_S3_ACCESS_KEY", "")
+    monkeypatch.setattr(settings, "ATTACHMENT_S3_SECRET_KEY", "")
+    with pytest.raises(DeliveryStorageUnavailableError, match="not configured"):
+        DeliveryStorage().put_bytes("report.md", b"report", "text/markdown")

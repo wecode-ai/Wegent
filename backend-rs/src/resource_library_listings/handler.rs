@@ -165,8 +165,13 @@ fn parse_bool<'a>(
     }
 }
 
-/// FastAPI integer decoding and bounds for `limit`.
-fn parse_limit<'a>(value: Option<&'a str>, errors: &mut Vec<ValidationEntry<'a>>) -> i64 {
+/// FastAPI integer decoding and bounds for `limit`. Shared with the
+/// `users/me/published` handler, whose `limit` uses the same `ge=1, le=100`
+/// bounds and `default=20`.
+pub(super) fn parse_limit<'a>(
+    value: Option<&'a str>,
+    errors: &mut Vec<ValidationEntry<'a>>,
+) -> i64 {
     let Some(value) = value else {
         return LIMIT_DEFAULT;
     };
@@ -185,8 +190,11 @@ fn parse_limit<'a>(value: Option<&'a str>, errors: &mut Vec<ValidationEntry<'a>>
 }
 
 /// One FastAPI validation-error entry (`{type, loc, msg, input, ctx?}`).
+///
+/// Shared with the sibling `users/me/published` handler, whose query fields use
+/// the same decoding and error shapes.
 #[derive(Serialize)]
-struct ValidationEntry<'a> {
+pub(super) struct ValidationEntry<'a> {
     #[serde(rename = "type")]
     kind: &'static str,
     loc: [&'a str; 2],
@@ -205,7 +213,7 @@ enum ValidationContext {
 }
 
 impl<'a> ValidationEntry<'a> {
-    fn pattern(field: &'a str, value: &'a str) -> Self {
+    pub(super) fn pattern(field: &'a str, value: &'a str) -> Self {
         Self {
             kind: "string_pattern_mismatch",
             loc: ["query", field],
@@ -235,7 +243,7 @@ impl<'a> ValidationEntry<'a> {
         }
     }
 
-    fn int_parsing(field: &'a str, value: &'a str) -> Self {
+    pub(super) fn int_parsing(field: &'a str, value: &'a str) -> Self {
         Self {
             kind: "int_parsing",
             loc: ["query", field],
@@ -255,7 +263,7 @@ impl<'a> ValidationEntry<'a> {
         }
     }
 
-    fn greater_than_equal(field: &'a str, value: &'a str, ge: i64) -> Self {
+    pub(super) fn greater_than_equal(field: &'a str, value: &'a str, ge: i64) -> Self {
         Self {
             kind: "greater_than_equal",
             loc: ["query", field],

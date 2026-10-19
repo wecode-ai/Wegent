@@ -41,8 +41,7 @@ mod collaboration_access;
 mod environment_authorization;
 
 pub(crate) use access::{
-    LOOP_ITEMS_COLUMNS, ProjectAccessMode, entity_columns, project_access_statement,
-    role_for_priority,
+    LOOP_ITEMS_COLUMNS, entity_columns, project_access_point_statement, role_for_priority,
 };
 
 /// `PATCH /api/v1/cloud-projects/{project_id}`: update one cloud project.
@@ -219,7 +218,7 @@ async fn project_access<M: Mysql>(
 ) -> Result<Option<(ProjectListRow, i64)>, brz_mysql::MysqlError> {
     // The source inlines the user and project ids into the statement, so it
     // carries no bind parameters.
-    let statement = project_access_statement(ProjectAccessMode::Point, user_id, Some(project_id));
+    let statement = project_access_point_statement(user_id, project_id);
     let row: Option<MysqlRow> = mysql.fetch_optional(statement, ()).await?;
     row.map(|row| {
         // The joined aggregate supplies the caller's role priority; read it

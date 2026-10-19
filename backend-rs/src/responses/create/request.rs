@@ -31,7 +31,7 @@ use super::ghost::{
     merge_ghost_capabilities,
 };
 use super::knowledge::{
-    AclQueryContext, build_acl_query_context, build_inherited_selected_knowledge_refs,
+    AclContextSource, build_inherited_selected_knowledge_refs,
     resolve_task_default_knowledge_base_ids,
 };
 use super::model_config::{
@@ -319,44 +319,22 @@ async fn resolve_knowledge(
     preload_skills: &[String],
     user_selected_skills: &[String],
 ) -> Result<ResolvedKnowledge, FastApiError> {
-    let acl = build_acl_query_context(
-        &state.mysql,
-        &state.entity_resolvers,
-        state.redis.as_ref(),
-        input.user_id,
-        &[],
-    )
-    .await
-    .map_err(dependency)?;
-    let acl_closure = |_team_user_id: &i64| AclQueryContext {
-        user_id: acl.user_id,
-        authorized_groups: acl.authorized_groups.clone(),
-        organization_names: acl.organization_names.clone(),
-        accessible_namespace_ids: acl.accessible_namespace_ids.clone(),
-        external_kb_ids: acl.external_kb_ids.clone(),
-        restricted_group_names: acl.restricted_group_names.clone(),
-    };
-    let default_ids = resolve_task_default_knowledge_base_ids(
-        &state.mysql,
-        input.task_json,
-        input.user_id,
-        &acl_closure,
-    )
-    .await
-    .map_err(dependency)?;
+    // `build_direct_access_query_context` is built by
+    // `get_acl_accessible_knowledge_base_ids` once the team's default knowledge
+    // base candidates are known to be non-empty, so a task without defaults
+    // never reads the organization names or the caller's group roles.
+    let acl = AclContextSource::new(&state.mysql, &state.entity_resolvers, state.redis.as_ref());
+    let default_ids = resolve_task_default_knowledge_base_ids(&acl, input.task_json, input.user_id)
+        .await
+        .map_err(dependency)?;
     if default_ids.is_empty() {
         return Ok(ResolvedKnowledge::empty());
     }
 
-    let inherited = build_inherited_selected_knowledge_refs(
-        &state.mysql,
-        input.task_json,
-        input.user_id,
-        &acl_closure,
-        &[],
-    )
-    .await
-    .map_err(dependency)?;
+    let inherited =
+        build_inherited_selected_knowledge_refs(&acl, input.task_json, input.user_id, &[])
+            .await
+            .map_err(dependency)?;
     let context = resolve_selected_knowledge_context(&inherited, &[]);
     let context = enrich_wegent_routing_metadata(&state.mysql, &context)
         .await
@@ -457,23 +435,23 @@ pub async fn build_execution_request(
     let system_prompt = base_system_prompt(&chain, input.team_member_prompt);
 
     // Model config (`get_model_config_for_bot` + placeholder processing).
-    let user_groups = crate::permissions::user_groups(
-        &state.mysql,
-        &state.entity_resolvers,
-        state.redis.as_ref(),
-        input.user_id,
-    )
-    .await
-    .map_err(dependency)?;
+    // `_find_model_with_namespace` reads the caller's groups only after the
+    // private and referenced Model reads miss, so the resolver owns that read.
     let model_name =
         resolve_model_name(&bot_spec, force_override, override_model_name).unwrap_or_default();
     let agent_config = bot_spec.get("agent_config").cloned().unwrap_or(Value::Null);
     let mut model_config = if model_name.is_empty() {
         Map::new()
     } else {
-        match resolve_model_for_bot(&state.mysql, input.user_id, &model_name, &user_groups)
-            .await
-            .map_err(dependency)?
+        match resolve_model_for_bot(
+            &state.mysql,
+            &state.entity_resolvers,
+            state.redis.as_ref(),
+            input.user_id,
+            &model_name,
+        )
+        .await
+        .map_err(dependency)?
         {
             Some(model) => {
                 let spec = model.json.0.get("spec").cloned().unwrap_or(Value::Null);
@@ -709,7 +687,10 @@ async fn resolve_shell_type(
         .get("namespace")
         .and_then(Value::as_str)
         .unwrap_or("default");
-    let shell = resolve_shell(&state.mysql, input.user_id, name, namespace)
+    // `_resolve_shell_info(bot, team.user_id)` is keyed by the *team's* owner,
+    // not the caller (`request_builder.py:2193,2228`), so the owner/search
+    // order follows the bot's owning namespace.
+    let shell = resolve_shell(&state.mysql, input.team.user_id, name, namespace)
         .await
         .map_err(dependency)?
         .ok_or_else(|| {

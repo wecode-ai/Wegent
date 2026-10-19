@@ -9,7 +9,7 @@ import {
   NotificationTaskSourceBridge,
   NotificationTaskSourceProvider,
 } from './NotificationTaskSource'
-import { useIssueDispatchNotificationActionRegistration } from './useIssueDispatchNotificationActionRegistration'
+import { subscribeIssueDispatch } from './issueDispatch'
 import { readActiveNotificationPreferences } from './notificationPreferences'
 import { WEWORK_OPEN_SCHEME_EVENT } from './schemeEvents'
 
@@ -80,26 +80,10 @@ const task = {
   projectName: 'Project',
 }
 const markRuntimeTaskRead = vi.fn()
-const issueDispatchNotificationAction = vi.fn()
-
-function IssueDispatchNotificationActionBridge() {
-  useIssueDispatchNotificationActionRegistration(
-    'issue-dispatch-test',
-    true,
-    issueDispatchNotificationAction
-  )
-  return null
-}
 
 const viewWithTask = (value = connection) => (
   <NotificationTaskSourceProvider>
     <NotificationTaskSourceBridge id="task-tab" active />
-    {view(value)}
-  </NotificationTaskSourceProvider>
-)
-const viewWithIssueDispatchAction = (value = connection) => (
-  <NotificationTaskSourceProvider>
-    <IssueDispatchNotificationActionBridge />
     {view(value)}
   </NotificationTaskSourceProvider>
 )
@@ -159,7 +143,6 @@ beforeEach(() => {
     unreadTaskKeys: new Set([task.key]),
     markRuntimeTaskRead,
   }
-  issueDispatchNotificationAction.mockResolvedValue(undefined)
 })
 
 describe('notification center', () => {
@@ -399,13 +382,13 @@ describe('notification center', () => {
     expect(screen.queryByTestId('wework-notification-n1-body')).toBeNull()
   })
 
-  it('creates or opens the personal task assigned by an Issue dispatch notification', async () => {
+  it('opens the assigned Issue and leaves its personal task to that board', async () => {
     const dispatchNotification = {
       ...entry,
       kind: 'issue_dispatch_assignment',
       title: '新任务：采集 CPU 证据',
       body: '负责人向你分配了协作任务。',
-      url: null,
+      url: 'wework://boards/12/issues/issue-1',
       payload: {
         projectId: '12',
         itemId: 'issue-1',
@@ -433,29 +416,45 @@ describe('notification center', () => {
       ...dispatchNotification,
       read_at: '2026-09-25T01:00:00+00:00',
     })
+    const answers: unknown[] = []
+    const unsubscribe = subscribeIssueDispatch({
+      shows: action => action.itemId === 'issue-1',
+      answer: action => answers.push(action),
+    })
+    const opened = vi.fn()
+    window.addEventListener(WEWORK_OPEN_SCHEME_EVENT, opened)
 
-    render(viewWithIssueDispatchAction())
-    fireEvent.click(screen.getByTestId('wework-notifications-button'))
-    fireEvent.click(screen.getByTestId('wework-notifications-category-collaboration'))
-    fireEvent.click(await screen.findByTestId('issue-dispatch-notification-create-task'))
+    try {
+      render(view())
+      fireEvent.click(screen.getByTestId('wework-notifications-button'))
+      fireEvent.click(screen.getByTestId('wework-notifications-category-collaboration'))
+      fireEvent.click(await screen.findByTestId('issue-dispatch-notification-create-task'))
 
-    await waitFor(() =>
-      expect(issueDispatchNotificationAction).toHaveBeenCalledWith({
-        projectId: '12',
-        itemId: 'issue-1',
-        issueId: 'issue-1',
-        dispatchTaskId: 'human-assignment-1',
-        humanAssignmentId: 'human-assignment-1',
-        dispatchId: 'dispatch-1',
-        roundId: 'round-1',
-        assignmentId: 'collect-cpu',
-        taskTitle: '采集 CPU 证据',
-        instructions: '只读采集 CPU 证据并提交交付。',
-        workflowStageId: 'investigate',
-        idempotencyKey: 'human-assignment:human-assignment-1',
-      })
-    )
-    expect(screen.queryByTestId('wework-notifications-popover')).toBeNull()
+      await waitFor(() => expect(opened).toHaveBeenCalledOnce())
+      expect((opened.mock.calls[0][0] as CustomEvent<string>).detail).toBe(
+        'wework://boards/12/issues/issue-1'
+      )
+      expect(answers).toEqual([
+        {
+          projectId: '12',
+          itemId: 'issue-1',
+          issueId: 'issue-1',
+          dispatchTaskId: 'human-assignment-1',
+          humanAssignmentId: 'human-assignment-1',
+          dispatchId: 'dispatch-1',
+          roundId: 'round-1',
+          assignmentId: 'collect-cpu',
+          taskTitle: '采集 CPU 证据',
+          instructions: '只读采集 CPU 证据并提交交付。',
+          workflowStageId: 'investigate',
+          idempotencyKey: 'human-assignment:human-assignment-1',
+        },
+      ])
+      expect(screen.queryByTestId('wework-notifications-popover')).toBeNull()
+    } finally {
+      unsubscribe()
+      window.removeEventListener(WEWORK_OPEN_SCHEME_EVENT, opened)
+    }
   })
 
   it('opens the original Issue for a direct human assignment without creating an AI task', async () => {
@@ -477,14 +476,13 @@ describe('notification center', () => {
     const opened = vi.fn()
     window.addEventListener(WEWORK_OPEN_SCHEME_EVENT, opened)
     try {
-      render(viewWithIssueDispatchAction())
+      render(view())
       fireEvent.click(screen.getByTestId('wework-notifications-button'))
       fireEvent.click(screen.getByTestId('wework-notifications-category-collaboration'))
       fireEvent.click(await screen.findByTestId('wework-notification-n1'))
 
       await waitFor(() => expect(opened).toHaveBeenCalledOnce())
       expect((opened.mock.calls[0][0] as CustomEvent<string>).detail).toBe(directNotification.url)
-      expect(issueDispatchNotificationAction).not.toHaveBeenCalled()
     } finally {
       window.removeEventListener(WEWORK_OPEN_SCHEME_EVENT, opened)
     }

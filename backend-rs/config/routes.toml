@@ -19,18 +19,18 @@
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/knowledge-bases"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/knowledge-bases/:knowledge_base_id/document-protection"
+[[routes]]
+methods = ["GET"]
+path = "/api/knowledge-bases/:knowledge_base_id/document-protection"
 [[routes]]
 methods = ["GET"]
 path = "/api/users/me"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/users/features"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/users/me/git-accounts/sync-summary"
+[[routes]]
+methods = ["GET"]
+path = "/api/users/me/git-accounts/sync-summary"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/git/repositories"
@@ -40,15 +40,15 @@ path = "/api/users/me"
 [[routes]]
 methods = ["GET"]
 path = "/api/v1/wework-notifications"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/v1/wework-notifications/preferences"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/wework-notifications/preferences"
 #[[routes]]
 #methods = ["PUT"]
 #path = "/api/v1/wework-notifications/preferences"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/runtime-work/im-notifications"
+[[routes]]
+methods = ["GET"]
+path = "/api/runtime-work/im-notifications"
 # `POST /api/runtime-work/llm-responses-proxy/responses` is the authenticated
 # LLM proxy gateway (`llm_proxy::llm_responses_proxy`). The `/chat/completions`
 # and `/messages` physical siblings have no recorded contract cases yet and
@@ -59,9 +59,9 @@ path = "/api/v1/wework-notifications"
 [[routes]]
 methods = ["PUT"]
 path = "/api/runtime-work/im-notifications/presence"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/knowledge-bases/:knowledge_base_id/artifacts"
+[[routes]]
+methods = ["GET"]
+path = "/api/knowledge-bases/:knowledge_base_id/artifacts"
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/auth/login"
@@ -97,9 +97,9 @@ path = "/api/v1/cloud-projects/:project_id/execution-environments"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/v1/cloud-projects/:project_id/chat-agents"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/knowledge/documents"
+[[routes]]
+methods = ["GET"]
+path = "/api/knowledge/documents"
 [[routes]]
 methods = ["GET"]
 path = "/api/quota/*path"
@@ -119,9 +119,9 @@ path = "/api/wework-transcripts/:transcript_id/encryption-key"
 # `405 {"detail":"Method Not Allowed"}` plus `Allow: GET`. The target owns the
 # recorded `POST` method and reproduces that response; the source `GET` listing
 # is not part of the recorded group and stays on the Python fallback.
-#[[routes]]
-#methods = ["POST"]
-#path = "/api/wework-transcripts/:transcript_id/turns"
+[[routes]]
+methods = ["POST"]
+path = "/api/wework-transcripts/:transcript_id/turns"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/wework-transcripts/:transcript_id/archives/:archive_id/download"
@@ -134,12 +134,12 @@ path = "/api/startup"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/tables"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/users/default-teams"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/internal/chat/attachments/:attachment_id/text"
+[[routes]]
+methods = ["GET"]
+path = "/api/users/default-teams"
+[[routes]]
+methods = ["GET"]
+path = "/api/internal/chat/attachments/:attachment_id/text"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/subscriptions/executions"
@@ -152,15 +152,15 @@ path = "/api/devices"
 #[[routes]]
 #methods = ["DELETE"]
 #path = "/api/devices/records/:record_id"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/users/welcome-config"
+[[routes]]
+methods = ["GET"]
+path = "/api/users/welcome-config"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/v1/runtime-profiles"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/tasks/:task_id/pipeline-stage-info"
+[[routes]]
+methods = ["GET"]
+path = "/api/tasks/:task_id/pipeline-stage-info"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/projects"
@@ -179,11 +179,10 @@ path = "/api/devices"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/v1/cloud-projects/:project_id/loop-item-pages"
-# `POST /api/v1/loop-item-executions/claim-my-next` is served by the
-# `loop_item_executions::handler` device claim the local App puller uses.
-#[[routes]]
-#methods = ["POST"]
-#path = "/api/v1/loop-item-executions/claim-my-next"
+# Older wework clients still call this retired Python API; Rust returns a JSON 404.
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/loop-item-executions/claim-my-next"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/auth/oidc/callback"
@@ -196,15 +195,15 @@ path = "/api/v1/kinds/skills/:skill_id/download"
 #path = "/api/v1/kinds/skills/unified"
 # `GET /api/internal/skills/{skill_id}/binary` is the service-to-service
 # binary download served by the `skills::internal_binary` handler.
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/internal/skills/:skill_id/binary"
+[[routes]]
+methods = ["GET"]
+path = "/api/internal/skills/:skill_id/binary"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/users/search"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/subscriptions"
+[[routes]]
+methods = ["GET"]
+path = "/api/subscriptions"
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/subscriptions"
@@ -254,24 +253,24 @@ path = "/api/tasks/lite/personal"
 # `POST /api/internal/chat/guidance/{task_id}/{subtask_id}/consume` — pop the
 # next queued Chat Shell guidance item for one subtask
 # (`app/api/endpoints/internal/chat_storage.py:consume_guidance`).
-#[[routes]]
-#methods = ["POST"]
-#path = "/api/internal/chat/guidance/:task_id/:subtask_id/consume"
+[[routes]]
+methods = ["POST"]
+path = "/api/internal/chat/guidance/:task_id/:subtask_id/consume"
 # `POST /api/internal/chat/guidance/{task_id}/{subtask_id}/expire` — expire the
 # queued Chat Shell guidance items for one subtask
 # (`app/api/endpoints/internal/chat_storage.py`).
-#[[routes]]
-#methods = ["POST"]
-#path = "/api/internal/chat/guidance/:task_id/:subtask_id/expire"
+[[routes]]
+methods = ["POST"]
+path = "/api/internal/chat/guidance/:task_id/:subtask_id/expire"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/knowledge-bases/all-grouped"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/attachments/:attachment_id"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/attachments/:attachment_id/executor-download"
+[[routes]]
+methods = ["GET"]
+path = "/api/attachments/:attachment_id/executor-download"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/attachments/:attachment_id/download"
@@ -293,18 +292,18 @@ path = "/api/tasks/:task_id/runtime-check"
 [[routes]]
 methods = ["GET"]
 path = "/api/teams"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/teams/default"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/users/quick-access"
+[[routes]]
+methods = ["GET"]
+path = "/api/teams/default"
+[[routes]]
+methods = ["GET"]
+path = "/api/users/quick-access"
 [[routes]]
 methods = ["GET"]
 path = "/api/teams/:team_id/skills"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/users/quick-launch"
+[[routes]]
+methods = ["GET"]
+path = "/api/users/quick-launch"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/users/recent-teams"
@@ -332,9 +331,9 @@ path = "/api/models/unified"
 [[routes]]
 methods = ["GET", "POST"]
 path = "/api/models/decisions"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/models/error-recommendations"
+[[routes]]
+methods = ["GET"]
+path = "/api/models/error-recommendations"
 [[routes]]
 methods = ["GET"]
 path = "/api/tasks/:task_id/remote-workspace/status"
@@ -349,9 +348,9 @@ methods = ["GET"]
 path = "/api/plugins/installed"
 # Literal POST sibling of `/api/plugins/installed`; kept adjacent so the
 # plugins-installed cutover inventory stays explicit.
-#[[routes]]
-#methods = ["POST"]
-#path = "/api/plugins/installed/auto-update-batch"
+[[routes]]
+methods = ["POST"]
+path = "/api/plugins/installed/auto-update-batch"
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/plugins/installed/report-device"
@@ -403,15 +402,15 @@ path = "/api/apps/installed"
 [[routes]]
 methods = ["GET"]
 path = "/api/knowledge/documents/:document_id/content"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/resource-library/listings"
+[[routes]]
+methods = ["GET"]
+path = "/api/resource-library/listings"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/resource-library/listings/:listing_id"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/resource-library/tags"
+[[routes]]
+methods = ["GET"]
+path = "/api/resource-library/tags"
 [[routes]]
 methods = ["GET"]
 path = "/api/v1/responses/:response_id"
@@ -497,9 +496,9 @@ path = "/api/v1/responses/:response_id"
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/api/mcp/system"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/users/me/mcps/providers/:provider_id/services"
+[[routes]]
+methods = ["GET"]
+path = "/api/users/me/mcps/providers/:provider_id/services"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/users/me/proxy-config"
@@ -510,9 +509,9 @@ path = "/api/v1/responses/:response_id"
 #methods = ["GET"]
 #path = "/api/sites"
 
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/sites/app-types"
+[[routes]]
+methods = ["GET"]
+path = "/api/sites/app-types"
 
 #[[routes]]
 #methods = ["GET"]
@@ -530,9 +529,9 @@ path = "/api/v1/responses/:response_id"
 
 # `GET /api/bots` — the current user's Bot list (`bots::list_bots`;
 # `app/api/endpoints/adapter/bots.py::list_bots`).
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/bots"
+[[routes]]
+methods = ["GET"]
+path = "/api/bots"
 
 # `GET /api/subtasks` — the task's paginated message list
 # (`app/api/endpoints/subtasks.py:list_subtasks`). The item detail
@@ -545,9 +544,9 @@ path = "/api/v1/responses/:response_id"
 # `POST /api/auth/wework/refresh` — issue a desktop access token after proving
 # possession of the device key bound to the refresh token
 # (`wework_auth::refresh_wework_access_token`).
-#[[routes]]
-#methods = ["POST"]
-#path = "/api/auth/wework/refresh"
+[[routes]]
+methods = ["POST"]
+path = "/api/auth/wework/refresh"
 
 # Candidates from the traffic-E2E run `20261009112120` recording. Keep these
 # routes disabled until their Rust handlers are implemented and verified so
@@ -570,9 +569,9 @@ path = "/api/connector-runtime/token"
 # `PATCH /api/internal/chat/history/{session_id}/messages/{message_id}` — the
 # write sibling of the `GET /api/internal/chat/history/{session_id}` rule.
 # `app/api/endpoints/internal/chat_storage.py:update_message`.
-#[[routes]]
-#methods = ["PATCH"]
-#path = "/api/internal/chat/history/:session_id/messages/:message_id"
+[[routes]]
+methods = ["PATCH"]
+path = "/api/internal/chat/history/:session_id/messages/:message_id"
 
 # `POST /api/mcp/knowledge-external/sse` — the external-knowledge MCP transport
 # (`app/mcp_server/server.py`, `EXTERNAL_KNOWLEDGE_MCP_TRANSPORT_PATH`).
@@ -582,9 +581,9 @@ path = "/api/connector-runtime/token"
 
 # `GET /api/v1/cloud-projects/{project_id}` is served by the cloud-projects
 # `get_cloud_project` handler.
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/v1/cloud-projects/:project_id"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/cloud-projects/:project_id"
 
 #[[routes]]
 #methods = ["GET"]
@@ -617,9 +616,9 @@ path = "/api/v1/dsh-plugin-storage/units/:unit/load"
 
 # `POST /api/wework-transcripts/{transcript_id}/lease` and its
 # `/lease/release` sibling (`app/api/endpoints/wework_transcripts.py`).
-#[[routes]]
-#methods = ["POST"]
-#path = "/api/wework-transcripts/:transcript_id/lease"
+[[routes]]
+methods = ["POST"]
+path = "/api/wework-transcripts/:transcript_id/lease"
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/wework-transcripts/:transcript_id/lease/release"
@@ -630,27 +629,27 @@ path = "/api/v1/dsh-plugin-storage/units/:unit/load"
 #[[routes]]
 #methods = ["DELETE"]
 #path = "/api/attachments/:attachment_id" # app/api/endpoints/adapter/attachments.py:1284
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/auth/oidc/cli-callback" # app/api/endpoints/oidc.py:395
-#[[routes]]
-#methods = ["POST"]
-#path = "/api/auth/oidc/cli-login" # app/api/endpoints/oidc.py:347
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/auth/oidc/cli-poll" # app/api/endpoints/oidc.py:535
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/auth/oidc/login" # app/api/endpoints/oidc.py:117
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/auth/wework/config" # app/api/endpoints/wework_auth.py:293
-#[[routes]]
-#methods = ["POST"]
-#path = "/api/auth/wework/sessions" # app/api/endpoints/wework_auth.py:303
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/auth/wework/sessions/:session_id/poll" # app/api/endpoints/wework_auth.py:349
+[[routes]]
+methods = ["GET"]
+path = "/api/auth/oidc/cli-callback" # app/api/endpoints/oidc.py:395
+[[routes]]
+methods = ["POST"]
+path = "/api/auth/oidc/cli-login" # app/api/endpoints/oidc.py:347
+[[routes]]
+methods = ["GET"]
+path = "/api/auth/oidc/cli-poll" # app/api/endpoints/oidc.py:535
+[[routes]]
+methods = ["GET"]
+path = "/api/auth/oidc/login" # app/api/endpoints/oidc.py:117
+[[routes]]
+methods = ["GET"]
+path = "/api/auth/wework/config" # app/api/endpoints/wework_auth.py:293
+[[routes]]
+methods = ["POST"]
+path = "/api/auth/wework/sessions" # app/api/endpoints/wework_auth.py:303
+[[routes]]
+methods = ["GET"]
+path = "/api/auth/wework/sessions/:session_id/poll" # app/api/endpoints/wework_auth.py:349
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/bots" # app/api/endpoints/adapter/bots.py:52
@@ -678,15 +677,15 @@ path = "/api/v1/dsh-plugin-storage/units/:unit/load"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/dingtalk-wikispace/sync-status" # app/api/endpoints/dingtalk_wikispace.py:73
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/external/mcp-identity/userinfo" # app/api/endpoints/mcp_identity.py:34
+[[routes]]
+methods = ["GET"]
+path = "/api/external/mcp-identity/userinfo" # app/api/endpoints/mcp_identity.py:34
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/git/repositories/branches" # app/api/endpoints/repository.py:84
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/git/repositories/search" # app/api/endpoints/repository.py:122
+[[routes]]
+methods = ["GET"]
+path = "/api/git/repositories/search" # app/api/endpoints/repository.py:122
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/groups/*group_name" # app/api/endpoints/groups.py:1004
@@ -706,9 +705,10 @@ path = "/api/v1/dsh-plugin-storage/units/:unit/load"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/im/private-sessions"
-#[[routes]]
-#methods = ["POST"]
-#path = "/api/internal/api-keys/lookup" # app/api/endpoints/internal/api_keys.py:29
+[[routes]]
+methods = ["POST"]
+path = "/api/internal/api-keys/lookup" # app/api/endpoints/internal/api_keys.py:29
+# Deferred: numeric pipeline stages must preserve manual confirmation semantics.
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/internal/callback" # app/api/endpoints/internal/callback.py:103
@@ -730,9 +730,10 @@ path = "/api/v1/dsh-plugin-storage/units/:unit/load"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/knowledge-bases/multimodal-default-prompts" # app/api/endpoints/knowledge.py:425
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/knowledge-bases/:kb_id/documents/:doc_id/detail" # app/api/endpoints/knowledge.py:1840
+[[routes]]
+methods = ["GET"]
+path = "/api/knowledge-bases/:kb_id/documents/:doc_id/detail" # app/api/endpoints/knowledge.py:1840
+# Deferred: document lists must retain external-source metadata.
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/knowledge-bases/:knowledge_base_id/documents" # app/api/endpoints/knowledge.py:759
@@ -742,9 +743,9 @@ path = "/api/v1/dsh-plugin-storage/units/:unit/load"
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/knowledge-bases/:knowledge_base_id/documents/external-import-status" # app/api/endpoints/knowledge.py:998
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/knowledge-bases/:knowledge_base_id/folders" # app/api/endpoints/knowledge.py:1431
+[[routes]]
+methods = ["GET"]
+path = "/api/knowledge-bases/:knowledge_base_id/folders" # app/api/endpoints/knowledge.py:1431
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/knowledge-documents/batch/delete" # app/api/endpoints/knowledge.py:1344
@@ -781,9 +782,9 @@ path = "/api/v1/dsh-plugin-storage/units/:unit/load"
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/mcp/interactive-form-question/sse" # app/mcp_server/server.py:1032
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/mcp/knowledge-external/documents/:document_id/file" # app/mcp_server/external_knowledge_app.py:59
+[[routes]]
+methods = ["GET"]
+path = "/api/mcp/knowledge-external/documents/:document_id/file" # app/mcp_server/external_knowledge_app.py:59
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/mcp/knowledge-external/sse" # app/mcp_server/server.py:1032
@@ -808,18 +809,18 @@ path = "/api/v1/dsh-plugin-storage/units/:unit/load"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/plugins/publication-requests" # app/api/endpoints/plugin_publications.py:76
-#[[routes]]
-#methods = ["PUT"]
-#path = "/api/projects/:project_id" # app/api/endpoints/projects.py:226
+[[routes]]
+methods = ["PUT"]
+path = "/api/projects/:project_id" # app/api/endpoints/projects.py:226
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/resource-library/agents/:agent_id/bindings" # app/api/endpoints/resource_library.py:302
 #[[routes]]
 #methods = ["PUT"]
 #path = "/api/resource-library/agents/:agent_id/bindings" # app/api/endpoints/resource_library.py:316
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/resource-library/assets/team-icons/:asset_id" # app/api/endpoints/resource_library.py:80
+[[routes]]
+methods = ["GET"]
+path = "/api/resource-library/assets/team-icons/:asset_id" # app/api/endpoints/resource_library.py:80
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/resource-library/groups/installs" # app/api/endpoints/resource_library.py:372
@@ -832,21 +833,21 @@ path = "/api/v1/dsh-plugin-storage/units/:unit/load"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/resource-library/users/me/installs" # app/api/endpoints/resource_library.py:352
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/resource-library/users/me/published" # app/api/endpoints/resource_library.py:332
+[[routes]]
+methods = ["GET"]
+path = "/api/resource-library/users/me/published" # app/api/endpoints/resource_library.py:332
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/retrievers" # app/api/endpoints/adapter/retrievers.py:96
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/retrievers/storage-types/retrieval-methods" # app/api/endpoints/adapter/retrievers.py:42
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/share/KnowledgeBase/:resource_id/my-permission" # app/api/endpoints/share.py:539
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/shells/unified" # app/api/endpoints/adapter/shells.py:197
+[[routes]]
+methods = ["GET"]
+path = "/api/share/KnowledgeBase/:resource_id/my-permission" # app/api/endpoints/share.py:539
+[[routes]]
+methods = ["GET"]
+path = "/api/shells/unified" # app/api/endpoints/adapter/shells.py:197
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/skill-market/providers" # app/api/endpoints/skill_market.py:128
@@ -856,9 +857,9 @@ path = "/api/v1/dsh-plugin-storage/units/:unit/load"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/smart-apps/marketplace/:smart_app_id/artifact" # app/api/endpoints/smart_apps.py:118
-#[[routes]]
-#methods = ["POST"]
-#path = "/api/smart-apps/marketplace/:smart_app_id/download" # app/api/endpoints/smart_apps.py:104
+[[routes]]
+methods = ["POST"]
+path = "/api/smart-apps/marketplace/:smart_app_id/download" # app/api/endpoints/smart_apps.py:104
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/smart-apps/owned" # app/api/endpoints/smart_apps.py:76
@@ -895,9 +896,9 @@ path = "/api/v1/dsh-plugin-storage/units/:unit/load"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/tasks/share/info" # app/api/endpoints/adapter/tasks.py:882
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/tasks/share/public" # app/api/endpoints/adapter/tasks.py:894
+[[routes]]
+methods = ["GET"]
+path = "/api/tasks/share/public" # app/api/endpoints/adapter/tasks.py:894
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/tasks/:task_id/members" # app/api/endpoints/adapter/task_members.py:129
@@ -925,9 +926,9 @@ path = "/api/v1/dsh-plugin-storage/units/:unit/load"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/users/me/subscription-invitations" # app/api/endpoints/adapter/subscription_follows.py:505
-#[[routes]]
-#methods = ["POST"]
-#path = "/api/users/me/wegent-runtime-token"
+[[routes]]
+methods = ["POST"]
+path = "/api/users/me/wegent-runtime-token"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/utils/url-metadata" # app/api/endpoints/utils.py:17
@@ -965,9 +966,9 @@ path = "/api/v1/dsh-plugin-storage/units/:unit/load"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/v1/kinds/skills/:skill_id/references" # app/api/endpoints/kind/skills.py:1926
-#[[routes]]
-#methods = ["DELETE"]
-#path = "/api/v1/responses/:response_id" # app/api/endpoints/openapi_responses.py:2053
+[[routes]]
+methods = ["DELETE"]
+path = "/api/v1/responses/:response_id" # app/api/endpoints/openapi_responses.py:2053
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/v1/responses/:response_id/cancel" # app/api/endpoints/openapi_responses.py:1849
@@ -987,9 +988,9 @@ path = "/api/v1/dsh-plugin-storage/units/:unit/load"
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/wework-transcripts/:transcript_id/segments" # app/api/endpoints/wework_transcripts.py:179
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/wiki/connections" # app/api/endpoints/external_wiki.py:224
+[[routes]]
+methods = ["GET"]
+path = "/api/wiki/connections" # app/api/endpoints/external_wiki.py:224
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/wizard/test-prompt/stream" # app/api/endpoints/wizard.py:1381
@@ -1011,3 +1012,20 @@ path = "/api/v1/dsh-plugin-storage/units/:unit/load"
 #[[routes]]
 #methods = ["POST"]
 #path = "/socket.io/" # app/main.py:984
+
+# Additional recorded METHOD/path cutovers with a registered Rust handler and passing replay.
+[[routes]]
+methods = ["GET"]
+path = "/api/api/v1/kinds/skills/:skill_id/download"
+
+
+# Deferred cutovers: replay or handler evidence is incomplete; preserve Python ownership.
+# GET /api/subscriptions/executions: no_exact_progress_ledger.
+# GET /api/users/me/mcps/providers/:provider_id/services/:service_id/oauth/sessions/:session_id/poll: no_registered_rust_handler, recent_replay_not_passing.
+# POST /api/v1/token-issuers/:issuer_id/issue: recent_replay_not_passing.
+# GET /api/knowledge-bases/all-grouped: no_exact_progress_ledger.
+# DELETE /api/tasks/:task_id: recent_replay_not_passing.
+# PUT /api/users/me: recent_replay_not_passing.
+# GET /api/knowledge-bases/:knowledge_base_id: private_runtime_ignores_static_cutover_exclusions.
+# DELETE /api/tasks/bulk: no_exact_progress_ledger.
+# GET /api/tasks/:task_id/remote-workspace/file: recent_replay_not_passing.

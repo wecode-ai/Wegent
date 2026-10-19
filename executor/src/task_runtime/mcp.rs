@@ -23,6 +23,10 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use crate::logging::log_executor_event;
 use crate::protocol::ExecutionRequest;
 
+mod assignment_notifications;
+
+use assignment_notifications::emit_local_assignment_notifications;
+
 use super::{
     BinaryInput, DeliveryCreate, LocalCommentCreate, ProjectCreate, RuntimeTaskAddress,
     TaskRuntime, TaskSearch, TaskUpdate,
@@ -112,6 +116,7 @@ pub(crate) struct SpaceMcpRequestContext {
     auth_token: Option<String>,
     surface: WeworkMcpSurface,
     cloud_collaboration_dispatcher: Option<CloudCollaborationRoundDispatcher>,
+    event_sender: Option<tokio::sync::broadcast::Sender<Value>>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -140,6 +145,7 @@ impl SpaceMcpRequestContext {
             auth_token,
             surface: WeworkMcpSurface::ProjectSpace,
             cloud_collaboration_dispatcher: None,
+            event_sender: None,
         }
     }
 
@@ -150,6 +156,7 @@ impl SpaceMcpRequestContext {
             auth_token,
             surface: WeworkMcpSurface::Notifications,
             cloud_collaboration_dispatcher: None,
+            event_sender: None,
         }
     }
 
@@ -181,6 +188,13 @@ impl SpaceMcpRequestContext {
         dispatcher: Option<CloudCollaborationRoundDispatcher>,
     ) {
         self.cloud_collaboration_dispatcher = dispatcher;
+    }
+
+    pub(crate) fn set_event_sender(
+        &mut self,
+        sender: Option<tokio::sync::broadcast::Sender<Value>>,
+    ) {
+        self.event_sender = sender;
     }
 }
 
@@ -1050,7 +1064,11 @@ async fn call_tool_with_runtime_context(
             });
             match (manager_task_id, plan) {
                 (Ok(manager_task_id), Ok(plan)) => {
-                    runtime.submit_collaboration_round(manager_task_id, plan)
+                    let receipt = runtime.submit_collaboration_round(manager_task_id, plan);
+                    if let Ok(receipt) = &receipt {
+                        emit_local_assignment_notifications(runtime, context, receipt);
+                    }
+                    receipt
                 }
                 (Err(error), _) => Err(super::TaskRuntimeError::Invalid(error)),
                 (_, Err(error)) => Err(error),

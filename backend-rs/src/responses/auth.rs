@@ -41,6 +41,11 @@ pub struct CurrentUser {
     pub id: i32,
     #[allow(dead_code)]
     pub user_name: String,
+    /// `AuthContext.api_key_name`: the authenticating `api_keys.name` for an
+    /// API-key request (`app/core/security.py:get_auth_context`), `None` for a
+    /// JWT/task-token request. `create_response` writes it into the Task CRD's
+    /// `metadata.labels.api_key_name`.
+    pub api_key_name: Option<String>,
 }
 
 pub struct ResponsesUser {
@@ -267,7 +272,6 @@ const API_KEY_COLUMNS: &str = "api_keys.id AS api_keys_id, \
 /// name for the same labeled projection.
 #[derive(Debug)]
 struct ApiKeyReloadRow {
-    #[allow(dead_code)]
     name: String,
     #[allow(dead_code)]
     key_type: String,
@@ -508,12 +512,14 @@ pub async fn get_current_user_flexible(
                 return Ok(CurrentUser {
                     id: auth_id(&user),
                     user_name: user.user_name,
+                    api_key_name: None,
                 });
             }
             if let Some(user) = verify_task_token_user(config, user_reader, &token).await? {
                 return Ok(CurrentUser {
                     id: auth_id(&user),
                     user_name: user.user_name,
+                    api_key_name: None,
                 });
             }
         }
@@ -601,11 +607,15 @@ pub async fn get_current_user_flexible(
         )
         .await
         .map_err(AuthError::dependency)?;
-    let _reload = reload
+    let reload = reload
         .as_ref()
         .map(ApiKeyReloadRow::from_row)
         .transpose()
         .map_err(AuthError::dependency)?;
+
+    // `AuthContext.api_key_name` is `api_key_record.name`; `create_response`
+    // writes it into the Task CRD's `metadata.labels.api_key_name`.
+    let api_key_name = reload.map(|row| row.name);
 
     // Personal key: return the key owner directly.
     if record.key_type == KEY_TYPE_PERSONAL {
@@ -614,6 +624,7 @@ pub async fn get_current_user_flexible(
             Some(user) if user.is_active => Ok(CurrentUser {
                 id: auth_id(&user),
                 user_name: user.user_name,
+                api_key_name,
             }),
             _ => Err(AuthError::UserNotFoundOrInactive),
         };
@@ -641,6 +652,7 @@ pub async fn get_current_user_flexible(
             return Ok(CurrentUser {
                 id: auth_id(&user),
                 user_name: user.user_name,
+                api_key_name,
             });
         }
         // The source auto-creates the missing user and applies default
@@ -671,6 +683,7 @@ pub async fn get_current_user_flexible(
             Some(user) if user.is_active => Ok(CurrentUser {
                 id: auth_id(&user),
                 user_name: user.user_name,
+                api_key_name,
             }),
             _ => Err(AuthError::UserNotFoundOrInactive),
         };

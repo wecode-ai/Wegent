@@ -203,8 +203,11 @@ pub async fn list_user_default_skill_refs<M: Mysql>(
     target_id: &str,
     group_namespace: Option<&str>,
 ) -> MysqlResult<Vec<Value>> {
+    // `kinds.user_id` is an integer column: the source renders the bound value
+    // as the unquoted literal `kinds.user_id = 6582`, so it must not be bound
+    // as a string.
     let bindings: Vec<SkillKindRow> = mysql
-        .fetch_all(user_default_bindings_statement(), (user_id.to_string(),))
+        .fetch_all(user_default_bindings_statement(), (user_id,))
         .await?;
     let mut candidates: Vec<SkillKindRow> = bindings
         .into_iter()
@@ -522,5 +525,26 @@ mod tests {
                 "is_public": true,
             })]
         );
+    }
+
+    /// The recorded statement carries `kinds.user_id = 6582`, an integer
+    /// literal, so the read binds an integer (`kinds.user_id = ?`). A
+    /// stringified id never matched the recorded exchange.
+    #[tokio::test]
+    async fn user_default_binding_read_binds_the_user_id_as_an_integer() {
+        let mysql = crate::sql_test_support::KindQueryCapture::writing();
+        let refs = list_user_default_skill_refs(&mysql, 6582, "user-6582", None)
+            .await
+            .expect("read");
+        assert!(refs.is_empty());
+        let queries = mysql.queries();
+        assert_eq!(queries.len(), 1);
+        assert!(queries[0].sql.contains("kinds.user_id = ?"));
+        assert!(
+            queries[0]
+                .sql
+                .contains("WHERE kinds.user_id = ? AND kinds.kind = 'SkillBinding'")
+        );
+        assert_eq!(queries[0].first_integer, Some(6582));
     }
 }

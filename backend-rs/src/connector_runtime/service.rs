@@ -7,26 +7,57 @@
 //! Ports `ConnectorRuntimeService.list_tools` and the pieces of
 //! `_connected_apps`, `_upstream_tools`, `_tool_from_upstream`, `_server_config`
 //! and `_risk_hints` it exercises.
+use brz_mysql::Mysql;
+
 use crate::apps_installed::db::UserRow;
 use crate::apps_installed::mcp::{self, UpstreamTool};
 use crate::apps_installed::service::{self as apps, ConnectorApp};
+use crate::http_compat::FastApiError;
 
 use super::models::{ConnectorTool, RiskHints, ToolAnnotations, default_input_schema};
 
 /// `list_tools`: every tool of the caller's connected visible apps.
-pub(crate) async fn list_tools(catalog: &[ConnectorApp], user: &UserRow) -> Vec<ConnectorTool> {
+///
+/// The connection lookup of `_connected_apps` runs outside the per-app
+/// `except HTTPException` branch, so a database failure is a 500 rather than a
+/// skipped connector.
+pub(crate) async fn list_tools<M>(
+    mysql: &M,
+    catalog: &[ConnectorApp],
+    user: &UserRow,
+) -> Result<Vec<ConnectorTool>, FastApiError>
+where
+    M: Mysql,
+{
     let mut tools = Vec::new();
-    for app in apps::list_visible_apps(catalog, user) {
-        if !apps::app_connected(app) {
-            continue;
+    let connected = match apps::connected_apps(mysql, catalog, user).await {
+        Ok(connected) => connected,
+        Err(error) => {
+            tracing::error!(%error, "connector authorization lookup failed");
+            return Err(FastApiError::internal());
         }
+    };
+    for app in connected {
         if app.transport == "http" {
             // `_http_tools` projects the app's inline `httpTools` definitions
             // through `ConnectorHttpToolDefinition`; the recorded catalog
             // defines an empty list, so this transport contributes no tools.
             continue;
         }
-        let upstream = match upstream_tools(app, user).await {
+        // `_upstream_tools` wraps `_server_config` and session failures into a
+        // 502 `HTTPException`, which `list_tools` skips.
+        let headers = match apps::session_headers(mysql, app, user).await {
+            Ok(headers) => headers,
+            Err(error) => {
+                tracing::warn!(
+                    connector = %app.slug,
+                    %error,
+                    "skipping unavailable connector during tool discovery"
+                );
+                continue;
+            }
+        };
+        let upstream = match mcp::list_tools_with_headers(&app.mcp_url, &headers).await {
             Ok(upstream) => upstream,
             // `except HTTPException`: an app whose discovery failed is
             // skipped with a warning, not reported to the caller.
@@ -47,15 +78,7 @@ pub(crate) async fn list_tools(catalog: &[ConnectorApp], user: &UserRow) -> Vec<
             tools.push(tool_from_upstream(app, &tool));
         }
     }
-    tools
-}
-
-/// `_upstream_tools`: one MCP session per app, listing every tool page.
-async fn upstream_tools(
-    app: &ConnectorApp,
-    user: &UserRow,
-) -> Result<Vec<UpstreamTool>, mcp::McpError> {
-    mcp::list_tools_with_headers(&app.mcp_url, &apps::session_headers(user)).await
+    Ok(tools)
 }
 
 /// `_tool_from_upstream`: project one upstream tool into a `ConnectorTool`.

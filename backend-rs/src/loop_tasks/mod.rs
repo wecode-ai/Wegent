@@ -9,6 +9,7 @@ pub mod assignments;
 pub mod auth;
 pub mod auth_error;
 pub mod cloud_context;
+pub mod collaborators;
 pub mod http_error;
 pub mod human_work;
 pub mod item_response;

@@ -76,6 +76,19 @@ fn active_project_task_statement_matches_the_recorded_predicate_order() {
     );
 }
 
+/// The internal workspace-archive endpoints' `_get_active_task` calls
+/// `get_task_by_states(states=TaskResource.is_active_query())`, i.e. the active
+/// *and* subscription states, with no owner filter. A single-state list
+/// silently hides subscription tasks (`is_active = 2`) as a 404.
+#[test]
+fn ownerless_active_task_statement_covers_both_active_states() {
+    let sql = active_task_no_owner_statement(TASKS_TABLE);
+    assert!(sql.contains("is_active IN (1, 2)"), "{sql}");
+    assert!(sql.ends_with("LIMIT 1"), "{sql}");
+    assert!(!sql.contains("user_id = ?"), "{sql}");
+    assert!(!sql.contains("client_origin = ?"), "{sql}");
+}
+
 /// The update clears the project link and rewrites the JSON, ordered the way
 /// SQLAlchemy flushes the dirty columns (the mapper's column order:
 /// `json`, `updated_at`, `project_id`).
@@ -272,10 +285,10 @@ async fn mutation_statements_match_the_recorded_single_table_shapes() {
         "{reads:?}"
     );
     assert!(
-        reads[4].contains("`role` = 'ASSISTANT' AND status = 'FAILED'"),
+        reads[4].contains("subtasks.`role` = 'ASSISTANT' AND subtasks.status = 'FAILED'"),
         "{reads:?}"
     );
-    assert!(reads[5].starts_with("SELECT id "), "{reads:?}");
+    assert!(reads[5].starts_with("SELECT subtasks.id "), "{reads:?}");
     assert_eq!(reads.len(), 6, "{reads:?}");
 
     assert!(

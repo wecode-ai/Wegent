@@ -87,16 +87,8 @@ pub(super) async fn authorized_projects<M: Mysql>(
     project_id: Option<i64>,
     workspace_id: Option<i64>,
 ) -> Result<Vec<AuthorizedProject>, brz_mysql::MysqlError> {
-    let mode = if project_id.is_some() {
-        super::ProjectAccessMode::Point
-    } else {
-        super::ProjectAccessMode::List { workspace_id }
-    };
     let rows: Vec<MysqlRow> = mysql
-        .fetch_all(
-            super::project_access_statement(mode, user_id, project_id),
-            (),
-        )
+        .fetch_all(access_sql(user_id, project_id, workspace_id), ())
         .await?;
     rows.into_iter()
         .map(|row| {
@@ -140,6 +132,42 @@ pub(super) async fn authorized_projects<M: Mysql>(
 mod tests {
     use super::*;
     use brz_mysql::Json;
+
+    #[tokio::test]
+    async fn authorized_point_and_list_queries_keep_the_full_access_projection() {
+        for (project_id, workspace_id) in [(Some(1001), None), (None, Some(2001))] {
+            let mysql = crate::sql_test_support::KindQueryCapture::default();
+            assert!(
+                authorized_projects(&mysql, 52, project_id, workspace_id)
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
+            let queries = mysql.queries();
+            assert_eq!(queries.len(), 1);
+            let sql = &queries[0].sql;
+            for column in [
+                "access.workspace_id",
+                "access.workspace_name",
+                "access.workspace_public_id",
+                "access.workspace_priority",
+                "access.direct_priority",
+                "access.inherited_priority",
+                "access.public_priority",
+            ] {
+                assert!(sql.contains(column), "missing access projection: {column}");
+            }
+            assert!(sql.contains("caller.id = 52 AND caller.is_active = true"));
+            assert_eq!(
+                sql.contains("AND loop_items.id = '1001'"),
+                project_id.is_some()
+            );
+            assert_eq!(
+                sql.contains("AND access.workspace_id = 2001"),
+                workspace_id.is_some()
+            );
+        }
+    }
 
     #[test]
     fn cp04_cp07_cp20_guest_response_keeps_parent_navigation_without_space_authority() {

@@ -14,7 +14,8 @@ from app.services.adapters import bot_kinds_service
 router = APIRouter()
 
 
-@router.get("", response_model=BotListResponse)
+# MIGRATION-CANDIDATE(api="GET /api/bots"): remove after final confirmation.
+# @router.get("", response_model=BotListResponse)
 def list_bots(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(10, ge=1, le=100, description="Items per page"),

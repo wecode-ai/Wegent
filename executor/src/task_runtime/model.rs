@@ -430,6 +430,14 @@ pub struct TaskBinding {
     pub workflow_node_id: Option<String>,
     #[serde(default)]
     pub workflow_stage_input: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub human_assignment_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dispatch_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dispatch_round_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignment_id: Option<String>,
     pub binding_type: String,
     pub linked_at: String,
 }

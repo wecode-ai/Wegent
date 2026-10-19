@@ -12,7 +12,7 @@
 //! `DELETE`, and soft-delete the task.
 
 use brz_http_server::StatusCode;
-use brz_mysql::FromMysqlRow;
+use brz_mysql::{FromMysqlCol, FromMysqlRow, Json, MysqlRow};
 use serde_json::Value;
 
 use crate::json_compat::python_json_value;
@@ -23,6 +23,18 @@ use crate::executor_manager::SandboxLookup;
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 use crate::task_store::task_update_timestamp;
+
+/// `SubtaskRole.ASSISTANT` — the only role the metric hooks queue.
+const ASSISTANT_ROLE: &str = "ASSISTANT";
+
+/// Decode one column of the failed-assistant projection positionally. The
+/// projection aliases every column with the resolved physical table name,
+/// which a caller cannot know, so look the column up by its mapper position.
+fn subtask_column<T: FromMysqlCol>(row: &MysqlRow, column: &str) -> brz_mysql::MysqlResult<T> {
+    let index = crate::task_store::subtask_column_index(column)
+        .ok_or_else(|| brz_mysql::MysqlError::ColumnNotFound(column.to_string()))?;
+    row.get_at(index)
+}
 
 /// `_handle_member_leave`'s approved-member probe.
 const APPROVED_MEMBER_QUERY: &str = "SELECT resource_members.id AS resource_members_id \nFROM resource_members \n\
@@ -96,11 +108,14 @@ pub(crate) async fn delete_task(
     cleanup_executor_runtime(state, task_id, user_id, task.user_id).await?;
 
     let updated_at = task_update_timestamp();
-    state
+    let deleted = state
         .task_store
         .mark_task_subtasks_deleted(task_id, task.user_id, &updated_at)
         .await
         .map_err(|error| internal(&error))?;
+    // `queue_bulk_subtask_status_metrics` queued the FAILED ASSISTANT events
+    // inside the session; `_after_commit` publishes them after the commit.
+    let metric_events = queued_metric_events(&deleted);
 
     let payload = mark_task_deleted_payload(&task.json);
     state
@@ -115,7 +130,85 @@ pub(crate) async fn delete_task(
         .execute("COMMIT", ())
         .await
         .map_err(|error| internal(&error))?;
+    publish_queued_metrics(state, &metric_events).await;
     Ok(())
+}
+
+/// `queue_bulk_subtask_status_metrics` (`task_run_metric_hooks.py:199-224`):
+/// each queued FAILED ASSISTANT row becomes one metric event stamped with the
+/// queue-time clock, published with `status=DELETE` (never FAILED) and
+/// `sync_failure=True`.
+fn queued_metric_events(deleted: &crate::task_store::DeletedSubtasks) -> Vec<QueuedMetricEvent> {
+    let mut events = Vec::new();
+    for row in &deleted.failed_assistant {
+        let Ok(role) = subtask_column::<String>(row, "role") else {
+            continue;
+        };
+        if role != ASSISTANT_ROLE {
+            continue;
+        }
+        let Ok(Some(created_at)) =
+            subtask_column::<Option<chrono::NaiveDateTime>>(row, "created_at")
+        else {
+            continue;
+        };
+        let Ok(subtask_id) = subtask_column::<i64>(row, "id") else {
+            continue;
+        };
+        let error_message = subtask_column::<Option<String>>(row, "error_message")
+            .ok()
+            .flatten();
+        let result = subtask_column::<Option<Json<Value>>>(row, "result")
+            .ok()
+            .flatten()
+            .map(|json| json.0);
+        events.push(QueuedMetricEvent {
+            subtask_id,
+            created_at,
+            state_changed_at: deleted.queued_at,
+            message: crate::task_run_metrics::failure_message(
+                error_message.as_deref(),
+                result.as_ref(),
+            ),
+        });
+    }
+    events
+}
+
+/// One queued event awaiting the after-commit publish.
+struct QueuedMetricEvent {
+    subtask_id: i64,
+    created_at: chrono::NaiveDateTime,
+    state_changed_at: chrono::NaiveDateTime,
+    message: Option<String>,
+}
+
+/// `TaskRunMetricHooks._after_commit` on the delete session: hand the queued
+/// events to `TaskRunMetricsStore.record_events` and swallow a store failure,
+/// so a Redis error never changes the committed result.
+async fn publish_queued_metrics(state: &AppState, events: &[QueuedMetricEvent]) {
+    if events.is_empty() {
+        return;
+    }
+    let Some(redis) = state.redis.as_ref() else {
+        return;
+    };
+    let publishable: Vec<crate::task_run_metrics::SubtaskMetricEvent> = events
+        .iter()
+        .map(|event| crate::task_run_metrics::SubtaskMetricEvent {
+            subtask_id: event.subtask_id,
+            created_at: event.created_at,
+            // The source publishes a deleted subtask with `status=DELETE`.
+            failed: false,
+            state_changed_at: event.state_changed_at,
+            message: event.message.clone(),
+            record_total: false,
+            sync_failure: true,
+        })
+        .collect();
+    if let Err(error) = crate::task_run_metrics::record_events(redis, &publishable).await {
+        tracing::warn!(%error, "task run metrics publish failed");
+    }
 }
 
 /// `bulk_delete_tasks`: delete every id, swallowing per-id failures.

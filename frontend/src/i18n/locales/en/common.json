@@ -677,7 +677,7 @@
     "url_placeholder": "Paste the StreamableHttp URL here",
     "url_hint": "Open the DingTalk MCP page, click \"Get MCP Server Config\", then copy the \"StreamableHttp URL\" value and paste it here. You do not need to paste the full JSON config. The URL is stored as a user-scoped encrypted credential.",
     "auth_mode_label": "Authentication",
-    "auth_mode_url": "Personal StreamableHttp URL",
+    "auth_mode_url": "API Key / StreamableHttp URL",
     "auth_mode_oauth": "OAuth 2.0 authorization",
     "oauth_url_label": "MCP OAuth URL",
     "oauth_url_hint": "Paste the OAuth URL shown on the DingTalk MCP page. Wegent completes the authorization and refreshes tokens automatically, so the personal URL expiry no longer applies.",
@@ -695,7 +695,7 @@
     "load_failed": "Failed to load DingTalk configuration",
     "modal": {
       "title": "Configure DingTalk MCP",
-      "description": "No usable {{service}} MCP is available in the current session. Get the StreamableHttp URL first, then save it here.",
+      "description": "No usable {{service}} MCP is available in the current session. Choose API Key or OAuth 2.0 authentication, then complete the configuration here.",
       "steps_intro": "Follow these steps:",
       "step_open_home": "Open the DingTalk MCP page",
       "step_choose_service": "Choose the MCP service related to \"{{service}}\"",

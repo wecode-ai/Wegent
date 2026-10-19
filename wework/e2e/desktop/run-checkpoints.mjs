@@ -66,6 +66,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'temporary-chat': './scenarios/temporary-chat.scenario.mjs',
   'embedded-browser': './scenarios/embedded-browser-agent.scenario.mjs',
   'change-request-status': './scenarios/change-request-status.scenario.mjs',
+  'git-commit-generation': './scenarios/git-commit-generation.scenario.mjs',
   'claude-runtime': './scenarios/claude-runtime.scenario.mjs',
   'local-file-preview': './scenarios/local-file-preview.scenario.mjs',
   'local-harness': './scenarios/local-terminal.scenario.mjs',
@@ -95,6 +96,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'native-window-startup': './scenarios/native-window-startup.scenario.mjs',
   'native-window-chrome': './scenarios/native-window-chrome.scenario.mjs',
   'renderer-storage': './scenarios/renderer-storage.scenario.mjs',
+  'application-menu': './scenarios/application-menu.scenario.mjs',
   'tray-lifecycle': './scenarios/tray-lifecycle.scenario.mjs',
   'project-automation': './scenarios/project-automation.scenario.mjs',
   'project-assignment-notification': './scenarios/project-assignment-notification.scenario.mjs',
@@ -132,6 +134,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'external-content-import': './scenarios/external-content-import.scenario.mjs',
   'send-key-preference': './scenarios/send-key-preference.scenario.mjs',
   'reply-predictions': './scenarios/reply-predictions.scenario.mjs',
+  'reply-prediction-auth': './scenarios/reply-prediction-auth.scenario.mjs',
   'model-settings': './scenarios/model-settings.scenario.mjs',
   'codex-native-catalog': './scenarios/codex-native-catalog.scenario.mjs',
   'system-proxy': './scenarios/system-proxy.scenario.mjs',
@@ -145,6 +148,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'model-settings',
   'codex-native-catalog',
   'reply-predictions',
+  'reply-prediction-auth',
   'collaboration-worktree-policy',
   'cloud-model-recovery',
   'task-model-deletion',
@@ -155,6 +159,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'codex-account-login',
   'cloud-space-mention',
   'change-request-status',
+  'git-commit-generation',
   'claude-runtime',
   'local-file-preview',
   'local-harness',
@@ -201,6 +206,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'native-window-startup',
   'native-window-chrome',
   'renderer-storage',
+  'application-menu',
   'tray-lifecycle',
   'temporary-chat',
   'browser-annotation-core',
@@ -502,7 +508,10 @@ async function prepareSharedHarnessRuntime(appBinary, parentDirectory) {
     const identity = JSON.parse(await readFile(join(extractedRoot, 'runtime.json'), 'utf8'))
     if (
       identity.dshVersion !== runtime.dshVersion ||
-      identity.role !== runtime.role ||
+      !(
+        identity.role === runtime.role ||
+        (Array.isArray(identity.roles) && identity.roles.includes(runtime.role))
+      ) ||
       identity.sourceFingerprint !== runtime.sourceFingerprint
     ) {
       throw new Error(`Bundled DSH runtime identity is invalid: ${runtime.assetName}`)

@@ -37,10 +37,6 @@ from app.schemas.subscription import NotificationChannelInfo
 from app.schemas.subtask_context import AttachmentDetailResponse
 from app.schemas.user import GitTokenOrderUpdate, UserCreate, UserInDB, UserUpdate
 from app.services.adapters.team_kinds import team_kinds_service
-from app.services.admin_password_bootstrap import (
-    get_cached_admin_password_setup_required,
-    raise_admin_password_setup_required,
-)
 from app.services.auth import (
     create_task_token,
     extract_token_from_header,
@@ -188,55 +184,6 @@ async def get_feature_flags(
     )
 
 
-# MIGRATION-CANDIDATE(api="GET /api/users/me"): remove after final confirmation.
-# @router.get("/me", response_model=UserInDB)
-async def read_current_user(
-    db: Session = Depends(get_db),
-    current_user: Optional[User] = Depends(security.get_current_user_optional),
-):
-    """Get current user information.
-
-    For the initial 'admin' user, also returns admin_setup_completed status.
-    """
-    if current_user is None:
-        if get_cached_admin_password_setup_required():
-            raise_admin_password_setup_required()
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing authentication credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    # Check admin setup status only for the initial 'admin' user
-    # This is used by GlobalAdminSetupWizard to show setup wizard on first login
-    admin_setup_completed = None
-    if current_user.user_name == "admin":
-        setup_config = (
-            db.query(SystemConfig)
-            .filter(SystemConfig.config_key == ADMIN_SETUP_CONFIG_KEY)
-            .first()
-        )
-        if setup_config and setup_config.config_value:
-            admin_setup_completed = setup_config.config_value.get("completed", False)
-        else:
-            admin_setup_completed = False
-
-    # Create response with admin_setup_completed field
-    return UserInDB(
-        id=current_user.id,
-        user_name=current_user.user_name,
-        email=current_user.email,
-        is_active=current_user.is_active,
-        git_info=current_user.git_info,
-        preferences=current_user.preferences,
-        role=current_user.role,
-        auth_source=current_user.auth_source,
-        created_at=current_user.created_at,
-        updated_at=current_user.updated_at,
-        admin_setup_completed=admin_setup_completed,
-    )
-
-
 @router.get("/me/wegent-runtime", response_model=WegentRuntimeUserResponse)
 async def read_wegent_runtime_user(
     authorization: Optional[str] = Header(default=None),
@@ -277,7 +224,8 @@ async def read_wegent_runtime_user(
     )
 
 
-@router.post("/me/wegent-runtime-token", response_model=WegentRuntimeAuthTokenResponse)
+# MIGRATION-CANDIDATE(api="POST /api/users/me/wegent-runtime-token"): remove after final confirmation.
+# @router.post("/me/wegent-runtime-token", response_model=WegentRuntimeAuthTokenResponse)
 @trace_async("create_wegent_runtime_auth_token", "users.api")
 async def create_wegent_runtime_auth_token(
     current_user: User = Depends(security.get_current_user),
@@ -484,10 +432,11 @@ async def import_user_runtime_auth_json_from_device(
         ) from exc
 
 
-@router.get(
-    "/me/mcps/providers/{provider_id}/services",
-    response_model=list[MCPProviderServiceConfigResponse],
-)
+# MIGRATION-CANDIDATE(api="GET /api/users/me/mcps/providers/:provider_id/services"): remove after final confirmation.
+# @router.get(
+#     "/me/mcps/providers/{provider_id}/services",
+#     response_model=list[MCPProviderServiceConfigResponse],
+# )
 async def list_mcp_provider_services(
     provider_id: str,
     current_user: User = Depends(security.get_current_user),
@@ -646,10 +595,11 @@ async def reorder_git_tokens(
     )
 
 
-@router.get(
-    "/me/git-accounts/sync-summary",
-    response_model=GitAccountSyncSummary,
-)
+# MIGRATION-CANDIDATE(api="GET /api/users/me/git-accounts/sync-summary"): remove after final confirmation.
+# @router.get(
+#     "/me/git-accounts/sync-summary",
+#     response_model=GitAccountSyncSummary,
+# )
 async def get_git_account_sync_summary(
     current_user: User = Depends(security.get_current_user),
 ) -> GitAccountSyncSummary:
@@ -844,7 +794,8 @@ def _is_ready_attachment_context(context: object) -> bool:
     )
 
 
-@router.get("/quick-access", response_model=QuickAccessResponse)
+# MIGRATION-CANDIDATE(api="GET /api/users/quick-access"): remove after final confirmation.
+# @router.get("/quick-access", response_model=QuickAccessResponse)
 async def get_user_quick_access(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
@@ -940,7 +891,8 @@ def get_user_recent_teams(
     return [_quick_access_team_from_data(team) for team in teams]
 
 
-@router.get("/quick-launch", response_model=QuickLaunchResponse)
+# MIGRATION-CANDIDATE(api="GET /api/users/quick-launch"): remove after final confirmation.
+# @router.get("/quick-launch", response_model=QuickLaunchResponse)
 async def get_user_quick_launch(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
@@ -1125,7 +1077,8 @@ DEFAULT_SLOGAN_TIPS_CONFIG = {
 ADMIN_SETUP_CONFIG_KEY = "admin_setup_completed"
 
 
-@router.get("/welcome-config", response_model=WelcomeConfigResponse)
+# MIGRATION-CANDIDATE(api="GET /api/users/welcome-config"): remove after final confirmation.
+# @router.get("/welcome-config", response_model=WelcomeConfigResponse)
 async def get_welcome_config(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
@@ -1229,7 +1182,8 @@ def parse_default_team_config(config_value: str) -> Optional[DefaultTeamConfig]:
     return DefaultTeamConfig(name=name, namespace=namespace)
 
 
-@router.get("/default-teams", response_model=DefaultTeamsResponse)
+# MIGRATION-CANDIDATE(api="GET /api/users/default-teams"): remove after final confirmation.
+# @router.get("/default-teams", response_model=DefaultTeamsResponse)
 async def get_default_teams(
     _current_user: User = Depends(security.get_current_user),  # noqa: ARG001
 ):

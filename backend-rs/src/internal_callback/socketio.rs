@@ -23,8 +23,21 @@ pub(crate) async fn publish_emit<R: Redis>(
     task_id: i64,
     payload: Value,
 ) -> RedisResult<i64> {
-    let data = python_dumps(&Value::Array(vec![payload]));
     let room = format!("task:{task_id}");
-    let message = emit_message(event, &data, "/chat", &room);
+    publish_emit_in_room(redis, event, &room, payload).await
+}
+
+/// Publish one Socket.IO emit for the `/chat` namespace into an explicit room.
+///
+/// The wrapped emitters address different rooms: result frames use
+/// `task:{task_id}` while task-status and pet frames use `user:{user_id}`.
+pub(crate) async fn publish_emit_in_room<R: Redis>(
+    redis: &R,
+    event: &str,
+    room: &str,
+    payload: Value,
+) -> RedisResult<i64> {
+    let data = python_dumps(&Value::Array(vec![payload]));
+    let message = emit_message(event, &data, "/chat", room);
     redis.publish(SOCKETIO_CHANNEL, message).await
 }

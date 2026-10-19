@@ -5,6 +5,7 @@
 import base64
 import json
 
+import pytest
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -102,3 +103,19 @@ def _parse_runtime_aes_key(key: str) -> bytes:
         return base64.b64decode(key[7:], validate=True)
 
     return key.encode("utf-8")
+
+
+@pytest.fixture(autouse=True)
+def _retained_python_handler_contracts(test_client):
+    import app.api.endpoints.users as endpoint_0
+    from tests.legacy_python_routes import legacy_python_handlers
+
+    with legacy_python_handlers(test_client.app) as register:
+        register(
+            "/api/users/me/wegent-runtime-token",
+            endpoint_0.create_wegent_runtime_auth_token,
+            endpoint_0.router,
+            methods=["POST"],
+            response_model=endpoint_0.WegentRuntimeAuthTokenResponse,
+        )
+        yield

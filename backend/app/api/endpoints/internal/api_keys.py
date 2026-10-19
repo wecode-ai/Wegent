@@ -27,7 +27,8 @@ router = APIRouter(
 )
 
 
-@router.post("/lookup", response_model=APIKeyLookupResponse)
+# MIGRATION-CANDIDATE(api="POST /api/internal/api-keys/lookup"): remove after final confirmation.
+# @router.post("/lookup", response_model=APIKeyLookupResponse)
 @trace_sync("lookup_api_key", "api_keys.internal")
 def lookup_api_key(
     request: APIKeyLookupRequest, db: Session = Depends(get_db)

@@ -29,20 +29,20 @@ const COLLECTOR = `采集智能体-${process.pid}`
 const REVIEWER = '当前设备智能体'
 const GROUP = `并发执行小组-${process.pid}`
 const ISSUE = `核验本地协作调度-${process.pid}`
+const HUMAN_ISSUE = `核验本地人工通知-${process.pid}`
+const HUMAN_TASK = '人工核验通知与任务入口'
 const FIRST_TASK = '采集运行证据'
 const SECOND_TASK = '独立复核结论'
-const THIRD_TASK = '补充最终验收证据'
 const FIRST_INSTRUCTIONS = '采集可复核运行证据，不修改 Issue 状态'
 const SECOND_INSTRUCTIONS = '独立复核第一项工作的目标和证据，不修改 Issue 状态'
-const THIRD_INSTRUCTIONS = '根据第一轮两项结果补充最终验收证据，不修改 Issue 状态'
 const MARKER = `LOCAL_COORDINATE_${process.pid}`
 const COLLECTOR_ROLE_MARKER = `${MARKER}_COLLECTOR_ROLE`
 const REVIEWER_ROLE_MARKER = `${MARKER}_REVIEWER_ROLE`
-const GROUP_RULES = `${MARKER} 协作规则：每轮任务必须独立可验收，全部返回后由负责人继续决策。`
+const GROUP_RULES = `${MARKER} 协作规则：每轮任务必须独立可验收，全部返回后由负责人评估并显式提交待确认。`
 const CALLS = {
   firstPlan: `${MARKER}-plan-1`,
-  secondPlan: `${MARKER}-plan-2`,
   updateStatus: `${MARKER}-update-status`,
+  humanPlan: `${MARKER}-human-plan`,
 }
 
 function scoped(selector) {
@@ -89,31 +89,11 @@ function firstRoundPlan(collectorAgentId, reviewerAgentId) {
   }
 }
 
-function secondRoundPlan(reviewerAgentId) {
-  return {
-    plan: {
-      round_id: `${MARKER}-round-2`,
-      summary: '根据第一轮两项结果补充最终验收证据。',
-      items: [
-        {
-          assignment_id: `${MARKER}-assignment-3`,
-          title: THIRD_TASK,
-          instructions: `${MARKER}。${THIRD_INSTRUCTIONS}。`,
-          assignee_type: 'agent',
-          assignee_id: reviewerAgentId,
-          model_id: MODEL,
-        },
-      ],
-    },
-  }
-}
-
 function updateStatusArguments() {
   return {
-    idempotency_key: `${MARKER}-final-status`,
     status: 'in_review',
-    reason: '第一轮两个并发子任务和第二轮补充任务均已完成，负责人已综合核验。',
-    comment: '负责人已核验两轮三个任务的执行证据，提交 Issue 待确认。',
+    reason: '本轮两项成员任务均已完成，负责人已综合核验。',
+    comment: '负责人已核验本轮两项任务的执行证据，提交 Issue 待确认。',
   }
 }
 
@@ -219,6 +199,17 @@ async function createCoordinateGroup(control, timeoutMs) {
   await control.command('click', `[data-testid="${leaderMemberTestId}"]`)
   await control.command('click', `[data-testid="${collectorTestId}"]`)
   await control.command('click', `[data-testid="${reviewerTestId}"]`)
+  const candidates = JSON.parse(await control.command('snapshot', 'body'))
+  const humanTestIds = candidates.testIds.filter(testId =>
+    testId.startsWith('collaboration-group-create-member-human-')
+  )
+  assert.equal(humanTestIds.length, 1, 'The local group must expose its current human member')
+  const humanSelector = `[data-testid="${humanTestIds[0]}"]`
+  if (
+    (await control.command('getAttribute', humanSelector, { value: 'aria-pressed' })) !== 'true'
+  ) {
+    await control.command('click', humanSelector)
+  }
   await control.command('click', scoped('[data-testid="collaboration-group-create-add-members"]'))
   await control.command('click', scoped('[data-testid="collaboration-group-leader"]'))
   const leaderId = leaderMemberTestId.slice('collaboration-group-create-member-agent-'.length)
@@ -251,14 +242,15 @@ async function createCoordinateGroup(control, timeoutMs) {
     leaderId,
     collectorId: collectorTestId.slice('collaboration-group-create-member-agent-'.length),
     reviewerId: reviewerTestId.slice('collaboration-group-create-member-agent-'.length),
+    humanId: humanTestIds[0].slice('collaboration-group-create-member-human-'.length),
   }
 }
 
-async function createIssueAndAssignGroup(control, timeoutMs) {
+async function createIssueAndAssignGroup(control, timeoutMs, title = ISSUE) {
   await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
   await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
-    value: ISSUE,
+    value: title,
   })
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
     value: `${MARKER}。负责人必须并发分配两个子任务，等待结果后显式更新 Issue 状态。`,
@@ -267,7 +259,7 @@ async function createIssueAndAssignGroup(control, timeoutMs) {
     timeoutMs,
   })
   await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
-    text: ISSUE,
+    text: title,
     timeoutMs,
   })
   await control.command('click', scoped('[data-testid="cloud-todo-detail-assignee"]'))
@@ -322,7 +314,7 @@ async function waitForCompletedMemberTasks(control, expected, timeoutMs) {
         'getText',
         scoped(`[data-testid="cloud-task-activity-task-title-${activityId}"]`)
       )
-      if (![FIRST_TASK, SECOND_TASK, THIRD_TASK].includes(title.trim())) continue
+      if (![FIRST_TASK, SECOND_TASK].includes(title.trim())) continue
       const badgeTestId = `cloud-task-activity-execution-badge-${activityId}`
       if (!snapshot.testIds.includes(badgeTestId)) continue
       const badge = await control.command('getText', `[data-testid="${badgeTestId}"]`)
@@ -359,6 +351,21 @@ async function waitForCondition(read, predicate, timeoutMs, message) {
   assert.fail(`${message}. Last value: ${JSON.stringify(latest)}`)
 }
 
+async function waitForHumanNotification(control, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  let notifications = []
+  while (Date.now() < deadline) {
+    notifications = JSON.parse(await control.command('getSystemNotifications', 'body'))
+    const matches = notifications.filter(notification => notification.body.includes(HUMAN_TASK))
+    if (matches.length) {
+      assert.equal(matches.length, 1, 'A human assignment must emit exactly one notification')
+      return matches[0]
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.fail(`Human assignment produced no global notification: ${JSON.stringify(notifications)}`)
+}
+
 export async function createDesktopScenario({
   captureScreenshot,
   modelResponseTimeoutMs,
@@ -368,28 +375,30 @@ export async function createDesktopScenario({
   let parentStage = 'initial'
   let collectorAgentId = ''
   let reviewerAgentId = ''
+  let humanUserId = ''
+  let humanNotificationUrl = null
+  let releaseHumanDispatch
+  let resolveHumanManagerStarted
+  const humanDispatchRelease = new Promise(resolve => {
+    releaseHumanDispatch = resolve
+  })
+  const humanManagerStarted = new Promise(resolve => {
+    resolveHumanManagerStarted = resolve
+  })
   let managerRuns = 0
   let childRequests = 0
   let childCompletions = 0
   let releaseFirstChild
   let releaseSecondChild
-  let releaseThirdChild
   let resolveBothChildrenStarted
-  let resolveThirdChildStarted
   const firstChildRelease = new Promise(resolve => {
     releaseFirstChild = resolve
   })
   const secondChildRelease = new Promise(resolve => {
     releaseSecondChild = resolve
   })
-  const thirdChildRelease = new Promise(resolve => {
-    releaseThirdChild = resolve
-  })
   const bothChildrenStarted = new Promise(resolve => {
     resolveBothChildrenStarted = resolve
-  })
-  const thirdChildStarted = new Promise(resolve => {
-    resolveThirdChildStarted = resolve
   })
 
   return {
@@ -414,6 +423,34 @@ export async function createDesktopScenario({
         return true
       }
 
+      if (requestText.includes(HUMAN_ISSUE)) {
+        if (requestContainsToolOutput(body, CALLS.humanPlan)) {
+          writeEvents(response, responseId, [assistantMessage('已分配给人工成员，等待其交付。')])
+          return true
+        }
+        const selection = managerToolEvents(body, 'submit_workflow_plan', CALLS.humanPlan, {
+          plan: {
+            round_id: `${MARKER}-human-round`,
+            summary: '由人工成员核验本地通知和任务入口。',
+            items: [
+              {
+                assignment_id: `${MARKER}-human-assignment`,
+                title: HUMAN_TASK,
+                instructions: `${MARKER}。${HUMAN_TASK}。`,
+                assignee_type: 'human',
+                assignee_id: humanUserId,
+              },
+            ],
+          },
+        })
+        if (selection.mode === 'direct') {
+          resolveHumanManagerStarted()
+          await humanDispatchRelease
+        }
+        writeEvents(response, responseId, selection.events)
+        return true
+      }
+
       const isCollectorRequest = requestText.includes(COLLECTOR_ROLE_MARKER)
       const isReviewerRequest = requestText.includes(REVIEWER_ROLE_MARKER)
       const isMemberRequest = isCollectorRequest || isReviewerRequest
@@ -423,9 +460,7 @@ export async function createDesktopScenario({
           ? 1
           : requestText.includes(`任务标题：${SECOND_TASK}`)
             ? 2
-            : requestText.includes(`任务标题：${THIRD_TASK}`)
-              ? 3
-              : 0
+            : 0
         assert.notEqual(childOrdinal, 0, '执行成员请求没有包含负责人分配的任务标题')
         if (isReviewerRequest) {
           assert.equal(
@@ -435,20 +470,13 @@ export async function createDesktopScenario({
           )
         }
         if (childRequests === 2) resolveBothChildrenStarted()
-        if (childOrdinal === 3) resolveThirdChildStarted()
-        await (childOrdinal === 1
-          ? firstChildRelease
-          : childOrdinal === 2
-            ? secondChildRelease
-            : thirdChildRelease)
+        await (childOrdinal === 1 ? firstChildRelease : secondChildRelease)
         childCompletions += 1
         writeEvents(response, responseId, [
           assistantMessage(
             childOrdinal === 1
               ? `${FIRST_TASK} 已完成：证据完整。`
-              : childOrdinal === 2
-                ? `${SECOND_TASK} 已完成：复核通过。`
-                : `${THIRD_TASK} 已完成：验收证据齐全。`
+              : `${SECOND_TASK} 已完成：复核通过。`
           ),
         ])
         return true
@@ -460,16 +488,7 @@ export async function createDesktopScenario({
       )
       if (requestContainsToolOutput(body, CALLS.updateStatus)) {
         parentStage = 'complete'
-        writeEvents(response, responseId, [
-          assistantMessage('负责人已综合两轮执行结果，并将 Issue 提交待确认。'),
-        ])
-        return true
-      }
-      if (requestContainsToolOutput(body, CALLS.secondPlan)) {
-        parentStage = 'second-round-dispatched'
-        writeEvents(response, responseId, [
-          assistantMessage('第二轮任务已交给 Executor，等待独立执行结果。'),
-        ])
+        writeEvents(response, responseId, [assistantMessage(updateStatusArguments().comment)])
         return true
       }
       if (requestContainsToolOutput(body, CALLS.firstPlan)) {
@@ -500,30 +519,14 @@ export async function createDesktopScenario({
       }
 
       if (parentStage === 'first-round-dispatched') {
-        assert.ok(
-          requestText.includes(`${FIRST_TASK} 已完成：证据完整。`) &&
-            requestText.includes(`${SECOND_TASK} 已完成：复核通过。`),
-          '第一轮 barrier 后的新负责人运行没有收到两项执行结果'
+        assert.equal(requestContainsToolOutput(body, CALLS.firstPlan), false)
+        assert.equal(
+          requestText.includes(CALLS.firstPlan),
+          false,
+          '负责人必须使用新会话，不能复用上一轮工具历史'
         )
-        const selection = managerToolEvents(
-          body,
-          'submit_workflow_plan',
-          CALLS.secondPlan,
-          secondRoundPlan(reviewerAgentId)
-        )
-        if (selection.mode === 'direct') {
-          managerRuns += 1
-          parentStage = 'second-round-dispatched'
-        }
-        writeEvents(response, responseId, selection.events)
-        return true
-      }
-
-      if (parentStage === 'second-round-dispatched') {
-        assert.ok(
-          requestText.includes(`${THIRD_TASK} 已完成：验收证据齐全。`),
-          '第二轮 barrier 后的新负责人运行没有收到执行结果'
-        )
+        assert.ok(requestText.includes(`${FIRST_TASK} 已完成：证据完整。`))
+        assert.ok(requestText.includes(`${SECOND_TASK} 已完成：复核通过。`))
         const selection = managerToolEvents(
           body,
           'update_issue_status',
@@ -574,6 +577,7 @@ export async function createDesktopScenario({
       const group = await createCoordinateGroup(control, uiTimeoutMs)
       collectorAgentId = group.collectorId
       reviewerAgentId = group.reviewerId
+      humanUserId = group.humanId
       await captureScreenshot(control, 'local-coordinate-02-default-device-in-group.png', CONTENT)
       await createIssueAndAssignGroup(control, uiTimeoutMs)
 
@@ -621,44 +625,57 @@ export async function createDesktopScenario({
       await captureScreenshot(control, 'local-coordinate-04-one-member-task-finished.png', CONTENT)
 
       releaseSecondChild()
-      await waitForPromise(
-        thirdChildStarted,
-        modelResponseTimeoutMs,
-        '第一轮并发子任务完成后，同一负责人没有继续分配第二轮任务'
-      )
-      await waitForActivityText(control, THIRD_TASK, modelResponseTimeoutMs)
       await waitForCompletedMemberTasks(control, 2, modelResponseTimeoutMs)
-      assert.equal(
-        await control.command('getValue', scoped('[data-testid="cloud-todo-detail-status"]')),
-        'in_progress',
-        '第二轮执行完成前 Issue 状态被错误迁移'
-      )
-      assert.equal(parentStage, 'second-round-dispatched', '负责人没有进入第二轮 barrier')
-      const secondRoundEventTestId = await waitForTestIdByText(
-        control,
-        scoped('[data-testid="cloud-task-activity-list"]'),
-        'cloud-task-manager-event-',
-        THIRD_TASK,
-        modelResponseTimeoutMs
-      )
-      await control.command('scrollIntoView', `[data-testid="${secondRoundEventTestId}"]`)
-      await captureScreenshot(control, 'local-coordinate-05-manager-second-round.png', CONTENT)
-
-      releaseThirdChild()
-      await waitForCompletedMemberTasks(control, 3, modelResponseTimeoutMs)
       await waitForIssueStatus(control, 'in_review', modelResponseTimeoutMs)
-      await waitForActivityText(control, '待确认', modelResponseTimeoutMs)
       await waitForCondition(
         () => parentStage,
         value => value === 'complete',
         modelResponseTimeoutMs,
-        '负责人未在成员完成后继续运行并完成显式决策'
+        '本轮结果到齐后负责人没有恢复并显式提交待确认'
       )
-      assert.equal(parentStage, 'complete', '负责人未在成员完成后继续运行并完成显式决策')
-      assert.equal(managerRuns, 3, 'Executor 没有为两次 barrier 各启动一次新的负责人运行')
-      assert.equal(childRequests, 3, '负责人没有按两轮启动三个子任务')
-      assert.equal(childCompletions, 3, '两轮三个子任务没有全部完成')
-      await captureScreenshot(control, 'local-coordinate-06-manager-status-decision.png', CONTENT)
+      assert.equal(managerRuns, 2, '本轮 barrier 后应恰好启动一次新的负责人运行')
+      assert.equal(childRequests, 2, '应仅启动最初派发的两个成员任务')
+      assert.equal(childCompletions, 2, '两个成员任务都应完成')
+      await captureScreenshot(
+        control,
+        'local-coordinate-05-agent-owner-awaiting-review.png',
+        CONTENT
+      )
+
+      await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
+      await createIssueAndAssignGroup(control, uiTimeoutMs, HUMAN_ISSUE)
+      await waitForPromise(
+        humanManagerStarted,
+        modelResponseTimeoutMs,
+        'The local coordinator did not prepare a human assignment'
+      )
+      await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
+      await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('clearSystemNotifications', 'body')
+      releaseHumanDispatch()
+      const notification = await waitForHumanNotification(control, modelResponseTimeoutMs)
+      humanNotificationUrl = notification.url
+      assert.match(humanNotificationUrl, /^wework:\/\/boards\/local\/[^/]+\/issues\/[^/]+$/)
+      await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('activateSystemNotification', 'body', { value: humanNotificationUrl })
+      await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
+        text: HUMAN_ISSUE,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', scoped('[data-testid="cloud-todo-personal-task-start"]'), {
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(
+        control,
+        'local-coordinate-07-human-notification-opened-issue.png',
+        CONTENT
+      )
     },
 
     diagnostics() {
@@ -669,6 +686,7 @@ export async function createDesktopScenario({
         issue: ISSUE,
         managerRuns,
         parentStage,
+        humanNotificationUrl,
       }
     },
   }

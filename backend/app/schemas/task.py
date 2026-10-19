@@ -9,8 +9,6 @@ from typing import Any, List, Optional
 from pydantic import BaseModel, Field, model_validator
 
 from app.core.constants import CLIENT_ORIGIN_FRONTEND, SUPPORTED_CLIENT_ORIGINS
-from app.schemas.kind import SkillRefMeta
-from app.schemas.subtask import SubtaskWithBot
 from app.schemas.team import TeamInDB
 from app.schemas.user import UserInDB
 
@@ -211,27 +209,6 @@ class TaskDetail(BaseModel):
         from_attributes = True
 
 
-class TaskRuntimeActiveStream(BaseModel):
-    """Lightweight active stream checkpoint for runtime consistency checks."""
-
-    subtask_id: int
-    cursor: int = 0
-    last_activity_at: Optional[datetime] = None
-
-
-class TaskRuntimeCheck(BaseModel):
-    """Lightweight task runtime checkpoint.
-
-    Message content is intentionally excluded and recovered through WebSocket
-    join/resume only.
-    """
-
-    task_id: int
-    task_status: TaskStatus
-    status_updated_at: Optional[datetime] = None
-    active_stream: Optional[TaskRuntimeActiveStream] = None
-
-
 class TaskListResponse(BaseModel):
     """Task paginated response model"""
 
@@ -360,22 +337,6 @@ class PipelineStageInfo(BaseModel):
     current_stage_name: str  # Name of current stage (bot name)
     is_pending_confirmation: bool  # Whether waiting for user confirmation
     stages: list[dict]  # List of {index, name, require_confirmation, status}
-
-
-class TaskSkillsResponse(BaseModel):
-    """Response for GET /tasks/{task_id}/skills endpoint.
-
-    Returns all skills associated with a task through the chain:
-    task → team → bots → ghosts → skills
-    """
-
-    task_id: int
-    team_id: Optional[int] = None
-    team_namespace: str = "default"
-    skills: List[str] = []  # All bot skills (deduplicated)
-    preload_skills: List[str] = []  # Skills to preload
-    skill_refs: dict[str, SkillRefMeta] = {}
-    preload_skill_refs: dict[str, SkillRefMeta] = {}
 
 
 class PromptDraftGenerateRequest(BaseModel):

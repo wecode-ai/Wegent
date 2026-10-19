@@ -141,9 +141,9 @@ pub(crate) fn current_user_response(
 }
 
 /// The `UserPreferences`-modeled preference keys the response echoes.
-/// Dynamic-keyed objects (`wework_project_work_preferences`,
-/// `runtime_configs`, `options`) echo their stored JSON verbatim through
-/// [`brz_json::RawJson`].
+/// Dynamic-keyed objects (`wework_project_work_preferences`, `options`) echo
+/// their stored JSON verbatim through [`brz_json::RawJson`];
+/// `runtime_configs` is re-materialized from its declared nested model.
 #[derive(Debug, Default, Deserialize)]
 struct EchoedPreferences {
     #[serde(default)]
@@ -175,7 +175,7 @@ struct EchoedPreferences {
     #[serde(default)]
     wework_project_work_preferences: Option<brz_json::RawJson>,
     #[serde(default)]
-    runtime_configs: Option<brz_json::RawJson>,
+    runtime_configs: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 /// `MCPProviderKeys` (`extra="allow"`): the three legacy provider-key fields
@@ -322,7 +322,7 @@ struct PreferencesResponse {
     #[serde(flatten)]
     extra: crate::user_profile::ErasedFields,
     wework_project_work_preferences: brz_json::RawJson,
-    runtime_configs: brz_json::RawJson,
+    runtime_configs: serde_json::Value,
 }
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -379,8 +379,33 @@ fn preferences_view(
         wework_project_work_preferences: source
             .wework_project_work_preferences
             .unwrap_or_else(empty_object_echo),
-        runtime_configs: source.runtime_configs.unwrap_or_else(empty_object_echo),
+        runtime_configs: runtime_configs_view(source.runtime_configs),
     })
+}
+
+/// `runtime_configs: dict[str, UserRuntimeConfigPreference]`: every stored
+/// runtime document is validated against the declared model, so only
+/// `use_user_config` (default `false`) is rendered and unknown nested keys
+/// such as `use_proxy` are dropped. Entries keep the stored document order.
+fn runtime_configs_view(
+    configs: Option<serde_json::Map<String, serde_json::Value>>,
+) -> serde_json::Value {
+    let Some(configs) = configs else {
+        return serde_json::Value::Object(serde_json::Map::new());
+    };
+    let mut rendered = serde_json::Map::new();
+    for (runtime, config) in configs {
+        let use_user_config = config
+            .as_object()
+            .and_then(|object| object.get("use_user_config"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        rendered.insert(
+            runtime,
+            serde_json::json!({ "use_user_config": use_user_config }),
+        );
+    }
+    serde_json::Value::Object(rendered)
 }
 
 /// The `{}` document for a schema-defaulted nested dict field
@@ -627,6 +652,19 @@ mod tests {
         assert_eq!(
             body["preferences"]["runtime_configs"]["r"]["use_user_config"],
             json!(true)
+        );
+    }
+
+    /// `UserRuntimeConfigPreference` declares only `use_user_config`
+    /// (default `false`), so a stored document's extra keys (the persisted
+    /// `use_proxy` flag) never reach the response.
+    #[test]
+    fn runtime_configs_drop_unknown_keys() {
+        let preferences = r#"{"runtime_configs":{"codex":{"use_user_config":false,"use_proxy":false},"claude":{"use_proxy":true}}}"#;
+        let body = serde_json::to_value(user_in_db_response(&user_row(preferences))).unwrap();
+        assert_eq!(
+            serde_json::to_string(&body["preferences"]["runtime_configs"]).unwrap(),
+            r#"{"codex":{"use_user_config":false},"claude":{"use_user_config":false}}"#
         );
     }
 

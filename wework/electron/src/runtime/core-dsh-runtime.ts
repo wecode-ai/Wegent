@@ -73,7 +73,8 @@ export async function resetCoreDshRuntime(dataDirectory: string): Promise<void> 
 
 interface RuntimeIdentity {
   dshVersion: string
-  role: string
+  role?: string
+  roles?: string[]
   sourceFingerprint: string
 }
 
@@ -262,10 +263,11 @@ export async function selectBundledDshRuntimeMatching(
 ): Promise<BundledDshRuntime> {
   const absoluteRoot = resolve(root)
   const roots = await runtimeDirectories(absoluteRoot)
-  const candidates = (await Promise.all(roots.map(candidate => readRuntime(candidate)))).filter(
+  const candidates = (
+    await Promise.all(roots.map(candidate => readRuntime(candidate, role)))
+  ).filter(
     (runtime): runtime is BundledDshRuntime =>
       runtime !== null &&
-      runtime.role === role &&
       semver.satisfies(runtime.version, versionRequirement, { includePrerelease: true })
   )
   const selected = candidates.sort((left, right) => semver.rcompare(left.version, right.version))[0]
@@ -558,7 +560,7 @@ async function runtimeDirectories(root: string): Promise<string[]> {
         fingerprint => typeof fingerprint === 'string' && /^[0-9a-f]{64}$/i.test(fingerprint)
       )
     ) {
-      return fingerprints.map(fingerprint => join(root, fingerprint as string))
+      return [...new Set(fingerprints)].map(fingerprint => join(root, fingerprint as string))
     }
   } catch {
     // Fall back to direct-runtime metadata or directory discovery.
@@ -577,14 +579,17 @@ async function isRuntimeRoot(root: string): Promise<boolean> {
   }
 }
 
-async function readRuntime(root: string): Promise<BundledDshRuntime | null> {
+async function readRuntime(root: string, role: string): Promise<BundledDshRuntime | null> {
   try {
     const identity = JSON.parse(
       await readFile(join(root, 'runtime.json'), 'utf8')
     ) as RuntimeIdentity
     if (
       typeof identity.dshVersion !== 'string' ||
-      typeof identity.role !== 'string' ||
+      !(
+        identity.role === role ||
+        (Array.isArray(identity.roles) && identity.roles.includes(role))
+      ) ||
       typeof identity.sourceFingerprint !== 'string' ||
       !/^[0-9a-f]{64}$/i.test(identity.sourceFingerprint)
     ) {
@@ -600,7 +605,7 @@ async function readRuntime(root: string): Promise<BundledDshRuntime | null> {
     return {
       root,
       version: identity.dshVersion,
-      role: identity.role,
+      role,
       sourceFingerprint: identity.sourceFingerprint,
       entry,
       pluginsRoot: join(root, 'plugins'),

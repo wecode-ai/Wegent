@@ -11,8 +11,7 @@
 //!   (`app/services/attachment/storage_factory.py`); a deployment can point it
 //!   at a MinIO/S3 backend through a deployment-specific implementation;
 //! - a best-effort image upload for accepted image types
-//!   (`app/services/media/weibo_image_upload.py` + the internal signing in
-//!   `app/services/tauth.py`).
+//!   through the configured application-owned media service.
 //!
 //! [`AttachmentUploadBackend`] carries that split without putting internal
 //! media or object-store knowledge in this crate, mirroring
@@ -24,7 +23,7 @@ use async_trait::async_trait;
 /// The metadata the source image upload produces.
 #[derive(Debug, Clone)]
 pub struct ImagePid {
-    /// The reusable Weibo picture id (`image_pid`).
+    /// The reusable picture id (`image_pid`).
     pub pid: String,
 }
 
@@ -65,6 +64,16 @@ impl std::fmt::Display for UploadBackendError {
 /// The configured storage backend plus the image-upload capability.
 #[async_trait]
 pub trait AttachmentUploadBackend: Send + Sync {
+    /// Provider label stored alongside a successfully uploaded image id.
+    fn image_pid_source(&self) -> &'static str {
+        "image_upload"
+    }
+
+    /// Provider label for video metadata whose bytes are stored externally.
+    fn video_metadata_storage_backend(&self) -> &'static str {
+        "external"
+    }
+
     /// `StorageBackend.backend_type`: `"mysql"` keeps bytes in
     /// `subtask_contexts.binary_data`; any other value stores them externally.
     fn backend_type(&self) -> &str;
@@ -84,6 +93,12 @@ pub trait AttachmentUploadBackend: Send + Sync {
     /// The source image upload; `None` when the content is not a
     /// supported image or the upload fails (the source's best-effort failure).
     async fn upload_image_pid(&self, request: ImageUploadRequest<'_>) -> Option<ImagePid>;
+
+    /// `StorageBackend.delete`: remove one stored object. `Ok(false)` marks a
+    /// failed removal that the source logs without blocking a row deletion;
+    /// the MySQL backend keeps the bytes in the row, so it has nothing to
+    /// remove and reports success.
+    async fn delete_object(&self, key: &str) -> Result<bool, UploadBackendError>;
 }
 
 /// The open-source default: `ATTACHMENT_STORAGE_BACKEND=mysql` and no image
@@ -109,5 +124,9 @@ impl AttachmentUploadBackend for MySqlStorageBackend {
 
     async fn upload_image_pid(&self, _request: ImageUploadRequest<'_>) -> Option<ImagePid> {
         None
+    }
+
+    async fn delete_object(&self, _key: &str) -> Result<bool, UploadBackendError> {
+        Ok(true)
     }
 }

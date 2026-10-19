@@ -227,7 +227,8 @@ def get_project_endpoint(
     return project
 
 
-@router.put("/{project_id}", response_model=ProjectResponse)
+# MIGRATION-CANDIDATE(api="PUT /api/projects/:project_id"): remove after final confirmation.
+# @router.put("/{project_id}", response_model=ProjectResponse)
 def update_project_endpoint(
     project_id: int = Path(..., description="Project ID"),
     project_update: ProjectUpdate = Body(...),

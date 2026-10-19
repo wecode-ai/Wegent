@@ -38,7 +38,7 @@ const {
   prepareLockPath,
 } = resolveHarnessRuntimeCachePaths(root)
 const sharedFiles = ['.npmrc', 'pnpm-workspace.yaml']
-const archiveFormatVersion = 'dsh-runtime-tar-gzip-v9'
+const archiveFormatVersion = 'dsh-runtime-tar-gzip-v10'
 const materializeRequested = process.argv.includes('--materialize')
 const skipRemoteReuse = process.env.WEWORK_HARNESS_RUNTIME_SKIP_REMOTE_REUSE === '1'
 const baseUrl = (
@@ -132,28 +132,24 @@ async function runtimeSources() {
       ) {
         throw new Error(`${directory}/package.json must declare unique Wework runtime roles`)
       }
-      return roles.map(role => ({
+      return {
         dshVersion,
-        role,
-        runtimeRoot,
+        roles,
         entries: [
           { name: 'package.json', content: packageContent },
           { name: 'pnpm-lock.yaml', content: lockContent },
           ...sharedEntries,
           ...pluginEntries,
         ],
-        pluginFiles,
-      }))
+      }
     })
   )
-  return sources.flat()
+  return sources
 }
 
 function runtimeIdentity(runtime) {
   const sourceFingerprint = createHash('sha256')
     .update(archiveFormatVersion)
-    .update('\0')
-    .update(runtime.role)
     .update('\0')
     .update(process.versions.modules)
     .update('\0')
@@ -178,7 +174,6 @@ function validateDescriptor(descriptor, runtime) {
   const downloadUrl = `${baseUrl}/${runtime.assetName}`
   if (
     descriptor.dshVersion !== runtime.dshVersion ||
-    descriptor.role !== runtime.role ||
     descriptor.sourceFingerprint !== runtime.sourceFingerprint ||
     descriptor.assetName !== runtime.assetName ||
     descriptor.downloadUrl !== downloadUrl ||
@@ -340,7 +335,7 @@ async function buildRuntime(runtime) {
       `${JSON.stringify(
         {
           dshVersion: runtime.dshVersion,
-          role: runtime.role,
+          roles: runtime.roles,
           sourceFingerprint: runtime.sourceFingerprint,
         },
         null,
@@ -363,7 +358,6 @@ async function buildRuntime(runtime) {
     )
     const descriptor = {
       dshVersion: runtime.dshVersion,
-      role: runtime.role,
       sourceFingerprint: runtime.sourceFingerprint,
       archiveSha256: await sha256(temporaryArchive),
       archiveBytes: (await stat(temporaryArchive)).size,
@@ -418,18 +412,19 @@ try {
         if (materializeRequested) {
           await materializeRuntime(runtime, descriptor)
         }
-        return descriptor
+        return runtime.roles.map(role => ({ ...descriptor, role }))
       })
     )
+    const catalog = { runtimes: descriptors.flat() }
 
     await resetTargetDirectory()
-    await writeFile(catalogPath, `${JSON.stringify({ runtimes: descriptors }, null, 2)}\n`)
+    await writeFile(catalogPath, `${JSON.stringify(catalog, null, 2)}\n`)
     if (materializeRequested) {
       await mkdir(materializedRoot, { recursive: true })
-      await pruneMaterializedRuntimes(descriptors)
+      await pruneMaterializedRuntimes(catalog.runtimes)
       await writeFile(
         path.join(materializedRoot, 'runtimes.json'),
-        `${JSON.stringify({ runtimes: descriptors }, null, 2)}\n`
+        `${JSON.stringify(catalog, null, 2)}\n`
       )
       console.log(`Harness runtime root: ${materializedRoot}`)
     }
