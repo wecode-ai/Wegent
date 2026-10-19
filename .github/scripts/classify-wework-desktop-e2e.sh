@@ -21,6 +21,7 @@ core_segments=(
   collaboration-local-group-cancellation
   collaboration-issue-comment-mention
   collaboration-issue-comment-notification
+  collaboration-issue-attachment-preview
   cloud-space-mention
   priority-filter
   external-content-import
@@ -178,7 +179,7 @@ core_shards=(
   project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,collaboration-local-group-coordinate,collaboration-human-round-resume
   resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-task-discovery,collaboration-app-queue-identity,collaboration-issue-archive,collaboration-local-group-cancellation
   workspace-attachments,automation-lifecycle,drawing-attachment
-  project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention
+  project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention,collaboration-issue-attachment-preview
   rendering-extensions,transcript-sync,background-terminals
   runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification
@@ -736,6 +737,10 @@ classify_wework_path() {
       select_target "core:collaboration-issue-comment-notification"
       return
       ;;
+    wework/e2e/desktop/scenarios/collaboration-issue-attachment-preview.scenario.mjs)
+      select_target "core:collaboration-issue-attachment-preview"
+      return
+      ;;
     wework/src/features/todo/TaskBoardView* | \
       wework/src/features/workbench/runtimeTaskArchive* | \
       wework/e2e/desktop/scenarios/task-board-bulk-actions.scenario.mjs)
@@ -1290,12 +1295,17 @@ classify_path() {
       select_collaboration_dispatch_checkpoints
       select_target "core:collaboration-issue-comment-mention"
       select_target "core:collaboration-issue-comment-notification"
+      select_target "core:collaboration-issue-attachment-preview"
       ;;
     executor/src/server/codex_model_catalog*.rs)
       select_target "core:codex-native-catalog"
       ;;
     executor/* | packages/chat-core/* | package.json | pnpm-lock.yaml | pnpm-workspace.yaml)
       select_all_desktop_suites
+      ;;
+    backend/app/api/endpoints/deliveries.py | \
+      backend/tests/api/test_deliveries_api.py)
+      select_target "core:collaboration-issue-attachment-preview"
       ;;
     backend-rs/* | backend-rs/** | \
       wework/e2e/desktop/modules/cloud-environment.mjs | \
