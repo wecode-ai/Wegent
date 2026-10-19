@@ -3,8 +3,17 @@ import { createElement, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { RuntimeTaskAddress } from '@/types/api'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
-import { clearRuntimeConversationCacheForTests } from '@/features/workbench/runtimeConversationCache'
-import { resetRuntimeConversationQueueControllersForTests } from '@/features/workbench/runtimeConversationQueueController'
+import {
+  cacheRuntimeConversationQueuedMessages,
+  cacheRuntimeConversationQueuePaused,
+  clearRuntimeConversationCacheForTests,
+  getRuntimeConversationQueuedMessages,
+  getRuntimeConversationQueuePaused,
+} from '@/features/workbench/runtimeConversationCache'
+import {
+  getRuntimeConversationQueueController,
+  resetRuntimeConversationQueueControllersForTests,
+} from '@/features/workbench/runtimeConversationQueueController'
 import {
   RuntimeTaskLifecycleProvider,
   RuntimeTaskLifecycleStore,
@@ -14,6 +23,7 @@ import { useWorkbenchPaneSession } from './useWorkbenchPaneSession'
 const mocks = vi.hoisted(() => ({
   context: {} as Record<string, unknown>,
   send: vi.fn(),
+  cancel: vi.fn(),
   setInput: vi.fn(),
   resetAttachments: vi.fn(),
   setError: vi.fn(),
@@ -48,6 +58,7 @@ let lifecycleStore: RuntimeTaskLifecycleStore
 beforeEach(() => {
   vi.clearAllMocks()
   mocks.send.mockResolvedValue(true)
+  mocks.cancel.mockResolvedValue(true)
   lifecycleStore = new RuntimeTaskLifecycleStore('pane-continuation-test')
   lifecycleStore.syncRuntimeTask(address, {
     taskId: address.taskId,
@@ -76,6 +87,7 @@ beforeEach(() => {
       setComposerErrorForScope: mocks.setError,
     },
     sendRuntimePaneMessage: mocks.send,
+    cancelRuntimePaneTask: mocks.cancel,
     getRuntimeGoal: vi.fn().mockResolvedValue({ accepted: false }),
     loadRuntimeTranscriptForPane: vi.fn().mockResolvedValue({ messages: [], turns: [] }),
     refreshWorkLists: vi.fn().mockResolvedValue(undefined),
@@ -209,4 +221,71 @@ describe('pane continuation without composer submission', () => {
 
     expect(mocks.send).not.toHaveBeenCalled()
   })
+})
+
+describe('composer cancellation rollback', () => {
+  test.each([
+    { pendingResume: false, outcome: 'rejected' },
+    { pendingResume: true, outcome: 'rejected' },
+    { pendingResume: true, outcome: 'thrown' },
+    { pendingResume: true, outcome: 'accepted' },
+  ] as const)(
+    'preserves queue intent after $outcome cancellation (pendingResume=$pendingResume)',
+    async ({ pendingResume, outcome }) => {
+      const queuedMessage = {
+        id: 'preserved-follow-up',
+        content: 'Continue the queued work',
+        status: 'queued' as const,
+        createdAt: '2026-10-19T00:00:00Z',
+      }
+      cacheRuntimeConversationQueuePaused(address, true)
+      cacheRuntimeConversationQueuedMessages(address, [queuedMessage])
+      if (pendingResume) {
+        getRuntimeConversationQueueController(address).resumeAfterTurn(
+          lifecycleStore.getTask(address)
+        )
+      }
+      lifecycleStore.turnStarted(address, 'manual-turn')
+      const { result, unmount } = await renderSession()
+      if (outcome === 'thrown') {
+        mocks.cancel.mockRejectedValue(new Error('executor offline'))
+      } else {
+        mocks.cancel.mockResolvedValue(outcome === 'accepted')
+      }
+
+      await act(async () => {
+        const stopping = result.current.pauseCurrentResponse()
+        if (outcome === 'thrown') await expect(stopping).rejects.toThrow('executor offline')
+        else await stopping
+      })
+
+      expect(mocks.cancel).toHaveBeenCalledExactlyOnceWith(address)
+      expect(result.current.queuedMessagesPaused).toBe(true)
+      expect(getRuntimeConversationQueuedMessages(address)).toEqual([queuedMessage])
+      expect(mocks.send).not.toHaveBeenCalled()
+
+      unmount()
+      await act(async () => {
+        lifecycleStore.turnSettled(
+          address,
+          'manual-turn',
+          outcome === 'accepted' ? 'cancelled' : 'succeeded'
+        )
+        lifecycleStore.executorSettled(address)
+      })
+
+      if (pendingResume && outcome !== 'accepted') {
+        await waitFor(() => expect(mocks.send).toHaveBeenCalledOnce())
+        expect(mocks.send).toHaveBeenCalledWith(
+          expect.objectContaining({ address, clientUserMessageId: queuedMessage.id }),
+          expect.any(Object)
+        )
+        expect(getRuntimeConversationQueuePaused(address)).toBe(false)
+      } else {
+        expect(getRuntimeConversationQueuePaused(address)).toBe(true)
+        expect(getRuntimeConversationQueuedMessages(address)).toEqual([queuedMessage])
+        expect(mocks.send).not.toHaveBeenCalled()
+      }
+    }
+  )
 })

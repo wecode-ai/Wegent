@@ -2779,6 +2779,7 @@ export function useWorkbenchPaneSession({
     })
     let accepted: boolean | null = null
     let queuePauseRequested = false
+    let restoreQueue: (() => void) | undefined
     let abortReason: 'goal-pause-rejected' | null = null
     try {
       if (goal?.status === 'active' || taskGoalStatus === 'active') {
@@ -2789,24 +2790,18 @@ export function useWorkbenchPaneSession({
         }
       }
 
-      const shouldPauseQueue = queuedMessages.some(message => message.status === 'queued')
-      queuePauseRequested = shouldPauseQueue
-      if (shouldPauseQueue) {
-        queueController?.cancelResumeAfterTurn()
-        setQueuedMessagesPaused(true)
-      }
+      restoreQueue = queueController?.pauseForCancellation()
+      queuePauseRequested = getRuntimeConversationQueuePausedByKey(
+        runtimeConversationKey(currentRuntimeTask)
+      )
       const cancelled = await cancelRuntimePaneTask(currentRuntimeTask)
       accepted = cancelled
-      if (!cancelled) {
-        if (shouldPauseQueue) {
-          setQueuedMessagesPaused(false)
-        }
-        return
-      }
+      if (!cancelled) return
 
       optimisticallyInterruptRuntimeConversation(currentRuntimeTask)
       void refreshWorkLists()
     } finally {
+      if (accepted !== true) restoreQueue?.()
       logRuntimeQueueStage(currentRuntimeTask, 'queue-stop-result', {
         source: 'composer',
         accepted,
@@ -2819,9 +2814,7 @@ export function useWorkbenchPaneSession({
     currentRuntimeTask,
     goal?.status,
     queueController,
-    queuedMessages,
     refreshWorkLists,
-    setQueuedMessagesPaused,
     taskGoalStatus,
     updateCurrentGoalStatus,
   ])

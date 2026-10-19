@@ -785,7 +785,14 @@ export function useWorkbenchRuntimeMessaging({
           return false
         }
         lifecycleStore.stopRequested(address)
-        await refreshWorkLists()
+        try {
+          await refreshWorkLists()
+        } catch (error) {
+          console.warn('[Wework] Runtime cancellation accepted but work list refresh failed', {
+            taskId: address.taskId,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        }
         return true
       } catch (error) {
         reportError(
