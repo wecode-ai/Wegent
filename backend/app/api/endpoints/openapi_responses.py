@@ -17,6 +17,10 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, Optional
 
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
+
 from app.api.dependencies import get_db
 from app.api.endpoints import wework_api
 from app.core import security
@@ -56,10 +60,6 @@ from app.services.openapi.output_builder import (
 from app.services.rag.sources import ExternalRefValidationError
 from app.services.readers.kinds import KindType, kindReader
 from app.stores.tasks import subtask_store, task_access_store, task_store
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
-from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
-
 from shared.db.capability_reference import resolve_model_kind
 from shared.telemetry.decorators import (
     add_span_event,
@@ -725,7 +725,6 @@ async def _create_non_streaming_response_unified(
     from app.services.execution import execution_dispatcher
     from app.services.execution.emitters import SSEResultEmitter
     from app.services.openapi.chat_session import setup_chat_session
-
     from shared.models import EventType
 
     # Set up chat session (creates task and subtasks)
@@ -1081,7 +1080,6 @@ async def _create_streaming_response_unified(
     from app.services.execution import execution_dispatcher
     from app.services.openapi.chat_session import setup_chat_session
     from app.services.openapi.streaming import streaming_service
-
     from shared.models import EventType
 
     # Set up chat session (creates task and subtasks)

@@ -10,6 +10,11 @@ from datetime import datetime
 from typing import Annotated, Literal, Optional
 from urllib.parse import quote
 
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
+
 from app.api.dependencies import get_db, with_task_telemetry
 from app.api.endpoints.adapter.attachments import _build_content_disposition
 from app.core import security
@@ -53,11 +58,6 @@ from app.services.remote_workspace_service import remote_workspace_service
 from app.services.shared_task import shared_task_service
 from app.services.task_fork import task_fork_service
 from app.stores.tasks import task_store
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
-from fastapi.responses import StreamingResponse
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session
-
 from shared.telemetry.decorators import trace_sync
 
 router = APIRouter()

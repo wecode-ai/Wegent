@@ -16,6 +16,10 @@ import json
 import logging
 from typing import Any, Optional
 
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+
 from app.api.dependencies import get_db
 from app.core.config import settings
 from app.models.knowledge import KnowledgeDocument
@@ -39,10 +43,6 @@ from app.services.chat.subtask_history import (
     read_subtask_record,
 )
 from app.stores.tasks import subtask_store, task_store
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
-
 from shared.prompts.constants import parse_prompt_blocks
 from shared.telemetry.decorators import trace_async, trace_sync
 

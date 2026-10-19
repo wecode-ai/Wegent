@@ -6,6 +6,9 @@
 
 from typing import Literal
 
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.orm import Session
+
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
@@ -23,8 +26,6 @@ from app.schemas.resource_library import (
 from app.schemas.resource_search import ResourceSearchResponse
 from app.services.resource_library_service import resource_library_service
 from app.services.resource_search import search_resources
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.orm import Session
 
 router = APIRouter()
 PUBLIC_TEAM_ICON_ASSET_TYPE = "public_team_icon"

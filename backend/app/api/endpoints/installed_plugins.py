@@ -7,6 +7,22 @@ import logging
 from dataclasses import dataclass
 from urllib.parse import quote
 
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    status,
+)
+from fastapi.responses import Response, StreamingResponse
+from jose import JWTError, jwt
+from sqlalchemy.orm import Session
+
 from app.api.dependencies import get_db
 from app.api.marketplace_upload import read_marketplace_package
 from app.core import security
@@ -68,22 +84,6 @@ from app.services.plugin_marketplace_service import plugin_marketplace_service
 from app.services.plugin_package_parser import MAX_PLUGIN_PACKAGE_SIZE_BYTES
 from app.services.plugin_package_storage import PluginPackageStorageError
 from app.stores.tasks import subtask_store, task_store
-from fastapi import (
-    APIRouter,
-    BackgroundTasks,
-    Depends,
-    File,
-    Form,
-    HTTPException,
-    Query,
-    Request,
-    UploadFile,
-    status,
-)
-from fastapi.responses import Response, StreamingResponse
-from jose import JWTError, jwt
-from sqlalchemy.orm import Session
-
 from shared.telemetry.decorators import trace_async
 
 router = APIRouter(tags=["plugins"])

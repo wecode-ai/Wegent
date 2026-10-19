@@ -5,6 +5,8 @@
 import time
 import uuid
 
+from fastapi import APIRouter, Depends, HTTPException, status
+
 from app.core import security
 from app.core.cache import cache_manager
 from app.core.config import settings
@@ -14,7 +16,6 @@ from app.models.user import User
 from app.schemas.user import (
     WeworkAuthSessionActionResponse,
 )
-from fastapi import APIRouter, Depends, HTTPException, status
 
 router = APIRouter()
 

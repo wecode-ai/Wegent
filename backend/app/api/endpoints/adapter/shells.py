@@ -10,6 +10,10 @@ import uuid
 from datetime import datetime
 from typing import List, Optional
 
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
 from app.api.dependencies import get_db
 from app.core import security
 from app.core.cache import cache_manager
@@ -19,9 +23,6 @@ from app.schemas.kind import Shell as ShellCRD
 from app.services.capability_reference_service import (
     get_referenced_capability,
 )
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
-from sqlalchemy.orm import Session
 
 router = APIRouter()
 logger = logging.getLogger(__name__)

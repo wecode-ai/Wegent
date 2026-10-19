@@ -15,6 +15,9 @@ import logging
 from collections import Counter
 from typing import Any, Optional
 
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.orm import Session
+
 from app.api.dependencies import get_db
 from app.core import security
 from app.core.cache import cache_manager
@@ -69,9 +72,6 @@ from app.services.wiki.service import (
     unbind_kb_wiki_document,
     wiki_document_uses_connection,
 )
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.orm import Session
-
 from shared.models.db import User
 
 logger = logging.getLogger(__name__)

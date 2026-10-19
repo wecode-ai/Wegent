@@ -15,6 +15,9 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from sqlalchemy.orm import Session
+
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
@@ -30,8 +33,6 @@ from app.schemas.subscription import (
 from app.services.subscription import subscription_service
 from app.services.subscription.follow_service import subscription_follow_service
 from app.services.subscription.helpers import validate_subscription_for_read
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
-from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
@@ -499,6 +500,7 @@ def confirm_subscription_preview(
     import json
 
     import redis
+
     from app.core.config import settings
     from app.schemas.subscription import (
         SubscriptionCreate,

@@ -6,6 +6,17 @@
 
 from typing import NoReturn
 
+from fastapi import (
+    APIRouter,
+    Depends,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    status,
+)
+
 from app.core import security
 from app.models.user import User
 from app.schemas.site import (
@@ -31,16 +42,6 @@ from app.services.sites import (
     SitesUpstreamResponseError,
     SitesUpstreamUnavailableError,
     sites_service,
-)
-from fastapi import (
-    APIRouter,
-    Depends,
-    Header,
-    HTTPException,
-    Query,
-    Request,
-    Response,
-    status,
 )
 
 router = APIRouter()

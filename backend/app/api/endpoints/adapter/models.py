@@ -5,6 +5,10 @@
 import logging
 from typing import List, Optional
 
+from fastapi import APIRouter, Depends, Query, status
+from fastapi.concurrency import run_in_threadpool
+from sqlalchemy.orm import Session
+
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.kind import Kind
@@ -21,9 +25,6 @@ from app.services import model_credential_service
 from app.services.adapters import public_model_service
 from app.services.model_aggregation_service import model_aggregation_service
 from app.services.model_connection_service import _test_llm_connection
-from fastapi import APIRouter, Depends, Query, status
-from fastapi.concurrency import run_in_threadpool
-from sqlalchemy.orm import Session
 
 router = APIRouter()
 logger = logging.getLogger(__name__)

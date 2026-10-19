@@ -11,6 +11,9 @@ wegent-username header.  Business logic is fully delegated to
 KnowledgeOrchestrator so that REST API and MCP tools share the same path.
 """
 
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from sqlalchemy.orm import Session
+
 from app.api.dependencies import get_db
 from app.api.knowledge_document_side_effects import (
     schedule_kb_summary_updates_after_deletion,
@@ -41,9 +44,6 @@ from app.services.knowledge.orchestrator import (
     MAX_KNOWLEDGE_LIST_LIMIT,
     knowledge_orchestrator,
 )
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
-from sqlalchemy.orm import Session
-
 from shared.telemetry.decorators import add_span_event, trace_async, trace_sync
 
 router = APIRouter()

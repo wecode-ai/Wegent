@@ -7,6 +7,10 @@
 from typing import NoReturn
 from urllib.parse import quote
 
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
+
 from app.api.dependencies import get_db
 from app.api.marketplace_upload import read_marketplace_package
 from app.core import security
@@ -36,10 +40,6 @@ from app.services.smart_app_download_link import (
 )
 from app.services.smart_app_marketplace_service import smart_app_marketplace_service
 from app.services.smart_app_package_parser import MAX_SMART_APP_PACKAGE_SIZE_BYTES
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
-
 from shared.telemetry.decorators import trace_async
 
 router = APIRouter(tags=["smart-apps"])

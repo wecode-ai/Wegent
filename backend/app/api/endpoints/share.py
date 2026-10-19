@@ -12,6 +12,9 @@ Supports Team, Task, and KnowledgeBase resource types.
 import logging
 from typing import Dict, Optional
 
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
@@ -40,8 +43,6 @@ from app.services.share import (
     team_share_service,
 )
 from app.services.share.base_service import UnifiedShareService
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 

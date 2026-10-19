@@ -105,16 +105,20 @@ from app.api.endpoints.internal import (
     chat_storage_router,
     conversion_callback_router,
     knowledge_router,
-    object_storage_router,
-    plugin_publications_router,
-    rag_content_router,
-    services_router,
-    workspace_archives_router,
 )
 from app.api.endpoints.internal import (
     model_config_router as internal_model_config_router,
 )
+from app.api.endpoints.internal import (
+    object_storage_router,
+    plugin_publications_router,
+    rag_content_router,
+)
 from app.api.endpoints.internal import robot_queue as internal_robot_queue
+from app.api.endpoints.internal import (
+    services_router,
+    workspace_archives_router,
+)
 
 # RAG internal router is conditionally imported based on STANDALONE_MODE
 if not settings.STANDALONE_MODE:

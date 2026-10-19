@@ -8,6 +8,9 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy.orm import Session
+
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
@@ -29,9 +32,6 @@ from app.services.knowledge.artifact_service import (
 from app.services.knowledge.artifact_task_launcher import (
     ArtifactTaskConfigurationError,
 )
-from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy.orm import Session
-
 from shared.telemetry.decorators import trace_async
 
 router = APIRouter()

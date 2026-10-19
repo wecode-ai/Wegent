@@ -13,6 +13,17 @@ import logging
 from datetime import datetime
 from typing import Dict, Optional
 
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    status,
+)
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
 from app.api.dependencies import get_db
 from app.api.endpoints._knowledge_multimodal import (
     multimodal_create_kwargs,
@@ -84,17 +95,6 @@ from app.services.knowledge.orchestrator import (
     knowledge_orchestrator,
 )
 from app.services.knowledge.retrieval_profile import get_profile
-from fastapi import (
-    APIRouter,
-    BackgroundTasks,
-    Depends,
-    HTTPException,
-    Query,
-    status,
-)
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
-
 from shared.telemetry.decorators import (
     add_span_event,
     trace_async,

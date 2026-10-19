@@ -7,6 +7,11 @@ import time
 import uuid
 
 import jwt  # pip install pyjwt
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import RedirectResponse
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
 from app.api.dependencies import get_db
 from app.core.config import settings
 from app.core.security import create_access_token
@@ -18,10 +23,6 @@ from app.services.k_batch import (
     apply_default_resources_sync,
 )
 from app.services.oidc import oidc_service
-from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import RedirectResponse
-from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 

@@ -16,6 +16,21 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import quote
 
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
+from fastapi.responses import RedirectResponse, StreamingResponse
+from jose import JWTError, jwt
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
 from app.api.dependencies import get_db
 from app.core import security
 from app.core.config import settings
@@ -55,20 +70,6 @@ from app.services.web_scraper.security import (
     WebScraperUrlGuard,
 )
 from app.stores.tasks import subtask_store, task_store
-from fastapi import (
-    APIRouter,
-    Depends,
-    File,
-    Header,
-    HTTPException,
-    Query,
-    Request,
-    UploadFile,
-)
-from fastapi.responses import RedirectResponse, StreamingResponse
-from jose import JWTError, jwt
-from pydantic import BaseModel
-from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 

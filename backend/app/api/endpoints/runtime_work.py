@@ -4,6 +4,9 @@
 
 """Runtime-native local work endpoints for Wework."""
 
+from fastapi import APIRouter, Body, Depends, Query, Request
+from sqlalchemy.orm import Session
+
 from app.api.dependencies import get_db
 from app.core.security import get_current_user
 from app.models.user import User
@@ -59,9 +62,6 @@ from app.schemas.runtime_work import (
     RuntimeWorktreeSettingsPatch,
 )
 from app.services import runtime_work_service
-from fastapi import APIRouter, Body, Depends, Query, Request
-from sqlalchemy.orm import Session
-
 from shared.telemetry.decorators import (
     add_span_event,
     set_span_attribute,

@@ -10,6 +10,9 @@ Projects are containers for organizing tasks. Each task can belong to one projec
 
 from typing import Annotated
 
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
+from sqlalchemy.orm import Session
+
 from app.api.dependencies import get_db
 from app.core.constants import CLIENT_ORIGIN_FRONTEND, SUPPORTED_CLIENT_ORIGINS
 from app.core.security import get_current_user
@@ -38,8 +41,6 @@ from app.services import (
     project_service,
     project_task_queries,
 )
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
-from sqlalchemy.orm import Session
 
 router = APIRouter()
 
