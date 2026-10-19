@@ -82,7 +82,23 @@ const terminalConversationEvictionTimers = new Map<
 >()
 const goalSnapshotVersionsByConversation = new Map<string, number>()
 const canonicalDeviceIdByAlias = new Map<string, string>()
+const pendingConversationOperations = new Set<{
+  address: RuntimeTaskAddress
+  current: boolean
+}>()
 let nextRuntimeGoalSnapshotVersion = 1
+
+export function beginRuntimeConversationOperation(address: RuntimeTaskAddress) {
+  const operation = { address, current: true }
+  pendingConversationOperations.add(operation)
+  return {
+    isCurrent: () => operation.current,
+    dispose: () => {
+      operation.current = false
+      pendingConversationOperations.delete(operation)
+    },
+  }
+}
 
 export interface RuntimeConversationMetadata {
   goal: RuntimeGoal | null
@@ -966,7 +982,14 @@ function shortRuntimeAgentId(agentId: string): string {
 }
 
 export function evictRuntimeConversation(address: RuntimeTaskAddress) {
-  evictRuntimeConversationKey(runtimeConversationKey(address))
+  const key = runtimeConversationKey(address)
+  // Explicit archival invalidates pending work; ordinary LRU/idle eviction does not.
+  for (const operation of pendingConversationOperations) {
+    if (runtimeConversationKey(operation.address) !== key) continue
+    operation.current = false
+    pendingConversationOperations.delete(operation)
+  }
+  evictRuntimeConversationKey(key)
 }
 
 function evictRuntimeConversationKey(key: string) {
@@ -991,6 +1014,10 @@ export function getRuntimeConversationCacheStats() {
 }
 
 export function clearRuntimeConversationCacheForTests() {
+  pendingConversationOperations.forEach(operation => {
+    operation.current = false
+  })
+  pendingConversationOperations.clear()
   pendingStreamingNotifications.forEach(cancel => cancel())
   pendingStreamingNotifications.clear()
   terminalConversationEvictionTimers.forEach(timer => globalThis.clearTimeout(timer))

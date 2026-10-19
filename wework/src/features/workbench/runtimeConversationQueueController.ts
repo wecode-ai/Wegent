@@ -2,6 +2,7 @@ import type { RuntimeTaskAddress } from '@/types/api'
 import type { RuntimePaneQueuedMessage } from '@/types/workbench'
 import {
   appendAcceptedRuntimeConversationMessage,
+  beginRuntimeConversationOperation,
   cacheRuntimeConversationQueuedMessages,
   cacheRuntimeConversationQueuePaused,
   getRuntimeConversationQueuedMessages,
@@ -30,6 +31,8 @@ import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle/RuntimeTa
 interface QueueDependencies extends RuntimeQueuedMessageSenderDependencies {
   lifecycleStore: RuntimeTaskLifecycleStore
 }
+
+type ConversationOperation = ReturnType<typeof beginRuntimeConversationOperation>
 
 // Hidden React Activity trees can retain a controller after effect cleanup. Preserve that
 // identity without retaining drained tasks that no view or subscription still references.
@@ -64,11 +67,14 @@ class RuntimeConversationQueueController {
   private unsubscribeConversation: (() => void) | null = null
   private unsubscribeLifecycle: (() => void) | null = null
   private scheduled = false
-  private inFlight = false
+  private inFlight: ConversationOperation | null = null
+  private cancellationOperation: ConversationOperation | null = null
+  private pauseRevision = 0
   private lastDispatchDiagnostic: string | null = null
   private pendingResume: {
     previousLifecycle: RuntimeTaskLifecycleSnapshot | null
     observedManualTurn: boolean
+    operation: ConversationOperation
   } | null = null
 
   address: RuntimeTaskAddress
@@ -100,14 +106,58 @@ class RuntimeConversationQueueController {
   }
 
   resumeAfterTurn(previousLifecycle: RuntimeTaskLifecycleSnapshot | null): void {
-    this.pendingResume = { previousLifecycle, observedManualTurn: false }
+    this.cancelResumeAfterTurn()
+    this.pendingResume = {
+      previousLifecycle,
+      observedManualTurn: false,
+      operation: beginRuntimeConversationOperation(this.address),
+    }
   }
 
   cancelResumeAfterTurn(): void {
+    this.pauseRevision += 1
+    this.pendingResume?.operation.dispose()
     this.pendingResume = null
+    this.cancellationOperation?.dispose()
+    this.cancellationOperation = null
+  }
+
+  pauseForCancellation(): () => void {
+    const previousPaused = getRuntimeConversationQueuePaused(this.address)
+    const previousResume = this.pendingResume
+    this.cancelResumeAfterTurn()
+    const shouldPause =
+      previousResume ||
+      this.messages().some(
+        message =>
+          !message.runtimeQueued && (message.status === 'queued' || message.status === 'sending')
+      )
+    if (!previousPaused && !shouldPause) return () => {}
+    const operation = beginRuntimeConversationOperation(this.address)
+    this.cancellationOperation = operation
+    const revision = this.pauseRevision
+    cacheRuntimeConversationQueuePaused(this.address, true)
+    return () => {
+      if (
+        this.pauseRevision !== revision ||
+        !operation.isCurrent() ||
+        !getRuntimeConversationQueuePaused(this.address)
+      )
+        return
+      this.cancelResumeAfterTurn()
+      if (previousResume) {
+        this.pendingResume = {
+          ...previousResume,
+          operation: beginRuntimeConversationOperation(this.address),
+        }
+      }
+      cacheRuntimeConversationQueuePaused(this.address, previousPaused)
+      this.schedule()
+    }
   }
 
   async send(message: RuntimePaneQueuedMessage): Promise<void> {
+    this.clearInvalidatedRequest()
     const dependencies = this.dependencies
     if (!dependencies || this.inFlight) {
       this.log('queue-send-skipped', message, {
@@ -135,7 +185,9 @@ class RuntimeConversationQueueController {
       return
     }
     // Claim synchronously before transport preparation can yield or notify other views.
-    this.inFlight = true
+    this.cancelCancellationRollback()
+    const operation = beginRuntimeConversationOperation(this.address)
+    this.inFlight = operation
     this.update(message.id, {
       status: 'sending',
       deliveryMode: 'message',
@@ -146,11 +198,13 @@ class RuntimeConversationQueueController {
     let sendError: string | null = null
     try {
       const result = await sendRuntimeQueuedMessage(this.address, message, dependencies, {
+        isCurrent: operation.isCurrent,
         initialGoal: message.initialGoal,
         onError: error => {
           sendError = error
         },
       })
+      if (!operation.isCurrent()) return
       this.log('queue-send-result', message, {
         accepted: result.accepted,
         runtimeQueued: result.queued,
@@ -175,11 +229,13 @@ class RuntimeConversationQueueController {
         this.recordFailure(message.id, sendError, before)
       }
     } catch {
+      if (!operation.isCurrent()) return
       this.busyBlocks.delete(message.id)
       this.log('queue-send-error', message)
       this.update(message.id, { status: 'failed', awaitingTurnStart: undefined, error: '发送失败' })
     } finally {
-      this.inFlight = false
+      operation.dispose()
+      if (this.inFlight === operation) this.inFlight = null
       this.schedule()
     }
   }
@@ -203,6 +259,7 @@ class RuntimeConversationQueueController {
 
   private pump(): void {
     if (!this.dependencies) return
+    this.clearInvalidatedRequest()
     const lifecycle = this.dependencies?.lifecycleStore.getTask(this.address) ?? null
     this.reconcileStartedMessages(lifecycle)
     this.resumeAfterManualTurn(lifecycle)
@@ -267,7 +324,13 @@ class RuntimeConversationQueueController {
 
   private resumeAfterManualTurn(lifecycle: RuntimeTaskLifecycleSnapshot | null): void {
     const pending = this.pendingResume
-    if (!pending || !lifecycle) return
+    if (!pending) return
+    if (!pending.operation.isCurrent()) {
+      pending.operation.dispose()
+      this.pendingResume = null
+      return
+    }
+    if (!lifecycle) return
     if (!pending.observedManualTurn) {
       const previous = pending.previousLifecycle?.turn
       if (
@@ -281,6 +344,7 @@ class RuntimeConversationQueueController {
       pending.observedManualTurn = true
     }
     if (lifecycle.turn.phase === 'streaming' || lifecycle.turn.outcome === null) return
+    pending.operation.dispose()
     this.pendingResume = null
     cacheRuntimeConversationQueuePaused(this.address, false)
   }
@@ -331,17 +395,32 @@ class RuntimeConversationQueueController {
     this.unsubscribeLifecycle = null
     this.dependencies = null
     this.bindings.clear()
-    this.pendingResume = null
+    this.inFlight?.dispose()
+    this.inFlight = null
+    this.cancelResumeAfterTurn()
     this.busyBlocks.clear()
     this.lastDispatchDiagnostic = null
     if (hadSubscriptions) this.log('queue-controller-disposed', null)
+  }
+
+  private clearInvalidatedRequest(): void {
+    if (!this.inFlight || this.inFlight.isCurrent()) return
+    this.inFlight.dispose()
+    this.inFlight = null
+    this.busyBlocks.clear()
+  }
+
+  private cancelCancellationRollback(): void {
+    this.pauseRevision += 1
+    this.cancellationOperation?.dispose()
+    this.cancellationOperation = null
   }
 
   private observeDispatch(reason: string, lifecycle: RuntimeTaskLifecycleSnapshot | null): void {
     const details = {
       reason,
       bindingCount: this.bindings.size,
-      inFlight: this.inFlight,
+      inFlight: this.inFlight !== null,
       pendingResume: this.pendingResume !== null,
       lifecyclePresent: lifecycle !== null,
       executionPhase: lifecycle?.execution.phase ?? null,
@@ -365,7 +444,7 @@ class RuntimeConversationQueueController {
       owner: 'task-queue',
       messageId: message?.id ?? null,
       bindingCount: this.bindings.size,
-      inFlight: this.inFlight,
+      inFlight: this.inFlight !== null,
       pendingResume: this.pendingResume !== null,
       lifecycleSubscribed: this.unsubscribeLifecycle !== null,
       conversationSubscribed: this.unsubscribeConversation !== null,

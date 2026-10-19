@@ -108,6 +108,7 @@ import {
   applyRuntimeConversationAction,
   appendOptimisticRuntimeConversationGuidance,
   beginRuntimeConversationHydration,
+  beginRuntimeConversationOperation,
   beginRuntimeGoalSnapshot,
   cacheRuntimeConversationQueuedMessagesByKey,
   cacheRuntimeConversationQueuePausedByKey,
@@ -1191,36 +1192,42 @@ export function useWorkbenchPaneSession({
       options: SendRuntimeMessageOptions = {}
     ): Promise<RuntimeMessageSendResult> => {
       if (!currentRuntimeTask) return { accepted: false, queued: false }
-
-      const appendedLocalMessage = options.appendLocalMessage !== false
-      if (appendedLocalMessage) {
-        setMessages(
-          applyRuntimeConversationAction(currentRuntimeTask, {
-            type: 'user_added',
-            message: createRuntimeQueuedUserMessage(message),
-          })
-        )
-      }
-      const result = await sendRuntimeQueuedMessage(
-        currentRuntimeTask,
-        message,
-        { lifecycleStore, sendRuntimePaneMessage },
-        {
-          ...options,
-          appendAcceptedMessage: !appendedLocalMessage,
-          onError: options.onError ?? setError,
+      const operation = beginRuntimeConversationOperation(currentRuntimeTask)
+      try {
+        const appendedLocalMessage = options.appendLocalMessage !== false
+        if (appendedLocalMessage) {
+          setMessages(
+            applyRuntimeConversationAction(currentRuntimeTask, {
+              type: 'user_added',
+              message: createRuntimeQueuedUserMessage(message),
+            })
+          )
         }
-      )
-      const { accepted: sent, queued } = result
-      if ((!sent || queued) && appendedLocalMessage) {
-        const rolledBackMessages = rollbackRejectedRuntimeConversationTurn(
+        const result = await sendRuntimeQueuedMessage(
           currentRuntimeTask,
-          currentRuntimeTaskRef.current,
-          message.id
+          message,
+          { lifecycleStore, sendRuntimePaneMessage },
+          {
+            ...options,
+            isCurrent: operation.isCurrent,
+            appendAcceptedMessage: !appendedLocalMessage,
+            onError: options.onError ?? setError,
+          }
         )
-        if (rolledBackMessages) setMessages(rolledBackMessages)
+        if (!operation.isCurrent()) return { accepted: false, queued: false }
+        const { accepted: sent, queued } = result
+        if ((!sent || queued) && appendedLocalMessage) {
+          const rolledBackMessages = rollbackRejectedRuntimeConversationTurn(
+            currentRuntimeTask,
+            currentRuntimeTaskRef.current,
+            message.id
+          )
+          if (rolledBackMessages) setMessages(rolledBackMessages)
+        }
+        return result
+      } finally {
+        operation.dispose()
       }
-      return result
     },
     [currentRuntimeTask, lifecycleStore, sendRuntimePaneMessage, setError]
   )
@@ -1351,7 +1358,7 @@ export function useWorkbenchPaneSession({
       }
       const lifecycleAfterSend = lifecycleStore.getTask(currentRuntimeTask)
       if (!runtimeTaskLifecycleTransitionChanged(lifecycleBeforeSend, lifecycleAfterSend)) {
-        queuedMessageBusyBlockSnapshotsRef.current.set(message.id, lifecycleBeforeSend)
+        queuedMessageBusyBlocks.set(message.id, lifecycleBeforeSend)
       }
       setQueuedMessages(messages => [...messages, message])
       return true
@@ -1360,6 +1367,7 @@ export function useWorkbenchPaneSession({
       currentRuntimeTask,
       getRuntimeModelFields,
       lifecycleStore,
+      queuedMessageBusyBlocks,
       retainRuntimeQueuedMessage,
       sendRuntimeMessage,
       setError,

@@ -164,6 +164,7 @@ import {
   settleRuntimeConversationGuidance,
   syncRuntimeConversationDeviceAliases,
 } from './runtimeConversationCache'
+import { getRuntimeConversationQueueController } from './runtimeConversationQueueController'
 import {
   applyModelContextWindowOverride,
   findModelForSelection,
@@ -2288,6 +2289,7 @@ export function WorkbenchProvider({
   const stableArchiveRuntimeTask = useStableEvent(runtimeTasks.archiveRuntimeTask)
   const stableCancelRuntimeTask = useStableEvent(async (address: RuntimeTaskAddress) => {
     logRuntimeQueueStage(address, 'queue-stop-requested', { source: 'execution-action' })
+    const restoreQueue = getRuntimeConversationQueueController(address).pauseForCancellation()
     let accepted: boolean | null = null
     try {
       const response = await executorClient.runtime.cancelRuntimeTask(address)
@@ -2297,6 +2299,9 @@ export function WorkbenchProvider({
       }
       await notifyMainRuntimeWorkChanged(address)
       await refreshWorkLists()
+    } catch (error) {
+      if (accepted !== true) restoreQueue()
+      throw error
     } finally {
       logRuntimeQueueStage(address, 'queue-stop-result', {
         source: 'execution-action',

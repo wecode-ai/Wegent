@@ -7,6 +7,7 @@ import type { RuntimeGoalCreateInput, RuntimeSendRequest, RuntimeTaskAddress } f
 import type { RuntimePaneQueuedMessage, WorkbenchMessage } from '@/types/workbench'
 import {
   appendAcceptedRuntimeConversationMessage,
+  beginRuntimeConversationOperation,
   cacheRuntimeConversationQueuedMessages,
   getRuntimeConversationQueuedMessages,
   getRuntimeConversationTurnIds,
@@ -25,6 +26,7 @@ export interface RuntimeQueuedMessageSenderDependencies {
 }
 
 export interface SendRuntimeQueuedMessageOptions {
+  isCurrent?: () => boolean
   appendAcceptedMessage?: boolean
   onError?: (error: string) => void
   initialGoal?: RuntimeGoalCreateInput | null
@@ -54,53 +56,65 @@ export async function sendRuntimeQueuedMessage(
   { lifecycleStore, sendRuntimePaneMessage }: RuntimeQueuedMessageSenderDependencies,
   options: SendRuntimeQueuedMessageOptions = {}
 ): Promise<RuntimeQueuedMessageSendResult> {
-  const messageAttachments = message.attachments ?? []
-  const attachmentIds = remoteAttachmentIds(messageAttachments)
-  const attachments = localRuntimeAttachments(messageAttachments)
-  const terminalContext = readRuntimeTerminalAdditionalContext(address)
-  const additionalContext = { ...message.additionalContext, ...terminalContext }
-  const turnIdsBeforeSend =
-    options.appendAcceptedMessage === false ? null : getRuntimeConversationTurnIds(address)
-  let queued = false
-  let queuePosition: number | null | undefined
-  const accepted = await sendRuntimePaneMessage(
-    {
-      address,
-      message: message.content,
-      clientUserMessageId: message.id,
-      ...(message.modelId ? { modelId: message.modelId, modelType: message.modelType } : {}),
-      ...(message.modelOptions ? { modelOptions: message.modelOptions } : {}),
-      ...(options.initialGoal ? { initialGoal: options.initialGoal } : {}),
-      ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
-      ...(attachments.length > 0 ? { attachments } : {}),
-      ...(Object.keys(additionalContext).length > 0 ? { additionalContext } : {}),
-      ...(message.cloudProjectId ? { cloudProjectId: message.cloudProjectId } : {}),
-      ...(message.origin ? { origin: message.origin } : {}),
-    },
-    {
-      onError: options.onError,
-      onQueued: response => {
-        queued = true
-        queuePosition = response.queuePosition
+  const operation = options.isCurrent ? null : beginRuntimeConversationOperation(address)
+  const isCurrent = options.isCurrent ?? operation!.isCurrent
+  try {
+    if (!isCurrent()) return { accepted: false, queued: false }
+    const messageAttachments = message.attachments ?? []
+    const attachmentIds = remoteAttachmentIds(messageAttachments)
+    const attachments = localRuntimeAttachments(messageAttachments)
+    const terminalContext = readRuntimeTerminalAdditionalContext(address)
+    const additionalContext = { ...message.additionalContext, ...terminalContext }
+    const turnIdsBeforeSend =
+      options.appendAcceptedMessage === false ? null : getRuntimeConversationTurnIds(address)
+    let queued = false
+    let queuePosition: number | null | undefined
+    const accepted = await sendRuntimePaneMessage(
+      {
+        address,
+        message: message.content,
+        clientUserMessageId: message.id,
+        ...(message.modelId ? { modelId: message.modelId, modelType: message.modelType } : {}),
+        ...(message.modelOptions ? { modelOptions: message.modelOptions } : {}),
+        ...(options.initialGoal ? { initialGoal: options.initialGoal } : {}),
+        ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+        ...(attachments.length > 0 ? { attachments } : {}),
+        ...(Object.keys(additionalContext).length > 0 ? { additionalContext } : {}),
+        ...(message.cloudProjectId ? { cloudProjectId: message.cloudProjectId } : {}),
+        ...(message.origin ? { origin: message.origin } : {}),
       },
-      silentBusyRetry: options.silentBusyRetry,
-    }
-  )
-  if (accepted && !queued && turnIdsBeforeSend !== null) {
-    logRuntimeQueueStage(address, 'queue-send-writeback', {
-      messageId: message.id,
-      runtimeQueued: false,
-      lifecyclePresent: lifecycleStore.getTask(address) !== null,
-    })
-    appendAcceptedRuntimeConversationMessage(
-      address,
-      createRuntimeQueuedUserMessage(message),
-      lifecycleStore.getTask(address)?.turn.id ?? null,
-      turnIdsBeforeSend
+      {
+        isCurrent,
+        onError: error => {
+          if (isCurrent()) options.onError?.(error)
+        },
+        onQueued: response => {
+          if (!isCurrent()) return
+          queued = true
+          queuePosition = response.queuePosition
+        },
+        silentBusyRetry: options.silentBusyRetry,
+      }
     )
+    if (!isCurrent()) return { accepted: false, queued: false }
+    if (accepted && !queued && turnIdsBeforeSend !== null) {
+      logRuntimeQueueStage(address, 'queue-send-writeback', {
+        messageId: message.id,
+        runtimeQueued: false,
+        lifecyclePresent: lifecycleStore.getTask(address) !== null,
+      })
+      appendAcceptedRuntimeConversationMessage(
+        address,
+        createRuntimeQueuedUserMessage(message),
+        lifecycleStore.getTask(address)?.turn.id ?? null,
+        turnIdsBeforeSend
+      )
+    }
+    if (accepted) markRuntimeTerminalAdditionalContextDelivered(terminalContext)
+    return { accepted, queued, ...(queued ? { queuePosition } : {}) }
+  } finally {
+    operation?.dispose()
   }
-  if (accepted) markRuntimeTerminalAdditionalContextDelivered(terminalContext)
-  return { accepted, queued, ...(queued ? { queuePosition } : {}) }
 }
 
 export function retainRuntimeQueuedMessage(

@@ -1,8 +1,14 @@
-import { act, renderHook, waitFor } from '@testing-library/react'
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
+import { createElement, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { RuntimeTaskAddress } from '@/types/api'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import { clearRuntimeConversationCacheForTests } from '@/features/workbench/runtimeConversationCache'
+import { resetRuntimeConversationQueueControllersForTests } from '@/features/workbench/runtimeConversationQueueController'
+import {
+  RuntimeTaskLifecycleProvider,
+  RuntimeTaskLifecycleStore,
+} from '@/features/workbench/runtimeTaskLifecycle'
 import { useWorkbenchPaneSession } from './useWorkbenchPaneSession'
 
 const mocks = vi.hoisted(() => ({
@@ -11,24 +17,18 @@ const mocks = vi.hoisted(() => ({
   setInput: vi.fn(),
   resetAttachments: vi.fn(),
   setError: vi.fn(),
-  store: { getTask: vi.fn(), syncTranscript: vi.fn(), goalStatusReceived: vi.fn() },
 }))
 
 vi.mock('@/features/workbench/useWorkbench', () => ({
   useWorkbenchPaneContext: () => mocks.context,
 }))
-vi.mock('@/features/workbench/runtimeTaskLifecycle', async original => ({
-  ...(await original<typeof import('@/features/workbench/runtimeTaskLifecycle')>()),
-  useRuntimeTaskLifecycle: () => null,
-  useRuntimeTaskLifecycleStore: () => mocks.store,
-}))
 
-const address: RuntimeTaskAddress = {
+const address = {
   deviceId: 'original-device',
   taskId: 'original-task',
   threadId: 'original-thread',
   workspacePath: '/workspace/original',
-}
+} satisfies RuntimeTaskAddress
 const scopeKey = getRuntimeTaskChatScopeKey(address)
 const draft = 'Unsent follow-up question'
 const attachment = { id: 42, name: 'unsent.txt', url: '/unsent.txt', mimeType: 'text/plain' }
@@ -43,11 +43,20 @@ const codeComment = {
   createdAt: '2026-10-15T00:00:00Z',
 }
 const continuation = 'Authorization is complete. Continue from the blocked operation.'
+let lifecycleStore: RuntimeTaskLifecycleStore
 
 beforeEach(() => {
   vi.clearAllMocks()
   mocks.send.mockResolvedValue(true)
-  mocks.store.getTask.mockReturnValue(null)
+  lifecycleStore = new RuntimeTaskLifecycleStore('pane-continuation-test')
+  lifecycleStore.syncRuntimeTask(address, {
+    taskId: address.taskId,
+    workspacePath: address.workspacePath,
+    title: 'Continuation task',
+    runtime: 'codex',
+    running: false,
+    continuable: true,
+  })
   mocks.context = {
     state: {
       currentRuntimeTask: { ...address, taskId: 'another-selected-task' },
@@ -73,11 +82,19 @@ beforeEach(() => {
   }
 })
 
-afterEach(clearRuntimeConversationCacheForTests)
+afterEach(() => {
+  cleanup()
+  resetRuntimeConversationQueueControllersForTests()
+  clearRuntimeConversationCacheForTests()
+})
 
 async function renderSession(currentRuntimeTask: RuntimeTaskAddress | null = address) {
-  const hook = renderHook(() =>
-    useWorkbenchPaneSession({ currentRuntimeTask, debugSnapshotEnabled: false })
+  const hook = renderHook(
+    () => useWorkbenchPaneSession({ currentRuntimeTask, debugSnapshotEnabled: false }),
+    {
+      wrapper: ({ children }: { children: ReactNode }) =>
+        createElement(RuntimeTaskLifecycleProvider, { store: lifecycleStore, children }),
+    }
   )
   await waitFor(() => expect(hook.result.current.transcriptLoading).toBe(false))
   act(() => hook.result.current.addCodeComment(codeComment))
@@ -130,12 +147,12 @@ describe('pane continuation without composer submission', () => {
     expectDraftPreserved(result.current)
   })
 
-  test('keeps a busy rejection queued until the task lifecycle changes', async () => {
-    mocks.send.mockImplementation(async (_request, options) => {
+  test('retries a busy continuation on lifecycle changes after the pane unmounts', async () => {
+    mocks.send.mockImplementationOnce(async (_request, options) => {
       options.onError('runtime task is already running')
       return false
     })
-    const { result, rerender } = await renderSession()
+    const { result, rerender, unmount } = await renderSession()
 
     await act(async () => expect(await result.current.sendContinuation(continuation)).toBe(true))
     rerender()
@@ -145,6 +162,23 @@ describe('pane continuation without composer submission', () => {
     ])
     expect(mocks.send).toHaveBeenCalledOnce()
     expectDraftPreserved(result.current)
+
+    const queuedMessage = result.current.queuedMessages[0]
+    unmount()
+    await act(async () => lifecycleStore.executorStarted(address))
+    expect(mocks.send).toHaveBeenCalledOnce()
+
+    await act(async () => lifecycleStore.executorSettled(address))
+
+    await waitFor(() => expect(mocks.send).toHaveBeenCalledTimes(2))
+    expect(mocks.send).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        address,
+        message: continuation,
+        clientUserMessageId: queuedMessage.id,
+      }),
+      expect.any(Object)
+    )
   })
 
   test.each(['rejected', 'transport'])(

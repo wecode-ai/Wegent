@@ -6,6 +6,7 @@ import {
   cacheRuntimeConversationQueuedMessages,
   cacheRuntimeConversationQueuePaused,
   clearRuntimeConversationCacheForTests,
+  evictRuntimeConversation,
   getRuntimeConversationMessages,
   getRuntimeConversationQueuedMessages,
   getRuntimeConversationQueuePaused,
@@ -63,6 +64,30 @@ function attach(
 
 function flushQueue(): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, 0))
+}
+
+function deferredAcceptance() {
+  let resolve!: (accepted: boolean) => void
+  let reject!: (error: Error) => void
+  const promise = new Promise<boolean>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
+function manualResumeFixture() {
+  const store = idleStore(taskA)
+  const send = acceptingTransport(store)
+  const item = message('waiting-for-manual-turn')
+  cacheRuntimeConversationQueuedMessages(taskA, [item])
+  cacheRuntimeConversationQueuePaused(taskA, true)
+  const attachment = attach(taskA, store, send)
+  attachment.controller.resumeAfterTurn(store.getTask(taskA))
+  store.sendRequested(taskA)
+  store.sendAccepted(taskA)
+  store.turnStarted(taskA, 'manual-turn')
+  return { ...attachment, store, send, item }
 }
 
 function startTurn(
@@ -188,13 +213,10 @@ describe('RuntimeConversationQueueController', () => {
   test('shares the send claim across pane attachments and manual sends while acceptance is pending', async () => {
     const store = idleStore(taskA)
     const queue = [message('pending-1'), message('pending-2')]
-    let resolveAcceptance!: (accepted: boolean) => void
-    const acceptance = new Promise<boolean>(resolve => {
-      resolveAcceptance = resolve
-    })
+    const acceptance = deferredAcceptance()
     const send = vi.fn<SendRuntimePaneMessage>(async request => {
       store.sendRequested(request.address)
-      const accepted = await acceptance
+      const accepted = await acceptance.promise
       if (accepted) store.sendAccepted(request.address)
       return accepted
     })
@@ -214,12 +236,135 @@ describe('RuntimeConversationQueueController', () => {
     await flushQueue()
     expect(send).toHaveBeenCalledTimes(1)
 
-    resolveAcceptance(true)
+    acceptance.resolve(true)
     await sending
     await flushQueue()
     expect(send).toHaveBeenCalledTimes(2)
     expect(send.mock.calls[1][0].clientUserMessageId).toBe(queue[1].id)
   })
+
+  test.each(['accepted', 'queued', 'rejected', 'thrown'] as const)(
+    'does not recreate an archived detached task after a late %s response',
+    async response => {
+      const store = idleStore(taskA)
+      const acceptance = deferredAcceptance()
+      const queue = [message('archived-in-flight'), message('archived-next')]
+      const send = vi.fn<SendRuntimePaneMessage>(async (request, options) => {
+        store.sendRequested(request.address)
+        const accepted = await acceptance.promise
+        if (response === 'queued') {
+          options?.onQueued?.({
+            accepted: true,
+            taskId: request.address.taskId,
+            status: 'queued',
+            queuePosition: 1,
+          })
+        }
+        if (!accepted) options?.onError?.('Transport unavailable')
+        return accepted
+      })
+      cacheRuntimeConversationQueuedMessages(taskA, queue)
+      const { controller, detach } = attach(taskA, store, send)
+      const sending = controller.send(queue[0])
+      detach()
+      await flushQueue()
+      expect(send).toHaveBeenCalledTimes(1)
+
+      evictRuntimeConversation(taskA)
+      store.remove(taskA)
+      await flushQueue()
+      expect(getRuntimeConversationMessages(taskA)).toEqual([])
+      expect(getRuntimeConversationQueuedMessages(taskA)).toEqual([])
+      expect(store.getTask(taskA)).toBeNull()
+
+      if (response === 'thrown') acceptance.reject(new Error('Transport unavailable'))
+      else acceptance.resolve(response !== 'rejected')
+      await sending
+      await flushQueue()
+
+      expect(getRuntimeConversationMessages(taskA)).toEqual([])
+      expect(getRuntimeConversationQueuedMessages(taskA)).toEqual([])
+      expect(getRuntimeConversationQueuePaused(taskA)).toBe(false)
+      expect(store.getTask(taskA)).toBeNull()
+      expect(send).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  test.each(['accepted', 'queued'] as const)(
+    'keeps a new generation of the same task independent of a late %s response',
+    async response => {
+      const store = idleStore(taskA)
+      const acceptance = deferredAcceptance()
+      const archivedQueue = [message('old-generation-in-flight'), message('old-generation-next')]
+      const archivedSend = vi.fn<SendRuntimePaneMessage>(async (request, options) => {
+        store.sendRequested(request.address)
+        const accepted = await acceptance.promise
+        if (response === 'queued') {
+          options?.onQueued?.({
+            accepted: true,
+            taskId: request.address.taskId,
+            status: 'queued',
+            queuePosition: 1,
+          })
+        }
+        return accepted
+      })
+      cacheRuntimeConversationQueuedMessages(taskA, archivedQueue)
+      const archived = attach(taskA, store, archivedSend)
+      const archivedSending = archived.controller.send(archivedQueue[0])
+      archived.detach()
+      await flushQueue()
+      expect(archivedSend).toHaveBeenCalledTimes(1)
+
+      evictRuntimeConversation(taskA)
+      store.remove(taskA)
+      await flushQueue()
+      store.syncRuntimeTask(taskA, {
+        taskId: taskA.taskId,
+        workspacePath: '/workspace/queue-tests',
+        title: 'New task generation',
+        runtime: 'codex',
+        running: false,
+        continuable: true,
+      })
+      const currentMessage = message('new-generation')
+      const currentSend = acceptingTransport(store)
+      cacheRuntimeConversationQueuedMessages(taskA, [currentMessage])
+      attach(taskA, store, currentSend)
+      await flushQueue()
+
+      expect(currentSend).toHaveBeenCalledTimes(1)
+      expect(currentSend).toHaveBeenCalledWith(
+        expect.objectContaining({ clientUserMessageId: currentMessage.id }),
+        expect.any(Object)
+      )
+      const currentMessages = getRuntimeConversationMessages(taskA)
+      const currentQueue = getRuntimeConversationQueuedMessages(taskA)
+      const currentLifecycle = store.getTask(taskA)
+      const currentRevision = store.getTaskRevision(taskA)
+      expect(currentMessages.filter(item => item.role === 'user').map(item => item.id)).toEqual([
+        currentMessage.id,
+      ])
+      expect(currentQueue).toEqual([
+        expect.objectContaining({
+          id: currentMessage.id,
+          status: 'sending',
+          awaitingTurnStart: true,
+        }),
+      ])
+
+      acceptance.resolve(true)
+      await archivedSending
+      await flushQueue()
+
+      expect(getRuntimeConversationMessages(taskA)).toEqual(currentMessages)
+      expect(getRuntimeConversationQueuedMessages(taskA)).toEqual(currentQueue)
+      expect(store.getTask(taskA)).toEqual(currentLifecycle)
+      expect(store.getTaskRevision(taskA)).toBe(currentRevision)
+      expect(currentSend).toHaveBeenCalledTimes(1)
+      expect(archivedSend).toHaveBeenCalledTimes(1)
+    }
+  )
 
   test.each([false, true])(
     'preserves a paused queue after detach and honors manual-turn resume cancellation=%s',
@@ -254,6 +399,146 @@ describe('RuntimeConversationQueueController', () => {
       store.executorSettled(taskA)
       await flushQueue()
       expect(send).toHaveBeenCalledTimes(cancelResume ? 0 : 1)
+    }
+  )
+
+  test.each(['before', 'after'] as const)(
+    'restores a pending manual-turn resume when cancellation fails %s the turn settles',
+    async rollbackTiming => {
+      const { controller, detach, store, send, item } = manualResumeFixture()
+      await flushQueue()
+      const rollback = controller.pauseForCancellation()
+      detach()
+      await flushQueue()
+      expect(send).not.toHaveBeenCalled()
+
+      if (rollbackTiming === 'before') rollback()
+      settleTurn(store, taskA, 'manual-turn')
+      store.executorSettled(taskA)
+      await flushQueue()
+      if (rollbackTiming === 'after') {
+        expect(getRuntimeConversationQueuePaused(taskA)).toBe(true)
+        expect(send).not.toHaveBeenCalled()
+        rollback()
+        await flushQueue()
+      }
+
+      expect(getRuntimeConversationQueuePaused(taskA)).toBe(false)
+      expect(send).toHaveBeenCalledTimes(1)
+      expect(send).toHaveBeenCalledWith(
+        expect.objectContaining({ clientUserMessageId: item.id }),
+        expect.any(Object)
+      )
+    }
+  )
+
+  test('keeps a successful cancellation paused after the manual turn and later turns settle', async () => {
+    const { controller, detach, store, send, item } = manualResumeFixture()
+    await flushQueue()
+    controller.pauseForCancellation()
+    store.stopRequested(taskA)
+    detach()
+    store.turnSettled(taskA, 'manual-turn', 'cancelled')
+    store.executorSettled(taskA)
+    await flushQueue()
+    expect(getRuntimeConversationQueuePaused(taskA)).toBe(true)
+    expect(getRuntimeConversationQueuedMessages(taskA)).toEqual([item])
+    expect(send).not.toHaveBeenCalled()
+
+    store.turnStarted(taskA, 'later-manual-turn')
+    settleTurn(store, taskA, 'later-manual-turn')
+    store.executorSettled(taskA)
+    await flushQueue()
+    expect(getRuntimeConversationQueuePaused(taskA)).toBe(true)
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  test('ignores an older cancellation rollback after a new manual-turn resume', async () => {
+    const { controller, detach, store, send } = manualResumeFixture()
+    await flushQueue()
+    const rollback = controller.pauseForCancellation()
+    detach()
+    settleTurn(store, taskA, 'manual-turn')
+    store.executorSettled(taskA)
+    await flushQueue()
+
+    controller.resumeAfterTurn(store.getTask(taskA))
+    rollback()
+    await flushQueue()
+    expect(getRuntimeConversationQueuePaused(taskA)).toBe(true)
+    expect(send).not.toHaveBeenCalled()
+
+    store.sendRequested(taskA)
+    store.sendAccepted(taskA)
+    store.turnStarted(taskA, 'new-manual-turn')
+    await flushQueue()
+    expect(send).not.toHaveBeenCalled()
+    settleTurn(store, taskA, 'new-manual-turn')
+    store.executorSettled(taskA)
+    await flushQueue()
+    expect(getRuntimeConversationQueuePaused(taskA)).toBe(false)
+    expect(send).toHaveBeenCalledTimes(1)
+  })
+
+  test('ignores an older rollback after a second cancellation pause', async () => {
+    const { controller, detach, store, send } = manualResumeFixture()
+    await flushQueue()
+    const rollback = controller.pauseForCancellation()
+    controller.pauseForCancellation()
+    rollback()
+    detach()
+    settleTurn(store, taskA, 'manual-turn')
+    store.executorSettled(taskA)
+    await flushQueue()
+
+    expect(getRuntimeConversationQueuePaused(taskA)).toBe(true)
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  test('does not restore a cancelled pending resume after the task is archived', async () => {
+    const { controller, detach, store, send } = manualResumeFixture()
+    await flushQueue()
+    const rollback = controller.pauseForCancellation()
+    detach()
+    evictRuntimeConversation(taskA)
+    store.remove(taskA)
+    await flushQueue()
+    rollback()
+    await flushQueue()
+
+    expect(getRuntimeConversationMessages(taskA)).toEqual([])
+    expect(getRuntimeConversationQueuedMessages(taskA)).toEqual([])
+    expect(getRuntimeConversationQueuePaused(taskA)).toBe(false)
+    expect(store.getTask(taskA)).toBeNull()
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  test.each([
+    ['empty', false],
+    ['empty', true],
+    ['executor-queued', false],
+    ['executor-queued', true],
+  ] as const)(
+    'does not add a pause to an %s queue (previously paused=%s)',
+    async (queueKind, previouslyPaused) => {
+      const store = idleStore(taskA)
+      const send = acceptingTransport(store)
+      const queue =
+        queueKind === 'empty' ? [] : [{ ...message('executor-only'), runtimeQueued: true }]
+      cacheRuntimeConversationQueuedMessages(taskA, queue)
+      cacheRuntimeConversationQueuePaused(taskA, previouslyPaused)
+      const { controller, detach } = attach(taskA, store, send)
+      const rollback = controller.pauseForCancellation()
+      detach()
+      await flushQueue()
+
+      expect(getRuntimeConversationQueuePaused(taskA)).toBe(previouslyPaused)
+      expect(send).not.toHaveBeenCalled()
+      rollback()
+      await flushQueue()
+      expect(getRuntimeConversationQueuePaused(taskA)).toBe(previouslyPaused)
+      expect(getRuntimeConversationQueuedMessages(taskA)).toEqual(queue)
+      expect(send).not.toHaveBeenCalled()
     }
   )
 
