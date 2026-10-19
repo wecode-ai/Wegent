@@ -50,6 +50,8 @@ Native addresses remain queued in the Electron process until navigation is ackno
 
 An Issue navigation request is marked as handled only when its detail view opens. The request remains pending while project data loads or a parent rerender cancels the scheduled operation, so clicking a notification does not stop at the board without opening the Issue.
 
+The board of the named project answers an assignment notification: the click switches the workbench to that project and its Issue even from another project or another tab, and that board then opens the personal task the assignee has to work on. The request stays pending until the project data is ready, so the click is never dropped.
+
 ## Architecture
 
 ```mermaid

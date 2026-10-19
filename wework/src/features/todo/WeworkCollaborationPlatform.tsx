@@ -51,12 +51,13 @@ import {
 import { createWeworkProjectAgentConfigurationHost } from '@/features/collaboration/WeworkProjectAgentConfigurationHost'
 import { generateCollaborationGroupDraft } from '@/features/collaboration/collaborationGroupDraftGeneration'
 import { ensureDefaultLocalAgent } from '@/features/collaboration/defaultLocalAgent'
-import { useIssueDispatchNotificationActionRegistration } from '@/features/notifications/useIssueDispatchNotificationActionRegistration'
 import {
   issueDispatchPersonalTaskInput,
   type IssueTaskDispatchInput,
+  type IssueDispatchPersonalTaskAction,
 } from '@/features/notifications/NotificationTaskSourceContext'
 import { humanTaskDispatchInput, resolveHumanTaskDispatch } from './humanTaskDispatch'
+import { subscribeIssueDispatch } from '@/features/notifications/issueDispatch'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import type {
   ArchiveRuntimeConversationsResult,
@@ -801,33 +802,27 @@ export function WeworkSharedProject({
     [project.id, project.project_store, projectHost, runtimeWork, scopedApi.taskBindings]
   )
 
-  useIssueDispatchNotificationActionRegistration(
-    `collaboration-project:${project.id}`,
-    true,
-    async action => {
-      if (String(action.projectId) !== String(project.id)) {
-        throw new Error('请先打开任务所属项目')
-      }
+  /** Open the personal task an assignment notification hands to this reader. */
+  const answerIssueDispatch = useCallback(
+    async (action: IssueDispatchPersonalTaskAction) => {
       const issue = await scopedApi.issues.get(action.itemId)
       const existing = (await scopedApi.taskBindings?.list(action.itemId, action.projectId))?.find(
         binding => binding.humanAssignmentId === action.humanAssignmentId
       )
       if (existing) {
         acceptedDispatchTaskActions.current.add(action.idempotencyKey)
+        const address = workspaceExecutionAddress(
+          existing,
+          runtimeWork,
+          issue.id,
+          project.project_store
+        )
         if (runtimePort) {
-          setTaskComposer({
-            issue,
-            conversationKey: `${issue.id}:${existing.deviceId}:${existing.taskId}`,
-            address: collaborationTaskAddress(existing, runtimeWork),
-          })
-          projectHost.navigate({ ...projectHost.location, issueId: issue.id })
+          await openBoundTaskConversation(issue, address)
           return
         }
         if (!onOpenRuntimeTask) throw new Error('当前工作台无法打开个人任务')
-        await onOpenRuntimeTask({
-          deviceId: existing.deviceId,
-          taskId: existing.taskId,
-        })
+        await onOpenRuntimeTask(address)
         return
       }
       if (acceptedDispatchTaskActions.current.has(action.idempotencyKey)) return
@@ -838,7 +833,33 @@ export function WeworkSharedProject({
         acceptedDispatchTaskActions.current.delete(action.idempotencyKey)
         throw cause
       }
-    }
+    },
+    [
+      onOpenRuntimeTask,
+      openBoundTaskConversation,
+      openNewTaskConversation,
+      project.project_store,
+      runtimePort,
+      runtimeWork,
+      scopedApi.issues,
+      scopedApi.taskBindings,
+    ]
+  )
+
+  // Only the board that shows the Issue answers, which is the board a click on
+  // the notification switched to, whichever tab it came from.
+  useEffect(
+    () =>
+      subscribeIssueDispatch({
+        shows: action =>
+          action.itemId === focusedItemId && String(action.projectId) === String(project.id),
+        answer: action => {
+          void answerIssueDispatch(action).catch(cause => {
+            notify(cause instanceof Error ? cause.message : String(cause), 'error')
+          })
+        },
+      }),
+    [answerIssueDispatch, focusedItemId, notify, project.id]
   )
 
   const codeWorkspacePreference = loadProjectSpaceCodeWorkspacePreference(userId, {
