@@ -101,8 +101,8 @@ def test_task_status_failure_propagates_from_subtask_update():
 
 
 @pytest.mark.asyncio
-async def test_streaming_cleanup_runs_when_task_persistence_fails():
-    """Terminal persistence failures still clear the streaming checkpoint."""
+async def test_streaming_cleanup_is_preserved_when_task_persistence_fails():
+    """Failed status writes preserve the streaming checkpoint for recovery."""
     db_handler = SimpleNamespace(
         update_subtask_status=AsyncMock(side_effect=RuntimeError("task status failed"))
     )
@@ -113,6 +113,32 @@ async def test_streaming_cleanup_runs_when_task_persistence_fails():
         patch("app.services.chat.storage.session_manager", session_manager),
     ):
         with pytest.raises(RuntimeError, match="task status failed"):
+            await persist_completed_result(
+                subtask_id=10,
+                task_id=20,
+                status="COMPLETED",
+                result={"value": "done"},
+            )
+
+    session_manager.cleanup_streaming_state.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_streaming_cleanup_runs_when_workspace_persistence_fails():
+    """Workspace persistence failures still clear the streaming checkpoint."""
+    db_handler = SimpleNamespace(update_subtask_status=AsyncMock())
+    session_manager = SimpleNamespace(cleanup_streaming_state=AsyncMock())
+
+    with (
+        patch("app.services.chat.storage.db.db_handler", db_handler),
+        patch("app.services.chat.storage.session_manager", session_manager),
+        patch(
+            "app.services.chat.trigger.lifecycle._persist_standalone_workspace_path",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("workspace persistence failed"),
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="workspace persistence failed"):
             await persist_completed_result(
                 subtask_id=10,
                 task_id=20,

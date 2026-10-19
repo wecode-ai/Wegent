@@ -623,12 +623,12 @@ async def persist_completed_result(
         "executor_namespace": executor_namespace,
     }
 
+    await chat_db.db_handler.update_subtask_status(
+        subtask_id,
+        normalized_status,
+        **update_kwargs,
+    )
     try:
-        await chat_db.db_handler.update_subtask_status(
-            subtask_id,
-            normalized_status,
-            **update_kwargs,
-        )
         if normalized_status == "COMPLETED":
             await _persist_standalone_workspace_path(task_id, result)
     finally:
