@@ -48,6 +48,7 @@ const CHECKPOINT_RESOURCES = new Map([
     ['collaboration-runtime', 'desktop-runtime-intensive'],
   ],
   ['collaboration-issue-comment-notification', ['collaboration-runtime']],
+  ['collaboration-issue-mcp-comments', ['collaboration-runtime']],
   ['collaboration-issue-archive', ['collaboration-runtime', 'desktop-runtime-intensive']],
 ])
 const CHECKPOINT_SCENARIO_MODULES = {
@@ -125,6 +126,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
     './scenarios/collaboration-issue-comment-mention.scenario.mjs',
   'collaboration-issue-comment-notification':
     './scenarios/collaboration-issue-comment-notification.scenario.mjs',
+  'collaboration-issue-mcp-comments': './scenarios/collaboration-issue-mcp-comments.scenario.mjs',
   'collaboration-issue-archive': './scenarios/collaboration-issue-archive.scenario.mjs',
   'plugin-development': './scenarios/plugin-development.scenario.mjs',
   'task-attachments': './scenarios/task-attachments.scenario.mjs',
@@ -179,6 +181,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-local-group-cancellation',
   'collaboration-issue-comment-mention',
   'collaboration-issue-comment-notification',
+  'collaboration-issue-mcp-comments',
   'collaboration-issue-archive',
   'plugin-development',
   'task-attachments',

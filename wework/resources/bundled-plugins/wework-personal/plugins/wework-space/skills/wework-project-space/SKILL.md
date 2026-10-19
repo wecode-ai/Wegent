@@ -9,6 +9,7 @@ Use the `wework_space` MCP tools for project-space work.
 
 1. Call `get_current_context` before answering questions about the current Issue.
 2. Call `get_board_item` with that context before interpreting the Issue description.
+   Read `list_board_item_comments` as well for PR links, follow-up requirements and review feedback. It returns the latest 200 comments by default; use `limit` (up to 500) and `after_sequence` to page forward. Write with `add_board_item_comment` to the same visible Issue activity.
 3. Use `list_item_attachments` and `read_item_attachment` to inspect Issue attachments.
 4. Use the current context instead of asking the user to repeat a project or Issue identifier.
 5. Do not probe MCP resources, use Shell or `curl`, scrape the browser, or parse `wegent://` attachment URLs.
