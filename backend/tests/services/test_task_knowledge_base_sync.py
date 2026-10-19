@@ -51,6 +51,7 @@ class TestPrepareContextsForCreation:
             kb_contexts,
             selected_docs_contexts,
             external_contexts,
+            conversation_contexts,
         ) = _prepare_contexts_for_creation(
             contexts=[context_item],
             subtask_id=100,
@@ -60,6 +61,7 @@ class TestPrepareContextsForCreation:
         assert len(kb_contexts) == 1
         assert selected_docs_contexts == []
         assert external_contexts == []
+        assert conversation_contexts == []
         assert kb_contexts[0].type_data == {
             "knowledge_id": 10,
             "document_count": None,
@@ -81,14 +83,17 @@ class TestPrepareContextsForCreation:
             },
         )
 
-        kb_contexts, _, external_contexts = _prepare_contexts_for_creation(
-            contexts=[context_item],
-            subtask_id=100,
-            user_id=1,
+        kb_contexts, _, external_contexts, conversation_contexts = (
+            _prepare_contexts_for_creation(
+                contexts=[context_item],
+                subtask_id=100,
+                user_id=1,
+            )
         )
 
         assert len(kb_contexts) == 1
         assert external_contexts == []
+        assert conversation_contexts == []
         assert kb_contexts[0].type_data == {
             "knowledge_id": 10,
             "document_count": None,
@@ -109,14 +114,17 @@ class TestPrepareContextsForCreation:
             },
         )
 
-        kb_contexts, _, external_contexts = _prepare_contexts_for_creation(
-            contexts=[context_item],
-            subtask_id=100,
-            user_id=1,
+        kb_contexts, _, external_contexts, conversation_contexts = (
+            _prepare_contexts_for_creation(
+                contexts=[context_item],
+                subtask_id=100,
+                user_id=1,
+            )
         )
 
         assert len(kb_contexts) == 1
         assert external_contexts == []
+        assert conversation_contexts == []
         assert kb_contexts[0].type_data == {
             "knowledge_id": 10,
             "document_count": None,
@@ -139,14 +147,17 @@ class TestPrepareContextsForCreation:
             },
         )
 
-        kb_contexts, _, external_contexts = _prepare_contexts_for_creation(
-            contexts=[context_item],
-            subtask_id=100,
-            user_id=1,
+        kb_contexts, _, external_contexts, conversation_contexts = (
+            _prepare_contexts_for_creation(
+                contexts=[context_item],
+                subtask_id=100,
+                user_id=1,
+            )
         )
 
         assert len(kb_contexts) == 1
         assert external_contexts == []
+        assert conversation_contexts == []
         assert kb_contexts[0].type_data == {
             "knowledge_id": 10,
             "document_count": None,
@@ -170,14 +181,17 @@ class TestPrepareContextsForCreation:
             },
         )
 
-        kb_contexts, _, external_contexts = _prepare_contexts_for_creation(
-            contexts=[context_item],
-            subtask_id=100,
-            user_id=1,
+        kb_contexts, _, external_contexts, conversation_contexts = (
+            _prepare_contexts_for_creation(
+                contexts=[context_item],
+                subtask_id=100,
+                user_id=1,
+            )
         )
         scopes = _build_scopes_from_kb_contexts(kb_contexts)
 
         assert external_contexts == []
+        assert conversation_contexts == []
         assert len(scopes) == 1
         assert scopes[0].knowledge_base_id == 10
         assert scopes[0].scope_restricted is True
@@ -200,13 +214,16 @@ class TestPrepareContextsForCreation:
             },
         )
 
-        kb_contexts, _, external_contexts = _prepare_contexts_for_creation(
-            contexts=[context_item],
-            subtask_id=100,
-            user_id=1,
+        kb_contexts, _, external_contexts, conversation_contexts = (
+            _prepare_contexts_for_creation(
+                contexts=[context_item],
+                subtask_id=100,
+                user_id=1,
+            )
         )
 
         assert external_contexts == []
+        assert conversation_contexts == []
         assert len(kb_contexts) == 1
         assert kb_contexts[0].type_data == {
             "knowledge_id": 10,

@@ -41,6 +41,9 @@ class ContextType(str, PyEnum):
     KNOWLEDGE_BASE = "knowledge_base"
     SELECTED_DOCUMENTS = "selected_documents"  # Selected documents from notebook mode for direct injection
     EXTERNAL_KNOWLEDGE = "external_knowledge"
+    CONVERSATION = (
+        "conversation"  # A previous task referenced as untrusted background context
+    )
 
 
 class ContextStatus(str, PyEnum):

@@ -5,7 +5,7 @@
 'use client'
 
 import React, { ReactNode } from 'react'
-import { Database, Loader2 } from 'lucide-react'
+import { Database, Loader2, MessageSquareText } from 'lucide-react'
 import AttachmentPreview from '../input/AttachmentPreview'
 import ImageGallery from './ImageGallery'
 import type { SubtaskContextBrief, Attachment } from '@/types/api'
@@ -186,6 +186,8 @@ function ContextBadgeItem({
           documentCount={documentCount}
         />
       )
+    case 'conversation':
+      return <ConversationReferenceBadge context={context} />
     default:
       return null
   }
@@ -359,4 +361,16 @@ function ExternalKnowledgeBadge({
   )
 }
 
+function ConversationReferenceBadge({ context }: { context: SubtaskContextBrief }) {
+  const { t } = useTranslation('chat')
+  return (
+    <div data-testid={`conversation-reference-${context.task_id ?? context.id}`}>
+      <ContextPreviewBase
+        icon={<MessageSquareText className="text-text-secondary" />}
+        title={context.name}
+        subtitle={t('chat:mention.referencedTask')}
+      />
+    </div>
+  )
+}
 export default ContextBadgeList

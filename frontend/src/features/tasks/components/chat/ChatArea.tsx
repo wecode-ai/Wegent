@@ -26,7 +26,7 @@ import { useChatAreaState } from './useChatAreaState'
 import { useChatStreamHandlers, type SendMessageOptions } from './useChatStreamHandlers'
 import { allBotsHavePredefinedModel, DEFAULT_MODEL_NAME } from '../selector/ModelSelector'
 import { QuoteProvider, SelectionTooltip, useQuote } from '../text-selection'
-import type { Attachment, Team, SubtaskContextBrief, TaskType } from '@/types/api'
+import type { Attachment, SubtaskContextBrief, Task, TaskType, Team } from '@/types/api'
 import type { PipelineContextPassing } from '@/types/api'
 import type { Model } from '../../hooks/useModelSelection'
 import type { ContextItem, ExternalKnowledgeRef, QueueMessageContext } from '@/types/context'
@@ -327,6 +327,7 @@ function ChatAreaContent({
 
   // Task context
   const {
+    tasks,
     selectedTask,
     selectedTaskDetail,
     selectTask,
@@ -1649,6 +1650,29 @@ function ChatAreaContent({
   const selectedContextsRef = useRef(chatState.selectedContexts)
   selectedContextsRef.current = chatState.selectedContexts
 
+  const handleSelectConversation = useCallback(
+    (task: Task) => {
+      setSelectedContexts(previous => {
+        if (
+          previous.some(context => context.type === 'conversation' && context.task_id === task.id)
+        ) {
+          return previous
+        }
+        return [
+          ...previous,
+          {
+            id: `conversation:${task.id}`,
+            name: task.title || task.prompt.slice(0, 100) || String(task.id),
+            type: 'conversation',
+            task_id: task.id,
+            task_updated_at: task.updated_at,
+          },
+        ]
+      })
+    },
+    [setSelectedContexts]
+  )
+
   const handleRestoreDefaultTeam = useCallback(() => {
     const url = new URL(window.location.href)
     ignoredTeamIdParamRef.current = teamIdFromUrl
@@ -2291,6 +2315,14 @@ function ChatAreaContent({
             type: 'external_knowledge',
             ref,
           })
+        } else if (ctx.context_type === 'conversation' && ctx.task_id) {
+          restoredContextItems.push({
+            id: `conversation:${ctx.task_id}`,
+            name: ctx.name,
+            type: 'conversation',
+            task_id: ctx.task_id,
+            task_updated_at: ctx.task_updated_at ?? undefined,
+          })
         }
       }
       if (restoredContextItems.length > 0) {
@@ -2367,6 +2399,11 @@ function ChatAreaContent({
     teamModeFilter,
     tipText: chatState.randomTip,
     isGroupChat: selectedTaskDetail?.is_group_chat || false,
+    mentionTasks: tasks,
+    currentTaskId: selectedTaskDetail?.id ?? selectedTask?.id,
+    enableTaskMentions:
+      effectiveTaskType === 'chat' || effectiveTaskType === 'code' || effectiveTaskType === 'task',
+    onSelectConversation: handleSelectConversation,
     isDragging: chatState.isDragging,
     onDragEnter: handleDragEnter,
     onDragLeave: handleDragLeave,

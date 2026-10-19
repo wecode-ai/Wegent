@@ -5,68 +5,146 @@
 'use client'
 
 import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react'
+import { MessageSquareText } from 'lucide-react'
+import { taskApis } from '@/apis/tasks'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { Team } from '@/types/api'
+import type { Task, Team } from '@/types/api'
 import { TeamIconDisplay } from '@/features/settings/components/teams/TeamIconDisplay'
+import { formatRelativeTime } from '@/utils/dateTime'
 
 interface MentionableAgent {
   id: number
   name: string
   type: 'team' | 'bot'
-  iconId?: string | null // Team icon ID
+  iconId?: string | null
 }
+
+type MentionRow = { kind: 'task'; task: Task } | { kind: 'agent'; agent: MentionableAgent }
 
 interface MentionAutocompleteProps {
   team: Team | null
   query?: string
+  tasks?: Task[]
+  currentTaskId?: number | null
+  showTeamMention?: boolean
+  enableTaskMentions?: boolean
   onSelect: (mention: string) => void
+  onSelectTask?: (task: Task) => void
   onClose: () => void
   position: { top: number; left: number }
+}
+
+export function buildTaskMentionCandidates(
+  tasks: Task[],
+  query: string,
+  currentTaskId?: number | null
+): Task[] {
+  const normalizedQuery = query.trim().toLowerCase()
+  const deduped = new Map<number, Task>()
+  for (const task of tasks) {
+    if (task.id === currentTaskId) continue
+    const title = task.title || ''
+    const prompt = task.prompt || ''
+    if (
+      normalizedQuery &&
+      !title.toLowerCase().includes(normalizedQuery) &&
+      !prompt.toLowerCase().includes(normalizedQuery)
+    ) {
+      continue
+    }
+    deduped.set(task.id, task)
+  }
+  return Array.from(deduped.values()).sort((left, right) => {
+    const updatedDelta =
+      timestamp(right.updated_at || right.created_at) -
+      timestamp(left.updated_at || left.created_at)
+    return updatedDelta || right.id - left.id
+  })
+}
+
+function timestamp(value?: string | null): number {
+  if (!value) return 0
+  const parsed = Date.parse(value)
+  return Number.isNaN(parsed) ? 0 : parsed
 }
 
 export default function MentionAutocomplete({
   team,
   query = '',
+  tasks = [],
+  currentTaskId,
+  showTeamMention = false,
+  enableTaskMentions = false,
   onSelect,
+  onSelectTask,
   onClose,
   position,
 }: MentionAutocompleteProps) {
   const { t } = useTranslation()
   const menuRef = useRef<HTMLDivElement>(null)
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const [remoteTasks, setRemoteTasks] = useState<Task[]>([])
+  const [isSearchingTasks, setIsSearchingTasks] = useState(false)
 
-  // Build mentionable agents list (team only, no individual bots)
-  const mentionableAgents = useMemo<MentionableAgent[]>(() => {
-    if (!team) return []
-    const agents: MentionableAgent[] = []
-
-    // Only add team itself
-    agents.push({
-      id: team.id,
-      name: team.name,
-      type: 'team',
-      iconId: team.icon,
-    })
-
-    return agents
-  }, [team])
-
-  // Filter agents based on query
-  const filteredAgents = useMemo(() => {
-    if (!query || query.trim() === '') {
-      return mentionableAgents
+  useEffect(() => {
+    const normalizedQuery = query.trim()
+    if (!enableTaskMentions || !normalizedQuery) {
+      setRemoteTasks([])
+      setIsSearchingTasks(false)
+      return
     }
 
-    const lowerQuery = query.toLowerCase()
-    return mentionableAgents.filter(agent => agent.name.toLowerCase().includes(lowerQuery))
+    let cancelled = false
+    setIsSearchingTasks(true)
+    const timer = window.setTimeout(() => {
+      void taskApis
+        .searchTasks(normalizedQuery, { limit: 20 })
+        .then(result => {
+          if (!cancelled) setRemoteTasks(result.items || [])
+        })
+        .catch(() => {
+          if (!cancelled) setRemoteTasks([])
+        })
+        .finally(() => {
+          if (!cancelled) setIsSearchingTasks(false)
+        })
+    }, 180)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [enableTaskMentions, query])
+
+  const mentionableAgents = useMemo<MentionableAgent[]>(() => {
+    if (!team) return []
+    return [{ id: team.id, name: team.name, type: 'team', iconId: team.icon }]
+  }, [team])
+
+  const filteredAgents = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase()
+    if (!normalizedQuery) return mentionableAgents
+    return mentionableAgents.filter(agent => agent.name.toLowerCase().includes(normalizedQuery))
   }, [mentionableAgents, query])
 
-  // Reset selected index when filtered agents change
+  const taskCandidates = useMemo(
+    () => buildTaskMentionCandidates([...tasks, ...remoteTasks], query, currentTaskId).slice(0, 20),
+    [currentTaskId, query, remoteTasks, tasks]
+  )
+
+  const rows = useMemo<MentionRow[]>(() => {
+    const nextRows: MentionRow[] = []
+    if (showTeamMention) {
+      nextRows.push(...filteredAgents.map(agent => ({ kind: 'agent' as const, agent })))
+    }
+    nextRows.push(...taskCandidates.map(task => ({ kind: 'task' as const, task })))
+    return nextRows
+  }, [filteredAgents, showTeamMention, taskCandidates])
+
   useEffect(() => {
     setSelectedIndex(0)
-  }, [filteredAgents])
+  }, [rows])
 
-  // Close on outside click
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
@@ -81,14 +159,18 @@ export default function MentionAutocomplete({
   }, [onClose])
 
   const handleSelect = useCallback(
-    (agent: MentionableAgent) => {
-      onSelect(`@${agent.name}`)
+    (row: MentionRow) => {
+      if (row.kind === 'task') {
+        if (!onSelectTask) return
+        onSelectTask(row.task)
+      } else {
+        onSelect(`@${row.agent.name}`)
+      }
       onClose()
     },
-    [onSelect, onClose]
+    [onClose, onSelect, onSelectTask]
   )
 
-  // Handle keyboard navigation
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -98,7 +180,7 @@ export default function MentionAutocomplete({
       } else if (event.key === 'ArrowDown') {
         event.preventDefault()
         event.stopPropagation()
-        setSelectedIndex(prev => Math.min(prev + 1, filteredAgents.length - 1))
+        setSelectedIndex(prev => Math.min(prev + 1, Math.max(0, rows.length - 1)))
       } else if (event.key === 'ArrowUp') {
         event.preventDefault()
         event.stopPropagation()
@@ -106,58 +188,102 @@ export default function MentionAutocomplete({
       } else if (event.key === 'Enter') {
         event.preventDefault()
         event.stopPropagation()
-        if (filteredAgents[selectedIndex]) {
-          handleSelect(filteredAgents[selectedIndex])
+        if (rows[selectedIndex]) {
+          handleSelect(rows[selectedIndex])
         }
       }
     }
 
-    document.addEventListener('keydown', handleKeyDown, true) // Use capture phase
+    document.addEventListener('keydown', handleKeyDown, true)
     return () => {
       document.removeEventListener('keydown', handleKeyDown, true)
     }
-  }, [onClose, filteredAgents, selectedIndex, handleSelect])
+  }, [handleSelect, onClose, rows, selectedIndex])
 
-  if (!team || filteredAgents.length === 0) {
+  if (!team && !enableTaskMentions && taskCandidates.length === 0) {
     return null
   }
 
+  let previousKind: MentionRow['kind'] | null = null
   return (
     <div
       ref={menuRef}
-      className="absolute z-50 bg-surface border border-border rounded-md shadow-lg py-1 min-w-[200px] max-h-[300px] overflow-y-auto"
+      data-testid="mention-autocomplete"
+      className="absolute z-50 max-h-[320px] min-w-[240px] max-w-[calc(100vw-24px)] overflow-y-auto rounded-lg border border-border bg-surface py-1 shadow-lg sm:w-[380px]"
       style={{
-        bottom: `calc(100% - ${position.top}px)`, // Position above the cursor
+        bottom: `calc(100% - ${position.top}px)`,
         left: `${position.left}px`,
       }}
     >
-      {filteredAgents.map((agent, index) => (
-        <div
-          key={`${agent.type}-${agent.id}`}
-          className={`px-3 py-2 cursor-pointer transition-colors flex items-center gap-2 ${
-            index === selectedIndex ? 'bg-muted' : 'hover:bg-muted'
-          }`}
-          onClick={() => handleSelect(agent)}
-          role="button"
-          tabIndex={0}
-          onKeyDown={e => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault()
-              handleSelect(agent)
-            }
-          }}
-        >
-          <TeamIconDisplay
-            iconId={agent.iconId}
-            size="sm"
-            className="flex-shrink-0 text-text-secondary"
-          />
-          <div className="flex-1 min-w-0">
-            <span className="text-sm text-text-primary font-medium">{agent.name}</span>
-          </div>
+      {rows.map((row, index) => {
+        const showSectionHeader = row.kind !== previousKind
+        previousKind = row.kind
+        const isSelected = index === selectedIndex
+        if (row.kind === 'task') {
+          const updatedAt = formatRelativeTime(row.task.updated_at || row.task.created_at, t)
+          return (
+            <React.Fragment key={`task:${row.task.id}`}>
+              {showSectionHeader && (
+                <div className="px-3 pb-1 pt-2 text-xs text-text-muted">
+                  {t('chat:mention.taskSection')}
+                </div>
+              )}
+              <button
+                type="button"
+                data-testid={`mention-task-option-${row.task.id}`}
+                className={`flex min-h-11 w-full items-center gap-2 px-3 py-2 text-left transition-colors md:min-h-0 ${
+                  isSelected ? 'bg-muted' : 'hover:bg-muted'
+                }`}
+                onClick={() => handleSelect(row)}
+              >
+                <MessageSquareText className="h-4 w-4 flex-shrink-0 text-text-secondary" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium text-text-primary">
+                    {row.task.title || row.task.prompt}
+                  </span>
+                  <span className="block truncate text-xs text-text-muted">
+                    {t('chat:mention.taskHint')}
+                    {updatedAt ? ` · ${updatedAt}` : ''}
+                  </span>
+                </span>
+              </button>
+            </React.Fragment>
+          )
+        }
+
+        return (
+          <React.Fragment key={`agent:${row.agent.id}`}>
+            {showSectionHeader && (
+              <div className="px-3 pb-1 pt-2 text-xs text-text-muted">
+                {t('chat:mention.agentSection')}
+              </div>
+            )}
+            <button
+              type="button"
+              data-testid={`mention-agent-option-${row.agent.id}`}
+              className={`flex min-h-11 w-full items-center gap-2 px-3 py-2 text-left transition-colors md:min-h-0 ${
+                isSelected ? 'bg-muted' : 'hover:bg-muted'
+              }`}
+              onClick={() => handleSelect(row)}
+            >
+              <TeamIconDisplay
+                iconId={row.agent.iconId}
+                size="sm"
+                className="flex-shrink-0 text-text-secondary"
+              />
+              <span className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary">
+                {row.agent.name}
+              </span>
+            </button>
+          </React.Fragment>
+        )
+      })}
+      {rows.length === 0 && (
+        <div className="px-3 py-2 text-sm text-text-muted">
+          {isSearchingTasks ? t('chat:mention.searching') : t('chat:mention.noResults')}
         </div>
-      ))}
-      <div className="px-3 py-1 text-xs text-text-muted border-t border-border">
+      )}
+      <div className="mt-1 border-t border-border px-3 py-1 text-xs text-text-muted">
         {t('chat:groupChat.mentionAutocomplete.title')}
       </div>
     </div>

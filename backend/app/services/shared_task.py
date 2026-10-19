@@ -831,7 +831,12 @@ class SharedTaskService:
                 db.query(SubtaskContext)
                 .filter(
                     SubtaskContext.subtask_id.in_(subtask_ids),
-                    SubtaskContext.context_type != ContextType.KNOWLEDGE_BASE.value,
+                    SubtaskContext.context_type.notin_(
+                        [
+                            ContextType.KNOWLEDGE_BASE.value,
+                            ContextType.CONVERSATION.value,
+                        ]
+                    ),
                 )
                 .all()
             )

@@ -53,6 +53,12 @@ def build_context_display_fields(
             "external_parent_id": data.get("parent_id"),
         }
 
+    if context_type == "conversation":
+        return {
+            "task_id": data.get("task_id"),
+            "task_updated_at": data.get("updated_at"),
+        }
+
     return {}
 
 

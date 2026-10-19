@@ -1349,10 +1349,16 @@ class ChatNamespace(socketio.AsyncNamespace):
             skip_sid: Socket ID to skip (sender)
         """
         from app.api.ws.events import ServerEvents
+        from app.models.subtask_context import ContextType
         from app.services.context import context_service
 
         # Build contexts list for the subtask
-        contexts_briefs = context_service.get_briefs_by_subtask(db, user_subtask.id)
+        contexts_briefs = [
+            context
+            for context in context_service.get_briefs_by_subtask(db, user_subtask.id)
+            # Conversation references may point at tasks the recipient cannot access.
+            if context.context_type != ContextType.CONVERSATION.value
+        ]
         # Use Pydantic's model_dump to ensure all fields are serialized correctly
         contexts_list = [ctx.model_dump(mode="json") for ctx in contexts_briefs]
 

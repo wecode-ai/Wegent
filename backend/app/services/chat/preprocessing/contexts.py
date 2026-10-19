@@ -43,6 +43,12 @@ from shared.prompts import (
 )
 from shared.utils.attachment_block import build_attachment_header
 
+from .conversation_references import (
+    build_conversation_references_prompt,
+    prepend_conversation_reference_context,
+    resolve_conversation_reference,
+)
+
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -492,6 +498,8 @@ def link_contexts_to_subtask(
        (without extracted_text - RAG retrieval is done later via tools/Service)
     3. External knowledge refs: Selected at send time, batch create SubtaskContext
        records and sync them to task-level externalKnowledgeRefs.
+    4. Conversations: Validate access to previous tasks and persist their references
+       so preprocessing can inject them as untrusted background context.
 
     When knowledge bases or external knowledge refs are created, they are
     automatically synced to the task-level binding spec for future use across all
@@ -534,13 +542,21 @@ def link_contexts_to_subtask(
         kb_contexts_to_create,
         selected_docs_contexts_to_create,
         external_knowledge_contexts_to_create,
-    ) = _prepare_contexts_for_creation(contexts, subtask_id, user_id, db=db)
+        conversation_contexts_to_create,
+    ) = _prepare_contexts_for_creation(
+        contexts,
+        subtask_id,
+        user_id,
+        db=db,
+        current_task_id=task.id if task else None,
+    )
 
     # Combine all contexts to create
     all_contexts_to_create = (
         kb_contexts_to_create
         + selected_docs_contexts_to_create
         + external_knowledge_contexts_to_create
+        + conversation_contexts_to_create
     )
 
     # Execute all database operations in a single transaction
@@ -903,7 +919,9 @@ def _prepare_contexts_for_creation(
     user_id: int,
     *,
     db: Session | None = None,
+    current_task_id: int | None = None,
 ) -> tuple[
+    List[SubtaskContext],
     List[SubtaskContext],
     List[SubtaskContext],
     List[SubtaskContext],
@@ -918,17 +936,20 @@ def _prepare_contexts_for_creation(
 
     Returns:
         Tuple of (kb_contexts, selected_docs_contexts,
-        external_knowledge_contexts) ready for insertion
+        external_knowledge_contexts, conversation_contexts) ready for insertion
     """
     kb_contexts_to_create: List[SubtaskContext] = []
     selected_docs_contexts_to_create: List[SubtaskContext] = []
     external_knowledge_contexts_to_create: List[SubtaskContext] = []
+    conversation_contexts_to_create: List[SubtaskContext] = []
+    seen_conversation_task_ids: set[int] = set()
 
     if not contexts:
         return (
             kb_contexts_to_create,
             selected_docs_contexts_to_create,
             external_knowledge_contexts_to_create,
+            conversation_contexts_to_create,
         )
 
     for ctx in contexts:
@@ -1058,10 +1079,62 @@ def _prepare_contexts_for_creation(
                 logger.warning(f"Failed to prepare external knowledge context: {e}")
                 continue
 
+        elif ctx.type == "conversation":
+            try:
+                conversation_data = ctx.data
+                try:
+                    task_id = int(conversation_data.get("task_id"))
+                except (TypeError, ValueError) as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Invalid conversation reference",
+                    ) from exc
+                if current_task_id is not None and task_id == current_task_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Cannot reference the current task",
+                    )
+                if task_id in seen_conversation_task_ids:
+                    continue
+                if db is None:
+                    raise RuntimeError(
+                        "Database session is required for conversation references"
+                    )
+                task, title = resolve_conversation_reference(
+                    db,
+                    task_id=task_id,
+                    user_id=user_id,
+                )
+                updated_at = getattr(task, "updated_at", None)
+                seen_conversation_task_ids.add(task.id)
+                conversation_contexts_to_create.append(
+                    SubtaskContext(
+                        subtask_id=subtask_id,
+                        user_id=user_id,
+                        context_type=ContextType.CONVERSATION.value,
+                        name=title,
+                        status=ContextStatus.READY.value,
+                        type_data={
+                            "task_id": task.id,
+                            "updated_at": (
+                                updated_at.isoformat()
+                                if hasattr(updated_at, "isoformat")
+                                else str(updated_at or "")
+                            ),
+                        },
+                    )
+                )
+            except (HTTPException, RuntimeError):
+                raise
+            except Exception as e:
+                logger.warning(f"Failed to prepare conversation context: {e}")
+                continue
+
     return (
         kb_contexts_to_create,
         selected_docs_contexts_to_create,
         external_knowledge_contexts_to_create,
+        conversation_contexts_to_create,
     )
 
 
@@ -1153,9 +1226,15 @@ def _batch_update_and_insert_contexts(
             for c in contexts_to_create
             if c.context_type == ContextType.SELECTED_DOCUMENTS.value
         )
+        conversation_count = sum(
+            1
+            for c in contexts_to_create
+            if c.context_type == ContextType.CONVERSATION.value
+        )
         logger.info(
             f"Created {kb_count} knowledge base contexts "
-            f"and {selected_docs_count} selected_documents contexts for subtask {subtask_id}"
+            f"and {selected_docs_count} selected_documents contexts, "
+            f"and {conversation_count} conversation contexts for subtask {subtask_id}"
         )
 
     return created_context_ids
@@ -1182,6 +1261,8 @@ async def prepare_contexts_for_chat(
     This function retrieves all contexts associated with a user subtask and:
     1. Processes attachment contexts - injects content into the message
     2. Processes knowledge base contexts - creates KnowledgeBaseTool for RAG
+    3. Processes conversation references - injects prior task transcripts as
+       explicitly untrusted background context
 
     This eliminates the need to pass separate attachment_ids and knowledge_base_ids
     through the call chain.
@@ -1229,11 +1310,18 @@ async def prepare_contexts_for_chat(
         if c.context_type == ContextType.SELECTED_DOCUMENTS.value
         and c.status == ContextStatus.READY.value
     ]
+    conversation_contexts = [
+        c
+        for c in contexts
+        if c.context_type == ContextType.CONVERSATION.value
+        and c.status == ContextStatus.READY.value
+    ]
 
     logger.info(
         f"[prepare_contexts_for_chat] subtask={user_subtask_id}: "
         f"{len(attachment_contexts)} attachments, {len(kb_contexts)} knowledge bases, "
-        f"{len(selected_docs_contexts)} selected_documents"
+        f"{len(selected_docs_contexts)} selected_documents, "
+        f"{len(conversation_contexts)} conversation references"
     )
 
     # 1. Process attachment contexts - inject into message
@@ -1244,6 +1332,15 @@ async def prepare_contexts_for_chat(
         subtask_id=user_subtask_id,
         model_config=model_config,
         inline_attachment_content=inline_attachment_content,
+    )
+    conversation_reference_prompt = build_conversation_references_prompt(
+        db,
+        contexts=conversation_contexts,
+        user_id=user_id,
+    )
+    final_message = prepend_conversation_reference_context(
+        final_message,
+        conversation_reference_prompt,
     )
 
     # 2. Process knowledge base contexts - create tools

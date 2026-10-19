@@ -14,7 +14,7 @@ import ChatInputControls, { ChatInputControlsProps } from './ChatInputControls'
 import DeviceSelectorTab from './DeviceSelectorTab'
 import { QuoteCard } from '../text-selection'
 import { ConnectionStatusBanner } from './ConnectionStatusBanner'
-import type { Team, ChatTipItem, TaskType } from '@/types/api'
+import type { ChatTipItem, Task, TaskType, Team } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { SkillSelectorPopoverRef } from '../selector/SkillSelectorPopover'
 import type { TeamModeFilter } from '../selector/team-selector-utils'
@@ -69,6 +69,11 @@ export interface ChatInputCardProps extends Omit<
 
   // Group chat
   isGroupChat: boolean
+  /** Previous tasks available from the @ menu for context handoff. */
+  mentionTasks?: Task[]
+  currentTaskId?: number | null
+  enableTaskMentions?: boolean
+  onSelectConversation?: (task: Task) => void
 
   // Drag and drop
   isDragging: boolean
@@ -219,6 +224,10 @@ export function ChatInputCard({
   knowledgeBaseId,
   tipText,
   isGroupChat,
+  mentionTasks = [],
+  currentTaskId,
+  enableTaskMentions = false,
+  onSelectConversation,
   isDragging,
   onDragEnter,
   onDragLeave,
@@ -789,6 +798,10 @@ export function ChatInputCard({
               }
               isGroupChat={isGroupChat}
               team={selectedTeam}
+              mentionTasks={mentionTasks}
+              currentTaskId={currentTaskId}
+              enableTaskMentions={enableTaskMentions}
+              onSelectConversation={onSelectConversation}
               onPasteFile={onPasteFile}
               hasNoTeams={hasNoTeams}
               disabledReason={disabledReason}

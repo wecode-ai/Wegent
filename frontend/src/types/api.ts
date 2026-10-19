@@ -669,7 +669,7 @@ export interface MultiAttachmentUploadState {
 }
 
 // Subtask Context Types (unified context system)
-export type ContextType = 'attachment' | 'knowledge_base' | 'external_knowledge'
+export type ContextType = 'attachment' | 'knowledge_base' | 'external_knowledge' | 'conversation'
 export type ContextStatus = 'pending' | 'uploading' | 'parsing' | 'ready' | 'failed' | 'empty'
 
 export interface SubtaskContextBrief {
@@ -698,6 +698,9 @@ export interface SubtaskContextBrief {
   external_node_id?: string | null
   external_document_id?: string | null
   external_parent_id?: string | null
+  // Conversation reference fields
+  task_id?: number | null
+  task_updated_at?: string | null
   video_count?: number | null
   site?: string | null
   source_url?: string | null

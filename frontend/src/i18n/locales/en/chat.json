@@ -61,6 +61,14 @@
     "quoted_text": "Quoted text",
     "remove_quote": "Remove quote"
   },
+  "mention": {
+    "taskSection": "Previous tasks",
+    "agentSection": "Agent",
+    "taskHint": "Reference context and continue",
+    "referencedTask": "Previous task",
+    "searching": "Searching tasks...",
+    "noResults": "No matching previous tasks"
+  },
   "sourceReferences": {
     "title": "References",
     "openSource": "Open source",

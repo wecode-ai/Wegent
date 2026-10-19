@@ -10,7 +10,7 @@ import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useUser } from '@/features/common/UserContext'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Maximize2, Minimize2 } from 'lucide-react'
-import type { ChatTipItem, Team, TaskType } from '@/types/api'
+import type { ChatTipItem, Task, Team, TaskType } from '@/types/api'
 import type { UnifiedSkill } from '@/apis/skills'
 import MentionAutocomplete from '../chat/MentionAutocomplete'
 import SkillAutocomplete, { SkillFlyAnimationTrigger } from '../chat/SkillAutocomplete'
@@ -57,6 +57,11 @@ interface ChatInputProps {
   // Group chat support
   isGroupChat?: boolean
   team?: Team | null
+  /** Previous tasks available from the @ menu for context handoff. */
+  mentionTasks?: Task[]
+  currentTaskId?: number | null
+  enableTaskMentions?: boolean
+  onSelectConversation?: (task: Task) => void
   // Callback when file(s) are pasted (e.g., images from clipboard)
   onPasteFile?: (files: File | File[]) => void
   // Whether there are no available teams (shows disabled state with special placeholder)
@@ -101,6 +106,10 @@ export default function ChatInput({
   badge,
   isGroupChat = false,
   team = null,
+  mentionTasks = [],
+  currentTaskId,
+  enableTaskMentions = false,
+  onSelectConversation,
   onPasteFile,
   hasNoTeams = false,
   disabledReason,
@@ -407,8 +416,8 @@ export default function ChatInput({
         return null
       }
 
-      // Check for @ trigger in group chat mode
-      if (isGroupChat && team) {
+      // Check for @ trigger for agent mentions and task-context handoff.
+      if (enableTaskMentions || (isGroupChat && team)) {
         const lastChar = text[text.length - 1]
         if (lastChar === '@') {
           const position = getCursorPosition()
@@ -467,6 +476,7 @@ export default function ChatInput({
       getTextWithNewlines,
       isGroupChat,
       team,
+      enableTaskMentions,
       showMentionMenu,
       showSkillSelector,
       availableSkills.length,
@@ -474,30 +484,24 @@ export default function ChatInput({
     ]
   )
 
-  // Handle mention selection
-  const handleMentionSelect = useCallback(
-    (mention: string) => {
+  const replaceMentionQuery = useCallback(
+    (replacement: string) => {
       if (editableRef.current) {
         const currentText = getTextWithNewlines(editableRef.current)
-        // Replace the last @word (including partial @query) with the selected mention
-        // Find the last @ symbol and replace everything from there to the end of that word
+        // Replace the last @word, including the partial query, with the selection.
         const lastAtIndex = currentText.lastIndexOf('@')
         if (lastAtIndex !== -1) {
-          // Get text before the @
           const textBefore = currentText.substring(0, lastAtIndex)
-          // Get text after the @ and find where the current word ends
           const textAfterAt = currentText.substring(lastAtIndex + 1)
-          // Find the end of the current word (first whitespace after @)
           const wordEndMatch = textAfterAt.match(/^\S*/)
           const currentWord = wordEndMatch ? wordEndMatch[0] : ''
           const textAfterWord = textAfterAt.substring(currentWord.length)
-          // Build new text: text before @ + mention + space + remaining text
-          const newText = textBefore + mention + ' ' + textAfterWord.trimStart()
+          const trailingSpace = replacement ? ' ' : ''
+          const newText = textBefore + replacement + trailingSpace + textAfterWord.trimStart()
           setMessage(newText)
           setContentWithNewlines(editableRef.current, newText)
         }
 
-        // Move cursor to end
         const selection = window.getSelection()
         if (selection && editableRef.current) {
           const range = document.createRange()
@@ -507,13 +511,27 @@ export default function ChatInput({
           selection.addRange(range)
         }
 
-        // Focus back to input
         editableRef.current.focus()
         setShowMentionMenu(false)
         setMentionQuery('')
       }
     },
     [getTextWithNewlines, setMessage, setContentWithNewlines]
+  )
+
+  const handleMentionSelect = useCallback(
+    (mention: string) => {
+      replaceMentionQuery(mention)
+    },
+    [replaceMentionQuery]
+  )
+
+  const handleConversationSelect = useCallback(
+    (task: Task) => {
+      replaceMentionQuery('')
+      onSelectConversation?.(task)
+    },
+    [onSelectConversation, replaceMentionQuery]
   )
 
   // Handle skill selection from autocomplete
@@ -750,11 +768,16 @@ export default function ChatInput({
       )}
 
       {/* Mention autocomplete menu */}
-      {showMentionMenu && isGroupChat && team && (
+      {showMentionMenu && (enableTaskMentions || (isGroupChat && team)) && (
         <MentionAutocomplete
           team={team}
           query={mentionQuery}
+          tasks={mentionTasks}
+          currentTaskId={currentTaskId}
+          showTeamMention={isGroupChat && Boolean(team)}
+          enableTaskMentions={enableTaskMentions}
           onSelect={handleMentionSelect}
+          onSelectTask={handleConversationSelect}
           onClose={() => {
             setShowMentionMenu(false)
             setMentionQuery('')
