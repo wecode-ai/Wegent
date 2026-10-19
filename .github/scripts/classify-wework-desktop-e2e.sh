@@ -140,6 +140,7 @@ cloud_segments=(
   plugin-account-auth
   plugin-uninstall-resilience
   plugin-composer-long-list
+  plugin-runtime-path-recovery
   plugin-workspace-publication
 )
 # Group checkpoints by observed Cloud CI duration so every serial shard stays
@@ -160,7 +161,7 @@ cloud_shards=(
   supervisor-lifecycle,conversation-state
   model-routing,cloud-model-recovery,cloud-model-presets,task-model-deletion
   plugin-account-auth,cloud-device-lifecycle,plugin-uninstall-resilience,plugin-composer-long-list
-  cloud-worktree-queued-cancel
+  cloud-worktree-queued-cancel,plugin-runtime-path-recovery
   plugin-auto-update,plugin-workspace-publication,workspace-attachments
 )
 # Group checkpoints by observed Core CI duration so every serial shard stays
@@ -1102,6 +1103,15 @@ classify_wework_path() {
 
 classify_path() {
   local path="$1"
+
+  case "$path" in
+    wework/e2e/desktop/scenarios/plugin-runtime-path-recovery.scenario.mjs | \
+      wework/e2e/desktop/modules/plugin-runtime-path-fixture.mjs | \
+      wework/scripts/plugin-runtime-path-fixture.test.mjs)
+      select_target "cloud:plugin-runtime-path-recovery"
+      return
+      ;;
+  esac
 
   case "$path" in
     packages/collaboration/src/controls/ModelSelector* | \

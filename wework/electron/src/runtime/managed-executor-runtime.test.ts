@@ -24,6 +24,23 @@ describe('managed executor runtime', () => {
     expect(environment.WEGENT_EXECUTOR_HOME).toBe(join(homedir(), '.wework'))
     expect(environment.WEGENT_CODEX_HOME).toBe(join(homedir(), '.wework', 'codex'))
     expect(environment.CODEX_HOME).toBe(join(homedir(), '.wework', 'codex'))
+    expect(environment.WEGENT_PLUGIN_RUNTIME_TARGET).toBe('codex')
+  })
+
+  test('limits managed plugins to Codex without changing Claude execution homes', () => {
+    const environment = prepareManagedExecutorEnvironment({
+      dataDirectory: '/unused-electron-data',
+      environment: {
+        VITE_WEWORK_E2E: 'true',
+        WEGENT_PLUGIN_RUNTIME_TARGET: 'claude',
+        WEGENT_CLAUDE_HOME: '/configured/claude',
+        CLAUDE_CONFIG_DIR: '/native/claude',
+      },
+    })
+
+    expect(environment.WEGENT_PLUGIN_RUNTIME_TARGET).toBe('codex')
+    expect(environment.WEGENT_CLAUDE_HOME).toBe('/configured/claude')
+    expect(environment.CLAUDE_CONFIG_DIR).toBe('/native/claude')
   })
 
   test('preserves the executor log path contract for supervisor-owned logs', () => {

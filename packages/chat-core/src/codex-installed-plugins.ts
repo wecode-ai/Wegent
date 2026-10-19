@@ -398,8 +398,12 @@ export function toWegentStoreInstalledPlugin(
         managedByWegent: true,
         cloudPluginId: plugin.cloudPluginId ?? null,
         cloudInstalledPluginId: plugin.installedPluginId ?? null,
+        runtimeRecoveryError: plugin.runtimeRecoveryError?.trim() || null,
       },
     },
+    status: plugin.runtimeRecoveryError?.trim()
+      ? { ...installed.status, state: 'recovery_required' }
+      : installed.status,
   }
 }
 

@@ -47,6 +47,7 @@ export const DESKTOP_CHECKPOINTS = [
   'plugin-account-auth',
   'plugin-uninstall-resilience',
   'plugin-composer-long-list',
+  'plugin-runtime-path-recovery',
   'plugin-workspace-publication',
   'project-ai-settings',
   'model-routing',

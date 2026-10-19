@@ -119,6 +119,10 @@ export function mergeLocalInstalledWithStorePackages(
     if (!store?.spec.sourcePayload?.managedByWegent) return item
     return {
       ...item,
+      status:
+        item.status.state === 'recovery_required' || store.status.state === 'recovery_required'
+          ? { ...item.status, state: store.status.state }
+          : item.status,
       spec: {
         ...item.spec,
         sourcePayload: {
@@ -127,6 +131,10 @@ export function mergeLocalInstalledWithStorePackages(
           managedByWegent: true,
           cloudPluginId: store.spec.sourcePayload.cloudPluginId ?? null,
           cloudInstalledPluginId: store.spec.sourcePayload.cloudInstalledPluginId ?? null,
+          ...(store.spec.sourcePayload.runtimeRecoveryError !== undefined ||
+          item.spec.sourcePayload?.runtimeRecoveryError !== undefined
+            ? { runtimeRecoveryError: store.spec.sourcePayload.runtimeRecoveryError ?? null }
+            : {}),
         },
       },
     }
@@ -349,6 +357,7 @@ function cloudRowLocalPresencePayload(
   const cloudKindId = localPluginId(cloudItem)
   return {
     localPresent: true,
+    runtimeRecoveryError: localMatch.spec.sourcePayload?.runtimeRecoveryError ?? null,
     ...(cloudKindId ? { cloudInstalledPluginId: cloudKindId } : {}),
     ...(localVersion ? { localVersion } : {}),
   }

@@ -26,6 +26,7 @@ const CHECKPOINT_RESOURCES = new Map([
   ['project-assignment-notification', ['macos-inspector-foreground']],
   // Fresh packaged runtime extraction contends when these cloud checkpoints share a runner.
   ['plugin-account-auth', ['desktop-runtime-intensive']],
+  ['plugin-runtime-path-recovery', ['desktop-runtime-intensive']],
   ['cloud-device-lifecycle', ['desktop-runtime-intensive']],
   ['resilience', ['desktop-runtime-intensive']],
   ['environment-panel-scroll', ['desktop-runtime-intensive']],
@@ -60,6 +61,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'plugin-account-auth': './scenarios/plugin-account-auth.scenario.mjs',
   'plugin-uninstall-resilience': './scenarios/plugin-uninstall-resilience.scenario.mjs',
   'plugin-composer-long-list': './scenarios/plugin-composer-long-list.scenario.mjs',
+  'plugin-runtime-path-recovery': './scenarios/plugin-runtime-path-recovery.scenario.mjs',
   'codex-account-login': './scenarios/codex-account-login.scenario.mjs',
   'cloud-space-mention': './scenarios/cloud-space-mention.scenario.mjs',
   'conversation-state': './scenarios/conversation-mention.scenario.mjs',
@@ -156,6 +158,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'plugin-account-auth',
   'plugin-uninstall-resilience',
   'plugin-composer-long-list',
+  'plugin-runtime-path-recovery',
   'codex-account-login',
   'cloud-space-mention',
   'change-request-status',

@@ -42,7 +42,7 @@ impl Drop for ActivationRevision {
 }
 
 impl GlobalCapabilityStore {
-    fn shared_root(&self) -> Result<PathBuf, CapabilitySyncError> {
+    pub(super) fn shared_root(&self) -> Result<PathBuf, CapabilitySyncError> {
         match &self.workbench_root_override {
             Some(root) if root.is_absolute() => Ok(root.clone()),
             Some(_) => Err(CapabilitySyncError::invalid_payload(
@@ -129,7 +129,7 @@ pub(super) fn remember_plugin_runtime_owner(manifest: &mut Value, key: &str, plu
     }
 }
 
-fn owns_retained_plugin_runtime(manifest: &Value, key: &str, path: &Path) -> bool {
+pub(super) fn owns_retained_plugin_runtime(manifest: &Value, key: &str, path: &Path) -> bool {
     manifest
         .get("plugin_runtime_owners")
         .and_then(Value::as_object)
@@ -476,13 +476,10 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
             installed_spec.checksum = Some(package.archive_hash);
             package.path
         };
-        for (path, field) in [
-            (
-                self.store.plugin_runtime_link(&installed_spec),
-                "claude_link",
-            ),
-            (self.store.plugin_codex_link(&installed_spec), "codex_link"),
-        ] {
+        self.store
+            .prepare_relocated_runtime_ownership(&installed_spec, &store_path, manifest)
+            .map_err(PluginSyncFailure::runtime_metadata)?;
+        for (path, field) in self.store.plugin_runtime_targets(&installed_spec) {
             if occupied_unmanaged(&path, previous.as_ref(), field)
                 && !owns_retained_plugin_runtime(manifest, &spec.key, &path)
             {

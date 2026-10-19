@@ -2,11 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{
-    future::Future,
-    path::{Path, PathBuf},
-    pin::Pin,
-};
+use std::{future::Future, path::Path, pin::Pin};
 
 use reqwest::Url;
 use serde_json::{json, Value};
@@ -14,10 +10,13 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     agents::wework_codex_home,
-    local::capabilities::{
-        default_manifest_path, CapabilityPackageProvider, CapabilitySyncError,
-        CapabilitySyncHandler, GlobalCapabilityReporter, GlobalCapabilityStore,
-        ManagedCapabilityManifest, SkillSyncSpec,
+    local::{
+        capabilities::{
+            default_manifest_path, CapabilityPackageProvider, CapabilitySyncError,
+            CapabilitySyncHandler, GlobalCapabilityReporter, ManagedCapabilityManifest,
+            SkillSyncSpec,
+        },
+        plugin_recovery::default_plugin_store,
     },
     services::workbench::stage_skill_archive,
 };
@@ -82,23 +81,9 @@ where
 pub(super) fn default_capability_sync_handler(
     config: &LocalBackendConfig,
 ) -> CapabilitySyncHandler<HttpPackageProvider> {
-    let codex_home = wework_codex_home();
-    let claude_home = std::env::var_os("WEGENT_CLAUDE_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            codex_home
-                .parent()
-                .unwrap_or_else(|| Path::new("."))
-                .join("claude")
-        });
-    let store = GlobalCapabilityStore::new(default_manifest_path(), claude_home.join("skills"))
-        .with_plugins_dir(claude_home.join("plugins"))
-        .with_codex_skills_dir(codex_home.join("skills"))
-        .with_codex_plugins_dir(codex_home.join("plugins"))
-        .with_shared_packages();
     CapabilitySyncHandler::with_package_provider(
         config.auth_token.clone(),
-        store,
+        default_plugin_store(),
         HttpPackageProvider::new(config.backend_url.clone(), config.auth_token.clone()),
     )
 }

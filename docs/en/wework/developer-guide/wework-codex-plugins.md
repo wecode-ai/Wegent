@@ -114,6 +114,20 @@ Custom instructions from Settings → Context are read and written through Codex
 
 The interaction style uses the same `config.toml` as its single source of truth. Selecting Friendly or Pragmatic updates personality through `config/batchWrite`; Wework no longer stores personality in localStorage or repeats it as an override on every thread or turn request.
 
+## Managed Plugin Directory Recovery
+
+After manifest initialization and before starting Codex or backend connections, the Executor recovers managed installations using the current Home and stable plugin identity. Existing v2 manifests and manifests imported from v1 use the same flow. Historical absolute paths are migration hints, never authority to claim or remove native user directories. Shared packages must pass the existing checksum, package-record, and content checks before rebuilding caches and marketplace registration.
+
+Recovery preserves enablement, component settings, cloud installation IDs, and authorization associations, including current, previous, and retained cache ownership. Missing packages and unrelated occupied destinations affect only their installation: the manifest record remains visible as “Repair required,” and normal synchronization can retry once a verified package is available. Retained ownership or caches cannot resurrect an explicitly uninstalled plugin.
+
+Recovery uses the manifest lock, atomic publication, and a journal per plugin. Restart recovery distinguishes committed publication from incomplete work. Unproven ownership or later user changes preserve snapshots and report a conflict instead of overwriting unknown files. Recovery does not run before each message submission.
+
+The Wework managed Executor environment fixes `WEGENT_PLUGIN_RUNTIME_TARGET=codex`, registering only Codex plugin runtimes. Generic Executors without this variable retain dual-runtime plugin support. This switch does not clean up Skills, native Homes, or credentials.
+
+The Executor implements recovery, Electron selects the runtime target, and the plugin UI displays recovery errors; ship them together as one desktop version. Updating only the frontend does not add recovery to an older Executor. The manifest remains v2 and preserves unrelated fields, Skills, and MCP records. Pending recovery journals must be resumed by the matching updated Executor.
+
+The `plugin-runtime-path-recovery` desktop checkpoint belongs to existing Cloud shard 14. It installs and invokes a real plugin before stopping the app and relocating isolated Homes, then checks offline recovery, isolated failures, settings, updates, uninstall without resurrection, and reinstall invocation. Actual execution must be reported separately; static contract checks do not establish desktop verification.
+
 ## Runtime Permission Modes
 
 The Wework composer provides three permission modes for local Codex tasks and persists the selection in `modelSelection.options.permissionMode`. New tasks and historical tasks without this field default to Full access. When a user explicitly switches from another mode to Full access, the UI displays a risk confirmation:

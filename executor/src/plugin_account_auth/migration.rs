@@ -176,15 +176,16 @@ fn resolve_managed_package_at(
     {
         return Err(AuthError("plugin_auth_package_sync_required"));
     }
-    let store_path = entry["store_path"]
-        .as_str()
-        .ok_or(AuthError("plugin_auth_invalid_package"))?;
-    capabilities
-        .join(store_path)
-        .canonicalize()
-        .map_err(|_| AuthError("plugin_auth_package_sync_required"))?;
-    crate::local::plugin_catalog::managed_plugin_root(capabilities, shared_plugins, entry)
-        .map_err(|_| AuthError("plugin_auth_invalid_package"))
+    crate::local::plugin_catalog::managed_plugin_root(capabilities, shared_plugins, entry).map_err(
+        |error| match error {
+            crate::local::plugin_catalog::ManagedPluginPathError::Unavailable(_) => {
+                AuthError("plugin_auth_package_sync_required")
+            }
+            crate::local::plugin_catalog::ManagedPluginPathError::Invalid(_) => {
+                AuthError("plugin_auth_invalid_package")
+            }
+        },
+    )
 }
 
 pub(super) fn interpreter_for(definition: &Value) -> Result<PathBuf, AuthError> {
@@ -233,6 +234,26 @@ mod tests {
         )
         .unwrap();
         (manifest, shared, package_root, package)
+    }
+
+    #[test]
+    fn enrollment_keeps_its_installation_after_home_moves_and_old_paths_disappear() {
+        let temp = tempfile::tempdir().unwrap();
+        let old_home = temp.path().join("old-home");
+        let new_home = temp.path().join("new-home");
+        let (manifest, shared, root, package) = fixture(&old_home);
+        assert_eq!(
+            resolve_managed_package_at(&manifest, &shared, &package).unwrap(),
+            root.canonicalize().unwrap()
+        );
+        fs::rename(&old_home, &new_home).unwrap();
+        assert!(!old_home.exists());
+        let relocated = |path: &Path| new_home.join(path.strip_prefix(&old_home).unwrap());
+        assert_eq!(
+            resolve_managed_package_at(&relocated(&manifest), &relocated(&shared), &package)
+                .unwrap(),
+            relocated(&root).canonicalize().unwrap()
+        );
     }
 
     #[test]

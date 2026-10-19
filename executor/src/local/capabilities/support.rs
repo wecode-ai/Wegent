@@ -16,8 +16,8 @@ use zip::ZipArchive;
 
 use super::{CapabilitySyncError, PluginSyncSpec, DEFAULT_PLUGIN_MARKETPLACE, MANIFEST_VERSION};
 
-const CLAUDE_PLUGIN_MANIFEST_PATH: &str = ".claude-plugin/plugin.json";
-const CODEX_PLUGIN_MANIFEST_PATH: &str = ".codex-plugin/plugin.json";
+pub(super) const CLAUDE_PLUGIN_MANIFEST_PATH: &str = ".claude-plugin/plugin.json";
+pub(super) const CODEX_PLUGIN_MANIFEST_PATH: &str = ".codex-plugin/plugin.json";
 const PLUGIN_MANIFEST_PATHS: [&str; 2] = [CODEX_PLUGIN_MANIFEST_PATH, CLAUDE_PLUGIN_MANIFEST_PATH];
 const MAX_PACKAGE_ENTRY_COUNT: usize = 10_000;
 const MAX_EXPANDED_PACKAGE_SIZE_BYTES: u64 = 200 * 1024 * 1024;
@@ -475,10 +475,18 @@ pub(super) fn upsert_installed_plugin(
     spec: &PluginSyncSpec,
     runtime_link: &Path,
 ) -> Result<(), CapabilitySyncError> {
+    upsert_installed_plugin_at(plugins_dir, spec, runtime_link, &now_rfc3339_like())
+}
+
+pub(super) fn upsert_installed_plugin_at(
+    plugins_dir: &Path,
+    spec: &PluginSyncSpec,
+    runtime_link: &Path,
+    timestamp: &str,
+) -> Result<(), CapabilitySyncError> {
     let path = plugins_dir.join("installed_plugins.json");
     let mut installed = read_installed_plugins(plugins_dir)?;
     installed["version"] = json!(2);
-    let timestamp = now_rfc3339_like();
     let mut entry = Map::new();
     entry.insert("scope".to_owned(), json!("user"));
     entry.insert(
@@ -492,7 +500,7 @@ pub(super) fn upsert_installed_plugin(
         entry.insert("checksum".to_owned(), json!(checksum));
     }
     entry.insert("version".to_owned(), json!(spec.version));
-    entry.insert("installedAt".to_owned(), json!(timestamp.clone()));
+    entry.insert("installedAt".to_owned(), json!(timestamp));
     entry.insert("lastUpdated".to_owned(), json!(timestamp));
     if !spec.component_states.as_object().is_some_and(Map::is_empty) {
         entry.insert("componentStates".to_owned(), spec.component_states.clone());

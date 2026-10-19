@@ -53,6 +53,24 @@ function createPlugin(options?: { logo?: string; pluginKey?: string }): Installe
 }
 
 describe('InstalledPluginRow', () => {
+  test('shows repair status while keeping the installation and removal controls', () => {
+    const plugin = createPlugin()
+    plugin.raw.spec.sourcePayload = { runtimeRecoveryError: 'Verified package is missing' }
+    render(
+      <InstalledPluginRow
+        plugin={plugin}
+        onTry={vi.fn()}
+        onToggle={vi.fn()}
+        onUninstall={vi.fn()}
+      />
+    )
+    expect(screen.getByTestId('installed-plugin-recovery-59')).toHaveTextContent('需要修复')
+    expect(screen.getByTestId('installed-plugin-toggle-59')).toBeInTheDocument()
+    expect(screen.queryByTestId('installed-plugin-try-59')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('installed-plugin-actions-59'))
+    expect(screen.getByTestId('installed-plugin-uninstall-59')).toBeInTheDocument()
+  })
+
   test('renders the plugin logo from its installed release metadata', () => {
     render(
       <InstalledPluginRow
