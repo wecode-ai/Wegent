@@ -202,7 +202,10 @@ class DatabaseHandler:
             return self._update_task_status_sync(task_id, changed_subtask_id=subtask_id)
         except Exception:
             logger.exception("Error updating subtask %s status", subtask_id)
-            return None
+            # Keep the terminal subtask write even when the task-level CRD
+            # update fails. Returning None here would make StatusUpdatingEmitter
+            # report success and skip retry/recovery for the still-RUNNING task.
+            raise
 
     def _update_task_status_sync(
         self, task_id: int, changed_subtask_id: int | None = None
