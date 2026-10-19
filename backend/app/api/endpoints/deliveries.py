@@ -12,7 +12,6 @@ from fastapi import (
     Depends,
     File,
     Form,
-    Header,
     HTTPException,
     Query,
     UploadFile,
@@ -30,10 +29,8 @@ from app.core.security import (
 from app.models.delivery import (
     Delivery,
     LoopItem,
-    LoopItemTaskBinding,
     ProjectAutomationRule,
     ProjectChatAgent,
-    loop_datetime_is_unset,
 )
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
@@ -96,11 +93,8 @@ from app.services.human_issue_work import human_issue_work_service
 from app.services.issue_assignments import issue_assignment_service
 from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_item_status_history import (
-    is_processing_status,
     project_status_transition,
-    write_status_change,
 )
-from app.services.loop_item_unread import advance_content_revision
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.loop_items.provider_router import (
     loop_item_attachment_provider_router,
@@ -108,10 +102,8 @@ from app.services.loop_items.provider_router import (
 )
 from app.services.loop_items.service import MY_WORK_ITEM_LIMIT, loop_item_service
 from app.services.project_automation_domain import ProjectAutomationEvent
-from app.services.project_automation_execution import project_automation_execution
 from app.services.project_automations import (
     project_automation_processor,
-    project_automation_service,
 )
 from app.services.project_board_snapshot import project_board_snapshot_service
 from app.services.project_change_request_bindings import (
@@ -348,38 +340,6 @@ def find_runtime_task_loop_item(
         db, current_user.id, device_id, task_id
     )
     return _loop_item_response(db, item, current_user)
-
-
-# Migrated to Rust; cutover is configured in backend-rs/config/routes.toml.
-# @router.get("/runtime-tasks/cloud-context", response_model=CloudTaskContextResponse)
-# def find_runtime_task_cloud_context(
-#     device_id: str = Query(min_length=1),
-#     task_id: str = Query(min_length=1),
-#     db: Session = Depends(get_db),
-#     current_user: User = Depends(get_current_user),
-# ) -> CloudTaskContextResponse:
-#     binding, project, item = loop_item_service.find_cloud_context(
-#         db, current_user.id, device_id, task_id
-#     )
-#     return CloudTaskContextResponse.model_validate(
-#         {
-#             **binding.__dict__,
-#             "workflow_node_id": binding.workflow_node_id,
-#             "project": {
-#                 **project.__dict__,
-#                 "current_user_id": current_user.id,
-#                 "current_user_name": current_user.user_name,
-#                 "access_role": cloud_project_service.access(
-#                     db, project.id, current_user.id
-#                 ).role,
-#             },
-#             "loop_item": (
-#                 loop_item_service.response_values(db, item, current_user.id)
-#                 if item is not None
-#                 else None
-#             ),
-#         }
-#     )
 
 
 @router.post(

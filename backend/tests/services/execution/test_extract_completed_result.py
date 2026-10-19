@@ -6,7 +6,7 @@
 
 import pytest
 
-from app.services.execution.dispatcher import extract_completed_result
+from app.services.execution.response_parser import extract_completed_result
 
 
 class TestExtractCompletedResult:

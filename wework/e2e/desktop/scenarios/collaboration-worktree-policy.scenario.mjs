@@ -87,7 +87,10 @@ async function createIssue(control, label) {
 
 async function createTask(control, label, timeoutMs, executionMode = 'current_workspace') {
   await createIssue(control, label)
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-create-task"]'))
+  await control.command(
+    'clickWhenEnabled',
+    scoped('[data-testid="cloud-todo-personal-task-start"]')
+  )
   await control.command('waitFor', COMPOSER)
   const projectButton = `${PANEL} [data-testid="project-work-button"]`
   if (!(await control.command('getText', projectButton)).includes('Worktree policy E2E')) {

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
-from app.core.security import get_current_user
+from app.core.security import get_current_user, get_current_user_jwt_apikey_tasktoken
 from app.models.user import User
 from app.schemas.project_automation import (
     ProjectAutomationCreate,
@@ -39,7 +39,7 @@ router = APIRouter()
 def list_project_collaboration_groups(
     project_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> CollaborationGroupListResponse:
     return CollaborationGroupListResponse(
         items=[

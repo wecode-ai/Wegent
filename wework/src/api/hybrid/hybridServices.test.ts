@@ -277,7 +277,8 @@ const mocks = vi.hoisted(() => {
   }
 })
 
-vi.mock('@/api/local/localServices', () => ({
+vi.mock('@/api/local/localServices', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/api/local/localServices')>()),
   createLocalAppServices: (options: { materializeRuntimeTask?: unknown } | undefined) => {
     mocks.captureLocalAppOptions(options)
     return options?.materializeRuntimeTask ? mocks.localServices : mocks.localOnlyServices
@@ -993,6 +994,30 @@ describe('execution status write-back on history reads', () => {
 })
 
 describe('createHybridWorkbenchServices', () => {
+  it('sends current cloud credentials and model identity to the remote prediction device', async () => {
+    mocks.cloudRuntimeIpcRequest.mockResolvedValue({ suggestion: '请继续' })
+    const services = createServices()
+    await services.replyPredictionApi!.predict({
+      address: { deviceId: 'cloud-device', taskId: 'cloud-task' },
+      modelSelection: {
+        modelName: 'cloud-selected',
+        modelType: 'user',
+        options: { weworkCloudModelNamespace: 'default', weworkCloudModelResourceUserId: '42' },
+      },
+    })
+    expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledWith(
+      'runtime.text.predict_reply',
+      expect.objectContaining({
+        modelConfig: expect.objectContaining({
+          model_id: 'cloud-selected',
+          api_key: 'cloud-token',
+          default_headers: expect.objectContaining({ 'X-Wegent-Model-Namespace': 'default' }),
+        }),
+      }),
+      'cloud-device'
+    )
+  })
+
   it('routes predictions and cancellation to the session device', async () => {
     const services = createServices()
     const local = { address: { deviceId: 'local-device', taskId: 'local-task' } }
@@ -1278,7 +1303,7 @@ describe('createHybridWorkbenchServices', () => {
     expect(onChatChunk.mock.calls.map(([payload]) => payload.content)).toEqual(['local', 'cloud'])
   })
 
-  it('routes project assignment notifications through the cloud runtime stream only', () => {
+  it('routes project assignment notifications by project storage', () => {
     const services = createServices()
     const onProjectTaskAssigned = vi.fn()
 
@@ -1294,11 +1319,22 @@ describe('createHybridWorkbenchServices', () => {
       assignerName: 'Alice',
     }
 
-    expect(localHandlers?.onProjectTaskAssigned).toBeUndefined()
+    const localPayload = {
+      ...payload,
+      projectStore: 'local' as const,
+      projectId: 'local-project',
+    }
+    localHandlers?.onProjectTaskAssigned?.(localPayload)
+    expect(onProjectTaskAssigned).toHaveBeenCalledExactlyOnceWith(localPayload)
+    cloudHandlers?.onProjectTaskAssigned?.(localPayload)
+    localHandlers?.onProjectTaskAssigned?.(payload)
+    expect(onProjectTaskAssigned).toHaveBeenCalledOnce()
     cloudHandlers?.onProjectTaskAssigned?.(payload)
 
-    expect(onProjectTaskAssigned).toHaveBeenCalledOnce()
-    expect(onProjectTaskAssigned).toHaveBeenCalledWith(payload)
+    expect(onProjectTaskAssigned.mock.calls.map(([notification]) => notification)).toEqual([
+      localPayload,
+      payload,
+    ])
   })
 
   it('loads cloud models in the background without delaying local models', async () => {

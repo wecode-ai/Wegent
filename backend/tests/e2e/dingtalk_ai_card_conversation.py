@@ -42,7 +42,7 @@ from app.services.channels.dingtalk import card as card_module
 from app.services.channels.dingtalk.callback import dingtalk_callback_service
 from app.services.channels.dingtalk.handler import DingTalkChannelHandler
 from app.services.channels.handler import CHANNEL_CONV_TASK_PREFIX, MessageContext
-from app.services.execution.dispatcher import ResponsesAPIEventParser
+from app.services.execution.response_parser import ResponsesAPIEventParser
 from app.services.im.notification_dispatcher import IMNotificationDispatcher
 from app.services.im.session_service import (
     PRIVATE_SESSION_KEY_PREFIX,

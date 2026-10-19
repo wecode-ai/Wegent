@@ -386,6 +386,28 @@ fn find_session(
     Ok(())
 }
 
+/// Resolve only the selected agent Home, independently of the current workspace.
+pub(crate) fn claude_session_transcript(home: &Path, id: &str) -> Result<PathBuf, String> {
+    if !home.is_absolute() {
+        return Err("Claude config directory must be absolute".to_owned());
+    }
+    let kind = AgentKind::ClaudeCode;
+    let mut matches = Vec::new();
+    find_session(&home.join("projects"), id, &kind, &mut matches, 0)?;
+    let session = match matches.as_slice() {
+        [session] => session,
+        [] => {
+            return Err(
+                "Existing Claude session is missing from its agent Home; refusing to start a new conversation"
+                    .to_owned(),
+            )
+        }
+        _ => return Err("Native Claude session is ambiguous in agent Home".to_owned()),
+    };
+    validate_session(session, id, &kind)?;
+    fs::canonicalize(session).map_err(|error| error.to_string())
+}
+
 pub(crate) fn validate_session(path: &Path, id: &str, kind: &AgentKind) -> Result<(), String> {
     let file = fs::File::open(path).map_err(|error| error.to_string())?;
     if file.metadata().map_err(|error| error.to_string())?.len() > 128 * 1024 * 1024 {
@@ -500,6 +522,59 @@ fn copy_private_tree(source: &Path, target: &Path, depth: usize) -> Result<(), S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn claude_resume_requires_a_unique_valid_transcript_in_the_selected_home() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("selected");
+        let other_home = root.path().join("other");
+        let relative = "projects/old-workspace/session-1.jsonl";
+        let record = "{\"sessionId\":\"session-1\",\"type\":\"user\"}\n";
+        fs::create_dir_all(other_home.join("projects/old-workspace")).unwrap();
+        fs::write(other_home.join(relative), record).unwrap();
+        assert!(claude_session_transcript(&home, "session-1").is_err());
+
+        let transcript = home.join(relative);
+        fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+        for invalid in [
+            "{\"sessionId\":\"session-1\"}",
+            "{\"sessionId\":\"other-session\"}\n",
+            "{}\n",
+        ] {
+            fs::write(&transcript, invalid).unwrap();
+            assert!(claude_session_transcript(&home, "session-1").is_err());
+        }
+
+        fs::write(&transcript, record).unwrap();
+        assert_eq!(
+            claude_session_transcript(&home, "session-1").unwrap(),
+            transcript.canonicalize().unwrap()
+        );
+        let duplicate = home.join("projects/new-workspace/session-1.jsonl");
+        fs::create_dir_all(duplicate.parent().unwrap()).unwrap();
+        fs::write(&duplicate, record).unwrap();
+        assert!(claude_session_transcript(&home, "session-1")
+            .unwrap_err()
+            .contains("ambiguous"));
+        assert_eq!(fs::read_to_string(transcript).unwrap(), record);
+        assert_eq!(fs::read_to_string(duplicate).unwrap(), record);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn claude_resume_rejects_transcript_symlinks_outside_the_selected_home() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("selected");
+        let transcript = home.join("projects/old-workspace/session-1.jsonl");
+        let outside = root.path().join("outside.jsonl");
+        fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+        fs::write(&outside, "{\"sessionId\":\"session-1\"}\n").unwrap();
+        std::os::unix::fs::symlink(outside, transcript).unwrap();
+
+        assert!(claude_session_transcript(&home, "session-1")
+            .unwrap_err()
+            .contains("not a regular file"));
+    }
 
     #[test]
     fn legacy_proof_requires_exact_server_selected_bot_engine_and_session() {

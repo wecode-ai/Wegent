@@ -70,6 +70,7 @@ core_segments=(
   conversation-state
   send-key-preference
   reply-predictions
+  reply-prediction-auth
   model-settings
   codex-native-catalog
   system-proxy
@@ -166,7 +167,7 @@ cloud_shards=(
 core_shards=(
   harness-apps,browser-annotation-design
   supervisor-lifecycle,remote-device-onboarding,core-task-flow
-  temporary-chat,local-file-preview,conversation-state,reply-predictions,model-settings,codex-native-catalog
+  temporary-chat,local-file-preview,conversation-state,reply-predictions,reply-prediction-auth,model-settings,codex-native-catalog
   goal-lifecycle,goal-state-sync,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
   send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
   claude-runtime,workspace-tabs,task-attachments

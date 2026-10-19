@@ -13,20 +13,16 @@ logger = logging.getLogger(__name__)
 from app.api.dependencies import get_db
 from app.core import security
 from app.core.config import settings
-from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.shared_team import (
     JoinSharedTeamRequest,
     JoinSharedTeamResponse,
-    TeamShareRequest,
     TeamShareResponse,
 )
 from app.schemas.team import (
     TeamCreate,
     TeamDetail,
     TeamInDB,
-    TeamListResponse,
-    TeamSkillsResponse,
     TeamUpdate,
 )
 from app.services.adapters.team_kinds import team_kinds_service
@@ -80,58 +76,6 @@ def _add_default_for_modes(
         item["default_for_modes"] = default_modes
 
     return items
-
-
-# Migrated to Rust; cutover is configured in backend-rs/config/routes.toml.
-# @router.get("")
-# @trace_sync(span_name="teams.list", tracer_name="backend.teams")
-# def list_teams(
-#     page: int = Query(1, ge=1, description="Page number"),
-#     limit: int = Query(10, ge=1, le=100, description="Items per page"),
-#     scope: str = Query(
-#         "all",
-#         description="Query scope: 'personal', 'group', or 'all' (default)",
-#     ),
-#     group_name: Optional[str] = Query(
-#         None, description="Group name (required when scope='group')"
-#     ),
-#     group_names: list[str] | None = Query(default=None, max_length=100),
-#     source_filter: TeamSourceFilter | None = Query(default=None),
-#     mode: TeamModeFilter | None = Query(default=None),
-#     db: Session = Depends(get_db),
-#     current_user: User = Depends(security.get_current_user),
-# ):
-#     """
-#     Get current user's Team list (paginated) with scope support.
-#
-#     Scope behavior:
-#     - scope='personal': personal teams + shared teams
-#     - scope='group': group teams (requires group_name)
-#     - scope='all' (default): personal + shared + all user's groups
-#
-#     Each team item includes a `default_for_modes` field (list of mode names)
-#     indicating which modes this team is the default for (based on env config).
-#     """
-#
-#     validate_team_list_groups(db, current_user.id, group_name, group_names)
-#     filters = build_team_list_filters(db, current_user.id, source_filter, mode)
-#     items, total = team_kinds_service.get_user_teams_page(
-#         db=db,
-#         user_id=current_user.id,
-#         scope=scope,
-#         group_name=group_name,
-#         group_names=group_names,
-#         filters=filters,
-#         shared_only=source_filter == "group",
-#         skip=(page - 1) * limit,
-#         limit=limit,
-#     )
-#
-#     # Add default_for_modes field to each team based on env config
-#     default_config = _get_default_teams_config()
-#     items = _add_default_for_modes(items, default_config)
-#
-#     return {"total": total, "items": items}
 
 
 @router.post("", response_model=TeamInDB, status_code=status.HTTP_201_CREATED)
@@ -311,26 +255,6 @@ def get_team_input_parameters(
 ):
     """Get input parameters required by the team's external API bots"""
     return team_kinds_service.get_team_input_parameters(
-        db=db, team_id=team_id, user_id=current_user.id
-    )
-
-
-# MIGRATION-CANDIDATE(api="GET /api/teams/{team_id}/skills"): remove after final confirmation.
-# @router.get("/{team_id}/skills", response_model=TeamSkillsResponse)
-def get_team_skills(
-    team_id: int,
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Get all skills associated with a team.
-
-    Follows the chain: team → bots → ghosts → skills
-
-    Returns:
-        TeamSkillsResponse with team_id, team_namespace,
-        skills list (deduplicated), and preload_skills list.
-    """
-    return team_kinds_service.get_team_skills(
         db=db, team_id=team_id, user_id=current_user.id
     )
 

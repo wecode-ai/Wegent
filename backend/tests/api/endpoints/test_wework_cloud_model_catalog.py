@@ -12,7 +12,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.models.kind import Kind
-from app.models.user import User
 
 
 @pytest.fixture(autouse=True)
@@ -81,74 +80,6 @@ def _catalog(test_client: TestClient, token: str) -> dict[str, dict]:
     return {model["name"]: model for model in response.json()["data"]}
 
 
-# MIGRATION-CANDIDATE: retired Python HTTP test; this API is owned by Rust.
-# @pytest.mark.parametrize("mode", ["unknown", True, {}, []])
-# @pytest.mark.parametrize("model_type", ["public", "user"])
-# def test_invalid_mode_preserves_catalog_but_rejects_execution(
-#     test_client: TestClient,
-#     test_db: Session,
-#     test_token: str,
-#     test_user: User,
-#     cloud_model: Kind,
-#     model_type: str,
-#     mode: object,
-# ) -> None:
-#     """An invalid model must not break listing or silently execute in auto mode."""
-#     valid_json = deepcopy(cloud_model.json)
-#     valid_json["metadata"]["name"] = "other-cloud-model"
-#     test_db.add(
-#         Kind(
-#             user_id=0,
-#             kind="Model",
-#             name="other-cloud-model",
-#             namespace="default",
-#             is_active=True,
-#             json=valid_json,
-#         )
-#     )
-#     cloud_model.user_id = 0 if model_type == "public" else test_user.id
-#     model_json = deepcopy(cloud_model.json)
-#     model_json["spec"]["modelConfig"]["codex_request_mode"] = mode
-#     cloud_model.json = model_json
-#     test_db.commit()
-#
-#     models = _catalog(test_client, test_token)
-#     assert "other-cloud-model" in models
-#     model = models[cloud_model.name]
-#     assert model["type"] == model_type
-#     assert model["resourceUserId"] == cloud_model.user_id
-#     assert model["displayName"] == "Wework cloud model"
-#     assert model["provider"] == "openai"
-#     assert model["modelId"] == "provider-model"
-#     assert model["modelGroup"] == "test-group"
-#     assert model["contextWindow"] == 96000
-#     assert model["maxOutputTokens"] == 4321
-#     assert model["modelCapabilities"]["supportsImage"] is True
-#     assert model["config"]["reasoning"] == {"effort": "high", "summary": "detailed"}
-#     assert model["config"]["native_tool_search"] is False
-#     assert "codex_request_mode" not in model["config"]
-#     assert not model["config"].get("env")
-#     assert "test-provider-key" not in str(models)
-#     assert "private-provider-option" not in str(models)
-#     test_db.refresh(cloud_model)
-#     assert cloud_model.json["spec"]["modelConfig"]["codex_request_mode"] == mode
-#
-#     with patch("app.services.llm_proxy_service.httpx.AsyncClient") as upstream:
-#         response = test_client.post(
-#             "/api/runtime-work/llm-responses-proxy/responses",
-#             headers={
-#                 "Authorization": f"Bearer {test_token}",
-#                 "X-Wegent-Model-Type": model_type,
-#                 "X-Wegent-Model-Namespace": "default",
-#                 "X-Wegent-Model-User-Id": str(cloud_model.user_id),
-#             },
-#             json={"model": cloud_model.name, "input": "hello", "stream": True},
-#         )
-#     assert response.status_code == 400, response.text
-#     assert "codex_request_mode" in response.json()["detail"]
-#     upstream.assert_not_called()
-
-
 @pytest.mark.parametrize(
     ("protocol", "api_format"),
     [("openai", "chat/completions"), ("anthropic-messages", None)],
@@ -184,69 +115,3 @@ def test_gateway_rejects_passthrough_for_non_responses_models(
         "Codex passthrough requires an OpenAI Responses model"
     )
     upstream.assert_not_called()
-
-
-# MIGRATION-CANDIDATE: retired Python HTTP test; this API is owned by Rust.
-# @pytest.mark.parametrize("mode", ["standard", "passthrough"])
-# @pytest.mark.parametrize("batch_result", ["created", "updated"])
-# def test_desktop_fixture_updates_public_model_by_batch_identity(
-#     test_client: TestClient,
-#     test_db: Session,
-#     test_token: str,
-#     mode: str,
-#     batch_result: str,
-# ) -> None:
-#     """Both batch paths must support the public-model update used by desktop CI."""
-#     headers = {"Authorization": f"Bearer {test_token}"}
-#     items = [
-#         {
-#             "name": "desktop-e2e-cloud-responses",
-#             "env": {
-#                 "model": "openai",
-#                 "model_id": "provider-responses-model",
-#                 "base_url": "https://provider.example/v1",
-#                 "api_key": "test-provider-key",
-#                 "thinking_config": {"reasoning": {"summary": "detailed"}},
-#             },
-#             "is_active": True,
-#             "wework_available": True,
-#             "protocol": "openai-responses",
-#             "api_format": "responses",
-#         }
-#     ]
-#     first = test_client.post("/api/models/batch", headers=headers, json=items)
-#     assert first.status_code == 201, first.text
-#     seeded = first.json()
-#     if batch_result == "updated":
-#         second = test_client.post("/api/models/batch", headers=headers, json=items)
-#         assert second.status_code == 201, second.text
-#         seeded = second.json()
-#         assert seeded["updated"][0]["id"] == first.json()["created"][0]["id"]
-#     assert seeded["skipped"] == []
-#     saved = seeded[batch_result][0]
-#
-#     updated = test_client.put(
-#         f"/api/models/{saved['id']}",
-#         headers=headers,
-#         json={
-#             "config": {
-#                 **saved["config"],
-#                 "codex_request_mode": mode,
-#                 "max_output_tokens": 4321,
-#             }
-#         },
-#     )
-#     assert updated.status_code == 200, updated.text
-#     stored = test_db.get(Kind, saved["id"])
-#     test_db.refresh(stored)
-#     assert stored.user_id == 0
-#     assert stored.namespace == "default"
-#     assert stored.json["spec"]["modelConfig"]["env"] == items[0]["env"]
-#     model = _catalog(test_client, test_token)[saved["name"]]
-#     assert model["type"] == "public"
-#     assert model["resourceUserId"] == 0
-#     assert model["modelId"] == items[0]["env"]["model_id"]
-#     assert model["config"]["codex_request_mode"] == mode
-#     assert model["config"]["reasoning"] == {"summary": "detailed"}
-#     assert model["maxOutputTokens"] == 4321
-#     assert not model["config"].get("env")

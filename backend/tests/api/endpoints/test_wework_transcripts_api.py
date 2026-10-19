@@ -73,102 +73,6 @@ def _upload(
     )
 
 
-# MIGRATION-CANDIDATE: retired Python HTTP test; this API is owned by Rust.
-# def test_commits_native_object_metadata_and_structured_summary(
-#     test_client, test_token, test_db, monkeypatch
-# ):
-#     from app.services import wework_transcript_service
-#
-#     lease = _lease(test_client, test_token)
-#     encryption = test_client.get(
-#         "/api/wework-transcripts/transcript-1/encryption-key",
-#         headers=_headers(test_token),
-#     )
-#     assert encryption.status_code == 200
-#     assert encryption.json()["algorithm"] == "aes-256-gcm"
-#     assert len(encryption.json()["key"]) == 44
-#     storage = wework_transcript_service.wework_transcript_storage
-#     uploads = []
-#     monkeypatch.setattr(
-#         storage,
-#         "put_stream",
-#         lambda key, stream, size: uploads.append((key, stream.read(), size)),
-#     )
-#     request = _segment(lease)
-#     commit = _upload(test_client, test_token, request)
-#     assert commit.status_code == 200
-#     assert commit.json() == {"currentSequence": 1, "appended": 1}
-#     retry = _upload(test_client, test_token, request)
-#     assert retry.json() == {"currentSequence": 1, "appended": 0}
-#     assert uploads[0][1:] == (SEGMENT_BODY, len(SEGMENT_BODY))
-#     assert uploads[1] == uploads[0]
-#
-#     transcript = test_db.query(WeworkTranscript).one()
-#     archive = test_db.query(WeworkTranscriptArchive).one()
-#     turn = test_db.query(WeworkTranscriptTurn).one()
-#     assert transcript.current_sequence == 1
-#     assert transcript.archived_through_sequence == 1
-#     assert archive.from_sequence == 0
-#     assert archive.size_bytes == 4096
-#     assert archive.storage_key.endswith(f"1-snapshot-{SEGMENT_SHA256}.tgz.aes256gcm")
-#     assert turn.sequence == 1
-#     assert turn.turn_id == "turn-1"
-#     assert turn.payload["assistantMessage"] == "Done"
-#
-#     turns = test_client.get(
-#         "/api/wework-transcripts/transcript-1/turns?after=0&limit=1",
-#         headers=_headers(test_token),
-#     )
-#     assert turns.status_code == 200
-#     assert turns.json()["currentSequence"] == 1
-#     assert turns.json()["hasMore"] is False
-#     assert turns.json()["turns"][0]["payload"]["taskId"] == "task-1"
-
-
-# MIGRATION-CANDIDATE: retired Python HTTP test; this API is owned by Rust.
-# def test_persists_the_most_recent_writer_after_lease_release(
-#     test_client, test_token, test_db
-# ):
-#     lease = _lease(test_client, test_token, client_id="electron-origin")
-#     released = test_client.post(
-#         "/api/wework-transcripts/transcript-1/lease/release",
-#         headers=_headers(test_token),
-#         json={
-#             "clientId": "electron-origin",
-#             "fencingToken": lease["fencingToken"],
-#         },
-#     )
-#     assert released.status_code == 200
-#     first_listing = test_client.get(
-#         "/api/wework-transcripts?includeArchived=false",
-#         headers=_headers(test_token),
-#     )
-#     assert first_listing.status_code == 200
-#     assert first_listing.json()["items"][0]["writerClientId"] == "electron-origin"
-#
-#     other_lease = _lease(test_client, test_token, client_id="electron-other")
-#     other_released = test_client.post(
-#         "/api/wework-transcripts/transcript-1/lease/release",
-#         headers=_headers(test_token),
-#         json={
-#             "clientId": "electron-other",
-#             "fencingToken": other_lease["fencingToken"],
-#         },
-#     )
-#     assert other_released.status_code == 200
-#
-#     listing = test_client.get(
-#         "/api/wework-transcripts?includeArchived=false",
-#         headers=_headers(test_token),
-#     )
-#
-#     assert listing.status_code == 200
-#     assert listing.json()["items"][0]["writerClientId"] == "electron-other"
-#     transcript = test_db.query(WeworkTranscript).one()
-#     assert transcript.writer_client_id == "electron-other"
-#     assert transcript.writer_lease_expires_at.year == 1970
-
-
 def test_rejects_uploaded_segment_with_mismatched_digest(
     test_client, test_token, test_db, monkeypatch
 ):
@@ -193,30 +97,6 @@ def test_rejects_uploaded_segment_with_mismatched_digest(
     assert test_db.query(WeworkTranscriptArchive).count() == 0
     assert test_db.query(WeworkTranscriptTurn).count() == 0
     assert test_db.query(WeworkTranscript).one().current_sequence == 0
-
-
-# MIGRATION-CANDIDATE: retired Python HTTP test; this API is owned by Rust.
-# def test_encryption_key_is_shared_by_one_user_across_transcripts(
-#     test_client, test_token
-# ):
-#     from app.core.wework_transcript_encryption import transcript_encryption_key
-#
-#     _lease(test_client, test_token, transcript_id="transcript-1")
-#     _lease(test_client, test_token, transcript_id="transcript-2")
-#
-#     first = test_client.get(
-#         "/api/wework-transcripts/transcript-1/encryption-key",
-#         headers=_headers(test_token),
-#     )
-#     second = test_client.get(
-#         "/api/wework-transcripts/transcript-2/encryption-key",
-#         headers=_headers(test_token),
-#     )
-#
-#     assert first.status_code == 200
-#     assert second.status_code == 200
-#     assert first.json()["key"] == second.json()["key"]
-#     assert transcript_encryption_key(1) != transcript_encryption_key(2)
 
 
 def test_prunes_segments_older_than_previous_snapshot(
@@ -615,35 +495,6 @@ def test_reports_turn_conflict_when_turn_identity_exists_at_another_sequence(
 
     assert conflict.status_code == 409
     assert conflict.json()["detail"]["code"] == "turn_conflict"
-
-
-# MIGRATION-CANDIDATE: retired Python HTTP test; this API is owned by Rust.
-# def test_creates_branch_without_copying_parent_objects(
-#     test_client, test_token, test_db
-# ):
-#     _lease(test_client, test_token)
-#     branch = test_client.post(
-#         "/api/wework-transcripts/fork-device-b/lease",
-#         headers=_headers(test_token),
-#         json={
-#             "clientId": "client-b",
-#             "ttlSeconds": 60,
-#             "parentTranscriptId": "transcript-1",
-#             "forkedAtSequence": 0,
-#         },
-#     )
-#     assert branch.status_code == 200
-#     listing = test_client.get(
-#         "/api/wework-transcripts",
-#         headers=_headers(test_token),
-#     )
-#     item = next(
-#         row for row in listing.json()["items"] if row["transcriptId"] == "fork-device-b"
-#     )
-#     assert item["parentTranscriptId"] == "transcript-1"
-#     assert item["forkedAtSequence"] == 0
-#     assert test_db.query(WeworkTranscriptArchive).count() == 0
-#     assert test_db.query(WeworkTranscriptTurn).count() == 0
 
 
 def test_normalizes_stale_future_fork_point_to_parent_head(

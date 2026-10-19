@@ -289,7 +289,13 @@ export function AiChatModal({
     },
     []
   )
-  const runtimeContext = useMemo(() => buildWorkItemRuntimeContext(project, task), [project, task])
+  const runtimeContext = useMemo(
+    () => ({
+      ...buildWorkItemRuntimeContext(project, task),
+      ...(initialTaskRequest?.origin ? { origin: initialTaskRequest.origin } : {}),
+    }),
+    [initialTaskRequest, project, task]
+  )
   const executionDeviceName = useMemo(() => {
     const deviceId = initialAddress?.deviceId ?? null
     return getWorkbenchDeviceDisplayName(

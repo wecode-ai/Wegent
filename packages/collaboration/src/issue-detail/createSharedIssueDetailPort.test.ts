@@ -21,6 +21,9 @@ describe("createSharedIssueDetailPort", () => {
         taskId: "task-1",
         taskTitle: "Task",
         backendTaskId: 4,
+        bindingType: "user",
+        humanAssignmentId: "human-1",
+        dispatchId: "dispatch-1",
         linkedAt: "2026-09-10T00:00:00Z",
       },
     ]);
@@ -118,6 +121,9 @@ describe("createSharedIssueDetailPort", () => {
         loop_item_id: "issue-1",
         device_id: "device-1",
         task_id: "task-1",
+        binding_type: "user",
+        human_assignment_id: "human-1",
+        dispatch_id: "dispatch-1",
       }),
     ]);
     await expect(port.collaborators.list("issue-1")).resolves.toEqual([

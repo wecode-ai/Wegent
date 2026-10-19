@@ -658,28 +658,31 @@ impl TaskRuntime {
         project_id: &str,
         item_id: Option<&str>,
         input: RuntimeTaskAddress,
+        dispatch: Option<&Value>,
     ) -> Result<TaskBinding, TaskRuntimeError> {
         let project = self.local_store.get_project(project_id)?;
         match (task_provider(&project)?, item_id) {
-            (TaskProviderKind::Local, item_id) => {
-                self.local_store.bind_task(project_id, item_id, None, input)
-            }
+            (TaskProviderKind::Local, item_id) => self
+                .local_store
+                .bind_task(project_id, item_id, None, input, dispatch),
             (provider @ (TaskProviderKind::Github | TaskProviderKind::Gitlab), Some(item_id)) => {
                 self.issue_provider.get(&project, provider, item_id).await?;
                 self.local_store
-                    .bind_task(project_id, None, Some(item_id), input)
+                    .bind_task(project_id, None, Some(item_id), input, dispatch)
             }
             (TaskProviderKind::DingtalkAitable, Some(item_id)) => {
                 self.aitable_provider.get_board(&project, item_id).await?;
                 self.local_store
-                    .bind_task(project_id, None, Some(item_id), input)
+                    .bind_task(project_id, None, Some(item_id), input, dispatch)
             }
             (
                 TaskProviderKind::Github
                 | TaskProviderKind::Gitlab
                 | TaskProviderKind::DingtalkAitable,
                 None,
-            ) => self.local_store.bind_task(project_id, None, None, input),
+            ) => self
+                .local_store
+                .bind_task(project_id, None, None, input, dispatch),
             (provider, _) => Err(TaskRuntimeError::UnsupportedProvider(format!(
                 "{provider:?} bindings"
             ))),
@@ -2137,6 +2140,7 @@ esac
                     execution_context: None,
                     workflow_node_id: None,
                 },
+                None,
             )
             .await
             .unwrap();

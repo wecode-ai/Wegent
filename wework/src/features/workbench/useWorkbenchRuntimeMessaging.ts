@@ -8,6 +8,7 @@ import { ApiError } from '@/api/http'
 import type { ExecutorClient } from '@/api/executorAccess'
 import { REMOTE_TEAM_BACKEND_UNSUPPORTED } from '@/api/runtimeWork'
 import i18n from '@/i18n'
+import { prepareCloudAttachments } from '@/lib/cloud-attachments'
 import { appendCodeCommentContexts } from '@/lib/code-comment-context'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import {
@@ -139,13 +140,6 @@ function runtimeCreateMessage(intent: PreparedRuntimeTaskIntent): string {
     : ''
 }
 
-function remoteRuntimeAttachment(attachment: Attachment): Attachment {
-  const sanitized = { ...attachment }
-  delete sanitized.local_path
-  delete sanitized.local_preview_url
-  return sanitized
-}
-
 export async function prepareRuntimeAttachmentsForDevice(
   deviceId: string,
   devices: WorkbenchState['devices'],
@@ -159,37 +153,7 @@ export async function prepareRuntimeAttachmentsForDevice(
     return { attachmentIds, attachments }
   }
 
-  const existingRemoteIds = attachments
-    .filter(attachment => attachment.id > 0)
-    .map(attachment => attachment.id)
-  const localAttachments = attachments.filter(attachment => attachment.id <= 0)
-  if (localAttachments.some(attachment => !attachment.local_path?.trim())) {
-    throw new Error(i18n.t('workbench.cloud_attachment_local_file_unavailable'))
-  }
-  if (localAttachments.length > 0 && !uploadLocalAttachmentToCloud) {
-    throw new Error(i18n.t('workbench.cloud_attachment_upload_unavailable'))
-  }
-
-  const uploadedAttachments = await Promise.all(
-    localAttachments.map(attachment => uploadLocalAttachmentToCloud!(attachment))
-  )
-  if (uploadedAttachments.some(attachment => attachment.id <= 0)) {
-    throw new Error(i18n.t('workbench.cloud_attachment_upload_failed'))
-  }
-
-  return {
-    attachmentIds: Array.from(
-      new Set([
-        ...attachmentIds,
-        ...existingRemoteIds,
-        ...uploadedAttachments.map(attachment => attachment.id),
-      ])
-    ),
-    attachments: [
-      ...attachments.filter(attachment => attachment.id > 0),
-      ...uploadedAttachments,
-    ].map(remoteRuntimeAttachment),
-  }
+  return prepareCloudAttachments(attachments, uploadLocalAttachmentToCloud, attachmentIds)
 }
 
 export function runtimeExecutablePathForTarget({
@@ -1236,7 +1200,8 @@ export function useWorkbenchRuntimeMessaging({
         ...(options?.wegentTeamId ? { wegentTeamId: options.wegentTeamId } : {}),
         message: runtimeCreateMessage(intent),
         ...(clientUserMessageId ? { clientUserMessageId } : {}),
-        title: buildRuntimeTaskTitle(displayMessage, intent.title),
+        title:
+          options?.taskCreateRequest?.title ?? buildRuntimeTaskTitle(displayMessage, intent.title),
         modelId: executionModel.modelId,
         modelType: executionModel.modelType ?? null,
         modelOptions: {

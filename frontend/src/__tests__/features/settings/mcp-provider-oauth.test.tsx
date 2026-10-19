@@ -14,7 +14,7 @@ const TRANSLATIONS: Record<string, string> = {
   'dingtalk.saving': 'Saving',
   'dingtalk.open_link': 'Get DingTalk URL',
   'dingtalk.auth_mode_label': 'Authentication',
-  'dingtalk.auth_mode_url': 'Personal StreamableHttp URL',
+  'dingtalk.auth_mode_url': 'API Key / StreamableHttp URL',
   'dingtalk.auth_mode_oauth': 'OAuth 2.0 authorization',
   'dingtalk.oauth_url_label': 'MCP OAuth URL',
   'dingtalk.oauth_url_hint': 'Paste the OAuth URL',
@@ -27,6 +27,8 @@ const TRANSLATIONS: Record<string, string> = {
   'dingtalk.oauth_disconnect_failed': 'Failed to disconnect',
   'dingtalk.oauth_failed': 'DingTalk MCP authorization failed',
   'dingtalk.services.ai_table.title': 'DingTalk AI table',
+  'dingtalk.services.ai_table.save_success': 'DingTalk AI Table configuration saved',
+  'dingtalk.services.ai_table.save_failed': 'Failed to save DingTalk AI Table configuration',
 }
 
 const mockTranslate = (key: string) => TRANSLATIONS[key] || key
@@ -52,6 +54,7 @@ jest.mock('@/apis/user', () => ({
 }))
 
 const OAUTH_URL = 'https://mcp-gw.dingtalk.com/oauth/server/aitable'
+const API_KEY_URL = 'https://mcp-gw.dingtalk.com/api-key/server/aitable'
 
 function serviceConfig(overrides: Record<string, unknown> = {}) {
   return {
@@ -123,6 +126,9 @@ describe('McpProviderIntegrations OAuth', () => {
       expect(screen.getByTestId('dingtalk-ai_table-auth-mode-oauth')).toBeInTheDocument()
     )
     fireEvent.click(screen.getByTestId('dingtalk-ai_table-auth-mode-oauth'))
+    fireEvent.change(screen.getByTestId('dingtalk-ai_table-url-input'), {
+      target: { value: OAUTH_URL },
+    })
     fireEvent.click(screen.getByTestId('dingtalk-ai_table-oauth-connect'))
 
     await waitFor(() =>
@@ -131,5 +137,90 @@ describe('McpProviderIntegrations OAuth', () => {
     expect(screen.getByTestId('dingtalk-ai_table-oauth-status')).toHaveTextContent('ding-user')
     expect(screen.getByTestId('dingtalk-ai_table-oauth-disconnect')).toBeInTheDocument()
     expect(window.open).toHaveBeenCalled()
+  })
+
+  it('isolates API-key and OAuth URL drafts when switching authentication modes', async () => {
+    ;(userApis.getMcpProviderServices as jest.Mock).mockResolvedValue([
+      serviceConfig({ url: API_KEY_URL, auth_mode: 'url' }),
+    ])
+
+    render(<McpProviderIntegrations providerId="dingtalk" />)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('dingtalk-ai_table-auth-mode-oauth')).toBeInTheDocument()
+    )
+    const oauthModeButton = screen.getByTestId('dingtalk-ai_table-auth-mode-oauth')
+    const urlModeButton = screen.getByTestId('dingtalk-ai_table-auth-mode-url')
+    expect(
+      oauthModeButton.compareDocumentPosition(urlModeButton) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(screen.getByTestId('dingtalk-ai_table-url-input')).toHaveValue(API_KEY_URL)
+
+    fireEvent.click(screen.getByTestId('dingtalk-ai_table-auth-mode-oauth'))
+    expect(screen.getByTestId('dingtalk-ai_table-url-input')).toHaveValue('')
+
+    fireEvent.change(screen.getByTestId('dingtalk-ai_table-url-input'), {
+      target: { value: OAUTH_URL },
+    })
+    fireEvent.click(screen.getByTestId('dingtalk-ai_table-auth-mode-url'))
+    expect(screen.getByTestId('dingtalk-ai_table-url-input')).toHaveValue(API_KEY_URL)
+
+    fireEvent.click(screen.getByTestId('dingtalk-ai_table-auth-mode-oauth'))
+    expect(screen.getByTestId('dingtalk-ai_table-url-input')).toHaveValue(OAUTH_URL)
+  })
+
+  it('keeps the save button disabled only while that service is saving', async () => {
+    ;(userApis.getMcpProviderServices as jest.Mock).mockResolvedValue([serviceConfig()])
+    let resolveSave: (value: ReturnType<typeof serviceConfig>) => void = () => {}
+    ;(userApis.updateMcpProviderService as jest.Mock).mockReturnValue(
+      new Promise(resolve => {
+        resolveSave = resolve
+      })
+    )
+
+    render(<McpProviderIntegrations providerId="dingtalk" />)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('save-dingtalk-ai_table-button')).toBeInTheDocument()
+    )
+    fireEvent.click(screen.getByTestId('save-dingtalk-ai_table-button'))
+
+    const saveButton = screen.getByTestId('save-dingtalk-ai_table-button') as HTMLButtonElement
+    expect(saveButton).toBeDisabled()
+
+    resolveSave(serviceConfig())
+    await waitFor(() => expect(saveButton).toBeEnabled())
+    expect(screen.getByTestId('save-dingtalk-ai_table-saved')).toHaveTextContent(
+      'DingTalk AI Table configuration saved'
+    )
+    expect(mockToast).not.toHaveBeenCalled()
+  })
+
+  it('preserves the other authentication mode draft after saving OAuth', async () => {
+    ;(userApis.getMcpProviderServices as jest.Mock).mockResolvedValue([
+      serviceConfig({ url: API_KEY_URL, auth_mode: 'url' }),
+    ])
+    ;(userApis.updateMcpProviderService as jest.Mock).mockResolvedValue(
+      serviceConfig({ url: OAUTH_URL, auth_mode: 'oauth' })
+    )
+
+    render(<McpProviderIntegrations providerId="dingtalk" />)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('dingtalk-ai_table-url-input')).toHaveValue(API_KEY_URL)
+    )
+    fireEvent.click(screen.getByTestId('dingtalk-ai_table-auth-mode-oauth'))
+    fireEvent.change(screen.getByTestId('dingtalk-ai_table-url-input'), {
+      target: { value: OAUTH_URL },
+    })
+    fireEvent.click(screen.getByTestId('save-dingtalk-ai_table-button'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('save-dingtalk-ai_table-saved')).toBeInTheDocument()
+    )
+    expect(screen.getByTestId('dingtalk-ai_table-url-input')).toHaveValue(OAUTH_URL)
+
+    fireEvent.click(screen.getByTestId('dingtalk-ai_table-auth-mode-url'))
+    expect(screen.getByTestId('dingtalk-ai_table-url-input')).toHaveValue(API_KEY_URL)
   })
 })
