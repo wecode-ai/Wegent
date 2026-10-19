@@ -334,6 +334,8 @@ export async function createDesktopScenario({
         )
         // CI runs this by default; local comparisons can stop after the same assertions.
         if (process.env.WEWORK_E2E_PLUGIN_SOURCE_CONTINUATION_ONLY === 'true') return
+        await control.command('click', testId('workspace-tab-select-fixed-task'))
+        await control.command('waitFor', testId('plugins-button'))
         evidence.push(
           await verifyPluginCatalogBoundaries({
             cloud,
