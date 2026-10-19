@@ -9,6 +9,15 @@ const exec = promisify(execFile)
 const SUBJECT = 'test: verify routed commit generation'
 const MARKER = 'WEWORK_ROUTED_COMMIT_GENERATION'
 
+export async function openEnvironmentInfo(control) {
+  const button = '[data-testid="environment-info-button"]'
+  await control.command('waitFor', button)
+  const expanded = await control.command('getAttribute', button, { value: 'aria-expanded' })
+  assert.ok(expanded === 'true' || expanded === 'false', 'Environment toggle must expose its state')
+  if (expanded === 'false') await control.command('click', button)
+  await control.command('waitFor', '[data-testid="environment-info-popover"]')
+}
+
 function complete(response, content) {
   const id = `commit-generation-${Date.now()}`
   const events = [
@@ -105,8 +114,7 @@ export async function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await writeFile(join(workspacePath, 'commit-generation.txt'), `${MARKER}\n`)
-      await control.command('click', '[data-testid="environment-info-button"]')
-      await control.command('waitFor', '[data-testid="environment-info-popover"]')
+      await openEnvironmentInfo(control)
       await control.command('click', '[data-testid="environment-commit-button"]')
       await control.command('fill', '[data-testid="environment-commit-message-input"]', {
         value: '',
