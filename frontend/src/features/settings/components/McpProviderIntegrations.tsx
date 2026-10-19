@@ -5,7 +5,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { ExternalLink, Loader2 } from 'lucide-react'
+import { AlertCircle, CheckCircle2, ExternalLink, Loader2 } from 'lucide-react'
 
 import { userApis, type McpProviderServiceConfig } from '@/apis/user'
 import { Button } from '@/components/ui/button'
@@ -16,15 +16,22 @@ import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 
 type EditableService = McpProviderServiceConfig & {
-  draftUrl: string
+  draftUrls: {
+    url: string
+    oauth: string
+  }
   draftAuthMode: 'url' | 'oauth'
   connecting: boolean
 }
+
+type SaveStatus = 'idle' | 'saved' | 'error'
 
 function McpProviderServiceCard({
   providerId,
   service,
   loading,
+  saving,
+  saveStatus,
   onToggle,
   onUrlChange,
   onAuthModeChange,
@@ -35,6 +42,8 @@ function McpProviderServiceCard({
   providerId: string
   service: EditableService
   loading: boolean
+  saving: boolean
+  saveStatus: SaveStatus
   onToggle: (serviceId: string, enabled: boolean) => void
   onUrlChange: (serviceId: string, value: string) => void
   onAuthModeChange: (serviceId: string, mode: 'url' | 'oauth') => void
@@ -45,6 +54,8 @@ function McpProviderServiceCard({
   const { t } = useTranslation('common')
   const baseKey = `${providerId}.services.${service.service_id}`
   const oauthMode = service.draftAuthMode === 'oauth'
+  const saveDisabled =
+    loading || saving || (service.enabled && !service.draftUrls[service.draftAuthMode]?.trim())
 
   return (
     <div className="space-y-3 rounded-md border border-border bg-base p-4">
@@ -82,15 +93,6 @@ function McpProviderServiceCard({
                 data-testid={`${providerId}-${service.service_id}-auth-mode`}
               >
                 <Button
-                  variant={oauthMode ? 'outline' : 'primary'}
-                  type="button"
-                  onClick={() => onAuthModeChange(service.service_id, 'url')}
-                  disabled={loading || service.connecting}
-                  data-testid={`${providerId}-${service.service_id}-auth-mode-url`}
-                >
-                  {t(`${providerId}.auth_mode_url`)}
-                </Button>
-                <Button
                   variant={oauthMode ? 'primary' : 'outline'}
                   type="button"
                   onClick={() => onAuthModeChange(service.service_id, 'oauth')}
@@ -98,6 +100,15 @@ function McpProviderServiceCard({
                   data-testid={`${providerId}-${service.service_id}-auth-mode-oauth`}
                 >
                   {t(`${providerId}.auth_mode_oauth`)}
+                </Button>
+                <Button
+                  variant={oauthMode ? 'outline' : 'primary'}
+                  type="button"
+                  onClick={() => onAuthModeChange(service.service_id, 'url')}
+                  disabled={loading || service.connecting}
+                  data-testid={`${providerId}-${service.service_id}-auth-mode-url`}
+                >
+                  {t(`${providerId}.auth_mode_url`)}
                 </Button>
               </div>
             </div>
@@ -109,7 +120,7 @@ function McpProviderServiceCard({
             </Label>
             <Input
               id={`${providerId}-${service.service_id}-url`}
-              value={service.draftUrl}
+              value={service.draftUrls[service.draftAuthMode] ?? ''}
               onChange={event => onUrlChange(service.service_id, event.target.value)}
               placeholder={t(`${providerId}.url_placeholder`)}
               disabled={loading || service.connecting}
@@ -136,7 +147,11 @@ function McpProviderServiceCard({
                   variant="outline"
                   type="button"
                   onClick={() => onConnect(service.service_id)}
-                  disabled={loading || service.connecting || !service.draftUrl.trim()}
+                  disabled={
+                    loading ||
+                    service.connecting ||
+                    !service.draftUrls[service.draftAuthMode]?.trim()
+                  }
                   data-testid={`${providerId}-${service.service_id}-oauth-connect`}
                 >
                   {service.connecting ? (
@@ -180,10 +195,10 @@ function McpProviderServiceCard({
           variant="primary"
           type="button"
           onClick={() => onSave(service.service_id)}
-          disabled={loading || (service.enabled && !service.draftUrl.trim())}
+          disabled={saveDisabled}
           data-testid={`save-${providerId}-${service.service_id}-button`}
         >
-          {loading ? (
+          {saving ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               {t(`${providerId}.saving`)}
@@ -192,6 +207,24 @@ function McpProviderServiceCard({
             t(`${providerId}.save`)
           )}
         </Button>
+        {saveStatus === 'saved' && (
+          <span
+            className="flex items-center gap-1 text-xs text-emerald-600"
+            data-testid={`save-${providerId}-${service.service_id}-saved`}
+          >
+            <CheckCircle2 className="h-4 w-4" />
+            {t(`${baseKey}.save_success`)}
+          </span>
+        )}
+        {saveStatus === 'error' && (
+          <span
+            className="flex items-center gap-1 text-xs text-destructive"
+            data-testid={`save-${providerId}-${service.service_id}-error`}
+          >
+            <AlertCircle className="h-4 w-4" />
+            {t(`${baseKey}.save_failed`)}
+          </span>
+        )}
       </div>
     </div>
   )
@@ -208,6 +241,7 @@ export default function McpProviderIntegrations({ providerId }: { providerId: st
   const { toast } = useToast()
   const [loading, setLoading] = useState(true)
   const [savingServiceId, setSavingServiceId] = useState<string | null>(null)
+  const [saveStatuses, setSaveStatuses] = useState<Record<string, SaveStatus>>({})
   const [services, setServices] = useState<EditableService[]>([])
 
   useEffect(() => {
@@ -218,7 +252,10 @@ export default function McpProviderIntegrations({ providerId }: { providerId: st
         setServices(
           configs.map(service => ({
             ...service,
-            draftUrl: service.url,
+            draftUrls: {
+              url: service.auth_mode === 'url' ? service.url : '',
+              oauth: service.auth_mode === 'oauth' ? service.url : '',
+            },
             draftAuthMode: service.auth_mode ?? 'url',
             connecting: false,
           }))
@@ -246,14 +283,23 @@ export default function McpProviderIntegrations({ providerId }: { providerId: st
   }
 
   const handleToggle = (serviceId: string, enabled: boolean) => {
+    setSaveStatuses(current => ({ ...current, [serviceId]: 'idle' }))
     updateServiceState(serviceId, service => ({ ...service, enabled }))
   }
 
   const handleUrlChange = (serviceId: string, draftUrl: string) => {
-    updateServiceState(serviceId, service => ({ ...service, draftUrl }))
+    setSaveStatuses(current => ({ ...current, [serviceId]: 'idle' }))
+    updateServiceState(serviceId, service => ({
+      ...service,
+      draftUrls: {
+        ...service.draftUrls,
+        [service.draftAuthMode]: draftUrl,
+      },
+    }))
   }
 
   const handleAuthModeChange = (serviceId: string, mode: McpAuthMode) => {
+    setSaveStatuses(current => ({ ...current, [serviceId]: 'idle' }))
     updateServiceState(serviceId, service => ({ ...service, draftAuthMode: mode }))
   }
 
@@ -265,24 +311,22 @@ export default function McpProviderIntegrations({ providerId }: { providerId: st
       setSavingServiceId(serviceId)
       const saved = await userApis.updateMcpProviderService(providerId, serviceId, {
         enabled: current.enabled,
-        url: current.draftUrl,
+        url: current.draftUrls[current.draftAuthMode] ?? '',
         auth_mode: current.draftAuthMode,
       })
 
-      updateServiceState(serviceId, () => ({
+      updateServiceState(serviceId, service => ({
         ...saved,
-        draftUrl: saved.url,
+        draftUrls: {
+          ...service.draftUrls,
+          [saved.auth_mode ?? 'url']: saved.url,
+        },
         draftAuthMode: saved.auth_mode ?? 'url',
         connecting: false,
       }))
-      toast({
-        title: t(`${providerId}.services.${serviceId}.save_success`),
-      })
-    } catch (error) {
-      toast({
-        variant: 'destructive',
-        title: (error as Error)?.message || t(`${providerId}.services.${serviceId}.save_failed`),
-      })
+      setSaveStatuses(current => ({ ...current, [serviceId]: 'saved' }))
+    } catch {
+      setSaveStatuses(current => ({ ...current, [serviceId]: 'error' }))
     } finally {
       setSavingServiceId(null)
     }
@@ -304,9 +348,9 @@ export default function McpProviderIntegrations({ providerId }: { providerId: st
     try {
       // The backend discovers metadata from the resource URL, so persist the
       // OAuth resource and the mode before starting the session.
-      const saved = await userApis.updateMcpProviderService(providerId, serviceId, {
+      await userApis.updateMcpProviderService(providerId, serviceId, {
         enabled: true,
-        url: current.draftUrl,
+        url: current.draftUrls.oauth || current.url,
         auth_mode: 'oauth',
       })
       const session = await userApis.createMcpProviderOAuthSession(providerId, serviceId)
@@ -327,9 +371,12 @@ export default function McpProviderIntegrations({ providerId }: { providerId: st
       }
 
       const refreshed = await userApis.getMcpProviderService(providerId, serviceId)
-      updateServiceState(serviceId, () => ({
+      updateServiceState(serviceId, service => ({
         ...refreshed,
-        draftUrl: refreshed.url || saved.url,
+        draftUrls: {
+          ...service.draftUrls,
+          [refreshed.auth_mode ?? 'oauth']: refreshed.url,
+        },
         draftAuthMode: refreshed.auth_mode ?? 'oauth',
         connecting: false,
       }))
@@ -379,6 +426,8 @@ export default function McpProviderIntegrations({ providerId }: { providerId: st
           providerId={providerId}
           service={service}
           loading={savingServiceId === service.service_id}
+          saving={savingServiceId === service.service_id}
+          saveStatus={saveStatuses[service.service_id] ?? 'idle'}
           onToggle={handleToggle}
           onUrlChange={handleUrlChange}
           onAuthModeChange={handleAuthModeChange}
