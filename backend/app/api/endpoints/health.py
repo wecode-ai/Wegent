@@ -6,7 +6,6 @@
 During graceful shutdown:
 - /health returns 200 (app is still alive)
 - /ready returns 503 (stop sending new traffic)
-- /startup returns 200 (startup is complete)
 - /shutdown/initiate (POST) triggers graceful shutdown manually
 - /shutdown/reset (POST) resets shutdown state to restore 200
 """
@@ -102,12 +101,6 @@ def readiness_check(response: Response, db: Session = Depends(get_db)):
             "status": "not_ready",
             "message": f"Service not ready: {str(e)}",
         }
-
-
-# MIGRATION-CANDIDATE(api="GET /api/startup"): remove after final confirmation.
-# @router.get("/startup")
-# def startup_check(db: Session = Depends(get_db)):
-#     return {"status": "started"}
 
 
 @router.post("/shutdown/initiate")

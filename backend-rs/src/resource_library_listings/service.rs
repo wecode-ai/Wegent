@@ -29,6 +29,8 @@ use super::repository::{
 use super::skill_bindings::{is_personally_installed, user_default_skill_ids};
 
 mod detail;
+mod publication;
+mod published;
 
 /// The rows a listing projection reads.
 pub(super) struct Source<'a> {
@@ -302,7 +304,7 @@ where
     let publisher_user_name = if publisher_user_id > 0 {
         fetch_user_name(mysql, publisher_user_id)
             .await?
-            .map(|row| row.users_user_name)
+            .map(|row| row.user_name)
     } else {
         None
     };

@@ -19,7 +19,6 @@ from app.models.user import User
 from app.schemas.share import MemberRole
 from app.schemas.task import TaskCreate
 from app.services.adapters.task_kinds import task_kinds_service
-from app.services.adapters.task_kinds.task_skills_resolver import resolve_task_skills
 from app.services.adapters.team_kinds import team_kinds_service
 from app.services.chat.task_default_knowledge_bases import (
     build_initial_task_knowledge_base_refs,
@@ -356,10 +355,6 @@ def test_child_member_can_create_task_with_authorized_parent_team_and_use_skills
     # Task creation stores the initial user request plus the execution subtask.
     assert len(subtasks) == 2
 
-    resolved = resolve_task_skills(test_db, task_id=task.id, user_id=child_member.id)
-    assert resolved["team_id"] == team.id
-    assert "parent-skill" in resolved["skills"]
-
 
 def test_authorized_parent_team_defaults_are_resolved_dynamically(
     test_db: Session,
@@ -466,13 +461,6 @@ def test_group_guest_can_use_agent_without_reading_configuration_or_kb_documents
     assert team_kinds_service.get_team_input_parameters(
         test_db, team_id=team.id, user_id=guest.id
     ) == {"has_parameters": False, "parameters": []}
-    assert (
-        team_kinds_service.get_team_skills(test_db, team_id=team.id, user_id=guest.id)[
-            "team_id"
-        ]
-        == team.id
-    )
-
     selection = (
         {"team_name": team.name, "team_namespace": team.namespace}
         if by_name

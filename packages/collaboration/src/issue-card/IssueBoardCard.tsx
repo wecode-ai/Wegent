@@ -16,6 +16,7 @@ import {
 } from "./CollaborationIssueCard";
 import { IssueCardGoalSummary } from "./IssueCardTaskSummary";
 import { IssueExecutionConfigurationBadge } from "./IssueBoardCardContent";
+import { issueNeedsExecutionConfiguration } from "./model";
 import { Tooltip } from "../issue-detail/Tooltip";
 import type { CollaborationTranslate } from "../i18n";
 import { activityClassNames as cn } from "../issue-detail/activityClassNames";
@@ -38,8 +39,6 @@ export interface IssueBoardCardProps<T extends IssueBoardCardTask> extends Omit<
 > {
   item: CollaborationIssueCardProps["item"] & { can_view_detail?: boolean };
   translate: CollaborationTranslate;
-  needsExecutionConfiguration?: boolean;
-  onConfigureExecution?: () => void;
   onArchive?: () => void;
   archiveLabel?: string;
   previewPinned?: boolean;
@@ -62,8 +61,6 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
   labels,
   agentNames,
   translate: t,
-  needsExecutionConfiguration = false,
-  onConfigureExecution,
   onArchive,
   archiveLabel,
   previewPinned,
@@ -90,6 +87,7 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
   const drag = useIssueBoardCardDrag(item.id, dragEnabled);
   const dragging = draggingOverride || drag.dragging;
   const portalTheme = useCollaborationPortalTheme();
+  const needsExecutionConfiguration = issueNeedsExecutionConfiguration(item);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuContainerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -116,9 +114,6 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
   useEffect(() => {
     markReadRef.current = onMarkRead;
   }, [onMarkRead]);
-  const showConfigurationRow = Boolean(
-    needsExecutionConfiguration && onConfigureExecution,
-  );
   const hasProgress =
     item.can_view_detail !== false &&
     progressTaskBindings.length > 0 &&
@@ -241,7 +236,6 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
           </div>
         ) : null
       }
-      detailFlushBottom={showConfigurationRow}
       detailButtonTestId={detailButtonTestId ?? `cloud-todo-card-${item.id}`}
       detailButtonClassName="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus/30"
       onOpen={canOpenItem ? activateCard : undefined}

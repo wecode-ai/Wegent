@@ -192,6 +192,10 @@ export function useWorkbenchModels({
       const nextOptions = model
         ? normalizeModelOptions(model, nextSelectionConfig?.options ?? {})
         : (nextSelectionConfig?.options ?? {})
+      logModelLoading(traceId, 'workbench.selection_restored', {
+        runtimeTaskScope: scopeKey.includes(':runtime:'),
+        planMode: nextOptions.collaborationMode === 'plan',
+      })
       selectedModelRef.current[scopeKey] = model
       selectedModelOptionsRef.current[scopeKey] = nextOptions
       setSelectedModelByScope(current => {
@@ -206,7 +210,7 @@ export function useWorkbenchModels({
         current[scopeKey] ? { ...current, [scopeKey]: false } : current
       )
     },
-    [scopeKey]
+    [scopeKey, traceId]
   )
 
   const reconcileSelectedModels = useCallback((nextModels: UnifiedModel[]) => {
@@ -434,6 +438,13 @@ export function useWorkbenchModels({
         [optionId]: value,
       }
       const currentModel = selectedModelRef.current[targetScopeKey] ?? null
+      if (optionId === 'collaborationMode') {
+        logModelLoading(traceId, 'workbench.collaboration_mode_selected', {
+          runtimeTaskScope: targetScopeKey.includes(':runtime:'),
+          planMode: value === 'plan',
+          persist,
+        })
+      }
       selectedModelOptionsRef.current[targetScopeKey] = nextOptions
       setSelectedModelOptionsByScope(current => ({ ...current, [targetScopeKey]: nextOptions }))
       if (!persist) return
@@ -443,7 +454,7 @@ export function useWorkbenchModels({
         onSelectionChange?.(toDefaultModelSelectionConfig(nextOptions))
       }
     },
-    [locked, onSelectionChange]
+    [locked, onSelectionChange, traceId]
   )
 
   const setSelectedModelOption = useCallback(

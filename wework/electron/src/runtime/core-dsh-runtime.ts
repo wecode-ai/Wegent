@@ -5,7 +5,7 @@ import { hashComponentPath } from './component-update-manager.js'
 import { copyManagedPlugin } from './managed-plugin-files.js'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
 
-export const CORE_DSH_VERSION = '0.1.1-rc.2'
+export const CORE_DSH_VERSION = '0.2.0-rc.2'
 const PROFILE_NAME = 'wework-core'
 const PROFILE_STAMP = '.wework-runtime.json'
 const CORE_PLUGIN_PACKAGES = [
@@ -33,6 +33,7 @@ const CORE_PLUGIN_PACKAGES = [
 const CORE_UI_DEPENDENCIES = CORE_PLUGIN_PACKAGES.slice(8).map(([packageName]) => packageName)
 const REMOVED_CORE_DEPENDENCIES = ['@wegent/dsh-sidebar-example'] as const
 const CORE_HOST_BUNDLES = [
+  '@wework/dsh-browser-auth',
   '@deepseek-ai/dsh-base',
   '@wegent/dsh-electron-host',
   '@wegent/dsh-browser-runtime',
@@ -72,7 +73,8 @@ export async function resetCoreDshRuntime(dataDirectory: string): Promise<void> 
 
 interface RuntimeIdentity {
   dshVersion: string
-  role: string
+  role?: string
+  roles?: string[]
   sourceFingerprint: string
 }
 
@@ -168,6 +170,7 @@ export async function prepareCoreDshRuntime(
         options.environment.WEWORK_APP_WEB_ROOT?.trim() ||
         join(runtime.pluginRoots['@wegent/dsh-app-wework'], 'web'),
       WEWORK_HARNESS_API_KEY: 'wework-local-router',
+      WEWORK_DSH_BROWSER_AUTH: '1',
     },
     profile: PROFILE_NAME,
     version: runtime.version,
@@ -202,6 +205,7 @@ export async function selectCoreDshRuntime(
       join(pluginsRoot, directory),
     ])
   )
+  pluginRoots['@wework/dsh-browser-auth'] = join(runtime.pluginsRoot, 'wework-browser-auth')
   for (const plugin of internalPlugins) {
     if (plugin.name in pluginRoots) {
       throw new Error(`Duplicate core DSH plugin: ${plugin.name}`)
@@ -259,10 +263,11 @@ export async function selectBundledDshRuntimeMatching(
 ): Promise<BundledDshRuntime> {
   const absoluteRoot = resolve(root)
   const roots = await runtimeDirectories(absoluteRoot)
-  const candidates = (await Promise.all(roots.map(candidate => readRuntime(candidate)))).filter(
+  const candidates = (
+    await Promise.all(roots.map(candidate => readRuntime(candidate, role)))
+  ).filter(
     (runtime): runtime is BundledDshRuntime =>
       runtime !== null &&
-      runtime.role === role &&
       semver.satisfies(runtime.version, versionRequirement, { includePrerelease: true })
   )
   const selected = candidates.sort((left, right) => semver.rcompare(left.version, right.version))[0]
@@ -311,6 +316,12 @@ async function prepareProfile(options: {
     managedDependencies
   )
   await ensureNodePtySpawnHelpersExecutable(profileRoot)
+  await mkdir(profileRoot, { recursive: true, mode: 0o700 })
+  // Package installation replaces client files even when their bytes are unchanged.
+  // Production plugin changes take effect on explicit restart, without remounting the UI.
+  await writeFile(join(profileRoot, 'cordis.patch.yml'), '- id: client-hmr\n  disabled: true\n', {
+    mode: 0o600,
+  })
   if (stampIsCurrent && removedDependencies.size === 0 && coreDependenciesAreCurrent) {
     return
   }
@@ -321,7 +332,6 @@ async function prepareProfile(options: {
     currentBundles,
     new Set([...managedDependencyNames, ...REMOVED_CORE_DEPENDENCIES])
   )
-  await mkdir(profileRoot, { recursive: true, mode: 0o700 })
   if (
     currentManifest &&
     (!coreDependenciesAreCurrent ||
@@ -367,7 +377,6 @@ async function prepareProfile(options: {
     { mode: 0o600 }
   )
   await writeFile(join(profileRoot, 'cordis.yml'), '[]\n', { mode: 0o600 })
-  await writeFile(join(profileRoot, 'cordis.patch.yml'), '[]\n', { mode: 0o600 })
   await ensureCoreWorkspace(workspacePath)
   for (const packageName of managedDependencyNames) {
     const source = options.runtime.pluginRoots[packageName]
@@ -551,7 +560,7 @@ async function runtimeDirectories(root: string): Promise<string[]> {
         fingerprint => typeof fingerprint === 'string' && /^[0-9a-f]{64}$/i.test(fingerprint)
       )
     ) {
-      return fingerprints.map(fingerprint => join(root, fingerprint as string))
+      return [...new Set(fingerprints)].map(fingerprint => join(root, fingerprint as string))
     }
   } catch {
     // Fall back to direct-runtime metadata or directory discovery.
@@ -570,14 +579,17 @@ async function isRuntimeRoot(root: string): Promise<boolean> {
   }
 }
 
-async function readRuntime(root: string): Promise<BundledDshRuntime | null> {
+async function readRuntime(root: string, role: string): Promise<BundledDshRuntime | null> {
   try {
     const identity = JSON.parse(
       await readFile(join(root, 'runtime.json'), 'utf8')
     ) as RuntimeIdentity
     if (
       typeof identity.dshVersion !== 'string' ||
-      typeof identity.role !== 'string' ||
+      !(
+        identity.role === role ||
+        (Array.isArray(identity.roles) && identity.roles.includes(role))
+      ) ||
       typeof identity.sourceFingerprint !== 'string' ||
       !/^[0-9a-f]{64}$/i.test(identity.sourceFingerprint)
     ) {
@@ -593,7 +605,7 @@ async function readRuntime(root: string): Promise<BundledDshRuntime | null> {
     return {
       root,
       version: identity.dshVersion,
-      role: identity.role,
+      role,
       sourceFingerprint: identity.sourceFingerprint,
       entry,
       pluginsRoot: join(root, 'plugins'),

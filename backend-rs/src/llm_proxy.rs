@@ -35,7 +35,7 @@ use crate::auth::{SessionUser, UserRow};
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 
-mod model_config;
+pub(crate) mod model_config;
 
 use model_config::{resolve_llm_proxy_protocol, resolve_upstream_target, validate_model_access};
 
@@ -305,7 +305,11 @@ async fn proxy_llm_responses(
     if let Value::Object(object) = &mut body_json {
         object.insert("model".to_string(), Value::String(provider_model_id));
     }
-    let body_bytes = serde_json::to_vec(&body_json).map_err(|_| FastApiError::unhandled())?;
+    // The source re-serializes through `json.dumps(body_json)`, whose default
+    // separators are `", "` / `": "` and whose `ensure_ascii=True` escapes every
+    // non-ASCII character as `\uXXXX`; serde_json's compact literal rendering
+    // would change both the byte length and the escaped content.
+    let body_bytes = crate::json_compat::python_json_value(&body_json).into_bytes();
 
     let protocol = resolve_llm_proxy_protocol(&model_name, &model_config)?;
     let (upstream_path, auth_headers) = resolve_upstream_target(protocol, &provider_api_key);
@@ -545,6 +549,27 @@ mod tests {
         assert!(parse_request_body(b"[]").is_err());
         assert!(parse_request_body(br#"{"model":"  "}"#).is_err());
         assert!(parse_request_body(br#"{}"#).is_err());
+    }
+
+    #[test]
+    fn forwarded_body_renders_like_python_json_dumps() {
+        // The recorded upstream request body is `json.dumps(body_json)`: the
+        // `", "` / `": "` separators and `\uXXXX` non-ASCII escapes differ from
+        // serde_json's compact rendering.
+        let value: Value = serde_json::from_str(
+            "{\"model\":\"旧\",\"messages\":[{\"content\":\"你好\",\"role\":\"user\"}]}",
+        )
+        .unwrap();
+        let mut forwarded = value;
+        if let Value::Object(object) = &mut forwarded {
+            object.insert("model".to_string(), Value::String("m".to_string()));
+        }
+        let rendered = crate::json_compat::python_json_value(&forwarded);
+        assert_eq!(
+            rendered,
+            "{\"model\": \"m\", \"messages\": [{\"content\": \"\\u4f60\\u597d\", \
+             \"role\": \"user\"}]}"
+        );
     }
 
     #[test]

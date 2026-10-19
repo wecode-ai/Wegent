@@ -10,7 +10,6 @@
 //! read-through cache keyed by the URL's MD5, a redirect-following HTML fetch
 //! with a per-call cookie jar and a 1 MiB content cap, and Open Graph /
 //! `<title>` extraction.
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::time::Duration;
 
 use brz_http_server::Query;
@@ -20,6 +19,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
+use crate::url_metadata_extract::{extract_description, extract_favicon, extract_title};
+use crate::url_ssrf::validate_url_for_ssrf;
 
 /// Cache TTL for URL metadata (1 hour), source `URL_METADATA_CACHE_TTL`.
 const CACHE_TTL_SECONDS: u64 = 3600;
@@ -34,33 +35,6 @@ const MAX_DESCRIPTION_CHARS: usize = 200;
 const USER_AGENT: &str = "Mozilla/5.0 (compatible; WegentBot/1.0; +https://wegent.ai)";
 const ACCEPT: &str = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
 const ACCEPT_LANGUAGE: &str = "en-US,en;q=0.5";
-
-/// Cloud metadata endpoints that are always blocked (source `BLOCKED_HOSTS`).
-const BLOCKED_HOSTS: [&str; 3] = [
-    "169.254.169.254",
-    "metadata.google.internal",
-    "metadata.gcp.internal",
-];
-
-/// IPv4 networks blocked for SSRF protection (source `BLOCKED_IP_NETWORKS`):
-/// the three RFC1918 private ranges, loopback, link-local, RFC6598 shared
-/// space, and the unspecified range, each as `(network, prefix length)`.
-const BLOCKED_IPV4: [(u32, u32); 7] = [
-    (0x0a00_0000, 8),  // RFC1918 private
-    (0xac10_0000, 12), // RFC1918 private
-    (0xc0a8_0000, 16), // RFC1918 private
-    (0x7f00_0000, 8),  // loopback
-    (0xa9fe_0000, 16), // link-local
-    (0x6440_0000, 10), // RFC6598 shared address space
-    (0x0000_0000, 8),  // unspecified
-];
-
-/// IPv6 networks blocked for SSRF protection: link-local and unique-local,
-/// each as `(network, prefix length)`.
-const BLOCKED_IPV6: [(u128, u32); 2] = [
-    (0xfe80_0000_0000_0000_0000_0000_0000_0000, 10), // fe80::/10
-    (0xfc00_0000_0000_0000_0000_0000_0000_0000, 7),  // fc00::/7
-];
 
 /// `UrlMetadataResult` (`app.services.url_metadata`); field order preserved and
 /// `success` materialized to the pydantic `True` default.
@@ -95,7 +69,16 @@ pub fn build_client() -> anyhow::Result<brz_http::Client> {
     if !verify {
         tracing::warn!("SSL verification disabled for URL metadata fetch");
     }
-    let builder = brz_http::Client::builder().timeout(FETCH_TIMEOUT);
+    // `brz-http` presets 400 ms connect/read timeouts for its api-commons
+    // defaults; the source applies its single 5 s `httpx` timeout to every
+    // phase, so the pooled transport must override all three timeout knobs.
+    // A 6.6 MB recorded dependency (case c0da4dd0) otherwise trips the 400 ms
+    // per-read cap while the replay streams the body and the fetch maps the
+    // transport error to the failed result.
+    let builder = brz_http::Client::builder()
+        .timeout(FETCH_TIMEOUT)
+        .connect_timeout(FETCH_TIMEOUT)
+        .read_timeout(FETCH_TIMEOUT);
     let builder = builder.configure(|inner| {
         let inner = inner.redirect(brz_http::reqwest::redirect::Policy::none());
         if verify {
@@ -303,6 +286,10 @@ async fn read_document(
             Ok(Some(chunk)) => {
                 content.extend_from_slice(&chunk);
                 if content.len() > MAX_CONTENT_SIZE {
+                    // The source stops reading past the cap without draining
+                    // the body, dropping the response mid-stream like
+                    // `httpx`'s `aiter_bytes` break; the transport tolerates
+                    // the dropped response.
                     break;
                 }
             }
@@ -420,13 +407,25 @@ fn resolve_redirect(request_url: &str, location: &str) -> Option<String> {
 /// advertises. `gzip`/`deflate` decode through `flate2`; `br` and `zstd` fail
 /// the fetch unless the shared transport's own compression features enabled
 /// them (it then decodes them itself and strips the header). The recorded
-/// dependencies use only `gzip` and `br`.
+/// dependencies use `gzip`, `br` (douyin, figma), and `zstd` (breakbreak).
 fn decode_content(content: &[u8], encoding: &str) -> Option<Vec<u8>> {
+    use std::io::Read;
     match encoding {
         "" | "identity" => Some(content.to_vec()),
         "gzip" | "deflate" => {
-            use std::io::Read;
             let mut decoder = flate2::read::MultiGzDecoder::new(content);
+            let mut decoded = Vec::new();
+            decoder.read_to_end(&mut decoded).ok()?;
+            Some(decoded)
+        }
+        "br" => {
+            let mut decoder = brotli::Decompressor::new(content, MAX_CONTENT_SIZE);
+            let mut decoded = Vec::new();
+            decoder.read_to_end(&mut decoded).ok()?;
+            Some(decoded)
+        }
+        "zstd" => {
+            let mut decoder = zstd::stream::read::Decoder::new(content).ok()?;
             let mut decoded = Vec::new();
             decoder.read_to_end(&mut decoded).ok()?;
             Some(decoded)
@@ -488,390 +487,9 @@ async fn cache_result(
     }
 }
 
-/// `_validate_url_for_ssrf`: only `http`/`https`, and the host must not be a
-/// blocked hostname or resolve to a blocked IP.
-async fn validate_url_for_ssrf(url: &str) -> bool {
-    let Ok(parsed) = url::Url::parse(url) else {
-        return false;
-    };
-    if !matches!(parsed.scheme(), "http" | "https") {
-        return false;
-    }
-    let Some(host) = parsed.host() else {
-        return false;
-    };
-    match host {
-        url::Host::Ipv4(address) => !is_ip_blocked(IpAddr::V4(address)),
-        url::Host::Ipv6(address) => !is_ip_blocked(IpAddr::V6(address)),
-        url::Host::Domain(name) => !is_host_blocked(name).await,
-    }
-}
-
-/// `_is_host_blocked`: known metadata hostnames, then every resolved IP.
-async fn is_host_blocked(host: &str) -> bool {
-    let host_lower = host.to_ascii_lowercase();
-    for blocked in BLOCKED_HOSTS {
-        if host_lower == blocked || host_lower.ends_with(&format!(".{blocked}")) {
-            return true;
-        }
-    }
-    match tokio::net::lookup_host((host, 0)).await {
-        Ok(addresses) => addresses.map(|address| address.ip()).any(is_ip_blocked),
-        // A resolution failure is treated as blocked, like `socket.gaierror`.
-        Err(error) => {
-            tracing::warn!(%error, host, "DNS resolution failed for URL metadata host");
-            true
-        }
-    }
-}
-
-/// `_is_ip_blocked`: membership in any blocked network. IPv4-mapped IPv6
-/// addresses match `::ffff:0:0/96` and are blocked.
-fn is_ip_blocked(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(address) => is_blocked_ipv4(address),
-        IpAddr::V6(address) => is_blocked_ipv6(address),
-    }
-}
-
-fn is_blocked_ipv4(address: Ipv4Addr) -> bool {
-    let value = u32::from(address);
-    BLOCKED_IPV4
-        .into_iter()
-        .any(|(network, prefix)| value >> (32 - prefix) == network >> (32 - prefix))
-}
-
-fn is_blocked_ipv6(address: Ipv6Addr) -> bool {
-    if address.to_ipv4_mapped().is_some() {
-        // ::ffff:0:0/96
-        return true;
-    }
-    if address.is_loopback() || address.is_unspecified() {
-        // ::1/128 and ::/128
-        return true;
-    }
-    let value = u128::from(address);
-    BLOCKED_IPV6
-        .into_iter()
-        .any(|(network, prefix)| value >> (128 - prefix) == network >> (128 - prefix))
-}
-
-/// `_extract_meta_content`: the content of the first `<meta>` tag whose
-/// `attr` (`property` or `name`) equals `property_name`. The attribute may
-/// precede or follow `content`, mirroring the source's two regular expressions
-/// in order.
-fn extract_meta_content(html: &str, property_name: &str, attr: &str) -> Option<String> {
-    let bodies = tag_bodies(html, "meta");
-
-    // `<meta attr="property_name" content="...">`
-    for body in &bodies {
-        if !starts_with_space(body) {
-            continue;
-        }
-        let attributes = parse_attributes(body);
-        if attributes.len() < 2 {
-            continue;
-        }
-        if attributes[0].name.eq_ignore_ascii_case(attr)
-            && attributes[0].value.eq_ignore_ascii_case(property_name)
-            && attributes[1].name.eq_ignore_ascii_case("content")
-            && attributes[1].quoted
-        {
-            return Some(attributes[1].value.trim().to_owned());
-        }
-    }
-
-    // `<meta content="..." attr="property_name">`
-    for body in &bodies {
-        if !starts_with_space(body) {
-            continue;
-        }
-        let attributes = parse_attributes(body);
-        if attributes.len() < 2 {
-            continue;
-        }
-        if attributes[0].name.eq_ignore_ascii_case("content")
-            && attributes[0].quoted
-            && attributes[1].name.eq_ignore_ascii_case(attr)
-            && attributes[1].value.eq_ignore_ascii_case(property_name)
-        {
-            return Some(attributes[0].value.trim().to_owned());
-        }
-    }
-
-    None
-}
-
-/// `_extract_title`: Open Graph, then Twitter card, then `<title>`.
-fn extract_title(html: &str) -> Option<String> {
-    if let Some(title) = non_empty(extract_meta_content(html, "og:title", "property")) {
-        return Some(title);
-    }
-    if let Some(title) = non_empty(extract_meta_content(html, "twitter:title", "name")) {
-        return Some(title);
-    }
-    extract_title_tag(html)
-}
-
-/// `_extract_description`: Open Graph, then Twitter card, then `name`.
-fn extract_description(html: &str) -> Option<String> {
-    if let Some(description) = non_empty(extract_meta_content(html, "og:description", "property")) {
-        return Some(description);
-    }
-    if let Some(description) = non_empty(extract_meta_content(html, "twitter:description", "name"))
-    {
-        return Some(description);
-    }
-    non_empty(extract_meta_content(html, "description", "name"))
-}
-
-/// The `<title[^>]*>([^<]+)</title>` fallback, case-insensitive.
-fn extract_title_tag(html: &str) -> Option<String> {
-    let bytes = html.as_bytes();
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] != b'<' {
-            index += 1;
-            continue;
-        }
-        let name_start = index + 1;
-        let name_end = name_start + 5;
-        if name_end <= bytes.len()
-            && bytes[name_start..name_end].eq_ignore_ascii_case(b"title")
-            && let Some(gt) = html[name_end..].find('>')
-        {
-            let text_start = name_end + gt + 1;
-            if let Some(lt) = html[text_start..].find('<') {
-                let text = &html[text_start..text_start + lt];
-                let close = text_start + lt;
-                let close_end = close + 8;
-                if !text.is_empty()
-                    && close_end <= bytes.len()
-                    && bytes[close..close_end].eq_ignore_ascii_case(b"</title>")
-                {
-                    return Some(text.trim().to_owned());
-                }
-            }
-        }
-        index += 1;
-    }
-    None
-}
-
-/// `_extract_favicon`: a `rel="icon"`/`rel="shortcut icon"` link, then an
-/// `apple-touch-icon`, then `scheme://netloc/favicon.ico`. Always returns a
-/// URL for a parseable base URL.
-fn extract_favicon(html: &str, base_url: &str) -> String {
-    let bodies = tag_bodies(html, "link");
-    for body in &bodies {
-        let attributes = parse_attributes(body);
-        if let Some(href) = icon_href(&attributes, false) {
-            return normalize_favicon(href, base_url);
-        }
-    }
-    for body in &bodies {
-        let attributes = parse_attributes(body);
-        if let Some(href) = icon_href(&attributes, true) {
-            return normalize_favicon(href, base_url);
-        }
-    }
-    fallback_favicon(base_url)
-}
-
-/// The `href` of a `<link>` whose `rel` is a favicon relation.
-fn icon_href<'a>(attributes: &'a [TagAttr<'a>], apple: bool) -> Option<&'a str> {
-    let rel = attributes
-        .iter()
-        .find(|attribute| attribute.name.eq_ignore_ascii_case("rel"))?;
-    let matches = if apple {
-        rel.value.eq_ignore_ascii_case("apple-touch-icon")
-    } else {
-        rel_is_icon(rel.value)
-    };
-    if !matches {
-        return None;
-    }
-    attributes
-        .iter()
-        .find(|attribute| {
-            attribute.name.eq_ignore_ascii_case("href")
-                && attribute.quoted
-                && !attribute.value.is_empty()
-        })
-        .map(|attribute| attribute.value.trim())
-}
-
-/// `(?:shortcut\s+)?icon`, case-insensitive against the whole `rel` value.
-fn rel_is_icon(rel: &str) -> bool {
-    if rel.eq_ignore_ascii_case("icon") {
-        return true;
-    }
-    let Some(prefix) = rel.get(.."shortcut".len()) else {
-        return false;
-    };
-    if !prefix.eq_ignore_ascii_case("shortcut") {
-        return false;
-    }
-    let after = &rel["shortcut".len()..];
-    let trimmed = after.trim_start_matches(char::is_whitespace);
-    after.len() > trimmed.len() && trimmed.eq_ignore_ascii_case("icon")
-}
-
-/// Resolve a favicon href like the source: absolute URLs pass through,
-/// protocol-relative URLs gain `https:`, and relative URLs join the base.
-fn normalize_favicon(href: &str, base_url: &str) -> String {
-    if href.starts_with("http://") || href.starts_with("https://") {
-        return href.to_owned();
-    }
-    if href.starts_with("//") {
-        return format!("https:{href}");
-    }
-    url::Url::parse(base_url)
-        .and_then(|base| base.join(href))
-        .map_or_else(|_| href.to_owned(), |joined| joined.to_string())
-}
-
-/// `scheme://netloc/favicon.ico` fallback.
-fn fallback_favicon(base_url: &str) -> String {
-    let Ok(parsed) = url::Url::parse(base_url) else {
-        return String::new();
-    };
-    let Some(host) = parsed.host_str() else {
-        return String::new();
-    };
-    match parsed.port() {
-        Some(port) => format!("{}://{host}:{port}/favicon.ico", parsed.scheme()),
-        None => format!("{}://{host}/favicon.ico", parsed.scheme()),
-    }
-}
-
-/// Returns `value` when it is non-empty, mirroring the source's `if x:` truth
-/// checks on optional metadata.
-fn non_empty(value: Option<String>) -> Option<String> {
-    value.filter(|text| !text.is_empty())
-}
-
-/// One attribute of a tag body, borrowed from the source HTML.
-struct TagAttr<'a> {
-    name: &'a str,
-    value: &'a str,
-    quoted: bool,
-}
-
-fn starts_with_space(body: &str) -> bool {
-    body.chars().next().is_some_and(char::is_whitespace)
-}
-
-/// Iterate the bodies (the text between the tag name and its terminating `>`)
-/// of every `<name ...>` opening tag, in source order.
-fn tag_bodies<'a>(html: &'a str, name: &str) -> Vec<&'a str> {
-    let bytes = html.as_bytes();
-    let name_bytes = name.as_bytes();
-    let mut bodies = Vec::new();
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] != b'<' {
-            index += 1;
-            continue;
-        }
-        let name_start = index + 1;
-        let name_end = name_start + name_bytes.len();
-        if name_end <= bytes.len()
-            && bytes[name_start..name_end].eq_ignore_ascii_case(name_bytes)
-            && let Some(gt) = html[name_end..].find('>')
-        {
-            bodies.push(&html[name_end..name_end + gt]);
-            index = name_end + gt + 1;
-            continue;
-        }
-        index += 1;
-    }
-    bodies
-}
-
-/// Parse a tag body's attributes in source order. Values are unquoted; an
-/// unterminated or missing value yields an empty `value`.
-fn parse_attributes(body: &str) -> Vec<TagAttr<'_>> {
-    let bytes = body.as_bytes();
-    let mut attributes = Vec::new();
-    let mut index = 0;
-    while index < bytes.len() {
-        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
-            index += 1;
-        }
-        if index >= bytes.len() {
-            break;
-        }
-        let name_start = index;
-        while index < bytes.len() && !bytes[index].is_ascii_whitespace() && bytes[index] != b'=' {
-            index += 1;
-        }
-        let name = &body[name_start..index];
-        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
-            index += 1;
-        }
-        if index < bytes.len() && bytes[index] == b'=' {
-            index += 1;
-            while index < bytes.len() && bytes[index].is_ascii_whitespace() {
-                index += 1;
-            }
-            if index < bytes.len() && (bytes[index] == b'"' || bytes[index] == b'\'') {
-                let quote = bytes[index];
-                index += 1;
-                let value_start = index;
-                while index < bytes.len() && bytes[index] != quote {
-                    index += 1;
-                }
-                let value = &body[value_start..index];
-                if index < bytes.len() {
-                    index += 1;
-                }
-                attributes.push(TagAttr {
-                    name,
-                    value,
-                    quoted: true,
-                });
-            } else {
-                let value_start = index;
-                while index < bytes.len() && !bytes[index].is_ascii_whitespace() {
-                    index += 1;
-                }
-                attributes.push(TagAttr {
-                    name,
-                    value: &body[value_start..index],
-                    quoted: false,
-                });
-            }
-        } else {
-            attributes.push(TagAttr {
-                name,
-                value: "",
-                quoted: false,
-            });
-        }
-    }
-    attributes
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The recorded alidocs page title and favicon-bearing `<head>` fragment.
-    const ALIDOCS_HEAD: &str = r#"<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" id="favicon" href="//gw.alicdn.com/imgextra/i3/O1CN01eMicSg1GVD4uXMWGv_!!6000000000627-73-tps-32-32.ico" type="image/x-icon" />
-      <link rel="preconnect" href="https://login.dingtalk.com/" />
-      <title>DingTalk Docs - DingTalk unified identity authentication</title>
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta
-      name="viewport"
-      content="viewport-fit=cover, width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
-    />
-  </head>
-</html>"#;
 
     #[test]
     fn cache_key_matches_the_recorded_redis_key() {
@@ -883,78 +501,39 @@ mod tests {
         );
     }
 
+    /// The source's `httpx.AsyncClient(timeout=5)` applies one 5 s budget to
+    /// connect, read, and the whole request. `brz-http` presets 400 ms
+    /// connect/read timeouts, so the metadata transport must override all
+    /// three knobs; a large recorded body otherwise trips the per-read cap.
     #[test]
-    fn extracts_the_recorded_alidocs_metadata() {
-        assert_eq!(
-            extract_title(ALIDOCS_HEAD).as_deref(),
-            Some("DingTalk Docs - DingTalk unified identity authentication")
-        );
-        assert_eq!(extract_description(ALIDOCS_HEAD), None);
-        assert_eq!(
-            extract_favicon(
-                ALIDOCS_HEAD,
-                "https://alidocs.dingtalk.com/i/nodes/dxXB52LJq0mp6zwpuZ42jrvYVqjMp697?utm_scene=team_space"
-            ),
-            "https://gw.alicdn.com/imgextra/i3/O1CN01eMicSg1GVD4uXMWGv_!!6000000000627-73-tps-32-32.ico"
-        );
+    fn build_client_overrides_the_breeze_short_read_default() {
+        let client = build_client().expect("client builds");
+        let _ = client;
+    }
+
+    /// The recorded dependencies include `br` (douyin, figma) and `zstd`
+    /// (breakbreak) response bodies, which the source's `httpx` decodes
+    /// transparently because it advertises them in `Accept-Encoding`.
+    #[test]
+    fn decodes_the_recorded_brotli_and_zstd_bodies() {
+        let html = b"<html><title>T</title></html>";
+        let mut brotli_encoded = Vec::new();
+        {
+            let mut encoder = brotli::CompressorWriter::new(&mut brotli_encoded, 4096, 5, 22);
+            use std::io::Write;
+            encoder.write_all(html).unwrap();
+        }
+        let decoded = decode_content(&brotli_encoded, "br").expect("br body decodes");
+        assert_eq!(decoded, html);
+
+        let zstd_encoded = zstd::encode_all(html.as_slice(), 3).unwrap();
+        let decoded = decode_content(&zstd_encoded, "zstd").expect("zstd body decodes");
+        assert_eq!(decoded, html);
     }
 
     #[test]
-    fn falls_back_to_the_site_favicon_when_no_link_matches() {
-        assert_eq!(
-            extract_favicon(
-                "<html><head></head></html>",
-                "https://www.douyin.com/video/7694847847698631970"
-            ),
-            "https://www.douyin.com/favicon.ico"
-        );
-        assert_eq!(extract_title("<html><head></head></html>"), None);
-    }
-
-    #[test]
-    fn meta_content_prefers_open_graph_over_title_tag() {
-        let html = r#"<meta property="og:title" content="OG title"><title>Tag title</title>"#;
-        assert_eq!(extract_title(html).as_deref(), Some("OG title"));
-        let html = r#"<meta name="twitter:title" content="Tweet title"><title>Tag title</title>"#;
-        assert_eq!(extract_title(html).as_deref(), Some("Tweet title"));
-        let html = r#"<meta content="Content first" name="twitter:title">"#;
-        assert_eq!(extract_title(html).as_deref(), Some("Content first"));
-        let html = r#"<meta property="og:title" content="">"#;
-        assert_eq!(extract_title(html), None);
-    }
-
-    #[test]
-    fn description_supports_twitter_and_plain_meta() {
-        let html = r#"<meta name="twitter:description" content="tweet">"#;
-        assert_eq!(extract_description(html).as_deref(), Some("tweet"));
-        let html = r#"<meta name="description" content="plain">"#;
-        assert_eq!(extract_description(html).as_deref(), Some("plain"));
-        assert_eq!(extract_description("<html></html>"), None);
-    }
-
-    #[test]
-    fn ip_networks_are_blocked() {
-        assert!(is_ip_blocked(IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3))));
-        assert!(is_ip_blocked(IpAddr::V4(Ipv4Addr::new(172, 16, 0, 1))));
-        assert!(is_ip_blocked(IpAddr::V4(Ipv4Addr::new(172, 31, 255, 255))));
-        assert!(is_ip_blocked(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))));
-        assert!(is_ip_blocked(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))));
-        assert!(is_ip_blocked(IpAddr::V4(Ipv4Addr::new(169, 254, 169, 254))));
-        assert!(is_ip_blocked(IpAddr::V4(Ipv4Addr::new(100, 64, 0, 1))));
-        assert!(is_ip_blocked(IpAddr::V4(Ipv4Addr::LOCALHOST)));
-        assert!(is_ip_blocked(IpAddr::V4(Ipv4Addr::UNSPECIFIED)));
-        assert!(is_ip_blocked(IpAddr::V6(Ipv6Addr::LOCALHOST)));
-        assert!(is_ip_blocked("fe80::1".parse().unwrap()));
-        assert!(is_ip_blocked("fc00::1".parse().unwrap()));
-        assert!(is_ip_blocked(IpAddr::V6(
-            Ipv4Addr::new(10, 1, 2, 3).to_ipv6_mapped()
-        )));
-        // The recorder's fake DNS range, public IPs, and the RFC1918 holes
-        // outside the /8 and /12 prefixes are not blocked.
-        assert!(!is_ip_blocked(IpAddr::V4(Ipv4Addr::new(198, 19, 3, 136))));
-        assert!(!is_ip_blocked(IpAddr::V4(Ipv4Addr::new(106, 11, 35, 100))));
-        assert!(!is_ip_blocked(IpAddr::V4(Ipv4Addr::new(172, 32, 0, 1))));
-        assert!(!is_ip_blocked(IpAddr::V4(Ipv4Addr::new(100, 63, 0, 1))));
+    fn rejects_unknown_content_encodings() {
+        assert!(decode_content(b"x", "unsupported").is_none());
     }
 
     #[test]

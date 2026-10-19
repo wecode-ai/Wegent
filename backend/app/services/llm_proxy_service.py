@@ -17,9 +17,11 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.user import User
+from app.services import model_credential_service
 from app.services.chat.config.model_resolver import extract_and_process_model_config
 from app.services.group_permission import get_user_groups
 from app.services.wework_model_config import wework_model_config_options
+from shared.utils.crypto import CryptoConfigurationError
 
 logger = logging.getLogger(__name__)
 
@@ -353,11 +355,17 @@ def resolve_llm_proxy_model_config(
             detail="Cloud model not found",
         )
     model_spec = kind.json.get("spec", {})
-    config = extract_and_process_model_config(
-        model_spec=model_spec,
-        user_id=current_user.id,
-        user_name=current_user.user_name or "",
-    )
+    try:
+        config = extract_and_process_model_config(
+            model_spec=model_spec,
+            user_id=current_user.id,
+            user_name=current_user.user_name or "",
+        )
+    except CryptoConfigurationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cloud model credentials are unavailable; check the encryption configuration",
+        ) from error
     model_config = model_spec.get("modelConfig")
     upstream_api_format = None
     if (
@@ -373,7 +381,7 @@ def resolve_llm_proxy_model_config(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from exc
-    return config
+    return model_credential_service.with_model_api_key_template(config, model_spec)
 
 
 def _parse_request_body(body_bytes: bytes) -> tuple[dict[str, Any], str]:
@@ -433,6 +441,18 @@ async def proxy_llm_responses(
 
     body_json["model"] = provider_model_id
     body_bytes = json.dumps(body_json).encode("utf-8")
+    # Validate the endpoint before invoking a deployment credential service.
+    resolve_llm_proxy_protocol(model_name, model_config)
+    try:
+        api_key = await model_credential_service.resolve_model_provider_api_key(
+            model_config, current_user
+        )
+    except model_credential_service.ModelCredentialError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Model credentials unavailable",
+        ) from None
+    model_config = {**model_config, "api_key": api_key}
     upstream_path, auth_headers = _resolve_upstream_target(model_name, model_config)
     upstream_url = _join_upstream_url(provider_base_url, upstream_path)
 

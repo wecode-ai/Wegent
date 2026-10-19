@@ -77,6 +77,7 @@ struct RecommendedModel {
     provider: Option<String>,
     #[serde(rename = "modelId")]
     model_id: Option<String>,
+    capability: Option<String>,
     #[serde(rename = "modelCategoryType")]
     model_category_type: String,
     #[serde(rename = "isAdvanced")]
@@ -91,6 +92,7 @@ impl RecommendedModel {
             display_name: info.display_name,
             provider: info.provider,
             model_id: info.model_id,
+            capability: info.capability,
             model_category_type: info.model_category_type,
             is_advanced: info.is_advanced,
         }
@@ -384,6 +386,7 @@ mod tests {
                 "displayName",
                 "provider",
                 "modelId",
+                "capability",
                 "modelCategoryType",
                 "isAdvanced"
             ]
@@ -391,9 +394,34 @@ mod tests {
         assert_eq!(rendered["type"], "public");
         assert_eq!(rendered["provider"], "claude");
         assert_eq!(rendered["modelId"], "model-id");
+        // The source always emits `capability` (`model.get("capability")`),
+        // which is `null` when the CRD omits the summary.
+        assert!(rendered["capability"].is_null());
         // `model_category_type` defaults to `llm` when the CRD omits `modelType`.
         assert_eq!(rendered["modelCategoryType"], "llm");
         assert_eq!(rendered["isAdvanced"], false);
+    }
+
+    #[test]
+    fn recommendation_renders_the_capability_summary() {
+        // `_public_model_to_recommendation` copies
+        // `model.get("capability")`, i.e. `get_model_capability_description`.
+        for (capability, expected) in [
+            (
+                serde_json::json!("DeepSeek 旗舰模型，支持 1M 上下文窗口"),
+                "DeepSeek 旗舰模型，支持 1M 上下文窗口",
+            ),
+            (serde_json::json!({"description": "vision"}), "vision"),
+        ] {
+            let mut model = model_json(Some("Display"), "claude", "model-id");
+            model["spec"]["capability"] = capability;
+            let rendered = crate::json_contract_tests::serialized(RecommendedModel::from_info(
+                "m",
+                extract_model_info(&model),
+            ))
+            .unwrap();
+            assert_eq!(rendered["capability"], expected);
+        }
     }
 
     #[test]

@@ -19,7 +19,7 @@
 //! carries the labeled projection and `LIMIT 1 FOR UPDATE`, the flush updates
 //! `writer_lease_expires_at` then `updated_at` by primary key, and the refresh
 //! re-reads every mapped column unlabeled by primary key.
-use brz_mysql::FromMysqlRow;
+use brz_mysql::{FromMysqlRow, MysqlTransaction as _};
 
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
@@ -157,20 +157,30 @@ async fn release_lease_response(
     }
 
     // `transcript.writer_lease_expires_at = EPOCH_TIME; transcript.updated_at =
-    // utcnow(); db.commit()`: one flushed update, then the session commit.
+    // utcnow(); db.commit()`: one flushed update, then the session commit. Both
+    // statements run on the single pooled connection a scoped transaction
+    // pins, so the business UPDATE and its COMMIT share one connection the way
+    // the source's SQLAlchemy session does; a bare pool-level COMMIT can land
+    // on a different connection and cannot end another connection's write.
     let updated_at = utcnow().format("%Y-%m-%d %H:%M:%S%.6f").to_string();
     if let Err(error) = state
         .mysql
-        .execute(
-            UPDATE_LEASE_RELEASED_QUERY,
-            (EPOCH_TIME_SQL, updated_at.as_str(), transcript.id),
-        )
+        .with_transaction(async |transaction| {
+            transaction
+                .execute(
+                    UPDATE_LEASE_RELEASED_QUERY,
+                    (EPOCH_TIME_SQL, updated_at.as_str(), transcript.id),
+                )
+                .await
+        })
         .await
     {
         tracing::error!(%error, "wework_transcripts database dependency failure");
         return Err(internal_error());
     }
-    if let Err(error) = state.mysql.execute("COMMIT", ()).await {
+    // The request-scoped SQLAlchemy session closes right after the commit;
+    // the driver rolls the freshly opened idle transaction back.
+    if let Err(error) = state.mysql.execute("ROLLBACK", ()).await {
         tracing::error!(%error, "wework_transcripts database dependency failure");
         return Err(internal_error());
     }
@@ -381,6 +391,31 @@ mod tests {
                 .ends_with("FROM wework_transcripts WHERE wework_transcripts.id = ?")
         );
         assert_eq!(EPOCH_TIME_SQL, "1970-01-01 00:00:00");
+    }
+
+    /// The business UPDATE and its COMMIT run on the single connection a
+    /// scoped transaction pins (the source SQLAlchemy session's shape): no
+    /// bare pool-level `execute("COMMIT")` remains, the post-commit session
+    /// close rolls back, and the `db.refresh` re-read follows.
+    #[test]
+    fn update_and_commit_share_one_transaction_connection() {
+        let source = include_str!("wework_transcript_lease_release.rs");
+        assert!(
+            !source.contains("execute(\"COMMIT\", ()"),
+            "the scoped transaction commits on return; no bare pool-level COMMIT call"
+        );
+        let scoped = source
+            .find("with_transaction")
+            .expect("scoped transaction around the update");
+        let rollback = source[scoped..]
+            .find("execute(\"ROLLBACK\"")
+            .expect("session rollback after the scoped commit")
+            + scoped;
+        let refresh = source[scoped..]
+            .find("TRANSCRIPT_REFRESH_QUERY")
+            .expect("refresh after the rollback")
+            + scoped;
+        assert!(rollback < refresh, "refresh follows the session rollback");
     }
 
     #[test]

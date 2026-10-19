@@ -4,6 +4,7 @@
 
 """Tests for the public task-token userinfo endpoint."""
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.models.user import User
@@ -96,3 +97,19 @@ def test_get_mcp_identity_user_returns_404_for_inactive_user(
     )
 
     assert response.status_code == 404
+
+
+@pytest.fixture(autouse=True)
+def _retained_python_handler_contracts(test_client):
+    import app.api.endpoints.mcp_identity as endpoint_0
+    from tests.legacy_python_routes import legacy_python_handlers
+
+    with legacy_python_handlers(test_client.app) as register:
+        register(
+            "/api/external/mcp-identity/userinfo",
+            endpoint_0.read_mcp_identity_userinfo,
+            endpoint_0.router,
+            methods=["GET"],
+            response_model=endpoint_0.McpIdentityUserInfo,
+        )
+        yield

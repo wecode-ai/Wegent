@@ -19,9 +19,11 @@
 //! * model by name/namespace — `WHERE kinds.kind = 'Model' AND kinds.name = ?
 //!   AND kinds.namespace = ? AND kinds.is_active IS true ORDER BY kinds.id ASC
 //!   LIMIT 1`.
-use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult, MysqlRow};
+use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult, MysqlService};
+use brz_redis::Redis;
 use serde_json::Value;
 
+use crate::permissions::{EntityResolvers, user_groups};
 use crate::task_skills::kinds::KindCacheStore;
 use crate::teams::teams_repository::placeholders;
 
@@ -319,13 +321,6 @@ pub struct NamespaceRow {
     pub is_active: i8,
 }
 
-/// The `resource_members_id` presence probe.
-#[derive(Debug, FromMysqlRow)]
-struct MemberExistsRow {
-    #[mysql(rename = "resource_members_id")]
-    id: i64,
-}
-
 /// `KindReader.get_group`: a Team in a non-default namespace.
 pub fn team_group_statement() -> String {
     format!(
@@ -387,14 +382,19 @@ pub fn model_public_statement() -> String {
 /// capability shared with the caller, then a group Model, then the public
 /// Model.
 ///
+/// The caller's groups are read at the source's own position — only after the
+/// private and referenced reads miss — so a privately owned or shared Model
+/// never reads `get_user_groups`.
+///
 /// Documented gaps (no recorded create case reaches them): the per-group
 /// referenced read and the `bind_model` pointer chain
-/// (`_resolve_bind_model_pointer`); `user_groups` is supplied by the caller.
-pub async fn resolve_model_for_bot<M: Mysql>(
-    mysql: &M,
+/// (`_resolve_bind_model_pointer`).
+pub async fn resolve_model_for_bot<R: Redis>(
+    mysql: &MysqlService,
+    resolvers: &EntityResolvers<R>,
+    redis: Option<&R>,
     user_id: i64,
     name: &str,
-    user_groups: &[String],
 ) -> MysqlResult<Option<KindRow>> {
     if user_id != 0
         && let Some(model) = mysql
@@ -414,6 +414,8 @@ pub async fn resolve_model_for_bot<M: Mysql>(
     {
         return Ok(Some(model));
     }
+    // `Search group models`: `get_user_groups(db, user_id)`.
+    let user_groups = user_groups(mysql, resolvers, redis, user_id).await?;
     if !user_groups.is_empty() {
         let mut args: Vec<String> = vec![name.to_string()];
         args.extend(user_groups.iter().cloned());
@@ -491,30 +493,6 @@ pub async fn resolve_task_ref_team<M: Mysql>(
     resolve_team(&cache, viewer_user_id, namespace, name).await
 }
 
-/// `team_share_service.get_resource_for_use`: whether the caller may use the
-/// Team. The recorded share checks are the Team-scoped `resource_members` reads
-/// (`team_member_check_statement` / `team_entity_check_statement`), which return
-/// nothing for the recorded cases; a member row means the team is shared for use.
-pub async fn team_shared_for_use<M: Mysql>(
-    mysql: &M,
-    team_id: i64,
-    user_id: i64,
-) -> MysqlResult<bool> {
-    let member = mysql
-        .fetch_optional::<_, _, MemberExistsRow>(
-            team_member_check_statement(),
-            (team_id, user_id.to_string()),
-        )
-        .await?;
-    if member.is_some() {
-        return Ok(true);
-    }
-    let entities = mysql
-        .fetch_all::<_, _, MysqlRow>(team_entity_check_statement(), (team_id,))
-        .await?;
-    Ok(!entities.is_empty())
-}
-
 /// `kindReader.get_by_name_and_namespace(BOT)` for a non-default namespace.
 pub fn bot_group_statement() -> String {
     format!(
@@ -589,7 +567,7 @@ pub fn team_public_statement() -> String {
 /// create cases issue this for the resolved Team and it returns nothing (the
 /// team is not shared through the member table), so the read is modelled for
 /// dependency fidelity and never changes resolution.
-pub fn team_member_check_statement() -> String {
+pub(crate) fn team_member_check_statement() -> String {
     format!(
         "SELECT {RESOURCE_MEMBER_COLUMNS} \nFROM resource_members \n\
          WHERE resource_members.resource_type IN ('Team') \
@@ -604,7 +582,7 @@ pub fn team_member_check_statement() -> String {
 
 /// `team_share_service.check_permission`'s entity-grant read for a Team: the
 /// Team's non-user approved grants (empty for the recorded cases).
-pub fn team_entity_check_statement() -> String {
+pub(crate) fn team_entity_check_statement() -> String {
     "SELECT resource_members.entity_type AS resource_members_entity_type, \
      resource_members.entity_id AS resource_members_entity_id, \
      resource_members.`role` AS resource_members_role \nFROM resource_members \n\

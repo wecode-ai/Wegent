@@ -6,6 +6,9 @@ import { HostCapabilityRouter } from '../host/capability-router.js'
 import { HostPipeServer } from '../host/host-pipe.js'
 import { DshRuntime } from './dsh-runtime.js'
 
+const { browserFetch } = vi.hoisted(() => ({ browserFetch: vi.fn() }))
+vi.mock('electron', () => ({ session: { defaultSession: { fetch: browserFetch } } }))
+
 const servers: Array<ReturnType<typeof createServer>> = []
 
 afterEach(async () => {
@@ -21,6 +24,97 @@ afterEach(async () => {
 })
 
 describe('DSH runtime readiness', () => {
+  test.each(['before', 'after'])(
+    'authenticates a dynamically bound port with credentials sent %s its announcement',
+    async order => {
+      browserFetch.mockImplementation((url, init) => fetch(url, init))
+      const runtime = new DshRuntime({
+        url: 'http://127.0.0.1:0/',
+        command: process.execPath,
+        args: [
+          '-e',
+          `
+          const http = require('node:http')
+          const fs = require('node:fs')
+          let authenticated = false
+          const server = http.createServer((request, response) => {
+            if (request.url === '/?token=private-test-token') authenticated = true
+            response.writeHead(authenticated ? 200 : 401)
+            response.end()
+          })
+          server.listen(0, '127.0.0.1', () => {
+            const url = 'http://127.0.0.1:' + server.address().port
+            const credential = () => fs.writeSync(5, JSON.stringify({url: url + '/?token=private-test-token'}) + '\\n')
+            if (${JSON.stringify(order)} === 'before') credential()
+            console.log('dsh web: ' + url + '/?token=private-test-token')
+            if (${JSON.stringify(order)} === 'after') setImmediate(credential)
+          })
+        `,
+        ],
+        probeUrls: ['http://127.0.0.1:0/host', 'http://127.0.0.1:0/executor'],
+        env: { ...process.env, WEWORK_DSH_BROWSER_AUTH: '1' },
+        startTimeoutMs: 2_000,
+      })
+      try {
+        await runtime.start()
+        const origin = new URL(runtime.url()).origin
+        expect(Number(new URL(origin).port)).toBeGreaterThan(0)
+        expect(browserFetch.mock.calls.map(([url]) => url)).toEqual([
+          origin + '/?token=private-test-token',
+          origin + '/host',
+          origin + '/executor',
+        ])
+        expect(runtime.url()).not.toContain('token')
+      } finally {
+        await runtime.stop()
+        browserFetch.mockReset()
+      }
+    }
+  )
+
+  test('exchanges a private pipe credential before probing with the Electron session', async () => {
+    browserFetch.mockResolvedValue(new Response('', { status: 200 }))
+    const url = 'http://127.0.0.1:12345/'
+    const runtime = new DshRuntime({
+      url,
+      command: process.execPath,
+      args: [
+        '-e',
+        "require('node:fs').writeSync(5, JSON.stringify({url:'http://127.0.0.1:12345/?token=private-test-token'}) + '\\n'); setInterval(() => {}, 1000)",
+      ],
+      env: { ...process.env, WEWORK_DSH_BROWSER_AUTH: '1' },
+    })
+    try {
+      await runtime.start()
+      expect(browserFetch.mock.calls.map(([input]) => input)).toEqual([
+        url + '?token=private-test-token',
+        url,
+      ])
+      expect(runtime.url()).toBe(url)
+    } finally {
+      await runtime.stop()
+      browserFetch.mockReset()
+    }
+  })
+
+  test('rejects a pipe credential for a different origin before any browser request', async () => {
+    const runtime = new DshRuntime({
+      url: 'http://127.0.0.1:12345/',
+      command: process.execPath,
+      args: [
+        '-e',
+        "require('node:fs').writeSync(5, JSON.stringify({url:'https://example.com/?token=private-test-token'}) + '\\n'); setInterval(() => {}, 1000)",
+      ],
+      env: { ...process.env, WEWORK_DSH_BROWSER_AUTH: '1' },
+    })
+    try {
+      await expect(runtime.start()).rejects.toThrow('Invalid DSH browser authentication response')
+      expect(browserFetch).not.toHaveBeenCalled()
+    } finally {
+      await runtime.stop()
+    }
+  })
+
   test('concurrent managed runtimes bind their own ports and probe their advertised endpoints', async () => {
     const runtimes = Array.from(
       { length: 2 },

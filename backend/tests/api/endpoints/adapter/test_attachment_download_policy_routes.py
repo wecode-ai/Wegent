@@ -253,3 +253,18 @@ def test_shared_download_rechecks_policy_after_share_token_issued(
     )
 
     _assert_download_disabled(response)
+
+
+@pytest.fixture(autouse=True)
+def _retained_python_handler_contracts(test_client):
+    import app.api.endpoints.adapter.attachments as endpoint_0
+    from tests.legacy_python_routes import legacy_python_handlers
+
+    with legacy_python_handlers(test_client.app) as register:
+        register(
+            "/api/attachments/{attachment_id}/executor-download",
+            endpoint_0.executor_download_attachment,
+            endpoint_0.router,
+            methods=["GET"],
+        )
+        yield

@@ -7,6 +7,20 @@ import {
 } from './scheme'
 
 describe('Wework scheme routing', () => {
+  it('keeps local project storage in the destination and navigation route', () => {
+    const url = weworkIssueScheme('local-project-1', 'OFF-1', 'local')
+    const destination = parseWeworkScheme(url)!
+    expect(destination).toEqual({
+      kind: 'board',
+      projectStore: 'local',
+      projectId: 'local-project-1',
+      itemId: 'OFF-1',
+    })
+    expect(weworkDestinationRoute(destination)).toBe(
+      '/todo?projectStore=local&projectId=local-project-1&itemId=OFF-1'
+    )
+  })
+
   it('encodes notification targets without changing their identifiers', () => {
     expect(
       parseWeworkScheme(weworkTaskScheme({ deviceId: 'device:1', taskId: 'task/# 1' }))

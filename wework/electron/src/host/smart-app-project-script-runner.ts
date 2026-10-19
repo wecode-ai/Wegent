@@ -78,6 +78,7 @@ export interface RunSmartAppRuntimeProbeOptions extends Omit<
 > {
   script: string
   baseUrl: string
+  cookieHeader?: string
 }
 
 export async function runSmartAppProjectScripts(
@@ -140,6 +141,7 @@ export async function runSmartAppRuntimeProbe(
   const environment = {
     ...sanitizedEnvironment(command.environment),
     SMART_APP_BASE_URL: options.baseUrl,
+    ...(options.cookieHeader ? { SMART_APP_COOKIE: options.cookieHeader } : {}),
   }
   const run = options.run ?? runCommand
   const result = await run(command.command, [...command.argsPrefix, 'run', options.script], {

@@ -73,7 +73,9 @@ impl Mysql for KindQueryCapture {
     }
 
     fn route<K: MysqlRouteKey>(&self, _key: K) -> Self {
-        panic!("kinds lookups carry no routing key")
+        // Routed statements are captured exactly like plain ones; the physical
+        // table name is already rendered into the statement under test.
+        self.clone()
     }
 
     async fn fetch_optional<S, A, T>(&self, sql: S, args: A) -> MysqlResult<Option<T>>

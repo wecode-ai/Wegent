@@ -84,3 +84,18 @@ def test_download_accepts_internal_service_token(
     assert response.status_code == 200
     assert response.content == b"public-skill-binary"
     assert response.headers["content-type"] == "application/zip"
+
+
+@pytest.fixture(autouse=True)
+def _retained_python_handler_contracts(test_client):
+    import app.api.endpoints.internal.skills as endpoint_0
+    from tests.legacy_python_routes import legacy_python_handlers
+
+    with legacy_python_handlers(test_client.app) as register:
+        register(
+            "/api/internal/skills/{skill_id}/binary",
+            endpoint_0.get_skill_binary,
+            endpoint_0.router,
+            methods=["GET"],
+        )
+        yield

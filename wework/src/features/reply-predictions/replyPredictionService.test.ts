@@ -46,6 +46,41 @@ describe('reply prediction service', () => {
     expect((await next)?.text).toBe('新的建议')
   })
 
+  it('cancels an old model configuration and ignores its late failure', async () => {
+    const resolvers: Array<(value: { suggestion: string }) => void> = []
+    const rejectors: Array<(reason: Error) => void> = []
+    const predict = vi.fn<(data: { signal?: AbortSignal }) => Promise<{ suggestion: string }>>(
+      () =>
+        new Promise((resolve, reject) => {
+          resolvers.push(resolve)
+          rejectors.push(reject)
+        })
+    )
+    const service = new ReplyPredictionService({ predict })
+    const original = {
+      ...source(),
+      modelSelection: {
+        modelName: 'session-model',
+        modelType: 'runtime' as const,
+        options: { reasoningEffort: 'low' },
+      },
+    }
+    const old = service.request(original)
+    const updated = {
+      ...original,
+      modelSelection: { ...original.modelSelection, options: { reasoningEffort: 'high' } },
+    }
+    const next = service.request(updated)
+    expect(predict.mock.calls[0][0].signal?.aborted).toBe(true)
+    rejectors[0](new Error('Old credentials rejected'))
+    resolvers[1]({ suggestion: '当前配置的建议' })
+    expect(await old).toBeNull()
+    expect((await next)?.text).toBe('当前配置的建议')
+    expect(service.hasError(original.scope)).toBe(false)
+    expect((await service.request({ ...updated }))?.text).toBe('当前配置的建议')
+    expect(predict).toHaveBeenCalledTimes(2)
+  })
+
   it('does not retry failures or null predictions and isolates conversations', async () => {
     const predict = vi.fn(async () => {
       throw new Error('unsupported prediction mode')
@@ -53,6 +88,7 @@ describe('reply prediction service', () => {
     const service = new ReplyPredictionService({ predict })
     expect(await service.request(source())).toBeNull()
     expect(await service.request(source())).toBeNull()
+    expect(service.hasError(source().scope)).toBe(true)
     expect(predict).toHaveBeenCalledTimes(1)
     expect(await service.request({ ...source(), scope: 'task-2' })).toBeNull()
     expect(predict).toHaveBeenCalledTimes(2)
@@ -61,6 +97,7 @@ describe('reply prediction service', () => {
     expect(await emptyService.request(source())).toBeNull()
     expect(await emptyService.request(source())).toBeNull()
     expect(empty).toHaveBeenCalledTimes(1)
+    expect(emptyService.hasError(source().scope)).toBe(false)
   })
 
   it('does not predict busy turns and cancels only after the last composer releases', async () => {

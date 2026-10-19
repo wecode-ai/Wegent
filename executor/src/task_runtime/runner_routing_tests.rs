@@ -349,6 +349,7 @@ fn historical_comment_binding_is_queued_without_creating_a_new_session() {
                 "device_id":"runner-a", "task_id":"historical-session"
             }))
             .unwrap(),
+            None,
         )
         .unwrap();
     let root = store.create_comment(&LocalCommentCreate {

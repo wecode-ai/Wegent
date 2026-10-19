@@ -152,6 +152,15 @@ mod tests {
                     .map(move |method| (method.to_owned(), rule.path.clone()))
             })
             .collect();
+        assert_eq!(
+            selected.len(),
+            file.routes
+                .iter()
+                .map(|rule| rule.methods.len())
+                .sum::<usize>(),
+            "duplicate cutover rule"
+        );
+        assert!(selected.contains(&("GET".to_owned(), "/api/quota".to_owned())));
         let mut registered = BTreeSet::new();
         const METHODS: [&str; 7] = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"];
         macro_rules! collect {
@@ -190,7 +199,11 @@ mod tests {
             assert!(table.matches(&method, &concrete), "{method} {path}");
             assert!(!table.matches(&custom, &concrete));
             for sibling in METHODS {
-                let expected = selected.contains(&(sibling.to_owned(), path.clone()));
+                let expected = selected.iter().any(|(configured_method, configured_path)| {
+                    configured_method == sibling
+                        && brz_http_server::__private::match_route(&concrete, configured_path)
+                            .is_some()
+                });
                 let sibling = Method::from_bytes(sibling.as_bytes()).unwrap();
                 assert_eq!(
                     table.matches(&sibling, &concrete),
@@ -203,6 +216,39 @@ mod tests {
         assert!(!table.matches(&Method::GET, "/api/groups/engineering/members"));
         assert!(!table.matches(&Method::PUT, "/api/groups/engineering/members/batch/roles"));
         assert!(!table.matches(&Method::GET, "/api/tasks/123/unmigrated"));
+    }
+
+    /// The doubled-prefix skills download cutover must keep its Rust handler
+    /// registered while every other method stays on the Python fallback.
+    #[test]
+    fn doubled_prefix_skills_download_selects_registered_handler() {
+        const PATH: &str = "/api/api/v1/kinds/skills/:skill_id/download";
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
+        let table = load(&path).unwrap();
+        let concrete = "/api/api/v1/kinds/skills/125063/download";
+        assert!(table.matches(&Method::GET, concrete));
+        for other_method in [
+            Method::POST,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+            Method::HEAD,
+            Method::OPTIONS,
+        ] {
+            assert!(
+                !table.matches(&other_method, concrete),
+                "unmigrated method selected: {other_method} {concrete}"
+            );
+        }
+
+        // `method_bit`: DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT.
+        const GET: u16 = 1 << 1;
+        let registered =
+            brz_http_server::__private::inventory::iter::<crate::__http_registry_http_apis::Entry>
+                .into_iter()
+                .flat_map(|entry| (entry.0.routes)())
+                .any(|route| route.path == PATH && route.methods & GET != 0);
+        assert!(registered, "GET {PATH} must be registered by the router");
     }
 
     #[test]
@@ -242,5 +288,92 @@ mod tests {
                 .flat_map(|entry| (entry.0.routes)())
                 .any(|route| route.path == PATH && route.methods & PUT != 0);
         assert!(registered, "PUT {PATH} must be registered by the router");
+    }
+
+    /// A low-volume scanner probe keeps Python ownership even with a registered handler.
+    #[test]
+    fn method_call_anon_get_policy_registration_keeps_python_ownership() {
+        const PATH: &str = "/api/v1/method.callAnon/getPasswordPolicy";
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
+        let table = load(&path).unwrap();
+        assert!(!table.matches(&Method::POST, PATH));
+        for other_method in [
+            Method::GET,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+            Method::HEAD,
+            Method::OPTIONS,
+        ] {
+            assert!(
+                !table.matches(&other_method, PATH),
+                "unmigrated method selected: {other_method} {PATH}"
+            );
+        }
+
+        // `method_bit`: DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT.
+        const POST: u16 = 1 << 5;
+        let registered =
+            brz_http_server::__private::inventory::iter::<crate::__http_registry_http_apis::Entry>
+                .into_iter()
+                .flat_map(|entry| (entry.0.routes)())
+                .any(|route| route.path == PATH && route.methods & POST != 0);
+        assert!(registered, "POST {PATH} must be registered by the router");
+    }
+
+    /// A low-volume scanner probe keeps Python ownership even with a registered handler.
+    #[test]
+    fn method_call_anon_send_forgot_email_registration_keeps_python_ownership() {
+        const PATH: &str = "/api/v1/method.callAnon/sendForgotPasswordEmail";
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
+        let table = load(&path).unwrap();
+        assert!(!table.matches(&Method::POST, PATH));
+        for other_method in [
+            Method::GET,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+            Method::HEAD,
+            Method::OPTIONS,
+        ] {
+            assert!(
+                !table.matches(&other_method, PATH),
+                "unmigrated method selected: {other_method} {PATH}"
+            );
+        }
+
+        // `method_bit`: DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT.
+        const POST: u16 = 1 << 5;
+        let registered =
+            brz_http_server::__private::inventory::iter::<crate::__http_registry_http_apis::Entry>
+                .into_iter()
+                .flat_map(|entry| (entry.0.routes)())
+                .any(|route| route.path == PATH && route.methods & POST != 0);
+        assert!(registered, "POST {PATH} must be registered by the router");
+    }
+    #[test]
+    fn deferred_routes_keep_python_ownership() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
+        let table = load(&path).unwrap();
+        assert!(!table.matches(&Method::GET, "/api/knowledge-bases/123"));
+        assert!(table.matches(&Method::GET, "/api/teams/default"));
+        assert!(table.matches(&Method::GET, "/api/sites/app-types"));
+        for path in [
+            "/api/knowledge-bases/accessible",
+            "/api/knowledge-bases/all-grouped",
+            "/api/knowledge-bases/code-wiki-retrieval-profile",
+            "/api/knowledge-bases/code-wikis",
+            "/api/knowledge-bases/config",
+            "/api/knowledge-bases/multimodal-default-prompts",
+            "/api/knowledge-bases/organization-namespace",
+            "/api/subscriptions/executions",
+            "/api/tasks/123/remote-workspace/file",
+        ] {
+            assert!(!table.matches(&Method::GET, path), "deferred GET {path}");
+        }
+        assert!(!table.matches(&Method::DELETE, "/api/tasks/123"));
+        assert!(!table.matches(&Method::DELETE, "/api/tasks/bulk"));
+        assert!(!table.matches(&Method::PUT, "/api/users/me"));
+        assert!(!table.matches(&Method::POST, "/api/v1/token-issuers/123/issue"));
     }
 }

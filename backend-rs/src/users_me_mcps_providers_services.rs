@@ -12,10 +12,11 @@
 //! current user's stored configuration. A stored MCP URL is decrypted through
 //! `shared.utils.crypto` (`GIT_TOKEN_AES_KEY` / `GIT_TOKEN_AES_IV`).
 //!
-//! The pydantic `MCPProviderServiceConfigResponse` keeps only `provider_id`,
-//! `service_id`, `server_name`, `detail_url`, `enabled`, and `url`, in that
-//! declaration order; the registry's `skill_name`, `display_name`, and
-//! `message_keywords` are not part of this response.
+//! The pydantic `MCPProviderServiceConfigResponse` keeps `provider_id`,
+//! `service_id`, `server_name`, `detail_url`, `enabled`, `url`, `auth_mode`,
+//! `oauth_supported`, `oauth_connected`, `oauth_expires_at`, and
+//! `oauth_account`, in that declaration order; the registry's `skill_name`,
+//! `display_name`, and `message_keywords` are not part of this response.
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use serde::Serialize;
@@ -34,6 +35,7 @@ struct ServiceDefinition {
     service_id: &'static str,
     server_name: &'static str,
     detail_url: &'static str,
+    oauth_supported: bool,
 }
 
 /// A provider definition (`MCPProviderDefinition`) reduced to the
@@ -52,21 +54,25 @@ static DINGTALK_SERVICES: &[ServiceDefinition] = &[
         service_id: "docs",
         server_name: "dingtalk_docs",
         detail_url: "https://mcp.dingtalk.com/#/detail?mcpId=9629",
+        oauth_supported: true,
     },
     ServiceDefinition {
         service_id: "table",
         server_name: "dingtalk_table",
         detail_url: "https://mcp.dingtalk.com/#/detail?mcpId=9704",
+        oauth_supported: true,
     },
     ServiceDefinition {
         service_id: "ai_table",
         server_name: "dingtalk_ai_table",
         detail_url: "https://mcp.dingtalk.com/#/detail?mcpId=9555",
+        oauth_supported: true,
     },
     ServiceDefinition {
         service_id: "wikispace",
         server_name: "dingtalk_wikispace",
         detail_url: "https://mcp.dingtalk.com/#/detail?mcpId=9730",
+        oauth_supported: true,
     },
 ];
 
@@ -96,6 +102,11 @@ struct ProviderServiceConfig {
     detail_url: &'static str,
     enabled: bool,
     url: String,
+    auth_mode: &'static str,
+    oauth_supported: bool,
+    oauth_connected: bool,
+    oauth_expires_at: Option<i64>,
+    oauth_account: Option<String>,
 }
 
 /// GET /api/users/me/mcps/providers/{provider_id}/services: the free function,
@@ -136,15 +147,19 @@ fn list_services_with(
 
     let mut configs = Vec::with_capacity(provider.services.len());
     for service in provider.services {
-        let (enabled, url) =
-            service_config_with(preferences, provider_id, service.service_id, &decrypt)?;
+        let config = service_config_with(preferences, provider_id, service.service_id, &decrypt)?;
         configs.push(ProviderServiceConfig {
             provider_id: provider_id.to_owned(),
             service_id: service.service_id,
             server_name: service.server_name,
             detail_url: service.detail_url,
-            enabled,
-            url,
+            enabled: config.enabled,
+            url: config.url,
+            auth_mode: config.auth_mode,
+            oauth_supported: service.oauth_supported,
+            oauth_connected: config.oauth_connected,
+            oauth_expires_at: config.oauth_expires_at,
+            oauth_account: config.oauth_account,
         });
     }
     Ok(configs)
@@ -158,20 +173,21 @@ fn unsupported_provider(provider_id: &str) -> FastApiError {
     )
 }
 
-/// `UserMCPService.get_provider_service_config`: read the stored `enabled` flag
-/// and decrypted `url` for one provider service from the user's preferences.
+/// `UserMCPService.get_provider_service_config`: read the stored `enabled` flag,
+/// decrypted `url`, and OAuth state for one provider service from the user's
+/// preferences.
 ///
-/// The stored URL is decrypted only when it is encrypted, and the configured
-/// key material is resolved lazily at that point — matching the source, which
-/// never touches `_get_encryption_key` for a plain or absent URL. The explicit
-/// `decrypt` parameter carries that crypto boundary so it can be exercised
-/// without process environment.
+/// The stored URL and OAuth token credentials are decrypted only when they are
+/// encrypted, and the configured key material is resolved lazily at that point —
+/// matching the source, which never touches `_get_encryption_key` for a plain
+/// or absent value. The explicit `decrypt` parameter carries that crypto
+/// boundary so it can be exercised without process environment.
 fn service_config_with(
     preferences: &str,
     provider_id: &str,
     service_id: &str,
-    decrypt: impl FnOnce(&str) -> Result<String, CryptoError>,
-) -> Result<(bool, String), FastApiError> {
+    decrypt: impl Fn(&str) -> Result<String, CryptoError>,
+) -> Result<ServiceUserConfig, FastApiError> {
     // `load_preferences`: a non-object or unparsable payload is an empty map.
     let parsed: serde_json::Value =
         serde_json::from_str(preferences).unwrap_or(serde_json::Value::Null);
@@ -188,19 +204,84 @@ fn service_config_with(
         .is_some_and(python_truthy);
 
     // `credentials.get("url", "")`, then decrypt only an encrypted value.
-    let url = credentials
-        .and_then(|credentials| credentials.get("url"))
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("");
-    let url = if url.is_empty() {
-        String::new()
-    } else if is_data_encrypted(url) {
-        decrypt(url).map_err(|_| FastApiError::unhandled())?
+    let url = decrypt_stored(credentials, "url", &decrypt)?;
+
+    // `bool(access_token or refresh_token)` after `_decrypt` of each.
+    let access_token = decrypt_stored(credentials, "access_token", &decrypt)?;
+    let refresh_token = decrypt_stored(credentials, "refresh_token", &decrypt)?;
+    let oauth_connected = python_truthy_str(&access_token) || python_truthy_str(&refresh_token);
+
+    // `int(expires_at) if isinstance(expires_at, int) else None`.
+    let oauth_expires_at = credentials
+        .and_then(|credentials| credentials.get("expires_at"))
+        .and_then(serde_json::Value::as_i64);
+
+    // `_decrypt(credentials.get("account")) or None`.
+    let account = decrypt_stored(credentials, "account", &decrypt)?;
+    let oauth_account = if account.is_empty() {
+        None
     } else {
-        url.to_owned()
+        Some(account)
     };
 
-    Ok((enabled, url))
+    // `auth_mode` defaults to `"url"` unless stored as `"url"` or `"oauth"`.
+    let auth_mode = match service
+        .and_then(|service| service.get("auth_mode"))
+        .and_then(serde_json::Value::as_str)
+    {
+        Some("oauth") => "oauth",
+        Some("url") => "url",
+        _ => "url",
+    };
+
+    Ok(ServiceUserConfig {
+        enabled,
+        url,
+        auth_mode,
+        oauth_connected,
+        oauth_expires_at,
+        oauth_account,
+    })
+}
+
+/// The user-stored part of one provider service configuration
+/// (`get_provider_service_config`'s return value).
+#[derive(Debug, PartialEq)]
+struct ServiceUserConfig {
+    enabled: bool,
+    url: String,
+    auth_mode: &'static str,
+    oauth_connected: bool,
+    oauth_expires_at: Option<i64>,
+    oauth_account: Option<String>,
+}
+
+/// `_decrypt(credentials.get(key, None))`: a missing or non-string value is an
+/// empty string; an encrypted value is decrypted (failures fall back to the
+/// original text), a plain string is passed through.
+fn decrypt_stored(
+    credentials: Option<&serde_json::Value>,
+    key: &str,
+    decrypt: &impl Fn(&str) -> Result<String, CryptoError>,
+) -> Result<String, FastApiError> {
+    let value = credentials
+        .and_then(|credentials| credentials.get(key))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    if value.is_empty() {
+        return Ok(String::new());
+    }
+    if is_data_encrypted(value) {
+        decrypt(value).map_err(|_| FastApiError::unhandled())
+    } else {
+        Ok(value.to_owned())
+    }
+}
+
+/// Python truthiness for the decrypted credential strings: only the empty
+/// string is falsy.
+fn python_truthy_str(value: &str) -> bool {
+    !value.is_empty()
 }
 
 /// Python truthiness (`bool(value)`): `False`/`0`/empty string/empty
@@ -396,16 +477,114 @@ mod tests {
         .to_string();
         assert_eq!(
             service_config_with(&preferences, "dingtalk", "docs", test_decrypt).unwrap(),
-            (true, "docs".to_string())
+            ServiceUserConfig {
+                enabled: true,
+                url: "docs".to_string(),
+                auth_mode: "url",
+                oauth_connected: false,
+                oauth_expires_at: None,
+                oauth_account: None,
+            }
         );
         assert_eq!(
             service_config_with(&preferences, "dingtalk", "table", test_decrypt).unwrap(),
-            (false, String::new())
+            ServiceUserConfig {
+                enabled: false,
+                url: String::new(),
+                auth_mode: "url",
+                oauth_connected: false,
+                oauth_expires_at: None,
+                oauth_account: None,
+            }
         );
         // A service absent from the user's preferences has default values.
         assert_eq!(
             service_config_with(&preferences, "dingtalk", "wikispace", test_decrypt).unwrap(),
-            (false, String::new())
+            ServiceUserConfig {
+                enabled: false,
+                url: String::new(),
+                auth_mode: "url",
+                oauth_connected: false,
+                oauth_expires_at: None,
+                oauth_account: None,
+            }
+        );
+    }
+
+    #[test]
+    fn service_config_reads_oauth_state_and_auth_mode() {
+        let preferences = json!({
+            "mcps": {
+                "dingtalk": {
+                    "services": {
+                        "docs": {
+                            "enabled": true,
+                            "auth_mode": "oauth",
+                            "credentials": {
+                                "url": "N4DP229zmyi0e4Mwh5IlSg==",
+                                "access_token": "jpx/RyzbRARmLYmxMCrZW88hairJjbe3XMbPYMBFi8/3+gvembkfRWVcGgA+nr+G",
+                                "expires_at": 1792565276,
+                                "account": "N4DP229zmyi0e4Mwh5IlSg==",
+                            },
+                        },
+                        "table": {
+                            "enabled": false,
+                            "auth_mode": "invalid",
+                            "credentials": {
+                                "refresh_token": "plain-refresh-token",
+                            },
+                        },
+                        "ai_table": {
+                            "enabled": false,
+                            "credentials": {
+                                "access_token": "",
+                                "refresh_token": 7,
+                                "expires_at": "1792565276",
+                                "account": "",
+                            },
+                        },
+                    }
+                }
+            }
+        })
+        .to_string();
+        // OAuth state is decrypted; `oauth_connected` is any present token.
+        assert_eq!(
+            service_config_with(&preferences, "dingtalk", "docs", test_decrypt).unwrap(),
+            ServiceUserConfig {
+                enabled: true,
+                url: "docs".to_string(),
+                auth_mode: "oauth",
+                oauth_connected: true,
+                oauth_expires_at: Some(1792565276),
+                oauth_account: Some("docs".to_string()),
+            }
+        );
+        // A plain (unencrypted) refresh token also marks the service
+        // connected; an unknown auth_mode falls back to "url".
+        assert_eq!(
+            service_config_with(&preferences, "dingtalk", "table", test_decrypt).unwrap(),
+            ServiceUserConfig {
+                enabled: false,
+                url: String::new(),
+                auth_mode: "url",
+                oauth_connected: true,
+                oauth_expires_at: None,
+                oauth_account: None,
+            }
+        );
+        // Empty or non-string credentials read as disconnected and null;
+        // a non-int expires_at renders null.
+        assert_eq!(
+            service_config_with(&preferences, "dingtalk", "ai_table", test_decrypt).unwrap(),
+            ServiceUserConfig {
+                enabled: false,
+                url: String::new(),
+                auth_mode: "url",
+                oauth_connected: false,
+                oauth_expires_at: None,
+                oauth_account: None,
+            }
         );
     }
 
@@ -414,7 +593,14 @@ mod tests {
         for preferences in ["", "not json", "[]", "null", "{}"] {
             assert_eq!(
                 service_config_with(preferences, "dingtalk", "docs", test_decrypt).unwrap(),
-                (false, String::new()),
+                ServiceUserConfig {
+                    enabled: false,
+                    url: String::new(),
+                    auth_mode: "url",
+                    oauth_connected: false,
+                    oauth_expires_at: None,
+                    oauth_account: None,
+                },
                 "{preferences:?}"
             );
         }
@@ -442,19 +628,27 @@ mod tests {
             "[{\"provider_id\":\"dingtalk\",\"service_id\":\"docs\",\
              \"server_name\":\"dingtalk_docs\",\
              \"detail_url\":\"https://mcp.dingtalk.com/#/detail?mcpId=9629\",\
-             \"enabled\":true,\"url\":\"docs\"},\
+             \"enabled\":true,\"url\":\"docs\",\"auth_mode\":\"url\",\
+             \"oauth_supported\":true,\"oauth_connected\":false,\
+             \"oauth_expires_at\":null,\"oauth_account\":null},\
              {\"provider_id\":\"dingtalk\",\"service_id\":\"table\",\
              \"server_name\":\"dingtalk_table\",\
              \"detail_url\":\"https://mcp.dingtalk.com/#/detail?mcpId=9704\",\
-             \"enabled\":false,\"url\":\"\"},\
+             \"enabled\":false,\"url\":\"\",\"auth_mode\":\"url\",\
+             \"oauth_supported\":true,\"oauth_connected\":false,\
+             \"oauth_expires_at\":null,\"oauth_account\":null},\
              {\"provider_id\":\"dingtalk\",\"service_id\":\"ai_table\",\
              \"server_name\":\"dingtalk_ai_table\",\
              \"detail_url\":\"https://mcp.dingtalk.com/#/detail?mcpId=9555\",\
-             \"enabled\":false,\"url\":\"\"},\
+             \"enabled\":false,\"url\":\"\",\"auth_mode\":\"url\",\
+             \"oauth_supported\":true,\"oauth_connected\":false,\
+             \"oauth_expires_at\":null,\"oauth_account\":null},\
              {\"provider_id\":\"dingtalk\",\"service_id\":\"wikispace\",\
              \"server_name\":\"dingtalk_wikispace\",\
              \"detail_url\":\"https://mcp.dingtalk.com/#/detail?mcpId=9730\",\
-             \"enabled\":false,\"url\":\"\"}]"
+             \"enabled\":false,\"url\":\"\",\"auth_mode\":\"url\",\
+             \"oauth_supported\":true,\"oauth_connected\":false,\
+             \"oauth_expires_at\":null,\"oauth_account\":null}]"
         );
     }
 

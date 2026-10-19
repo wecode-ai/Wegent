@@ -22,6 +22,7 @@
 #![allow(dead_code)]
 
 pub mod bot_config;
+pub mod continuation;
 pub mod dispatch;
 pub mod executor_client;
 pub mod ghost;
@@ -29,6 +30,7 @@ pub mod knowledge;
 pub mod knowledge_prompt;
 pub mod model;
 pub mod model_config;
+pub mod model_selection;
 pub mod request;
 pub mod resolution;
 pub mod response_object;
@@ -40,5 +42,6 @@ pub mod session;
 pub mod shell;
 pub mod skills;
 pub mod streaming;
+pub mod team_access;
 
 mod handler;

@@ -98,6 +98,22 @@ def test_cp02_cp03_cp04_cp05_cp06_cp07_cp18_rust_catalog_mysql_policy(mysql_url)
                 assert all(
                     row.workspace_public_id == expected_public_id for row in rows
                 )
+                # Point lookups decode the same parent and permission-source
+                # columns as lists; compare real MySQL rows, including denied
+                # and absent projects, for every authorization case below.
+                for project_id in ("1001", "9999"):
+                    point_query = SQL.format(
+                        columns="loop_items.id AS project_id",
+                        user_id=int(user_id),
+                        project_filter=f"AND loop_items.id = '{project_id}'",
+                        workspace_filter="",
+                    )
+                    point_rows = db.execute(sa.text(point_query)).all()
+                    assert [dict(row._mapping) for row in point_rows] == [
+                        dict(row._mapping)
+                        for row in rows
+                        if str(row.project_id) == project_id
+                    ]
                 actual = {str(row.project_id): row.anon_1_priority for row in rows}
                 assert actual == source
                 return actual

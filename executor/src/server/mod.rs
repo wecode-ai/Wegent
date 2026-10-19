@@ -88,9 +88,7 @@ impl RunnerResult {
 pub struct AppState<R> {
     runner: R,
     runtime_heartbeat: Option<RuntimeHeartbeatController>,
-    decision_proxy: Arc<local_decision_proxy::DecisionProxyConfig>,
-    /// Shared for the life of the process so the exchanged credential cache and
-    /// the pooled upstream client survive per-request state construction.
+    /// Shared backend HTTP pool for the local decision capability.
     decision_runtime: Arc<local_decision_proxy::DecisionProxyRuntime>,
 }
 
@@ -99,7 +97,6 @@ impl<R> AppState<R> {
         Self {
             runner,
             runtime_heartbeat: None,
-            decision_proxy: local_decision_proxy::config_from_env_or_unconfigured(),
             decision_runtime: Arc::new(local_decision_proxy::DecisionProxyRuntime::new()),
         }
     }

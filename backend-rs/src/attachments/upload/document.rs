@@ -3,15 +3,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The `DocumentParser` subset `POST /api/attachments/upload` exercises:
-//! attachment input validation, plain-text/markdown extraction, and image
-//! metadata plus base64 inlining (`app/services/attachment/parser.py`).
+//! attachment input validation, plain-text/markdown extraction, the OOXML
+//! Word/Excel parsers, PDF text extraction, and image metadata plus base64
+//! inlining (`app/services/attachment/parser.py`).
 //!
-//! Text decoding, smart truncation, and the dedicated PDF/Word/Excel/XMind
-//! parsers are not reimplemented here: the recorded upload cases exercise a
-//! `.md` text file and a `.png` image. Text decoding covers UTF-8 (with BOM)
-//! and a latin-1 fallback; an unsupported special format raises the source's
-//! `DocumentParseError` with `unsupported_type`.
-use base64::Engine as _;
+//! Dispatch mirrors the source's `parse()`: the special formats with a
+//! dedicated parser (PDF, Word, Excel, PowerPoint, images, video/audio,
+//! archives), the known text formats, and finally the source's documented
+//! error codes — the legacy `.doc`/`.xls`/`.ppt` containers and
+//! `unsupported_type`. Formats whose Python parser is a third-party engine
+//! this port has not migrated (XMind, CSV, and image codecs other than
+//! PNG/JPEG) report `unsupported_type` rather than inventing content: the
+//! source library's message would otherwise have to be fabricated.
+use super::model_image;
+use super::model_jpeg;
+use super::office;
+use super::pdf;
+use super::truncation;
 
 /// `DocumentParser.SUPPORTED_EXTENSIONS`: extension -> MIME type.
 pub fn supported_mime_type(extension: &str) -> Option<&'static str> {
@@ -38,6 +46,8 @@ pub fn supported_mime_type(extension: &str) -> Option<&'static str> {
         ".avi" => "video/x-msvideo",
         ".webm" => "video/webm",
         ".mkv" => "video/x-matroska",
+        ".flv" => "video/x-flv",
+        ".wmv" => "video/x-ms-wmv",
         ".m4v" => "video/x-m4v",
         ".mp3" => "audio/mpeg",
         ".wav" => "audio/wav",
@@ -51,8 +61,12 @@ pub fn supported_mime_type(extension: &str) -> Option<&'static str> {
 }
 
 /// `DocumentParser.is_supported_extension`.
-pub fn is_supported_extension(extension: &str) -> bool {
-    supported_mime_type(extension).is_some()
+///
+/// The source accepts every extension: known extensions are validated by
+/// `SUPPORTED_EXTENSIONS`, while unknown ones proceed to MIME detection in
+/// `parse()` and only fail there when the detected MIME is not text-readable.
+pub fn is_supported_extension(_extension: &str) -> bool {
+    true
 }
 
 /// `DocumentParser.get_mime_type`.
@@ -119,9 +133,40 @@ impl DocumentParseError {
             error_code: "unsupported_type",
         }
     }
+
+    /// `parse()`'s MIME-detection rejection for an unknown non-text extension.
+    fn unrecognized(extension: &str) -> Self {
+        Self {
+            message: format!(
+                "Unrecognized file type: {extension} (detected MIME: application/octet-stream)"
+            ),
+            error_code: "unrecognized_type",
+        }
+    }
+
+    /// `DocumentParseError.LEGACY_*`: the source rejects the pre-OOXML
+    /// containers before it reaches a parser.
+    fn legacy(format: &str, error_code: &'static str) -> Self {
+        Self {
+            message: format!(
+                "Legacy {format} format is not fully supported. Please convert to {format}x"
+            ),
+            error_code,
+        }
+    }
+
+    /// `parse()`'s `except Exception` branch, which wraps a library failure.
+    fn parse_failed(document: &str, cause: &str) -> Self {
+        Self {
+            message: format!("Failed to parse {document}: {cause}"),
+            error_code: "parse_failed",
+        }
+    }
 }
 
-/// `DocumentParser.parse(binary_data, extension)`.
+/// `DocumentParser.parse(binary_data, extension)`: the special formats with a
+/// dedicated parser this port still lacks, the known text extensions, and the
+/// source's MIME-detected fallback for unknown extensions.
 pub fn parse(binary_data: &[u8], extension: &str) -> Result<ParseResult, DocumentParseError> {
     let max_length = max_extracted_text_length();
     if is_video(extension) {
@@ -132,72 +177,248 @@ pub fn parse(binary_data: &[u8], extension: &str) -> Result<ParseResult, Documen
             truncation_info: None,
         });
     }
-    if matches!(extension, ".txt" | ".md") {
-        return Ok(text_result(binary_data, max_length));
+    match extension {
+        // `SPECIAL_FORMAT_EXTENSIONS` with a dedicated parser.
+        ".doc" => Err(DocumentParseError::legacy(".doc", "legacy_doc")),
+        ".docx" => word_result(binary_data, max_length),
+        ".xls" => Err(DocumentParseError::legacy(".xls", "legacy_xls")),
+        ".xlsx" => excel_result(binary_data, max_length),
+        ".ppt" => Err(DocumentParseError::legacy(".ppt", "legacy_ppt")),
+        ".pptx" => powerpoint_result(binary_data, max_length),
+        ".pdf" => pdf_result(binary_data, max_length),
+        ".txt" | ".md" => Ok(text_result(binary_data, max_length)),
+        ".zip" => Ok(archive_result(binary_data, extension)),
+        _ => {
+            if let Some(metadata) = image_metadata(binary_data, extension) {
+                return Ok(metadata);
+            }
+            if matches!(
+                extension,
+                ".mp4"
+                    | ".mov"
+                    | ".avi"
+                    | ".webm"
+                    | ".mkv"
+                    | ".m4v"
+                    | ".mp3"
+                    | ".wav"
+                    | ".m4a"
+                    | ".aac"
+                    | ".ogg"
+                    | ".flac"
+            ) {
+                // `text = ""`: binary media carry no text at this stage.
+                return Ok(ParseResult {
+                    text: String::new(),
+                    text_length: 0,
+                    image_base64: None,
+                    truncation_info: None,
+                });
+            }
+            // The remaining special formats still need a third-party engine this
+            // port has not migrated: XMind, CSV, and the non-PNG/JPEG image
+            // codecs.
+            if matches!(
+                extension,
+                ".xmind"
+                    | ".csv"
+                    | ".jpg"
+                    | ".jpeg"
+                    | ".png"
+                    | ".gif"
+                    | ".bmp"
+                    | ".webp"
+                    | ".tif"
+                    | ".tiff"
+            ) {
+                return Err(DocumentParseError::unsupported(format!(
+                    "Unsupported file type: {extension}"
+                )));
+            }
+            // Unknown extension: `detect_mime_type` plus `is_text_mime_type`.
+            // The detected MIME for these files is `text/plain` or `text/html`
+            // (both text-readable); binary content is rejected with the source's
+            // `unrecognized_type`.
+            if text_readable_content(binary_data) {
+                return Ok(text_result(binary_data, max_length));
+            }
+            Err(DocumentParseError::unrecognized(extension))
+        }
     }
-    if let Some(metadata) = image_metadata(binary_data, extension) {
-        return Ok(metadata);
-    }
-    if matches!(
-        extension,
-        ".mp4"
-            | ".mov"
-            | ".avi"
-            | ".webm"
-            | ".mkv"
-            | ".m4v"
-            | ".mp3"
-            | ".wav"
-            | ".m4a"
-            | ".aac"
-            | ".ogg"
-            | ".flac"
-            | ".zip"
-    ) {
-        // Binary media/archives carry no text at this stage.
-        return Ok(ParseResult {
-            text: String::new(),
-            text_length: 0,
-            image_base64: None,
-            truncation_info: None,
-        });
-    }
-    Err(DocumentParseError::unsupported(format!(
-        "Unsupported file type: {extension}"
-    )))
 }
 
-/// `_parse_text_format`: decode the bytes and apply the length bound.
-fn text_result(binary_data: &[u8], max_length: usize) -> ParseResult {
-    let text = decode_text(binary_data);
-    if text.chars().count() > max_length {
-        let truncated: String = text.chars().take(max_length).collect();
-        let original_length = text.chars().count() as i64;
-        return ParseResult {
-            text: truncated,
-            text_length: max_length as i64,
-            image_base64: None,
-            truncation_info: Some(serde_json::json!({
-                "is_truncated": true,
-                "original_length": original_length,
-                "truncated_length": max_length as i64,
-                "truncation_message_key": "content_truncated",
-            })),
-        };
+/// Bound CPU-heavy document and image parsing on Tokio's blocking pool.
+pub async fn parse_async(
+    binary_data: &[u8],
+    extension: &str,
+) -> Result<ParseResult, DocumentParseError> {
+    static PARSERS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+    let permit = PARSERS
+        .acquire()
+        .await
+        .map_err(|_| DocumentParseError::parse_failed("attachment", "parser is shutting down"))?;
+    let binary_data = binary_data.to_vec();
+    let extension = extension.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        parse(&binary_data, &extension)
+    })
+    .await
+    .map_err(|_| DocumentParseError::parse_failed("attachment", "parser worker failed"))?
+}
+
+/// `detect_mime_type` + `is_text_mime_type`: whether libmagic would classify
+/// the bytes as a text-readable MIME type. The source accepts the `text/*`
+/// family plus a few structured suffixes; content without NUL bytes that
+/// decodes as text is the set that matters here.
+fn text_readable_content(binary_data: &[u8]) -> bool {
+    // libmagic reports an empty buffer as `application/x-empty`, which the
+    // source does not treat as text-readable.
+    if binary_data.is_empty() {
+        return false;
     }
-    let length = text.chars().count() as i64;
+    let sample = &binary_data[..binary_data.len().min(8192)];
+    if sample.contains(&0) {
+        return false;
+    }
+    let control = sample
+        .iter()
+        .filter(|byte| **byte < 0x20 && !matches!(**byte, b'\t' | b'\n' | b'\r' | 0x0c | 0x08))
+        .count();
+    control * 100 <= sample.len() * 5 && std::str::from_utf8(binary_data).is_ok()
+}
+
+/// `_parse_archive`: the archive's metadata text (`_parse_archive`).
+fn archive_result(binary_data: &[u8], extension: &str) -> ParseResult {
+    let mut text = format!(
+        "[压缩文件]\n格式: {}\n文件大小: {} 字节",
+        extension[1..].to_ascii_uppercase(),
+        binary_data.len()
+    );
+    if extension == ".zip" {
+        match office::zip::ZipArchive::new(binary_data) {
+            Ok(archive) => {
+                let names = archive.names();
+                text.push_str(&format!("\n包含文件数: {}", names.len()));
+                if !names.is_empty() {
+                    let preview = names.len().min(10);
+                    text.push_str(&format!("\n\n文件列表 (前 {preview} 个):"));
+                    for name in &names[..preview] {
+                        text.push_str(&format!("\n  - {name}"));
+                    }
+                    if names.len() > preview {
+                        text.push_str(&format!("\n  ... 还有 {} 个文件", names.len() - preview));
+                    }
+                }
+            }
+            Err(_) => text.push_str("\n(无法读取压缩包内容)"),
+        }
+    }
     ParseResult {
+        text_length: text.chars().count() as i64,
         text,
-        text_length: length,
         image_base64: None,
         truncation_info: None,
     }
 }
 
-/// `_decode_binary_data`: UTF-8 (with BOM) first, then a permissive fallback.
+/// `_parse_word_smart`: paragraphs then table rows, joined with `\n\n`.
+fn word_result(binary_data: &[u8], max_length: usize) -> Result<ParseResult, DocumentParseError> {
+    let extracted = office::word::extract(binary_data)
+        .map_err(|_| DocumentParseError::parse_failed("Word document", "unreadable package"))?;
+    let truncated = truncation::word_paragraphs(&extracted.collected(), max_length);
+    let (text, text_length) = (truncated.text.clone(), truncated.truncated_length as i64);
+    Ok(ParseResult {
+        text,
+        text_length,
+        image_base64: None,
+        truncation_info: truncated_info(&truncated),
+    })
+}
+
+/// `_parse_powerpoint_smart`: per-slide text then the slide-based head/tail
+/// truncation strategy.
+fn powerpoint_result(
+    binary_data: &[u8],
+    max_length: usize,
+) -> Result<ParseResult, DocumentParseError> {
+    let extracted = office::powerpoint::extract(binary_data)
+        .map_err(|_| DocumentParseError::parse_failed("PowerPoint", "unreadable package"))?;
+    let truncated = truncation::powerpoint_slides(&extracted.slides, max_length);
+    let (text, text_length) = (truncated.text.clone(), truncated.truncated_length as i64);
+    Ok(ParseResult {
+        text,
+        text_length,
+        image_base64: None,
+        truncation_info: truncated_info(&truncated),
+    })
+}
+
+/// `_parse_excel_smart`: complete rows per sheet, joined with `\n\n`.
+fn excel_result(binary_data: &[u8], max_length: usize) -> Result<ParseResult, DocumentParseError> {
+    let sheets = office::excel::read_sheets(binary_data)
+        .map_err(|_| DocumentParseError::parse_failed("Excel", "unreadable package"))?;
+    let truncated = truncation::excel_sheets(&sheets, max_length);
+    let (text, text_length) = (truncated.text.clone(), truncated.truncated_length as i64);
+    Ok(ParseResult {
+        text,
+        text_length,
+        image_base64: None,
+        truncation_info: truncated_info(&truncated),
+    })
+}
+
+/// `_parse_pdf_smart`: PyPDF2 page extraction plus the page-based head/tail
+/// truncation strategy.
+fn pdf_result(binary_data: &[u8], max_length: usize) -> Result<ParseResult, DocumentParseError> {
+    let pages = pdf::page_texts(binary_data).map_err(|error| match error {
+        pdf::PdfError::Encrypted => DocumentParseError {
+            message: "Cannot parse encrypted PDF file".to_owned(),
+            error_code: "encrypted_pdf",
+        },
+        pdf::PdfError::Other(cause) => DocumentParseError::parse_failed("PDF", &cause),
+    })?;
+    let truncated = truncation::pdf_pages(&pages, max_length);
+    let (text, text_length) = (truncated.text.clone(), truncated.truncated_length as i64);
+    Ok(ParseResult {
+        text,
+        text_length,
+        image_base64: None,
+        truncation_info: truncated_info(&truncated),
+    })
+}
+
+/// `TruncationInfo.from_smart_info`: only a real truncation is reported.
+fn truncated_info(truncated: &truncation::Truncated) -> Option<serde_json::Value> {
+    if !truncated.is_truncated {
+        return None;
+    }
+    Some(serde_json::json!({
+        "is_truncated": true,
+        "original_length": truncated.original_length,
+        "truncated_length": truncated.truncated_length,
+        "truncation_message_key": "content_truncated",
+    }))
+}
+
+/// `_parse_text_format`: decode the bytes and apply the smart text strategy
+/// (`TextTruncationStrategy`: a contiguous head and tail of lines).
+fn text_result(binary_data: &[u8], max_length: usize) -> ParseResult {
+    let text = decode_text(binary_data);
+    let truncated = truncation::text_lines(&text, max_length);
+    let truncation_info = truncated_info(&truncated);
+    ParseResult {
+        text_length: truncated.text.chars().count() as i64,
+        text: truncated.text,
+        image_base64: None,
+        truncation_info,
+    }
+}
+
+/// `_decode_binary_data`: UTF-8 first, then a permissive fallback.
 fn decode_text(binary_data: &[u8]) -> String {
     if let Ok(text) = std::str::from_utf8(binary_data) {
-        return text.trim_start_matches('\u{feff}').to_string();
+        return text.to_owned();
     }
     // The source then tries GB18030/GBK/Big5 before latin-1; this target keeps
     // the always-succeeding latin-1 fallback for undecodable input.
@@ -207,9 +428,30 @@ fn decode_text(binary_data: &[u8]) -> String {
 /// `_parse_image`: the metadata text plus the base64 model payload. Only PNG
 /// metadata is decoded exactly; other image formats report the dimensions they
 /// carry with `image_base64` inlined.
+///
+/// The dimensions and payload come from `prepare_image_bytes_for_model`
+/// (`model_image`): an image whose long edge exceeds 1568 is resized and
+/// re-encoded, while the reported format, mode, EXIF flag, and byte size stay
+/// those of the original upload.
 fn image_metadata(binary_data: &[u8], extension: &str) -> Option<ParseResult> {
-    let (format_name, width, height, mode, has_exif) = match extension {
-        ".png" => png_metadata(binary_data)?,
+    let (format_name, width, height, mode, has_exif, image_base64) = match extension {
+        ".png" => {
+            let (format, width, height, mode, has_exif) = png_metadata(binary_data)?;
+            let (base64, prepared_size) = model_image::inline_image(binary_data);
+            let (width, height) = prepared_size.unwrap_or((width, height));
+            (format, width, height, mode, has_exif, base64)
+        }
+        ".jpg" | ".jpeg" => {
+            let image = model_jpeg::prepare(binary_data)?;
+            (
+                image.format.to_owned(),
+                image.width,
+                image.height,
+                image.mode.to_owned(),
+                image.has_exif,
+                image.image_base64,
+            )
+        }
         _ => return None,
     };
     let mut text = String::from("[图片文件]\n");
@@ -220,7 +462,6 @@ fn image_metadata(binary_data: &[u8], extension: &str) -> Option<ParseResult> {
     if has_exif {
         text.push_str("\n\n[EXIF 信息]\n包含 EXIF 元数据");
     }
-    let image_base64 = base64::engine::general_purpose::STANDARD.encode(binary_data);
     Some(ParseResult {
         text_length: text.chars().count() as i64,
         text,
@@ -294,12 +535,81 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_extensions_are_rejected() {
-        let error = parse(b"data", ".exe").expect_err("unsupported");
-        assert_eq!(error.error_code, "unsupported_type");
+    fn legacy_containers_keep_the_source_error_codes() {
+        for (extension, code, format) in [
+            (".doc", "legacy_doc", ".doc"),
+            (".xls", "legacy_xls", ".xls"),
+            (".ppt", "legacy_ppt", ".ppt"),
+        ] {
+            let error = parse(b"legacy", extension).expect_err("legacy format is rejected");
+            assert_eq!(error.error_code, code);
+            assert_eq!(
+                error.message,
+                format!(
+                    "Legacy {format} format is not fully supported. Please convert to {format}x"
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn a_word_package_that_cannot_be_read_is_a_parse_failure() {
+        let error = parse(b"not a package", ".docx").expect_err("unreadable package");
+        assert_eq!(error.error_code, "parse_failed");
+        assert!(error.message.starts_with("Failed to parse Word document: "));
+        let error = parse(b"not a package", ".xlsx").expect_err("unreadable package");
+        assert_eq!(error.error_code, "parse_failed");
+        assert!(error.message.starts_with("Failed to parse Excel: "));
+    }
+
+    #[test]
+    fn an_archive_reports_its_listing_or_that_it_cannot_be_read() {
+        let archive = office::zip::stored_archive(&[("one.txt", b"1"), ("dir/", b"")]);
+        let parsed = parse(&archive, ".zip").expect("archive parses");
+        assert_eq!(
+            parsed.text,
+            format!(
+                "[压缩文件]\n格式: ZIP\n文件大小: {} 字节\n包含文件数: 2\n\n文件列表 (前 2 个):\n  - one.txt\n  - dir/",
+                archive.len()
+            )
+        );
+        let broken = parse(b"PK\x03\x04 not a zip", ".zip").expect("listing failure is text");
+        assert!(broken.text.ends_with("\n(无法读取压缩包内容)"));
+    }
+
+    #[test]
+    fn unknown_extensions_follow_the_detected_mime_type() {
+        // `is_supported_extension` accepts everything; `parse()` rejects only a
+        // non-text MIME type, so octet-stream content keeps `unrecognized_type`.
+        let error = parse(b"\x00\x01\x02\x03", ".exe").expect_err("binary is unrecognized");
+        assert_eq!(error.error_code, "unrecognized_type");
+        assert_eq!(
+            error.message,
+            "Unrecognized file type: .exe (detected MIME: application/octet-stream)"
+        );
+        let error = parse(b"", ".exe").expect_err("an empty file is unrecognized");
+        assert_eq!(error.error_code, "unrecognized_type");
+        let parsed = parse(b"<!DOCTYPE html><p>hi</p>", ".html").expect("text parses");
+        assert_eq!(parsed.text, "<!DOCTYPE html><p>hi</p>");
         assert!(is_supported_extension(".md"));
         assert!(is_supported_extension(".png"));
-        assert!(!is_supported_extension(".exe"));
+        assert!(is_supported_extension(".exe"));
+    }
+
+    #[test]
+    fn long_text_keeps_a_line_head_and_tail() {
+        let lines: Vec<String> = (1..=400).map(|index| format!("line {index}")).collect();
+        let text = lines.join("\n");
+        let parsed = parse(text.as_bytes(), ".md").expect("text parses");
+        // 400 nine/ten-character lines against the default 500000-character
+        // budget fit, so the small budget is exercised directly instead.
+        assert!(!parsed.text.contains("lines omitted"));
+        let truncated = truncation::text_lines(&text, 400);
+        assert!(truncated.is_truncated);
+        assert!(truncated.text.starts_with("# Head Section (lines 1-"));
+        assert!(truncated.text.contains("lines omitted"));
+        assert!(truncated.text.contains("# Tail Section (lines "));
+        assert!(truncated.text.ends_with("line 400"));
     }
 
     #[test]
@@ -324,5 +634,28 @@ mod tests {
         assert!(parsed.text.contains("颜色模式: RGBA"));
         assert!(parsed.text.contains("[EXIF 信息]"));
         assert!(parsed.image_base64.is_some());
+    }
+
+    #[test]
+    fn pdf_dispatch_reads_the_page_text() {
+        let pdf = pdf::simple_pdf_bytes();
+        let parsed = parse(&pdf, ".pdf").expect("pdf parses");
+        assert_eq!(parsed.text, "--- Page 1 ---\nA");
+        assert_eq!(parsed.text_length, 16);
+        assert!(parsed.truncation_info.is_none());
+    }
+
+    #[test]
+    fn encrypted_pdf_reports_the_source_error_code() {
+        let mut pdf = pdf::simple_pdf_bytes();
+        let trailer = b"/Root 1 0 R >>";
+        let position = pdf
+            .windows(trailer.len())
+            .position(|window| window == trailer)
+            .unwrap();
+        pdf.splice(position..position, b"/Encrypt 9 0 R ".iter().copied());
+        let error = parse(&pdf, ".pdf").expect_err("encrypted pdf fails");
+        assert_eq!(error.error_code, "encrypted_pdf");
+        assert_eq!(error.message, "Cannot parse encrypted PDF file");
     }
 }

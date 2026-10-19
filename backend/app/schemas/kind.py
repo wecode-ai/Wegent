@@ -23,6 +23,7 @@ from pydantic import (
 from app.schemas.external_knowledge import ExternalKnowledgeRef
 from app.schemas.quick_launch import QuickPhraseMixin
 from app.utils.workspace_archive_time import normalize_workspace_archive_datetime
+from shared.utils.decision_model import validate_decision_model_spec
 from shared.utils.model_category import resolve_model_category
 
 
@@ -60,6 +61,7 @@ class ModelCategoryType(str, Enum):
     RERANK = "rerank"
     VIDEO = "video"
     IMAGE = "image"
+    DECISION = "decision"
 
 
 # Type-specific configurations
@@ -279,6 +281,11 @@ class ModelSpec(BaseModel):
     """Model specification"""
 
     model_config = ConfigDict(extra="allow", hide_input_in_errors=True)
+
+    @model_validator(mode="after")
+    def _validate_decision_model(self) -> "ModelSpec":
+        validate_decision_model_spec(self.model_dump(mode="json"))
+        return self
 
     @model_validator(mode="before")
     @classmethod

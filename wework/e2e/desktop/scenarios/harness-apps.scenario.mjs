@@ -268,7 +268,12 @@ async function createLocalDshPlugin(resultDir) {
   return pluginPath
 }
 
-export async function createDesktopScenario({ captureScreenshot, resultDir, uiTimeoutMs }) {
+export async function createDesktopScenario({
+  captureScreenshot,
+  electronUserDataDirectory,
+  resultDir,
+  uiTimeoutMs,
+}) {
   const packagePath = await createHarnessPackage(resultDir, INSTALLATION_ID, '0.1.0-rc.8')
   const localDshPluginPath = await createLocalDshPlugin(resultDir)
   const importedPackagePath = await createHarnessPackage(
@@ -571,6 +576,17 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       await control.command('waitFor', '[data-testid="app-iframe-harness-market-1"]', {
         timeoutMs: 600_000,
       })
+      const legacyInstallations = JSON.parse(
+        await readFile(
+          join(electronUserDataDirectory, 'harness-apps', 'installations.json'),
+          'utf8'
+        )
+      )
+      assert.equal(
+        legacyInstallations.find(item => item.id === 'market-1')?.runtimeVersion,
+        '0.1.0-rc.8',
+        'An existing Smart app must keep its declared compatible runtime'
+      )
       await control.command(
         'click',
         `[data-testid="workspace-tab-select-${officialManagementTabId}"]`
@@ -657,6 +673,30 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       })
       const blankWorkbenchSnapshot = JSON.parse(
         await control.command('getWorkbenchDebugSnapshot', 'body')
+      )
+      const createdRoot = join(resultDir, CREATED_INSTALLATION_ID)
+      const createdManifest = JSON.parse(
+        await readFile(join(createdRoot, 'plugin-manifest.json'), 'utf8')
+      )
+      assert.equal(createdManifest.requirements.dsh, '0.2.0-rc.2')
+      const createdBundle = JSON.parse(
+        await readFile(
+          join(createdRoot, createdManifest.entry.installPackage, 'package.json'),
+          'utf8'
+        )
+      )
+      assert.deepEqual(createdBundle.dsh.client.inject, ['@deepseek-ai/dsh-client-ui-renderer'])
+      const currentInstallations = JSON.parse(
+        await readFile(
+          join(electronUserDataDirectory, 'harness-apps', 'installations.json'),
+          'utf8'
+        )
+      )
+      assert.equal(
+        currentInstallations.find(item => item.manifest.name === CREATED_INSTALLATION_ID)
+          ?.runtimeVersion,
+        '0.2.0-rc.2',
+        'A newly created Smart app must launch the current Workbench runtime'
       )
       assert.equal(blankWorkbenchSnapshot.workbench?.currentProject, null)
       assert.equal(

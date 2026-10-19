@@ -69,8 +69,9 @@ struct InstallCountRow {
 }
 
 /// The capability Kind behind one listing id, or `None` when no active
-/// capability carries that id.
-async fn fetch_source<M>(mysql: &M, listing_id: i64) -> MysqlResult<Option<KindRow>>
+/// capability carries that id. Shared with the publication endpoint, whose
+/// `_get_source` renders the same five-Kind lookup.
+pub(super) async fn fetch_source<M>(mysql: &M, listing_id: i64) -> MysqlResult<Option<KindRow>>
 where
     M: Mysql,
 {
@@ -78,7 +79,8 @@ where
 }
 
 /// `_listing_install_count`; a missing publication row means zero installs.
-async fn fetch_install_count<M>(mysql: &M, listing_id: i64) -> MysqlResult<i64>
+/// Shared with the publication endpoint's `to_listing` call.
+pub(super) async fn fetch_install_count<M>(mysql: &M, listing_id: i64) -> MysqlResult<i64>
 where
     M: Mysql,
 {
@@ -161,8 +163,9 @@ async fn get_resource_library_listing(
 }
 
 /// FastAPI's 422 body for an unparsable integer path parameter
-/// (`{type, loc, msg, input}`).
-fn validation_error(value: &str) -> FastApiError {
+/// (`{type, loc, msg, input}`). Shared with the publication endpoint, whose
+/// `listing_id` parameter renders the identical validation error.
+pub(super) fn validation_error(value: &str) -> FastApiError {
     #[derive(Serialize)]
     struct Entry<'a> {
         #[serde(rename = "type")]

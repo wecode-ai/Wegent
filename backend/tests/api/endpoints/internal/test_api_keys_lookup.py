@@ -310,3 +310,19 @@ class TestApiKeyLookup:
         response = test_client.post(LOOKUP_URL, json=body, headers=_internal_headers())
 
         assert response.status_code == 422
+
+
+@pytest.fixture(autouse=True)
+def _retained_python_handler_contracts(test_client):
+    import app.api.endpoints.internal.api_keys as endpoint_0
+    from tests.legacy_python_routes import legacy_python_handlers
+
+    with legacy_python_handlers(test_client.app) as register:
+        register(
+            "/api/internal/api-keys/lookup",
+            endpoint_0.lookup_api_key,
+            endpoint_0.router,
+            methods=["POST"],
+            response_model=endpoint_0.APIKeyLookupResponse,
+        )
+        yield

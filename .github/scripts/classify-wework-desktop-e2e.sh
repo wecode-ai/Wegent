@@ -66,10 +66,12 @@ core_segments=(
   native-window-startup
   native-window-chrome
   renderer-storage
+  application-menu
   tray-lifecycle
   conversation-state
   send-key-preference
   reply-predictions
+  reply-prediction-auth
   model-settings
   codex-native-catalog
   system-proxy
@@ -166,8 +168,8 @@ cloud_shards=(
 core_shards=(
   harness-apps,browser-annotation-design
   supervisor-lifecycle,remote-device-onboarding,core-task-flow
-  temporary-chat,local-file-preview,conversation-state,reply-predictions,model-settings,codex-native-catalog
-  goal-lifecycle,goal-state-sync,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
+  temporary-chat,local-file-preview,conversation-state,reply-predictions,reply-prediction-auth,model-settings,codex-native-catalog
+  goal-lifecycle,goal-state-sync,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,application-menu,dsh-owner-capture
   send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,task-board-bulk-actions,change-request-status,context-compaction
@@ -615,6 +617,17 @@ classify_wework_path() {
       select_target "core:window-lifecycle"
       select_target "core:tray-lifecycle"
       select_target "core:native-window-chrome"
+      return
+      ;;
+
+    # The native application menu spans the Electron host declaration and the
+    # renderer bridge that reports capability state and runs its actions.
+    wework/electron/src/host/application-menu* | \
+      wework/src/desktop/applicationMenu* | \
+      wework/src/desktop/ApplicationMenuWorkspaceBridge* | \
+      wework/src/components/topnav/ApplicationMenuButton* | \
+      wework/e2e/desktop/scenarios/application-menu.scenario.mjs)
+      select_target "core:application-menu"
       return
       ;;
 

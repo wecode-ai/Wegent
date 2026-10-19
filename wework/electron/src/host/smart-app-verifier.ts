@@ -311,6 +311,11 @@ export class SmartAppVerifier {
       ],
       issues: [...source.issues, ...issues],
     }
+    if (report.status === 'failed') {
+      console.warn('[smart-app-verification] failed', {
+        issues: issues.map(({ code, stage, message }) => ({ code, stage, message })),
+      })
+    }
     await persistReport(root, report)
     return report
   }

@@ -50,9 +50,10 @@ async function collectRuntime(sourceRoot, output, descriptor) {
     throw new Error(`Harness Runtime asset does not match its descriptor: ${assetName}`)
   }
   await writeImmutableFile(join(output, assetName), await readFile(source))
+  const { role: _role, ...archiveDescriptor } = descriptor
   await writeImmutableFile(
     join(output, assetName.replace(/\.tar\.gz$/, '.json')),
-    Buffer.from(`${JSON.stringify(descriptor, null, 2)}\n`)
+    Buffer.from(`${JSON.stringify(archiveDescriptor, null, 2)}\n`)
   )
 }
 

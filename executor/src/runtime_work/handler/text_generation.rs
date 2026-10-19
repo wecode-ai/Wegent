@@ -59,7 +59,7 @@ impl RuntimeWorkRpcHandler {
             },
             None => None,
         };
-        let request = runtime_event_request_from_link(&source);
+        let request = runtime_model_request(&source, &payload)?;
         let client = self
             .codex_app_server
             .for_request(&request)

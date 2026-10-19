@@ -58,6 +58,8 @@ import { RotatingLog } from '../runtime/rotating-log.js'
 import { registerMicrophoneDiagnostics } from './microphone-diagnostics.js'
 import { readMacosMicrophoneChecks } from './macos-microphone-diagnostics.js'
 import type { WeworkSyncRequest } from './wework-sync-request.js'
+import type { ApplicationMenu, ApplicationMenuCapabilityState } from './application-menu.js'
+import { openApplicationLogDirectory } from './application-log-directory.js'
 import {
   showRetainedNotification,
   type ElectronNotificationHandle,
@@ -115,6 +117,12 @@ export interface ElectronDesktopServices {
   executorHome: string
   appUpdates?: AppUpdateService
   browserAnnotations?: BrowserAnnotationController
+  applicationMenu?: () => ApplicationMenu | null
+  updateApplicationMenuCapabilities?: (
+    label: string,
+    capabilities: ApplicationMenuCapabilityState
+  ) => void
+  updateApplicationMenuLanguage?: (language: string) => void
   events: DesktopHostEventBroker
   feedback: FeedbackBundleManager
   quitApplication: () => void
@@ -529,28 +537,26 @@ export function createElectronCapabilityRouter(
   })
   router.register('clipboard.readWorkspacePaths', async params => {
     const fallbackPaths = stringArrayParam(params, 'fallbackPaths') ?? []
-    const nativePayloads = clipboard
-      .availableFormats()
-      .filter(format => /(file|filename|uri)/i.test(format))
-      .flatMap(format => {
-        const values: string[] = []
-        try {
-          values.push(clipboard.read(format))
-        } catch {
-          // Some native formats can only be read as buffers.
-        }
-        try {
-          const buffer = clipboard.readBuffer(format)
-          if (buffer.length > 0) {
-            values.push(buffer.toString('utf8'), buffer.toString('utf16le'))
-          }
-        } catch {
-          // Ignore unsupported clipboard encodings.
-        }
-        return values
-      })
+    const items = await clipboard.read().catch(() => [])
+    const nativePayloads = await Promise.all(
+      items.flatMap(item =>
+        item.types
+          .filter(format => /(file|filename|uri)/i.test(format))
+          .map(async format => {
+            try {
+              const payload = await item.getType(format)
+              if (!('arrayBuffer' in payload)) return []
+              const buffer = Buffer.from(await payload.arrayBuffer())
+              return [buffer.toString('utf8'), buffer.toString('utf16le')]
+            } catch {
+              // Native clipboard formats may become unavailable during a read.
+              return []
+            }
+          })
+      )
+    )
     return inspectWorkspacePaths([
-      ...extractFilePathsFromNativePayloads(nativePayloads),
+      ...extractFilePathsFromNativePayloads(nativePayloads.flat()),
       ...fallbackPaths,
     ])
   })
@@ -578,9 +584,9 @@ export function createElectronCapabilityRouter(
     requireActiveIsolatedClipboardLease(activeIsolatedClipboardLease, params, window)
     return clipboard.readText()
   })
-  router.register('isolatedClipboard.writeText', params => {
+  router.register('isolatedClipboard.writeText', async params => {
     requireActiveIsolatedClipboardLease(activeIsolatedClipboardLease, params, window)
-    clipboard.writeText(rawStringParam(params, 'text'))
+    await clipboard.writeText(rawStringParam(params, 'text'))
     return { written: true }
   })
   router.register('computerUse.status', () => computerUse.status())
@@ -596,10 +602,14 @@ export function createElectronCapabilityRouter(
   router.register('computerUse.stopCurrentAction', () => computerUse.stopCurrentAction())
   registerDesktopServiceCapabilities(router, desktopServices, {
     openLogDirectory: async () => {
-      const logDirectory = app.getPath('logs')
-      await mkdirDirectory(logDirectory)
-      const error = await shell.openPath(logDirectory)
-      if (error) throw new HostCapabilityError('open_log_directory_failed', error)
+      try {
+        await openApplicationLogDirectory()
+      } catch (error) {
+        throw new HostCapabilityError(
+          'open_log_directory_failed',
+          error instanceof Error ? error.message : String(error)
+        )
+      }
     },
     openDevTools: () => {
       const contents = requiredWindow(window).webContents
@@ -1154,6 +1164,33 @@ export function registerDesktopServiceCapabilities(
     openDevTools: () => void | Promise<void>
   }
 ): void {
+  router.register('applicationMenu.popup', params => {
+    const menu = services.applicationMenu?.()
+    if (!menu) throw new HostCapabilityError('menu_unavailable', 'Application menu is unavailable')
+    menu.popup(optionalStringParam(params, 'windowLabel') ?? 'main')
+  })
+  router.register('applicationMenu.setCapabilities', params => {
+    const label = stringParam(params, 'windowLabel')
+    services.updateApplicationMenuCapabilities?.(label, capabilityStateParam(params))
+  })
+  router.register('applicationMenu.setLanguage', params => {
+    services.updateApplicationMenuLanguage?.(stringParam(params, 'language'))
+  })
+  const testMenu = () => {
+    if (process.env.VITE_WEWORK_E2E !== 'true') {
+      throw new HostCapabilityError('e2e_disabled', 'Application menu test controls are disabled')
+    }
+    const menu = services.applicationMenu?.()
+    if (!menu) throw new HostCapabilityError('menu_unavailable', 'Application menu is unavailable')
+    return menu
+  }
+  router.register('e2e.getApplicationMenuSnapshot', () => testMenu().snapshot())
+  router.register('e2e.activateApplicationMenu', params =>
+    testMenu().activateForTesting(
+      stringParam(params, 'id'),
+      optionalStringParam(params, 'windowLabel') ?? 'main'
+    )
+  )
   router.register('developer.openLogDirectory', () => developer.openLogDirectory())
   router.register('developer.openDevTools', () => developer.openDevTools())
   router.register('maintenance.cleanupTemporaryImages', () =>
@@ -1349,11 +1386,6 @@ export function registerPluginDevelopmentCapabilities(
   router.register('pluginDevelopment.deleteData', () =>
     requiredPluginDevelopmentService(services).deleteData()
   )
-}
-
-async function mkdirDirectory(path: string): Promise<void> {
-  const { mkdir } = await import('node:fs/promises')
-  await mkdir(path, { recursive: true })
 }
 
 function feedbackRequestParam(params: Record<string, unknown>): FeedbackExportRequest {
@@ -1605,6 +1637,26 @@ function booleanParam(params: Record<string, unknown>, key: string): boolean | u
   if (value === undefined) return undefined
   if (typeof value !== 'boolean') invalidParam(key)
   return value
+}
+
+/**
+ * Parses the capability map reported by the renderer. Unknown keys are
+ * accepted so a newer renderer can add capabilities without a host update,
+ * but every declared value must be a boolean.
+ */
+function capabilityStateParam(
+  params: Record<string, unknown>,
+  key = 'capabilities'
+): ApplicationMenuCapabilityState {
+  const value = params[key]
+  if (!value || typeof value !== 'object' || Array.isArray(value)) invalidParam(key)
+  const record = value as Record<string, unknown>
+  const state: ApplicationMenuCapabilityState = {}
+  for (const [name, entry] of Object.entries(record)) {
+    if (typeof entry !== 'boolean') invalidParam(key)
+    state[name as keyof ApplicationMenuCapabilityState] = entry
+  }
+  return state
 }
 
 function stringRecordParam(params: Record<string, unknown>, key: string): Record<string, string> {

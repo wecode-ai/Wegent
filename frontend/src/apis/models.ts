@@ -5,7 +5,15 @@
 import { apiClient } from './client'
 
 // Model Category Type (different from resource type public/user/group)
-export type ModelCategoryType = 'llm' | 'tts' | 'stt' | 'embedding' | 'rerank' | 'video' | 'image'
+export type ModelCategoryType =
+  | 'llm'
+  | 'tts'
+  | 'stt'
+  | 'embedding'
+  | 'rerank'
+  | 'video'
+  | 'image'
+  | 'decision'
 
 // Type-specific configurations
 export interface TTSConfig {
@@ -314,6 +322,7 @@ export interface TestConnectionRequest {
     | 'gemini-deep-research'
     | 'openai-responses'
     | 'gpt-image'
+    | 'systemone'
     | 'custom'
   model_id: string
   api_key: string
@@ -325,6 +334,21 @@ export interface TestConnectionRequest {
 export interface TestConnectionResponse {
   success: boolean
   message: string
+}
+
+export interface DecisionModel {
+  id: string
+  displayName: string
+  modelId: string
+  protocol: 'systemone' | 'openai'
+  type: ModelTypeEnum
+  namespace: string
+}
+
+export interface DecisionModelCatalog {
+  protocolVersion: 1
+  defaultModel: string
+  models: DecisionModel[]
 }
 
 // Fetch Available Models Types
@@ -360,6 +384,10 @@ export interface CompatibleModelsResponse {
 // Model Services
 // Model Services
 export const modelApis = {
+  async getDecisionModels(): Promise<DecisionModelCatalog> {
+    return apiClient.get('/models/decisions')
+  },
+
   /**
    * Get model names for a specific shell type (legacy API, use getUnifiedModels for new implementations)
    */
