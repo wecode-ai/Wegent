@@ -6,6 +6,7 @@ import io
 import json
 import zipfile
 
+import pytest
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
@@ -778,3 +779,19 @@ def test_admin_updates_plugin_description_score_and_listing_state(
     assert test_db.get(Plugin, plugin.id).description_md == ""
     assert rejected.status_code == 409
     assert unmanaged.status_code == 404
+
+
+@pytest.fixture(autouse=True)
+def _retained_python_handler_contracts(test_client):
+    import app.api.endpoints.resource_library as endpoint_0
+    from tests.legacy_python_routes import legacy_python_handlers
+
+    with legacy_python_handlers(test_client.app) as register:
+        register(
+            "/api/resource-library/listings",
+            endpoint_0.list_resource_library,
+            endpoint_0.router,
+            methods=["GET"],
+            response_model=endpoint_0.ResourceLibraryDiscoveryList,
+        )
+        yield

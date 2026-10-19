@@ -224,7 +224,8 @@ async def read_wegent_runtime_user(
     )
 
 
-@router.post("/me/wegent-runtime-token", response_model=WegentRuntimeAuthTokenResponse)
+# MIGRATION-CANDIDATE(api="POST /api/users/me/wegent-runtime-token"): remove after final confirmation.
+# @router.post("/me/wegent-runtime-token", response_model=WegentRuntimeAuthTokenResponse)
 @trace_async("create_wegent_runtime_auth_token", "users.api")
 async def create_wegent_runtime_auth_token(
     current_user: User = Depends(security.get_current_user),
@@ -431,10 +432,11 @@ async def import_user_runtime_auth_json_from_device(
         ) from exc
 
 
-@router.get(
-    "/me/mcps/providers/{provider_id}/services",
-    response_model=list[MCPProviderServiceConfigResponse],
-)
+# MIGRATION-CANDIDATE(api="GET /api/users/me/mcps/providers/:provider_id/services"): remove after final confirmation.
+# @router.get(
+#     "/me/mcps/providers/{provider_id}/services",
+#     response_model=list[MCPProviderServiceConfigResponse],
+# )
 async def list_mcp_provider_services(
     provider_id: str,
     current_user: User = Depends(security.get_current_user),
@@ -593,10 +595,11 @@ async def reorder_git_tokens(
     )
 
 
-@router.get(
-    "/me/git-accounts/sync-summary",
-    response_model=GitAccountSyncSummary,
-)
+# MIGRATION-CANDIDATE(api="GET /api/users/me/git-accounts/sync-summary"): remove after final confirmation.
+# @router.get(
+#     "/me/git-accounts/sync-summary",
+#     response_model=GitAccountSyncSummary,
+# )
 async def get_git_account_sync_summary(
     current_user: User = Depends(security.get_current_user),
 ) -> GitAccountSyncSummary:
@@ -791,7 +794,8 @@ def _is_ready_attachment_context(context: object) -> bool:
     )
 
 
-@router.get("/quick-access", response_model=QuickAccessResponse)
+# MIGRATION-CANDIDATE(api="GET /api/users/quick-access"): remove after final confirmation.
+# @router.get("/quick-access", response_model=QuickAccessResponse)
 async def get_user_quick_access(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
@@ -887,7 +891,8 @@ def get_user_recent_teams(
     return [_quick_access_team_from_data(team) for team in teams]
 
 
-@router.get("/quick-launch", response_model=QuickLaunchResponse)
+# MIGRATION-CANDIDATE(api="GET /api/users/quick-launch"): remove after final confirmation.
+# @router.get("/quick-launch", response_model=QuickLaunchResponse)
 async def get_user_quick_launch(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
@@ -1072,7 +1077,8 @@ DEFAULT_SLOGAN_TIPS_CONFIG = {
 ADMIN_SETUP_CONFIG_KEY = "admin_setup_completed"
 
 
-@router.get("/welcome-config", response_model=WelcomeConfigResponse)
+# MIGRATION-CANDIDATE(api="GET /api/users/welcome-config"): remove after final confirmation.
+# @router.get("/welcome-config", response_model=WelcomeConfigResponse)
 async def get_welcome_config(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
@@ -1176,7 +1182,8 @@ def parse_default_team_config(config_value: str) -> Optional[DefaultTeamConfig]:
     return DefaultTeamConfig(name=name, namespace=namespace)
 
 
-@router.get("/default-teams", response_model=DefaultTeamsResponse)
+# MIGRATION-CANDIDATE(api="GET /api/users/default-teams"): remove after final confirmation.
+# @router.get("/default-teams", response_model=DefaultTeamsResponse)
 async def get_default_teams(
     _current_user: User = Depends(security.get_current_user),  # noqa: ARG001
 ):

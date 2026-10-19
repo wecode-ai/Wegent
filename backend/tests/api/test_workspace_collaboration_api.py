@@ -1697,3 +1697,19 @@ def test_agent_assignment_rejects_agent_from_another_project(
         .count()
         == 0
     )
+
+
+@pytest.fixture(autouse=True)
+def _retained_python_handler_contracts(test_client):
+    import app.api.endpoints.cloud_projects as endpoint_1
+    from tests.legacy_python_routes import legacy_python_handlers
+
+    with legacy_python_handlers(test_client.app) as register:
+        register(
+            "/api/v1/cloud-projects/{project_id}",
+            endpoint_1.get_cloud_project,
+            endpoint_1.router,
+            methods=["GET"],
+            response_model=endpoint_1.CloudProjectResponse,
+        )
+        yield

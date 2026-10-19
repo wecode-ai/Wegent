@@ -17,10 +17,11 @@
 //! from the plugin's latest release, and the latest release is ready and has
 //! passed scanning. The first `AUTO_UPDATE_BATCH_SIZE` candidates are applied
 //! through the shared installed-payload builder, preserving the row's
-//! `enabled`, `componentStates` and `updatePolicy`. The endpoint commits only
-//! when at least one candidate is advanced; otherwise the request-scoped session
-//! that opened the `FOR UPDATE` transaction rolls it back, so the recorded case
-//! advances nothing, returns the empty batch, and ends with a rollback.
+//! `enabled`, `componentStates` and `updatePolicy`. The endpoint always
+//! commits the `FOR UPDATE` transaction (`db.commit()` runs even for an
+//! empty batch, releasing the InnoDB range locks), and the request-scoped
+//! `get_db` session then closes with a rollback, so the recorded empty
+//! batches end with COMMIT followed by ROLLBACK.
 
 use std::collections::{HashMap, HashSet};
 
@@ -253,9 +254,11 @@ where
     let installed_rows = list_installed_kinds_for_update(mysql, user_id).await?;
     let eligible = eligible_rows(&installed_rows);
     if eligible.is_empty() {
-        // `_auto_update_candidates` short-circuits before any catalog read, so
-        // nothing is committed; the request-scoped session ends the locked
-        // `FOR UPDATE` transaction with `db.rollback()` when `get_db` closes it.
+        // `_auto_update_candidates` short-circuits before any catalog read, but
+        // `db.commit()` still runs for the empty batch (releasing the locking
+        // read's range locks) and the request-scoped session's close then
+        // rolls back the freshly opened transaction, like `get_db`.
+        mysql.execute("COMMIT", ()).await?;
         mysql.execute("ROLLBACK", ()).await?;
         return Ok(PluginAutoUpdateBatchResponse::empty());
     }
@@ -326,15 +329,13 @@ where
         });
     }
 
-    // The source closes the `FOR UPDATE` session exactly like the request-scoped
-    // `get_db` dependency: `db.commit()` only when a candidate advanced, and
-    // `db.rollback()` otherwise. Reproduce that terminal transaction control so
-    // the locked session's rollback is not dropped.
-    if updated.is_empty() {
-        mysql.execute("ROLLBACK", ()).await?;
-    } else {
-        mysql.execute("COMMIT", ()).await?;
-    }
+    // `db.commit()` runs unconditionally: even an empty batch holds InnoDB
+    // range locks from the locking read that must be released before a
+    // concurrent install can delay request cleanup. The request-scoped
+    // `get_db` session then closes, rolling back the freshly opened
+    // transaction, so the locked session always ends COMMIT then ROLLBACK.
+    mysql.execute("COMMIT", ()).await?;
+    mysql.execute("ROLLBACK", ()).await?;
 
     let remaining_count = candidates.len().saturating_sub(updated.len());
     Ok(PluginAutoUpdateBatchResponse {
@@ -855,5 +856,67 @@ mod tests {
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].plugin_id, 17);
         assert_eq!(selected[0].release_id, 129);
+    }
+
+    /// `auto_update_batch` ends the locking session with the source's
+    /// unconditional `db.commit()` followed by the request-scoped session
+    /// close's rollback, both for the short-circuit path (no eligible rows,
+    /// no catalog reads) and after the candidate pass.
+    #[tokio::test]
+    async fn empty_batch_commits_then_rolls_back_like_the_source() {
+        let registry = || {
+            let mut registry = EntityResolvers::public(
+                brz_mysql::MysqlService::connect_lazy("mysql://test:test@127.0.0.1:1/test")
+                    .unwrap(),
+            );
+            registry.register("org_department", NoopResolver);
+            registry
+        };
+        // Short-circuit path: no eligible installed rows, so no catalog reads
+        // run before the terminal transaction control.
+        let mysql = crate::sql_test_support::KindQueryCapture::writing();
+        let response =
+            auto_update_batch(&mysql, None::<&brz_redis::RedisService>, &registry(), 2095)
+                .await
+                .unwrap();
+        assert_eq!(response.updated_count, 0);
+        assert_eq!(response.remaining_count, 0);
+        assert_eq!(mysql.queries().len(), 1, "only the FOR UPDATE read");
+        let writes: Vec<String> = mysql.writes().into_iter().map(|query| query.sql).collect();
+        assert_eq!(writes, vec!["COMMIT".to_string(), "ROLLBACK".to_string()]);
+    }
+
+    /// A resolver that matches no bindings, so the full candidate pass with
+    /// eligible rows still finds no updatable candidate (public plugins are
+    /// accessible but their latest release already matches the recorded
+    /// fixtures' semantics is irrelevant here: the capture returns no rows at
+    /// all, so `_load_auto_update_catalog` yields nothing and the batch is
+    /// empty).
+    struct NoopResolver;
+
+    #[async_trait::async_trait]
+    impl<R: brz_redis::Redis> crate::permissions::EntityResolver<R> for NoopResolver {
+        async fn match_bindings(
+            &self,
+            _: &crate::permissions::EntityResolvers<R>,
+            _: Option<&R>,
+            _: i64,
+            _: &[String],
+            _: crate::permissions::ResolutionPurpose,
+        ) -> MysqlResult<Vec<String>> {
+            Ok(Vec::new())
+        }
+
+        async fn get_resource_ids_by_entity(
+            &self,
+            _: &crate::permissions::EntityResolvers<R>,
+            _: &brz_mysql::MysqlService,
+            _: Option<&R>,
+            _: i64,
+            _: &str,
+            _: &str,
+        ) -> MysqlResult<Vec<i64>> {
+            Ok(Vec::new())
+        }
     }
 }

@@ -12,7 +12,7 @@ fn normalize(sql: &str) -> String {
 }
 
 fn list_sql_raw(workspace_id: Option<i64>) -> String {
-    project_access_statement(ProjectAccessMode::List { workspace_id }, 52, None)
+    super::super::collaboration_access::access_sql(52, None, workspace_id)
 }
 
 fn list_sql(workspace_id: Option<i64>) -> String {
@@ -20,11 +20,7 @@ fn list_sql(workspace_id: Option<i64>) -> String {
 }
 
 fn point_sql() -> String {
-    normalize(&project_access_statement(
-        ProjectAccessMode::Point,
-        52,
-        Some(8308220868516891581),
-    ))
+    normalize(&project_access_point_statement(52, 8308220868516891581))
 }
 
 #[test]
@@ -38,7 +34,6 @@ fn cp02_cp03_cp04_cp06_sources_are_explicit_and_public_is_read_only() {
     assert!(sql.contains("caller.is_active = true"));
     assert!(sql.contains("kinds.is_active = true"));
 }
-
 /// The shared projection must carry every mapped `loop_items` column in the
 /// source's order. A dropped column — for example `start_at`, which sits
 /// between `priority` and `due_at` in the recorded rendering — makes every
@@ -112,20 +107,50 @@ fn projection_matches_the_source_loop_items_column_list() {
 }
 
 #[test]
-fn list_and_point_filters_keep_the_same_authorization_predicates() {
+fn list_and_point_filters_keep_their_recorded_contracts() {
     let list = list_sql(None);
     let point = point_sql();
-    assert_eq!(
-        point,
-        format!(
-            "{} LIMIT 1",
-            list.replace(
-                "ORDER BY loop_items.updated_at DESC",
-                "AND loop_items.id = '8308220868516891581' ORDER BY loop_items.updated_at DESC"
-            )
+    // The list read keeps the unified catalog CTE; the point read keeps the
+    // recorded union with the project id pushed into every branch.
+    assert!(list.contains("WITH parents AS ("));
+    assert!(list.contains("ORDER BY loop_items.updated_at DESC, loop_items.id"));
+    assert!(list_sql(Some(1200)).contains("AND access.workspace_id = 1200"));
+    assert!(point.contains("AND resource_members.resource_id = 8308220868516891581"));
+    assert!(point.contains("AND loop_items.id = '8308220868516891581'"));
+    assert!(point.ends_with("LIMIT 1"));
+}
+
+/// The point form renders the recorded `union_all(direct, inherited, public,
+/// owned)` statement: every branch in source order, the creator grant at
+/// Owner priority 0, and the workspace-inherited grant at Viewer priority 4.
+/// A reordered branch or a lost predicate stops matching the recorded
+/// dependency during replay and fails the whole request.
+#[test]
+fn point_form_renders_the_recorded_union_with_the_creator_grant() {
+    let sql = point_sql();
+    let branches: Vec<&str> = sql.matches("UNION ALL").collect();
+    assert_eq!(branches.len(), 3);
+    let direct = sql.find("FROM resource_members").expect("direct branch");
+    let inherited = sql
+        .find("AS anon_3 ON CAST(resource_members.entity_id AS SIGNED INTEGER)")
+        .expect("inherited branch");
+    let public = sql
+        .find("entity_type = 'authenticated_users'")
+        .expect("public branch");
+    let owned = sql
+        .find("SELECT loop_items.id AS project_id, 0 AS priority")
+        .expect("creator branch");
+    assert!(direct < inherited && inherited < public && public < owned);
+    assert!(sql.contains("resource_members.entity_id = '52'"));
+    assert!(sql.contains("loop_items.created_by_user_id = 52"));
+    assert!(sql.contains("kinds.is_active IS true"));
+    assert!(sql.contains("GROUP BY anon_2.project_id"));
+    assert!(sql.contains("min(anon_2.priority)"));
+    assert!(
+        sql.contains(
+            "AND resource_members.`role` IN ('Owner', 'Maintainer', 'Developer', 'Viewer')"
         )
     );
-    assert!(list_sql(Some(1200)).contains("AND access.workspace_id = 1200"));
 }
 
 /// `ROLES_BY_PRIORITY` maps the aggregated priorities and nothing else.

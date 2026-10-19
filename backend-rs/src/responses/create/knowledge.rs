@@ -48,15 +48,16 @@ use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};
 
 use super::knowledge_prompt::SelectedKnowledgeRef;
-use super::resolution::{KIND_COLUMNS, KindRow, resolve_task_ref_team, team_shared_for_use};
+use super::resolution::{KIND_COLUMNS, KindRow, resolve_task_ref_team};
 use super::selected_knowledge::{
     build_wegent_refs_for_ids, index_refs_by_integer_id, parse_knowledge_base_scopes,
 };
+use super::team_access::team_shared_for_use;
 use crate::permissions::{
     EntityResolvers, ResolutionPurpose, accessible_namespace_ids, effective_roles_in_groups,
     iter_user_groups_with_roles, organization_names, user_groups,
 };
-use crate::teams::teams_repository::placeholders;
+use crate::teams::teams_repository::{BindingArg, placeholders};
 
 /// `_iter_team_member_default_knowledge_base_ids` for one resolved Ghost: its
 /// `spec.defaultKnowledgeBaseRefs[].id`, in order.
@@ -170,27 +171,40 @@ pub fn acl_organization_knowledge_base_ids_statement(candidate_count: usize) -> 
 pub fn acl_visible_knowledge_base_ids_query(
     context: &AclQueryContext,
     candidate_ids: &[i64],
-) -> (String, Vec<String>) {
-    let mut params: Vec<String> = Vec::new();
+) -> (String, Vec<BindingArg>) {
+    let mut params: Vec<BindingArg> = Vec::new();
     let mut visibility: Vec<String> = Vec::new();
 
-    // `(Kind.user_id == user_id) & (Kind.namespace == "default")`
+    // `(Kind.user_id == user_id) & (Kind.namespace == "default")`: the recorded
+    // owner literal is an integer, so that slot binds as an integer.
     visibility.push("kinds.user_id = ? AND kinds.namespace = 'default'".to_string());
-    params.push(context.user_id.to_string());
+    params.push(BindingArg::Int(context.user_id));
 
     if !context.authorized_groups.is_empty() {
         visibility.push(format!(
             "kinds.namespace IN ({})",
             placeholders(context.authorized_groups.len())
         ));
-        params.extend(context.authorized_groups.iter().cloned());
+        params.extend(
+            context
+                .authorized_groups
+                .iter()
+                .cloned()
+                .map(BindingArg::Str),
+        );
     }
     if !context.organization_names.is_empty() {
         visibility.push(format!(
             "kinds.namespace IN ({})",
             placeholders(context.organization_names.len())
         ));
-        params.extend(context.organization_names.iter().cloned());
+        params.extend(
+            context
+                .organization_names
+                .iter()
+                .cloned()
+                .map(BindingArg::Str),
+        );
     }
 
     // `_shared_access_condition`: each `.exists()` renders wrapped in parens.
@@ -200,7 +214,8 @@ pub fn acl_visible_knowledge_base_ids_query(
             "resource_members.entity_type = 'user' AND resource_members.entity_id = ?"
         )
     )];
-    params.push(context.user_id.to_string());
+    // `resource_members.entity_id`: the text column keeps the id as text.
+    params.push(BindingArg::Str(context.user_id.to_string()));
     if !context.accessible_namespace_ids.is_empty() {
         shared.push(format!(
             "({})",
@@ -210,14 +225,20 @@ pub fn acl_visible_knowledge_base_ids_query(
                 placeholders(context.accessible_namespace_ids.len())
             ))
         ));
-        params.extend(context.accessible_namespace_ids.iter().cloned());
+        params.extend(
+            context
+                .accessible_namespace_ids
+                .iter()
+                .cloned()
+                .map(BindingArg::Str),
+        );
     }
     if !context.external_kb_ids.is_empty() {
         shared.push(format!(
             "kinds.id IN ({})",
             placeholders(context.external_kb_ids.len())
         ));
-        params.extend(context.external_kb_ids.iter().map(i64::to_string));
+        params.extend(context.external_kb_ids.iter().copied().map(BindingArg::Int));
     }
     visibility.extend(shared);
 
@@ -227,7 +248,7 @@ pub fn acl_visible_knowledge_base_ids_query(
         visibility.join(" OR "),
         placeholders(candidate_ids.len())
     );
-    params.extend(candidate_ids.iter().map(i64::to_string));
+    params.extend(candidate_ids.iter().copied().map(BindingArg::Int));
 
     // `apply_acl_deny_filter`
     sql.push_str(&format!(
@@ -238,15 +259,80 @@ pub fn acl_visible_knowledge_base_ids_query(
              AND resource_members.`role` = 'RestrictedAnalyst'"
         )
     ));
-    params.push(context.user_id.to_string());
+    params.push(BindingArg::Str(context.user_id.to_string()));
     if !context.restricted_group_names.is_empty() {
         sql.push_str(&format!(
             " \nAND kinds.namespace NOT IN ({})",
             placeholders(context.restricted_group_names.len())
         ));
-        params.extend(context.restricted_group_names.iter().cloned());
+        params.extend(
+            context
+                .restricted_group_names
+                .iter()
+                .cloned()
+                .map(BindingArg::Str),
+        );
     }
     (sql, params)
+}
+
+/// The inputs `build_direct_access_query_context` reads, held so the context is
+/// built where the source builds it.
+///
+/// `knowledge_visibility_query.get_acl_accessible_knowledge_base_ids` returns
+/// before `build_direct_access_query_context` when `candidate_ids` is empty, so
+/// the source never reads `organization_names` or the caller's group roles for
+/// a task whose team has no default knowledge base. Holding the inputs instead
+/// of a prebuilt [`AclQueryContext`] keeps that laziness and the source's
+/// `user_id = team.user_id` / `candidate_ids` arguments.
+pub struct AclContextSource<'a, R: Redis> {
+    mysql: &'a MysqlService,
+    resolvers: &'a EntityResolvers<R>,
+    redis: Option<&'a R>,
+}
+
+impl<'a, R: Redis> AclContextSource<'a, R> {
+    pub fn new(
+        mysql: &'a MysqlService,
+        resolvers: &'a EntityResolvers<R>,
+        redis: Option<&'a R>,
+    ) -> Self {
+        Self {
+            mysql,
+            resolvers,
+            redis,
+        }
+    }
+
+    /// `build_direct_access_query_context(db, user_id, candidate_ids=...)`.
+    pub async fn build(&self, user_id: i64, candidate_ids: &[i64]) -> MysqlResult<AclQueryContext> {
+        build_acl_query_context(
+            self.mysql,
+            self.resolvers,
+            self.redis,
+            user_id,
+            candidate_ids,
+        )
+        .await
+    }
+
+    /// The shared MySQL client every read of this context runs on.
+    pub fn mysql(&self) -> &MysqlService {
+        self.mysql
+    }
+
+    /// `get_effective_role_in_group(db, user_id, group_name)`: the caller's
+    /// effective role in one group.
+    pub async fn group_role(&self, user_id: i64, group_name: &str) -> MysqlResult<Option<String>> {
+        crate::knowledge_bases_all_grouped::membership::effective_role_in_group(
+            self.mysql,
+            self.redis,
+            self.resolvers,
+            user_id,
+            group_name,
+        )
+        .await
+    }
 }
 
 /// `build_direct_access_query_context`: the [`AclQueryContext`] the recorded
@@ -266,18 +352,23 @@ pub async fn build_acl_query_context<R: Redis>(
 
     // `get_effective_roles_in_groups(db, user_id, [name for name in groups if
     // name not in organization_names])`: only the restricted-group deny reads
-    // these roles.
+    // these roles, and the source returns before its membership fetch when the
+    // filtered list is empty.
     let non_org: Vec<String> = groups
         .iter()
         .filter(|name| !org_set.contains(name.as_str()))
         .cloned()
         .collect();
-    let entries = iter_user_groups_with_roles(mysql, resolvers, redis, user_id).await?;
-    let restricted_group_names: Vec<String> = effective_roles_in_groups(&entries, &non_org)
-        .into_iter()
-        .filter(|(_, role)| role == "RestrictedAnalyst")
-        .map(|(name, _)| name)
-        .collect();
+    let restricted_group_names: Vec<String> = if non_org.is_empty() {
+        Vec::new()
+    } else {
+        let entries = iter_user_groups_with_roles(mysql, resolvers, redis, user_id).await?;
+        effective_roles_in_groups(&entries, &non_org)
+            .into_iter()
+            .filter(|(_, role)| role == "RestrictedAnalyst")
+            .map(|(name, _)| name)
+            .collect()
+    };
 
     let accessible = accessible_namespace_ids(mysql, &groups).await?;
     let external =
@@ -458,12 +549,12 @@ async fn load_kinds_by_refs<M: Mysql>(
             .map(|(_, name)| name.to_string())
             .collect();
         if user_id != 0 {
+            // `Kind.user_id == user_id` renders the owner as an integer
+            // literal, so the owner slot binds as an integer.
+            let mut args = vec![BindingArg::Int(user_id)];
+            args.extend(names.iter().cloned().map(BindingArg::Str));
             let personal: Vec<KindRow> = mysql
-                .fetch_all(&kind_by_owner_names_statement(kind, names.len()), {
-                    let mut args = vec![user_id.to_string()];
-                    args.extend(names.iter().cloned());
-                    args
-                })
+                .fetch_all(&kind_by_owner_names_statement(kind, names.len()), args)
                 .await?;
             for row in personal {
                 result.insert((row.namespace.clone(), row.name.clone()), row);
@@ -475,12 +566,10 @@ async fn load_kinds_by_refs<M: Mysql>(
             .map(|(_, name)| name.to_string())
             .collect();
         if !missing.is_empty() {
+            let mut args = vec![BindingArg::Int(0)];
+            args.extend(missing.iter().cloned().map(BindingArg::Str));
             let public: Vec<KindRow> = mysql
-                .fetch_all(&kind_by_public_names_statement(kind, missing.len()), {
-                    let mut args = vec!["0".to_string()];
-                    args.extend(missing.iter().cloned());
-                    args
-                })
+                .fetch_all(&kind_by_public_names_statement(kind, missing.len()), args)
                 .await?;
             for row in public {
                 result.insert((row.namespace.clone(), row.name.clone()), row);
@@ -552,13 +641,13 @@ fn kind_by_group_names_statement(kind: &str, namespace_count: usize, name_count:
 ///
 /// Returns `(Some(team), ids)` on success; `None` for the team when the task
 /// is missing, the team is missing, or the share check denies use.
-pub async fn resolve_task_default_knowledge_bases<M: Mysql>(
-    mysql: &M,
+pub async fn resolve_task_default_knowledge_bases<R: Redis>(
+    acl: &AclContextSource<'_, R>,
     task_json: &Value,
     viewer_user_id: i64,
-    acl: &(dyn Fn(&i64) -> AclQueryContext + Send + Sync),
     knowledge_base_id: Option<i64>,
 ) -> MysqlResult<Option<(Option<KindRow>, Vec<i64>)>> {
+    let mysql = acl.mysql;
     let Some(team_ref) = task_json.get("spec").and_then(|spec| spec.get("teamRef")) else {
         return Ok(Some((None, Vec::new())));
     };
@@ -576,7 +665,11 @@ pub async fn resolve_task_default_knowledge_bases<M: Mysql>(
     let Some(team) = team else {
         return Ok(Some((None, Vec::new())));
     };
-    if !team_shared_for_use(mysql, team.id, viewer_user_id).await? {
+    // `TeamShareService._get_resource(for_use=True)`: a Team owned by the
+    // caller — or the public `user_id = 0` Team — is usable without any share
+    // read, so the member/entity checks and the group-role fallback run only
+    // for a Team someone else owns.
+    if !team_shared_for_use(acl, &team, viewer_user_id).await? {
         return Ok(Some((None, Vec::new())));
     }
 
@@ -590,8 +683,7 @@ pub async fn resolve_task_default_knowledge_bases<M: Mysql>(
         None => candidates,
     };
 
-    let context = acl(&team.user_id);
-    let allowed = get_acl_accessible_knowledge_base_ids(mysql, &context, &candidates).await?;
+    let allowed = get_acl_accessible_knowledge_base_ids(acl, team.user_id, &candidates).await?;
     Ok(Some((
         Some(team),
         candidates
@@ -602,13 +694,12 @@ pub async fn resolve_task_default_knowledge_bases<M: Mysql>(
 }
 
 /// `resolve_task_default_knowledge_base_ids`: the accessible default ids.
-pub async fn resolve_task_default_knowledge_base_ids<M: Mysql>(
-    mysql: &M,
+pub async fn resolve_task_default_knowledge_base_ids<R: Redis>(
+    acl: &AclContextSource<'_, R>,
     task_json: &Value,
     viewer_user_id: i64,
-    acl: &(dyn Fn(&i64) -> AclQueryContext + Send + Sync),
 ) -> MysqlResult<Vec<i64>> {
-    match resolve_task_default_knowledge_bases(mysql, task_json, viewer_user_id, acl, None).await? {
+    match resolve_task_default_knowledge_bases(acl, task_json, viewer_user_id, None).await? {
         Some((_, ids)) => Ok(ids),
         None => Ok(Vec::new()),
     }
@@ -618,13 +709,13 @@ pub async fn resolve_task_default_knowledge_base_ids<M: Mysql>(
 /// the task's persisted `knowledgeBaseRefs`/`knowledgeBaseScopes` ids plus the
 /// agent defaults, resolved into `wegent` refs and merged over the task's
 /// external refs.
-pub async fn build_inherited_selected_knowledge_refs<M: Mysql>(
-    mysql: &M,
+pub async fn build_inherited_selected_knowledge_refs<R: Redis>(
+    acl: &AclContextSource<'_, R>,
     task_json: &Value,
     viewer_user_id: i64,
-    acl: &(dyn Fn(&i64) -> AclQueryContext + Send + Sync),
     external_refs: &[Value],
 ) -> MysqlResult<Vec<SelectedKnowledgeRef>> {
+    let mysql = acl.mysql;
     let spec = task_json.get("spec").cloned().unwrap_or(Value::Null);
     let mut persisted: Vec<i64> = index_refs_by_integer_id(
         &spec
@@ -646,7 +737,7 @@ pub async fn build_inherited_selected_knowledge_refs<M: Mysql>(
         .copied(),
     );
     let default_ids =
-        resolve_task_default_knowledge_base_ids(mysql, task_json, viewer_user_id, acl).await?;
+        resolve_task_default_knowledge_base_ids(acl, task_json, viewer_user_id).await?;
     let selected_ids = deduplicate(&[persisted, default_ids].concat());
 
     let wegent = build_wegent_refs_for_ids(
@@ -692,27 +783,33 @@ fn external_refs_from_values(values: &[Value]) -> Vec<SelectedKnowledgeRef> {
 /// recorded `queued` cases call this with `candidate_ids = [239607]` (the
 /// Ghost's `defaultKnowledgeBaseRefs`), so the `user_id != 0` visibility query
 /// below **is** reached. The empty-candidate early return is still the source's
-/// first branch.
-pub async fn get_acl_accessible_knowledge_base_ids<M: Mysql>(
-    mysql: &M,
-    context: &AclQueryContext,
+/// first branch, and `build_direct_access_query_context` is built after it —
+/// the source's own position and order — so a task without default knowledge
+/// bases never reads the organization names or the caller's group roles.
+pub async fn get_acl_accessible_knowledge_base_ids<R: Redis>(
+    acl: &AclContextSource<'_, R>,
+    user_id: i64,
     candidate_ids: &[i64],
 ) -> MysqlResult<Vec<i64>> {
     let candidates = deduplicate(candidate_ids);
     if candidates.is_empty() {
         return Ok(Vec::new());
     }
-    let candidate_params: Vec<String> = candidates.iter().map(i64::to_string).collect();
-    let rows = if context.user_id == 0 {
-        mysql
+    let candidate_params: Vec<BindingArg> =
+        candidates.iter().copied().map(BindingArg::Int).collect();
+    let rows = if user_id == 0 {
+        acl.mysql
             .fetch_all::<_, _, MysqlRow>(
                 acl_organization_knowledge_base_ids_statement(candidates.len()),
                 candidate_params,
             )
             .await?
     } else {
-        let (statement, params) = acl_visible_knowledge_base_ids_query(context, &candidates);
-        mysql.fetch_all::<_, _, MysqlRow>(statement, params).await?
+        let context = acl.build(user_id, &candidates).await?;
+        let (statement, params) = acl_visible_knowledge_base_ids_query(&context, &candidates);
+        acl.mysql
+            .fetch_all::<_, _, MysqlRow>(statement, params)
+            .await?
     };
     let mut ids = Vec::with_capacity(rows.len());
     for row in &rows {
@@ -811,8 +908,22 @@ mod tests {
         assert_eq!(
             params,
             vec![
-                "477", "ns-a", "team-c", "team-a", "team-b", "team-d", "org-a", "org-b", "477",
-                "569", "90", "615", "557", "567", "239607", "477",
+                BindingArg::Int(477),
+                BindingArg::Str("ns-a".to_string()),
+                BindingArg::Str("team-c".to_string()),
+                BindingArg::Str("team-a".to_string()),
+                BindingArg::Str("team-b".to_string()),
+                BindingArg::Str("team-d".to_string()),
+                BindingArg::Str("org-a".to_string()),
+                BindingArg::Str("org-b".to_string()),
+                BindingArg::Str("477".to_string()),
+                BindingArg::Str("569".to_string()),
+                BindingArg::Str("90".to_string()),
+                BindingArg::Str("615".to_string()),
+                BindingArg::Str("557".to_string()),
+                BindingArg::Str("567".to_string()),
+                BindingArg::Int(239_607),
+                BindingArg::Str("477".to_string()),
             ]
         );
     }
@@ -835,6 +946,14 @@ mod tests {
             2
         );
         assert_eq!(flat.matches("kinds.id IN (?)").count(), 1);
-        assert_eq!(params, vec!["42", "42", "7", "42"]);
+        assert_eq!(
+            params,
+            vec![
+                BindingArg::Int(42),
+                BindingArg::Str("42".to_string()),
+                BindingArg::Int(7),
+                BindingArg::Str("42".to_string()),
+            ]
+        );
     }
 }

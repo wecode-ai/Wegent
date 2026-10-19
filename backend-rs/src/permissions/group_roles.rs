@@ -13,6 +13,8 @@
 use brz_mysql::{FromMysqlRow, MysqlResult, MysqlService};
 use brz_redis::Redis;
 
+use crate::teams::teams_repository::NAMESPACE_COLUMNS;
+
 use super::EntityResolvers;
 
 /// `NAMESPACE_RESOURCE_TYPE`.
@@ -211,13 +213,18 @@ async fn namespace_names(
         return Ok(std::collections::BTreeMap::new());
     }
     let placeholders = vec!["?"; ids.len()].join(", ");
+    // The source reads the full `Namespace` entity. `Namespace.is_active` is a
+    // bare truthy filter (`db.query(Namespace).filter(Namespace.id.in_(...),
+    // Namespace.is_active)` in `group_member_helper.iter_user_groups_with_roles`),
+    // which SQLAlchemy renders as `= 1` — not the `IS true` form the
+    // `.is_(True)` call sites use. The ids are integers, so the rendered
+    // literal is unquoted too.
     let sql = format!(
-        "SELECT namespace.id AS namespace_id, namespace.name AS namespace_name \n\
+        "SELECT {NAMESPACE_COLUMNS} \n\
          FROM namespace \n\
-         WHERE namespace.id IN ({placeholders}) AND namespace.is_active IS true"
+         WHERE namespace.id IN ({placeholders}) AND namespace.is_active = 1"
     );
-    let args: Vec<String> = ids.iter().map(i64::to_string).collect();
-    let rows: Vec<NamespaceRow> = mysql.fetch_all(&sql, args).await?;
+    let rows: Vec<NamespaceRow> = mysql.fetch_all(&sql, ids.to_vec()).await?;
     Ok(rows
         .into_iter()
         .map(|row| (row.namespace_id, row.namespace_name))

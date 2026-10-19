@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import pytest
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
@@ -393,3 +394,27 @@ def test_list_group_installs_batch_rejects_too_many_groups(test_client, test_tok
 
     assert response.status_code == 400
     assert response.json()["detail"] == "At most 100 groups can be queried at once"
+
+
+@pytest.fixture(autouse=True)
+def _retained_python_handler_contracts(test_client):
+    import app.api.endpoints.resource_library as endpoint_0
+    import app.api.endpoints.resource_library as endpoint_1
+    from tests.legacy_python_routes import legacy_python_handlers
+
+    with legacy_python_handlers(test_client.app) as register:
+        register(
+            "/api/resource-library/listings",
+            endpoint_0.list_resource_library,
+            endpoint_0.router,
+            methods=["GET"],
+            response_model=endpoint_0.ResourceLibraryDiscoveryList,
+        )
+        register(
+            "/api/resource-library/tags",
+            endpoint_1.get_marketplace_tags,
+            endpoint_1.router,
+            methods=["GET"],
+            response_model=endpoint_1.MarketplaceTagsResponse,
+        )
+        yield

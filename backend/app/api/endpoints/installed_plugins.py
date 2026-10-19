@@ -175,10 +175,11 @@ def _ensure_submission_matches_task_token(
     )
 
 
-@router.post(
-    "/installed/auto-update-batch",
-    response_model=PluginAutoUpdateBatchResponse,
-)
+# MIGRATION-CANDIDATE(api="POST /api/plugins/installed/auto-update-batch"): remove after final confirmation.
+# @router.post(
+#     "/installed/auto-update-batch",
+#     response_model=PluginAutoUpdateBatchResponse,
+# )
 def auto_update_installed_plugins(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),

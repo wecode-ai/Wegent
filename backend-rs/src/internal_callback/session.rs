@@ -562,6 +562,153 @@ pub(crate) async fn update_tool_block_status<R: Redis>(
     add_block(redis, subtask_id, &mut existing).await
 }
 
+/// `_finalize_unresolved_preview_tool_blocks`: close preview-only tool blocks
+/// that never received a result. A successful terminal turn closes them as
+/// `done`; an explicit unexecuted-tool termination keeps the error status.
+pub(crate) fn finalize_unresolved_preview_tool_blocks(
+    blocks: Vec<Map<String, Value>>,
+    termination_reason: Option<&str>,
+    terminal_status: Option<&str>,
+) -> Vec<Map<String, Value>> {
+    const PREVIEW_STATUSES: [&str; 2] = ["pending", "generating_arguments"];
+    const UNRESOLVED_MESSAGE: &str = "Tool call was not executed before the turn completed. The turn may have hit the tool-call limit.";
+    const GENERIC_MESSAGE: &str = "Tool call preview did not complete before the turn ended.";
+    let inferred_tool_limit = termination_reason == Some("completed_with_unexecuted_tool_calls");
+    let successful_terminal = terminal_status
+        .map(str::to_uppercase)
+        .is_some_and(|status| status == "COMPLETED");
+    let has_explicit_tool_error = blocks.iter().any(|block| {
+        block.get("type").and_then(Value::as_str) == Some("tool")
+            && block.get("status").and_then(Value::as_str) == Some("error")
+            && block
+                .get("tool_output")
+                .is_some_and(|value| !value.is_null())
+    });
+    let unresolved_message = if inferred_tool_limit && !has_explicit_tool_error {
+        UNRESOLVED_MESSAGE
+    } else {
+        GENERIC_MESSAGE
+    };
+    let mut finalized = Vec::with_capacity(blocks.len());
+    for mut block in blocks {
+        let is_preview_tool = block.get("type").and_then(Value::as_str) == Some("tool")
+            && block
+                .get("status")
+                .and_then(Value::as_str)
+                .is_some_and(|status| PREVIEW_STATUSES.contains(&status))
+            && block.get("tool_output").is_none_or(Value::is_null);
+        if is_preview_tool {
+            if successful_terminal && !inferred_tool_limit {
+                block.insert("status".into(), Value::String("done".into()));
+            } else {
+                block.insert("status".into(), Value::String("error".into()));
+                block.insert(
+                    "tool_output".into(),
+                    Value::String(unresolved_message.to_string()),
+                );
+            }
+        }
+        finalized.push(block);
+    }
+    finalized
+}
+
+/// `get_streaming_content`: raw read of the `APPEND`-built streaming text.
+///
+/// The source uses the raw client rather than the cache manager because
+/// `add_text_content` writes raw bytes with `APPEND`. A missing key and any
+/// read or decode error both yield `None`.
+pub(crate) async fn get_streaming_content<R: Redis>(redis: &R, subtask_id: i64) -> Option<String> {
+    let bytes = redis
+        .get::<_, brz_redis::RedisBytes>(&streaming_key(subtask_id))
+        .await
+        .ok()
+        .flatten()?;
+    std::str::from_utf8(&bytes).ok().map(str::to_string)
+}
+
+/// `get_accumulated_content`: the streaming text, or an empty string.
+pub(crate) async fn get_accumulated_content<R: Redis>(redis: &R, subtask_id: i64) -> String {
+    get_streaming_content(redis, subtask_id)
+        .await
+        .unwrap_or_default()
+}
+
+/// `finalize_and_get_blocks`: finalize the pending text and thinking blocks,
+/// hydrate block content, then close unresolved preview tool blocks.
+///
+/// The source returns `[]` when any step raises, so every failure path here
+/// also yields an empty list.
+pub(crate) async fn finalize_and_get_blocks<R: Redis>(
+    redis: &R,
+    subtask_id: i64,
+    termination_reason: Option<&str>,
+    terminal_status: Option<&str>,
+) -> Vec<Map<String, Value>> {
+    if finalize_current_text_block(redis, subtask_id)
+        .await
+        .is_err()
+    {
+        return Vec::new();
+    }
+    if finalize_current_thinking_block(redis, subtask_id)
+        .await
+        .is_err()
+    {
+        return Vec::new();
+    }
+    let Some(blocks) = load_blocks(redis, subtask_id, true).await else {
+        return Vec::new();
+    };
+    finalize_unresolved_preview_tool_blocks(blocks, termination_reason, terminal_status)
+}
+
+/// `clear_task_streaming_status`: drop the task-level streaming status key.
+pub(crate) async fn clear_task_streaming_status<R: Redis>(
+    redis: &R,
+    task_id: i64,
+) -> RedisResult<i64> {
+    redis.del(task_streaming_key(task_id)).await
+}
+
+/// `cleanup_streaming_state`: delete the whole per-subtask streaming key set in
+/// one `DEL`, followed by the task-level status key when a task id is known.
+pub(crate) async fn cleanup_streaming_state<R: Redis>(
+    redis: &R,
+    subtask_id: i64,
+    task_id: Option<i64>,
+) -> RedisResult<()> {
+    let blocks_key = blocks_key(subtask_id);
+    let blocks_raw = redis.lrange::<_, String>(&blocks_key, 0, -1).await?;
+    let mut keys = vec![
+        streaming_key(subtask_id),
+        blocks_key,
+        text_block_key(subtask_id),
+        thinking_block_key(subtask_id),
+        context_metrics_key(subtask_id),
+    ];
+    keys.extend(extract_block_content_keys(&blocks_raw));
+    redis.del_many(keys).await?;
+    if let Some(task_id) = task_id {
+        clear_task_streaming_status(redis, task_id).await?;
+    }
+    Ok(())
+}
+
+/// `_extract_block_content_keys`: the internal `_content_key` of each block.
+fn extract_block_content_keys(blocks_raw: &[String]) -> Vec<String> {
+    let mut keys = Vec::new();
+    for entry in blocks_raw {
+        let Ok(Value::Object(block)) = serde_json::from_str::<Value>(entry) else {
+            continue;
+        };
+        if let Some(Value::String(content_key)) = block.get(BLOCK_CONTENT_KEY_FIELD) {
+            keys.push(content_key.clone());
+        }
+    }
+    keys
+}
+
 fn text_block_id(block: &Map<String, Value>) -> String {
     block
         .get("id")

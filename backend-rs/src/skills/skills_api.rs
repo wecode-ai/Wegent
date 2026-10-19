@@ -141,6 +141,27 @@ async fn download_skill(
     .await
 }
 
+/// `GET /api/api/v1/kinds/skills/{skill_id}/download`: the doubled-prefix
+/// path clients send when their gateway already prefixes `/api`.
+///
+/// The source mounts the download route at `/api/v1/kinds/skills/...`
+/// (`API_PREFIX` plus the `/v1` and `/kinds/skills` router prefixes in
+/// `app/api/api.py` and `app/api/endpoints/kind/__init__.py`), so the doubled
+/// path matches no route and FastAPI answers its default
+/// `404 {"detail":"Not Found"}` before authentication or validation. The
+/// cutover routes the path to Rust to reproduce that response instead of
+/// proxying to Python, which the replay environment answers with
+/// `502 fallback upstream unavailable`.
+#[brz_http_server::get("/api/api/v1/kinds/skills/:skill_id/download", access = public)]
+async fn doubled_prefix_download_skill(
+    skill_id: &str,
+) -> Result<(), crate::http_compat::FastApiError> {
+    // No source route exists at this path, so the framework rejects the
+    // request before it parses the segment or validates the query string.
+    let _ = skill_id;
+    Err(not_found("Not Found"))
+}
+
 /// Handler body for `GET /api/v1/kinds/skills/{skill_id}/download`.
 #[allow(clippy::too_many_arguments)]
 async fn download(
@@ -380,6 +401,16 @@ mod tests {
         })
     }
 
+    #[brz_http_server::get(
+        "/probe/api/skills/:skill_id/download",
+        group = probe::skills_download_probe,
+        access = public
+    )]
+    async fn probe_doubled_prefix(skill_id: &str) -> Result<(), crate::http_compat::FastApiError> {
+        let _ = skill_id;
+        doubled_prefix_download_skill(skill_id).await
+    }
+
     /// Drives the mapped error over a real `http-server` socket so status,
     /// headers, and body are asserted exactly as the runtime renders them.
     async fn serve(request: &str) -> String {
@@ -406,6 +437,10 @@ mod tests {
             .map_or("", |line| line[name.len()..].trim())
     }
 
+    fn body_of(raw: &str) -> &str {
+        raw.split_once("\r\n\r\n").map_or("", |(_, body)| body)
+    }
+
     #[tokio::test]
     async fn not_modified_renders_etag_without_a_content_type() {
         let raw = serve(
@@ -420,6 +455,21 @@ mod tests {
             "",
             "the source returns a bare Response(304), which has no media type"
         );
+    }
+
+    #[tokio::test]
+    async fn doubled_prefix_download_returns_fastapi_not_found() {
+        // The source has no route at the doubled `/api/api/...` path, so it
+        // answers FastAPI's default 404 JSON before parsing the segment.
+        let raw = serve(
+            "GET /probe/api/skills/125063/download?namespace=default&task_id=474439267535385 \
+             HTTP/1.1\r\n\
+             Host: localhost\r\nConnection: close\r\n\r\n",
+        )
+        .await;
+        assert!(raw.starts_with("HTTP/1.1 404"), "raw response: {raw}");
+        assert_eq!(body_of(&raw), r#"{"detail":"Not Found"}"#);
+        assert_eq!(header_of(&raw, "content-type:"), "application/json");
     }
 
     #[test]

@@ -78,6 +78,7 @@ from app.services.project_chat.service import project_chat_service
 from app.stores.tasks import subtask_store, task_access_store, task_store
 
 router = APIRouter()
+legacy_router = APIRouter()
 
 
 def _collaboration_message_body(
@@ -204,7 +205,9 @@ def create_cloud_project(
     return _project_response(db, project, current_user)
 
 
-@router.get("/{project_id}", response_model=CloudProjectResponse)
+# MIGRATION-CANDIDATE(api="GET /api/v1/cloud-projects/:project_id"): remove after final confirmation.
+# @router.get("/{project_id}", response_model=CloudProjectResponse)
+@legacy_router.get("/{project_id}", response_model=CloudProjectResponse)
 def get_cloud_project(
     project_id: int,
     db: Session = Depends(get_db),

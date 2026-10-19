@@ -830,10 +830,11 @@ async def health_check():
     return HealthResponse(status="ok")
 
 
-@router.post(
-    "/guidance/{task_id}/{subtask_id}/consume",
-    response_model=GuidanceConsumeResponse,
-)
+# MIGRATION-CANDIDATE(api="POST /api/internal/chat/guidance/:task_id/:subtask_id/consume"): remove after final confirmation.
+# @router.post(
+#     "/guidance/{task_id}/{subtask_id}/consume",
+#     response_model=GuidanceConsumeResponse,
+# )
 async def consume_guidance(task_id: int, subtask_id: int):
     """Consume the next queued Chat Shell guidance item."""
     logger.info(
@@ -868,10 +869,11 @@ async def consume_guidance(task_id: int, subtask_id: int):
     return GuidanceConsumeResponse(item=item_data)
 
 
-@router.post(
-    "/guidance/{task_id}/{subtask_id}/expire",
-    response_model=GuidanceExpireResponse,
-)
+# MIGRATION-CANDIDATE(api="POST /api/internal/chat/guidance/:task_id/:subtask_id/expire"): remove after final confirmation.
+# @router.post(
+#     "/guidance/{task_id}/{subtask_id}/expire",
+#     response_model=GuidanceExpireResponse,
+# )
 async def expire_guidance(task_id: int, subtask_id: int):
     """Expire all queued Chat Shell guidance items."""
     expired_ids = await guidance_queue.expire(task_id=task_id, subtask_id=subtask_id)
@@ -1087,7 +1089,8 @@ class AttachmentTextResponse(BaseModel):
     source_truncated: bool
 
 
-@router.get("/attachments/{attachment_id}/text", response_model=AttachmentTextResponse)
+# MIGRATION-CANDIDATE(api="GET /api/internal/chat/attachments/:attachment_id/text"): remove after final confirmation.
+# @router.get("/attachments/{attachment_id}/text", response_model=AttachmentTextResponse)
 async def get_attachment_text(
     attachment_id: int,
     session_id: str = Query(..., description="Conversation session, e.g. task-123"),
@@ -1322,9 +1325,10 @@ async def append_messages_batch(
     return BatchMessageIdsResponse(message_ids=message_ids)
 
 
-@router.patch(
-    "/history/{session_id}/messages/{message_id}", response_model=SuccessResponse
-)
+# MIGRATION-CANDIDATE(api="PATCH /api/internal/chat/history/:session_id/messages/:message_id"): remove after final confirmation.
+# @router.patch(
+#     "/history/{session_id}/messages/{message_id}", response_model=SuccessResponse
+# )
 async def update_message(
     session_id: str,
     message_id: str,

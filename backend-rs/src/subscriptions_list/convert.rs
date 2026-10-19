@@ -6,7 +6,7 @@
 //! `GET /api/subscriptions`.
 use std::collections::{HashMap, HashSet};
 
-use chrono::NaiveDateTime;
+use chrono::{DateTime, FixedOffset, NaiveDateTime};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -127,10 +127,10 @@ pub(crate) struct SubscriptionItem {
     namespace: String,
     pub(crate) webhook_url: Option<String>,
     webhook_secret: Option<String>,
-    last_execution_time: Option<String>,
+    pub(crate) last_execution_time: Option<String>,
     last_execution_status: Option<String>,
     last_execution_message: Option<String>,
-    next_execution_time: Option<String>,
+    pub(crate) next_execution_time: Option<String>,
     execution_count: i64,
     success_count: i64,
     failure_count: i64,
@@ -146,8 +146,8 @@ pub(crate) struct SubscriptionItem {
     rental_count: i64,
     pub(crate) trigger_config_valid: bool,
     trigger_config_error: Option<String>,
-    expires_at: Option<String>,
-    is_expired: bool,
+    pub(crate) expires_at: Option<String>,
+    pub(crate) is_expired: bool,
     created_at: String,
     updated_at: String,
 }
@@ -202,12 +202,26 @@ pub(crate) fn convert_to_subscription_in_db(
     });
 
     let last_execution_time =
-        internal_datetime(&internal, "last_execution_time").map(pydantic_datetime);
+        internal_datetime(&internal, "last_execution_time").map(|dt| match dt {
+            ParsedDatetime::Naive(value) => pydantic_datetime(value),
+            ParsedDatetime::Aware(value) => pydantic_aware_datetime(&value),
+        });
     let next_execution_time =
-        internal_datetime(&internal, "next_execution_time").map(pydantic_datetime);
+        internal_datetime(&internal, "next_execution_time").map(|dt| match dt {
+            ParsedDatetime::Naive(value) => pydantic_datetime(value),
+            ParsedDatetime::Aware(value) => pydantic_aware_datetime(&value),
+        });
     let expires_at = internal_datetime(&internal, "expires_at");
     let is_expired = expires_at
-        .map(|expires_at| chrono::Utc::now().naive_utc() >= expires_at)
+        .as_ref()
+        .map(|expires_at| match expires_at {
+            ParsedDatetime::Naive(value) => chrono::Utc::now().naive_utc() >= *value,
+            // `is_subscription_expired`: an aware expires_at is compared
+            // against aware UTC now.
+            ParsedDatetime::Aware(value) => {
+                chrono::Utc::now() >= DateTime::<chrono::Utc>::from(*value)
+            }
+        })
         .unwrap_or(false);
 
     let execution_target = spec
@@ -291,7 +305,10 @@ pub(crate) fn convert_to_subscription_in_db(
         rental_count: internal_i64(&internal, "rental_count").unwrap_or(0),
         trigger_config_valid,
         trigger_config_error,
-        expires_at: expires_at.map(pydantic_datetime),
+        expires_at: expires_at.map(|dt| match dt {
+            ParsedDatetime::Naive(value) => pydantic_datetime(value),
+            ParsedDatetime::Aware(value) => pydantic_aware_datetime(&value),
+        }),
         is_expired,
         created_at: pydantic_datetime(row.created_at),
         updated_at: pydantic_datetime(row.updated_at),
@@ -467,17 +484,48 @@ pub(crate) fn internal_i64(internal: &Value, key: &str) -> Option<i64> {
     internal.get(key).and_then(Value::as_i64)
 }
 
+/// A `_internal` datetime after `datetime.fromisoformat`: aware when the
+/// stored string carried a UTC offset, naive otherwise.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ParsedDatetime {
+    Naive(NaiveDateTime),
+    Aware(DateTime<FixedOffset>),
+}
+
 /// Parse an ISO-8601 datetime from `_internal` (`datetime.fromisoformat`
 /// accepts `YYYY-MM-DDTHH:MM:SS` and optional microseconds/fractional
-/// offsets; the stored values are naive).
-pub(crate) fn internal_datetime(internal: &Value, key: &str) -> Option<chrono::NaiveDateTime> {
+/// offsets; a UTC offset in the stored value yields an aware datetime).
+pub(crate) fn internal_datetime(internal: &Value, key: &str) -> Option<ParsedDatetime> {
     let raw = internal.get(key)?.as_str()?;
     chrono::DateTime::parse_from_rfc3339(raw)
         .ok()
-        .map(|dt| dt.naive_local())
-        .or_else(|| chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S").ok())
-        .or_else(|| chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S%.f").ok())
-        .or_else(|| chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S").ok())
+        .map(ParsedDatetime::Aware)
+        .or_else(|| {
+            chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S")
+                .ok()
+                .map(ParsedDatetime::Naive)
+        })
+        .or_else(|| {
+            chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S%.f")
+                .ok()
+                .map(ParsedDatetime::Naive)
+        })
+        .or_else(|| {
+            chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S")
+                .ok()
+                .map(ParsedDatetime::Naive)
+        })
+}
+
+/// pydantic aware-datetime serialization: like `pydantic_datetime` plus the
+/// stored offset, with a UTC offset rendered as `Z`.
+pub(crate) fn pydantic_aware_datetime(value: &DateTime<FixedOffset>) -> String {
+    let naive = pydantic_datetime(value.naive_local());
+    if value.offset().local_minus_utc() == 0 {
+        format!("{naive}Z")
+    } else {
+        format!("{naive}{}", value.offset())
+    }
 }
 
 /// pydantic naive-datetime serialization: `YYYY-MM-DDTHH:MM:SS` plus

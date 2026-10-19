@@ -100,6 +100,38 @@ pub struct DiscoveryList {
     pub limit: i64,
 }
 
+/// Raw query parameters for `GET /api/resource-library/users/me/published`.
+/// Values stay strings so the handler can reproduce FastAPI's decoding and
+/// validation before the service runs.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct PublishedQuery {
+    pub resource_type: Option<String>,
+    pub page: Option<String>,
+    pub limit: Option<String>,
+}
+
+/// Validated `list_published` arguments.
+///
+/// `resource_type` keeps the endpoint's own value (`agent`, `skill`, ...)
+/// because the service compares it against
+/// `marketplace_resources.resource_type` directly.
+#[derive(Debug, Clone)]
+pub struct PublishedParams {
+    pub resource_type: Option<&'static str>,
+    pub page: i64,
+    pub limit: i64,
+}
+
+/// `ResourceLibraryListingList`: the offset-paginated listing body.
+#[derive(Debug, Serialize)]
+pub struct ListingList {
+    pub items: Vec<Listing>,
+    pub total: i64,
+    pub page: i64,
+    pub limit: i64,
+}
+
 /// `ResourceLibraryListing`.
 #[derive(Debug, Serialize)]
 pub struct Listing {
@@ -257,6 +289,9 @@ pub struct KindSpec {
     /// `_extract_exceptions`: the stored exception rules.
     pub exceptions: Option<Vec<Option<ExceptionEntry>>>,
     pub capability: Option<Capability>,
+    /// `_delete_legacy_agent_installations`' `spec.sourceRef`.
+    #[serde(rename = "sourceRef")]
+    pub source_ref: Option<SourceRef>,
 }
 
 /// One stored `spec.exceptions` entry (`SkillBindingException`).
@@ -282,6 +317,14 @@ pub struct SkillRef {
     pub is_public: Option<JsonScalar>,
     #[serde(rename = "is_public")]
     pub is_public_snake: Option<JsonScalar>,
+}
+
+/// `kinds.json.spec.sourceRef` (legacy `CapabilityInstallation` rows).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct SourceRef {
+    #[serde(rename = "kindId")]
+    pub kind_id: Option<JsonScalar>,
 }
 
 /// `kinds.json.spec.capability`.

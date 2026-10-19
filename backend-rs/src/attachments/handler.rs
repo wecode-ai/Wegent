@@ -47,6 +47,29 @@ fn error_response(status: StatusCode, detail: &str) -> crate::http_compat::FastA
     crate::http_compat::FastApiError::detail(status, detail)
 }
 
+/// `str(request.url)`: the absolute URL the source observes behind its
+/// proxy — `x-forwarded-proto` scheme and the forwarded authority
+/// (`x-forwarded-host`, falling back to the `Host` header), plus the
+/// request target. The redirect branch only runs without `download_token`
+/// or `share_token`, so the query string is at most the caller's `purpose`.
+fn request_url(request: &AnonymousRequest<'_>) -> String {
+    let scheme = request.forwarded_proto.unwrap_or("http");
+    let host = request
+        .forwarded_host
+        .filter(|value| !value.is_empty())
+        .or(request.host)
+        .unwrap_or("localhost");
+    let mut url = format!(
+        "{scheme}://{host}/api/attachments/{}/download",
+        request.attachment_id
+    );
+    if let Some(purpose) = request.purpose.filter(|value| !value.is_empty()) {
+        url.push_str("?purpose=");
+        url.push_str(&percent_encode(purpose));
+    }
+    url
+}
+
 /// `_build_content_disposition`: a latin-1-encodable filename gets a quoted
 /// `filename="..."` (backslash and quote escaped); any other filename uses
 /// RFC 5987 `filename*=UTF-8''<percent-encoded>`.
@@ -121,18 +144,51 @@ fn attachment_disposition(download_purpose: DownloadPurpose) -> &'static str {
     }
 }
 
+/// The request context the anonymous browser-redirect branch needs
+/// (`request.headers.get("Accept")` and `str(request.url)`).
+pub(super) struct AnonymousRequest<'a> {
+    pub accept: Option<&'a str>,
+    pub host: Option<&'a str>,
+    pub forwarded_host: Option<&'a str>,
+    pub forwarded_proto: Option<&'a str>,
+    pub attachment_id: i64,
+    pub purpose: Option<&'a str>,
+}
+
+/// The download endpoint's outcome: the file stream or the anonymous
+/// browser-redirect `302` to the frontend login page.
+pub(super) enum DownloadOutcome {
+    Download(AttachmentDownload),
+    LoginRedirect(brz_http_server::Redirect),
+}
+
+impl brz_http_server::IntoHttpResponse<brz_http_server::__private::kind::Direct>
+    for DownloadOutcome
+{
+    fn into_http_response(
+        self,
+        arena: &brz_http_server::EphemeralBytesArena,
+    ) -> brz_http_server::Response {
+        match self {
+            Self::Download(download) => download.into_http_response(arena),
+            Self::LoginRedirect(redirect) => redirect.into_http_response(arena),
+        }
+    }
+}
+
 /// Handler body for `GET /api/attachments/{attachment_id}/download`.
 ///
 /// The source authenticates the request with, in order, a
 /// `download_token` query parameter (method 1), a `share_token` query
 /// parameter (method 2), the bearer session JWT (method 3), or the
-/// anonymous browser redirect (method 4). Methods 1-3 are implemented; a
-/// request carrying none falls through to the source's non-browser outcome,
-/// `401 Authentication required`.
+/// anonymous browser redirect (method 4): a browser Accept header gets a
+/// `302` to `{FRONTEND_URL}/login?redirect={quote(current_url)}`, anything
+/// else the `401 Authentication required` body.
 ///
 /// The resolved purpose selects both the file disposition
 /// (`playback`/`preview` stream inline, everything else attaches) and the
 /// argument the knowledge-document download policy checks.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn download_attachment(
     state: &Arc<AppState>,
     attachment_id: i64,
@@ -141,7 +197,8 @@ pub(super) async fn download_attachment(
     purpose: Option<&str>,
     range_header: Option<&str>,
     user: Option<&UserRow>,
-) -> Result<AttachmentDownload, crate::http_compat::FastApiError> {
+    request: &AnonymousRequest<'_>,
+) -> Result<DownloadOutcome, crate::http_compat::FastApiError> {
     // The source tests `if download_token:` first, so an empty parameter is
     // treated as absent and the session credential applies instead.
     let (context, download_purpose) = match download_token.filter(|token| !token.is_empty()) {
@@ -195,8 +252,23 @@ pub(super) async fn download_attachment(
             // Method 3: the bearer session JWT (`get_current_user_optional`).
             None => {
                 let Some(user) = user else {
-                    // No authentication provided: the source falls back to
-                    // the anonymous browser redirect; without it, 401.
+                    // Method 4: no authentication. A browser Accept header
+                    // redirects to the frontend login page; an API client
+                    // gets the 401 body.
+                    if request
+                        .accept
+                        .is_some_and(|accept| accept.contains("text/html"))
+                    {
+                        let current_url = request_url(request);
+                        let login_url = format!(
+                            "{}/login?redirect={}",
+                            state.oidc_config.frontend_url,
+                            percent_encode(&current_url)
+                        );
+                        return Ok(DownloadOutcome::LoginRedirect(
+                            brz_http_server::Redirect::found(login_url),
+                        ));
+                    }
                     return Err(error_response(
                         StatusCode::UNAUTHORIZED,
                         "Authentication required",
@@ -261,7 +333,7 @@ pub(super) async fn download_attachment(
         })
         .await?
     {
-        return Ok(response);
+        return Ok(DownloadOutcome::Download(response));
     }
 
     // `application media download policy`.
@@ -321,7 +393,9 @@ pub(super) async fn download_attachment(
     response = response
         .header("x-accel-buffering", "no")
         .map_err(attachment_header_error)?;
-    Ok(AttachmentDownload::Binary(response))
+    Ok(DownloadOutcome::Download(AttachmentDownload::Binary(
+        response,
+    )))
 }
 
 /// `_get_attachment_context`: load the context
@@ -352,6 +426,8 @@ pub(super) async fn get_attachment_context(
     let has_access = match context_store::ensure_attachment_access(
         &*state.task_store,
         &state.mysql,
+        state.redis.as_ref(),
+        &state.entity_resolvers,
         &context,
         user_id,
     )
@@ -398,6 +474,43 @@ fn minio_config_from_env() -> Option<MinioConfig> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `str(request.url)` behind the proxy: the forwarded scheme, the Host
+    /// authority, and the request path (plus `purpose` when sent).
+    #[test]
+    fn request_url_uses_forwarded_scheme_and_host() {
+        let request = AnonymousRequest {
+            accept: None,
+            host: Some("127.0.0.1:8080"),
+            forwarded_host: Some("wegent.example.invalid"),
+            forwarded_proto: Some("https"),
+            attachment_id: 1392665,
+            purpose: None,
+        };
+        assert_eq!(
+            request_url(&request),
+            "https://wegent.example.invalid/api/attachments/1392665/download"
+        );
+    }
+
+    #[test]
+    fn the_login_redirect_quotes_the_current_url() {
+        // `quote(current_url)` with the default safe set keeps `/` and
+        // escapes `:` — the recorded `Location` shape.
+        let request = AnonymousRequest {
+            accept: Some("text/html,application/xhtml+xml"),
+            host: Some("127.0.0.1:8080"),
+            forwarded_host: Some("wegent.example.invalid"),
+            forwarded_proto: Some("https"),
+            attachment_id: 1392665,
+            purpose: None,
+        };
+        let current_url = request_url(&request);
+        assert_eq!(
+            percent_encode(&current_url),
+            "https%3A//wegent.example.invalid/api/attachments/1392665/download"
+        );
+    }
 
     #[test]
     fn ascii_filenames_use_quoted_disposition() {

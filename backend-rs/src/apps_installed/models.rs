@@ -13,12 +13,12 @@ use serde::Serialize;
 /// `ConnectorConnectionResponse`.
 #[derive(Debug, Serialize)]
 pub struct ConnectionResponse {
-    pub status: &'static str,
+    /// `connected`, `disconnected`, `expired`, `pending`, or `error` from the
+    /// stored connection, or the `auth_type == "none"` default.
+    pub status: String,
     pub external_account_name: Option<String>,
     pub granted_scopes: Vec<String>,
-    /// Serialized as an ISO datetime when present; the source's only
-    /// connection shape on this endpoint without an OAuth connection is the
-    /// `auth_type == "none"` default, which carries no expiry.
+    /// Pydantic serializes the stored naive datetime without a timezone.
     pub expires_at: Option<String>,
 }
 
@@ -56,7 +56,7 @@ pub struct InstalledResponse {
 /// `ConnectorAppService.user_response`.
 pub fn connected_no_auth() -> ConnectionResponse {
     ConnectionResponse {
-        status: "connected",
+        status: "connected".to_string(),
         external_account_name: None,
         granted_scopes: Vec::new(),
         expires_at: None,

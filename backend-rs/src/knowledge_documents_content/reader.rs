@@ -50,7 +50,7 @@ pub(crate) const DOCUMENT_COLUMNS: &str = "knowledge_documents.id AS knowledge_d
      knowledge_documents.updated_at AS knowledge_documents_updated_at";
 
 /// `knowledge_document_external_sources` columns.
-const EXTERNAL_SOURCE_COLUMNS: &str = "knowledge_document_external_sources.document_id \
+pub(crate) const EXTERNAL_SOURCE_COLUMNS: &str = "knowledge_document_external_sources.document_id \
      AS knowledge_document_external_sources_document_id, \
      knowledge_document_external_sources.kind_id \
      AS knowledge_document_external_sources_kind_id, \
@@ -303,8 +303,18 @@ pub(crate) async fn external_sources_by_document_ids<M>(
 where
     M: Mysql,
 {
+    external_source_rows(mysql, document_ids).await.map(|_| ())
+}
+
+/// The same `selectin` load, returning the number of identity rows. The
+/// conversion failure transition needs `document.has_external_identity`
+/// without issuing the load twice.
+pub(crate) async fn external_source_rows<M>(mysql: &M, document_ids: &[i64]) -> MysqlResult<usize>
+where
+    M: Mysql,
+{
     if document_ids.is_empty() {
-        return Ok(());
+        return Ok(0);
     }
     let ids = document_ids
         .iter()
@@ -316,7 +326,7 @@ where
         #[allow(dead_code)]
         knowledge_document_external_sources_document_id: i64,
     }
-    let _rows: Vec<Row> = mysql
+    let rows: Vec<Row> = mysql
         .fetch_all(
             &format!(
                 "SELECT {EXTERNAL_SOURCE_COLUMNS} \n\
@@ -326,7 +336,7 @@ where
             (),
         )
         .await?;
-    Ok(())
+    Ok(rows.len())
 }
 
 /// The `selectin` external-source load for a **single** parent row, as

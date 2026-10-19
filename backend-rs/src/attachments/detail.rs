@@ -81,6 +81,8 @@ async fn attachment_detail(
     let has_access = match context_store::ensure_attachment_access(
         &*state.task_store,
         &state.mysql,
+        state.redis.as_ref(),
+        &state.entity_resolvers,
         &context,
         user.users_id,
     )
@@ -133,6 +135,7 @@ async fn executor_download_attachment(
 }
 
 /// GET /api/attachments/{attachment_id}/download.
+#[allow(clippy::too_many_arguments)]
 #[brz_http_server::get("/api/attachments/:attachment_id/download", access = optional)]
 async fn download(
     #[inject(state)] state: &Arc<AppState>,
@@ -141,8 +144,20 @@ async fn download(
     share_token: Option<String>,
     purpose: Option<String>,
     #[header("range")] range: Option<&str>,
+    #[header("accept")] accept: Option<&str>,
+    #[header("host")] host: Option<&str>,
+    #[header("x-forwarded-host")] forwarded_host: Option<&str>,
+    #[header("x-forwarded-proto")] forwarded_proto: Option<&str>,
     #[auth] user: Option<AttachmentUser>,
-) -> Result<super::external_media::AttachmentDownload, crate::http_compat::FastApiError> {
+) -> Result<super::handler::DownloadOutcome, crate::http_compat::FastApiError> {
+    let request = super::handler::AnonymousRequest {
+        accept,
+        host,
+        forwarded_host,
+        forwarded_proto,
+        attachment_id,
+        purpose: purpose.as_deref(),
+    };
     super::handler::download_attachment(
         state,
         attachment_id,
@@ -151,6 +166,7 @@ async fn download(
         purpose.as_deref(),
         range,
         user.as_deref(),
+        &request,
     )
     .await
 }

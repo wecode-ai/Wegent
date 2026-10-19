@@ -531,11 +531,12 @@ def review_request(
 # =============================================================================
 
 
-@router.get(
-    "/KnowledgeBase/{resource_id}/my-permission",
-    response_model=MyKBPermissionResponse,
-    summary="Get my KnowledgeBase permission",
-)
+# MIGRATION-CANDIDATE(api="GET /api/share/KnowledgeBase/:resource_id/my-permission"): remove after final confirmation.
+# @router.get(
+#     "/KnowledgeBase/{resource_id}/my-permission",
+#     response_model=MyKBPermissionResponse,
+#     summary="Get my KnowledgeBase permission",
+# )
 def get_my_kb_permission(
     resource_id: int,
     db: Session = Depends(get_db),

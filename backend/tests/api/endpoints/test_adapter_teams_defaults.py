@@ -22,6 +22,9 @@ def test_default_route_precedes_id_route_and_returns_nullable_team(monkeypatch):
     resolve = Mock(return_value={"id": 3, "name": "assistant", "namespace": "default"})
     monkeypatch.setattr(teams_endpoint, "resolve_default_team", resolve)
     app = FastAPI()
+    app.add_api_route(
+        "/teams/default", teams_endpoint.get_default_team, methods=["GET"]
+    )
     app.include_router(teams_endpoint.router, prefix="/teams")
     app.dependency_overrides[get_db] = lambda: None
     app.dependency_overrides[security.get_current_user] = lambda: SimpleNamespace(id=7)

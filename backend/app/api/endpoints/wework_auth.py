@@ -209,7 +209,8 @@ def _create_wework_refresh_token(user: User, device_thumbprint: str) -> str:
     )
 
 
-@router.get("/config", response_model=WeworkWebConfigResponse)
+# MIGRATION-CANDIDATE(api="GET /api/auth/wework/config"): remove after final confirmation.
+# @router.get("/config", response_model=WeworkWebConfigResponse)
 async def get_wework_web_config() -> WeworkWebConfigResponse:
     """Return public Web and Socket.IO URLs associated with this Backend."""
     socket_url = settings.WEGENT_SOCKET_URL.strip().rstrip("/")
@@ -219,7 +220,8 @@ async def get_wework_web_config() -> WeworkWebConfigResponse:
     )
 
 
-@router.post("/sessions", response_model=WeworkAuthSessionCreateResponse)
+# MIGRATION-CANDIDATE(api="POST /api/auth/wework/sessions"): remove after final confirmation.
+# @router.post("/sessions", response_model=WeworkAuthSessionCreateResponse)
 async def create_wework_auth_session(
     request: WeworkAuthSessionCreateRequest | None = None,
 ) -> WeworkAuthSessionCreateResponse:
@@ -265,7 +267,8 @@ async def create_wework_auth_session(
     )
 
 
-@router.get("/sessions/{session_id}/poll", response_model=WeworkAuthSessionPollResponse)
+# MIGRATION-CANDIDATE(api="GET /api/auth/wework/sessions/:session_id/poll"): remove after final confirmation.
+# @router.get("/sessions/{session_id}/poll", response_model=WeworkAuthSessionPollResponse)
 async def poll_wework_auth_session(
     session_id: str,
     poll_token: str = Query(...),

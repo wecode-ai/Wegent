@@ -19,7 +19,7 @@ from shared.models import ExecutionRequest
 @pytest.mark.asyncio
 @pytest.mark.parametrize("idle_seconds, expected_connections", [(0.0, 1), (3.0, 2)])
 async def test_sequential_dispatches_retire_idle_connections(
-    monkeypatch, idle_seconds: float, expected_connections: int
+    monkeypatch, caplog, idle_seconds: float, expected_connections: int
 ) -> None:
     """Reuse active connections and retire idle ones before the server's 5s limit."""
     monkeypatch.setenv("NO_PROXY", "127.0.0.1")
@@ -88,11 +88,14 @@ async def test_sequential_dispatches_retire_idle_connections(
                     request = ExecutionRequest(task_id=101, subtask_id=subtask_id)
                     await asyncio.wait_for(
                         dispatcher._dispatch_sse(request, target, AsyncMock()),
-                        timeout=2,
+                        # SDK initialization can exceed 2s on a loaded worker.
+                        # Idle expiry is controlled by idle_clock, not this watchdog.
+                        timeout=30,
                     )
                     idle_clock = idle_seconds
 
                 assert len(requests) == 2
+                assert "stream_cleanup_interrupted" not in caplog.text
                 assert len(connections) == expected_connections
     finally:
         await dispatcher.http_client.aclose()

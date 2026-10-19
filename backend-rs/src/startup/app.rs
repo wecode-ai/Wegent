@@ -14,6 +14,10 @@ use anyhow::{Context as _, Result};
 use std::sync::Arc;
 
 pub async fn build() -> Result<AppState> {
+    // `Settings.LOCAL_DEVICE_COMMANDS` is validated while the source process
+    // starts; an invalid value fails startup instead of the first command.
+    crate::device_commands::init_from_env().context("failed to load LOCAL_DEVICE_COMMANDS")?;
+
     let config = OidcConfig::from_env();
     let oidc = OidcService::new(&config).context("failed to build OIDC provider client")?;
 
@@ -54,12 +58,32 @@ pub async fn build() -> Result<AppState> {
             None
         }
     };
+    // The Celery result consumer keeps its own connection
+    // (`celery/backends/redis.py:ResultConsumer.start`). It is best-effort like
+    // the shared service: without it an index dispatch fails exactly as an
+    // unreachable source broker would.
+    let celery_subscriber = if redis.is_some() {
+        match super::redis::celery_subscriber(&redis_config).await {
+            Ok(service) => Some(service),
+            Err(error) => {
+                tracing::warn!(%error, "failed to connect the Celery result subscriber");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let celery = crate::celery_broker::CeleryBroker::new(celery_subscriber);
     // `executor_version_service` is created once with the application's Redis
     // service: its refresh worker is started here, at process startup, so a
     // device listing only enqueues the refresh a cache miss requires.
     let executor_version =
         crate::executor_version::ExecutorVersionService::from_redis(redis.clone())
             .context("failed to build the executor-version service")?;
+    // The source Socket.IO server's `AsyncRedisManager` subscribes to the
+    // adapter channel once per process. Migrated interactive RPC handlers share
+    // that process-owned subscription instead of opening one per request.
+    let socketio_rpc = Some(crate::socketio_rpc::SocketIoRpc::start(&redis_config));
     // `GET /api/git/repositories`: the retained provider HTTP client and the
     // process-owned background full-fetch worker are built here so the worker
     // is initialization-owned.
@@ -89,6 +113,8 @@ pub async fn build() -> Result<AppState> {
         jwt_algorithm,
         mysql,
         redis,
+        celery,
+        socketio_rpc,
         oidc_config: config,
         oidc,
         oidc_callback,
@@ -100,6 +126,7 @@ pub async fn build() -> Result<AppState> {
         video_result_urls: Arc::new(crate::video_result_urls::NoVideoResultUrlRefresh),
         cloud_runtime_features: Arc::new(crate::devices::NoCloudRuntimeFeatures),
         skill_market: crate::skill_market::SkillMarketRegistry::default(),
+        mcp_providers: crate::mcp_providers::McpProviderRegistry::default(),
         executor_version,
         executor_manager: crate::executor_manager::ExecutorManager::from_env()
             .context("failed to build the executor-manager client")?,
@@ -108,6 +135,9 @@ pub async fn build() -> Result<AppState> {
         llm_proxy_credentials: Arc::new(crate::llm_proxy::StoredLlmProxyCredentials),
         repository_tokens: Arc::new(crate::repository_tokens::StoredRepositoryTokens),
         git_repositories,
+        // The outbound token issuer's `_collect_extra_claims` seam: the
+        // open-source core contributes no extra claims.
+        token_issuer_extra_claims: Arc::new(crate::token_issuers::NoExtraClaims),
         // `create_response`'s background dispatch worker is spawned here so the
         // fire-and-forget executor/chat-shell dispatch is initialization-owned.
         responses_dispatch: Arc::new(crate::responses::dispatch::ResponsesDispatch::spawn()),

@@ -140,10 +140,11 @@ def list_knowledge_bases_open(
 # ---------------------------------------------------------------------------
 
 
-@router.get(
-    "/documents",
-    response_model=KnowledgeDocumentListResponse,
-)
+# MIGRATION-CANDIDATE(api="GET /api/knowledge/documents"): remove after final confirmation.
+# @router.get(
+#     "/documents",
+#     response_model=KnowledgeDocumentListResponse,
+# )
 @trace_sync("list_documents_open", "knowledge.api")
 def list_documents_open(
     knowledge_base_id: int = Query(

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Row projections and statements for the admin plugin-publication list.
+//! Row projections and statements for the plugin-publication request lists.
 //!
 //! Source models: `app/models/plugin_publication.py` and the `Plugin`/`User`
 //! models. Every projection selects the full SQLAlchemy column list with the
@@ -14,30 +14,25 @@ use chrono::NaiveDateTime;
 
 use brz_json::OpaqueJson;
 
-use super::query::ListParams;
+use super::admin::ListParams as AdminListParams;
+use super::user::ListParams as UserListParams;
 
-/// One bound statement value: the list filters bind ids, text, and datetimes.
+/// One bound statement value: the page query binds its limit and offset.
 #[derive(Debug, Clone)]
 pub(super) enum SqlArg {
     Int(i64),
-    Str(String),
-    DateTime(NaiveDateTime),
 }
 
 impl MysqlValue for SqlArg {
     fn write(self, writer: &mut MysqlValueWriter) -> MysqlResult<()> {
         match self {
             Self::Int(value) => writer.push(value),
-            Self::Str(value) => writer.push(value),
-            Self::DateTime(value) => writer.push(value),
         }
     }
 
     fn encoded_size_hint(&self) -> usize {
         match self {
             Self::Int(_) => std::mem::size_of::<i64>(),
-            Self::Str(value) => value.len(),
-            Self::DateTime(_) => std::mem::size_of::<NaiveDateTime>(),
         }
     }
 }
@@ -298,7 +293,7 @@ pub(super) struct PluginIdRow {
 }
 
 /// The SQLAlchemy `PluginPublicationRequest` labeled column projection.
-const REQUEST_COLUMNS: &str = "plugin_publication_requests.id AS plugin_publication_requests_id, \
+pub(super) const REQUEST_COLUMNS: &str = "plugin_publication_requests.id AS plugin_publication_requests_id, \
      plugin_publication_requests.source_plugin_id AS plugin_publication_requests_source_plugin_id, \
      plugin_publication_requests.target_plugin_id AS plugin_publication_requests_target_plugin_id, \
      plugin_publication_requests.submitter_user_id AS plugin_publication_requests_submitter_user_id, \
@@ -311,7 +306,7 @@ const REQUEST_COLUMNS: &str = "plugin_publication_requests.id AS plugin_publicat
      plugin_publication_requests.updated_at AS plugin_publication_requests_updated_at";
 
 /// The SQLAlchemy `Plugin` labeled column projection.
-const PLUGIN_COLUMNS: &str = "plugins.id AS plugins_id, \
+pub(super) const PLUGIN_COLUMNS: &str = "plugins.id AS plugins_id, \
      plugins.catalog_namespace AS plugins_catalog_namespace, plugins.slug AS plugins_slug, \
      plugins.name AS plugins_name, plugins.display_name AS plugins_display_name, \
      plugins.summary AS plugins_summary, plugins.description_md AS plugins_description_md, \
@@ -327,7 +322,7 @@ const PLUGIN_COLUMNS: &str = "plugins.id AS plugins_id, \
      plugins.updated_at AS plugins_updated_at, plugins.published_at AS plugins_published_at";
 
 /// The SQLAlchemy `PluginPublicationRevision` labeled column projection.
-const REVISION_COLUMNS: &str = "plugin_publication_revisions.id AS plugin_publication_revisions_id, \
+pub(super) const REVISION_COLUMNS: &str = "plugin_publication_revisions.id AS plugin_publication_revisions_id, \
      plugin_publication_revisions.request_id AS plugin_publication_revisions_request_id, \
      plugin_publication_revisions.revision AS plugin_publication_revisions_revision, \
      plugin_publication_revisions.source_release_id AS plugin_publication_revisions_source_release_id, \
@@ -363,7 +358,7 @@ const REVISION_COLUMNS: &str = "plugin_publication_revisions.id AS plugin_public
      plugin_publication_revisions.updated_at AS plugin_publication_revisions_updated_at";
 
 /// The SQLAlchemy `PluginPublicationCheck` labeled column projection.
-const CHECK_COLUMNS: &str = "plugin_publication_checks.id AS plugin_publication_checks_id, \
+pub(super) const CHECK_COLUMNS: &str = "plugin_publication_checks.id AS plugin_publication_checks_id, \
      plugin_publication_checks.revision_id AS plugin_publication_checks_revision_id, \
      plugin_publication_checks.stage AS plugin_publication_checks_stage, \
      plugin_publication_checks.check_code AS plugin_publication_checks_check_code, \
@@ -381,7 +376,7 @@ const CHECK_COLUMNS: &str = "plugin_publication_checks.id AS plugin_publication_
      plugin_publication_checks.updated_at AS plugin_publication_checks_updated_at";
 
 /// The SQLAlchemy `User` labeled column projection.
-const USER_COLUMNS: &str = "users.id AS users_id, users.user_name AS users_user_name, \
+pub(super) const USER_COLUMNS: &str = "users.id AS users_id, users.user_name AS users_user_name, \
      users.password_hash AS users_password_hash, users.email AS users_email, \
      users.git_info AS users_git_info, users.is_active AS users_is_active, \
      users.`role` AS users_role, users.auth_source AS users_auth_source, \
@@ -389,12 +384,12 @@ const USER_COLUMNS: &str = "users.id AS users_id, users.user_name AS users_user_
      users.updated_at AS users_updated_at";
 
 /// `case((submitted_at == EPOCH_TIME, created_at), else_=submitted_at)`.
-const EFFECTIVE_SUBMITTED_AT: &str = "CASE WHEN (plugin_publication_requests.submitted_at = \
+pub(super) const EFFECTIVE_SUBMITTED_AT: &str = "CASE WHEN (plugin_publication_requests.submitted_at = \
      '1970-01-01 00:00:00') THEN plugin_publication_requests.created_at ELSE \
      plugin_publication_requests.submitted_at END";
 
 /// `is_terminal = aggregate_status.in_(TERMINAL_PUBLICATION_STATUSES)`.
-const TERMINAL_PREDICATE: &str =
+pub(super) const TERMINAL_PREDICATE: &str =
     "plugin_publication_requests.aggregate_status IN ('published', 'withdrawn', 'closed')";
 
 /// The text-filter values resolved by earlier lookups.
@@ -404,51 +399,84 @@ pub(super) struct Filters {
     pub(super) plugin_ids: Option<Vec<i64>>,
 }
 
-/// `rows_query.count()`: the filtered projection wrapped in `count(*)`.
+/// `rows_query.count()` for the admin variant: the filtered projection
+/// wrapped in `count(*)`.
 pub(super) async fn count_requests<M: Mysql>(
     mysql: &M,
-    params: &ListParams,
+    params: &AdminListParams,
     filters: &Filters,
 ) -> MysqlResult<i64> {
-    let (statement, args) = count_sql(params, filters);
+    let (statement, args) = count_sql(&admin_conditions(params, filters));
     let rows: Vec<CountRow> = mysql.fetch_all(statement, args).await?;
     Ok(rows.first().map_or(0, |row| row.count_1))
 }
 
-/// The paginated, ordered list query executed against the database.
+/// The paginated, ordered admin list query.
 pub(super) async fn select_requests<M: Mysql>(
     mysql: &M,
-    params: &ListParams,
+    params: &AdminListParams,
     filters: &Filters,
 ) -> MysqlResult<Vec<RequestRow>> {
-    let (statement, args) = select_sql(params, filters);
+    let (statement, args) = select_sql(
+        &admin_conditions(params, filters),
+        params.page,
+        params.limit,
+    );
+    mysql.fetch_all(statement, args).await
+}
+
+/// `rows_query.count()` for the submitter variant: the caller's requests.
+pub(super) async fn count_user_requests<M: Mysql>(
+    mysql: &M,
+    user_id: i32,
+    params: &UserListParams,
+) -> MysqlResult<i64> {
+    let (statement, args) = count_sql(&user_conditions(user_id, params));
+    let rows: Vec<CountRow> = mysql.fetch_all(statement, args).await?;
+    Ok(rows.first().map_or(0, |row| row.count_1))
+}
+
+/// The paginated, ordered submitter list query.
+pub(super) async fn select_user_requests<M: Mysql>(
+    mysql: &M,
+    user_id: i32,
+    params: &UserListParams,
+) -> MysqlResult<Vec<RequestRow>> {
+    let (statement, args) =
+        select_sql(&user_conditions(user_id, params), params.page, params.limit);
     mysql.fetch_all(statement, args).await
 }
 
 /// The `count(*)` statement and its bound arguments.
-pub(super) fn count_sql(params: &ListParams, filters: &Filters) -> (String, Vec<SqlArg>) {
-    let (clause, args) = where_clause(params, filters);
+pub(super) fn count_sql(conditions: &[String]) -> (String, Vec<SqlArg>) {
+    let clause = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!(" WHERE {}", conditions.join(" AND "))
+    };
     (
         format!(
             "SELECT count(*) AS count_1 FROM (SELECT {REQUEST_COLUMNS} \
              FROM plugin_publication_requests{clause}) AS anon_1"
         ),
-        args,
+        Vec::new(),
     )
 }
 
 /// The paginated, ordered list query.
-pub(super) fn select_sql(params: &ListParams, filters: &Filters) -> (String, Vec<SqlArg>) {
-    let (clause, mut args) = where_clause(params, filters);
-    args.push(SqlArg::Int((params.page - 1) * params.limit));
-    args.push(SqlArg::Int(params.limit));
+pub(super) fn select_sql(conditions: &[String], page: i64, limit: i64) -> (String, Vec<SqlArg>) {
+    let clause = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!(" WHERE {}", conditions.join(" AND "))
+    };
     let order = order_by();
     (
         format!(
             "SELECT {REQUEST_COLUMNS} FROM plugin_publication_requests{clause} \
              ORDER BY {order} LIMIT ?, ?"
         ),
-        args,
+        vec![SqlArg::Int((page - 1) * limit), SqlArg::Int(limit)],
     )
 }
 
@@ -462,55 +490,86 @@ fn order_by() -> String {
     )
 }
 
-/// The SQLAlchemy `WHERE` chain applied by `list_requests`.
-fn where_clause(params: &ListParams, filters: &Filters) -> (String, Vec<SqlArg>) {
+/// The admin `WHERE` chain rendered by `list_requests` with `is_admin=True`:
+/// every condition binds inline except the text-filter id lists, which the
+/// caller resolves into literal `IN` clauses.
+pub(super) fn admin_conditions(params: &AdminListParams, filters: &Filters) -> Vec<String> {
     let mut conditions: Vec<String> = Vec::new();
-    let mut args: Vec<SqlArg> = Vec::new();
     if let Some(status) = &params.status {
-        conditions.push("plugin_publication_requests.aggregate_status = ?".to_string());
-        args.push(SqlArg::Str(status.clone()));
+        conditions.push(format!(
+            "plugin_publication_requests.aggregate_status = '{}'",
+            escape_sql_literal(status)
+        ));
     }
     if let Some(risk_level) = &params.risk_level {
-        conditions.push("plugin_publication_requests.risk_level = ?".to_string());
-        args.push(SqlArg::Str(risk_level.clone()));
+        conditions.push(format!(
+            "plugin_publication_requests.risk_level = '{}'",
+            escape_sql_literal(risk_level)
+        ));
     }
     if let Some(ids) = &filters.submitter_ids {
         conditions.push(format!(
             "plugin_publication_requests.submitter_user_id IN ({})",
-            placeholders(ids.len())
+            id_list(ids)
         ));
-        args.extend(ids.iter().map(|id| SqlArg::Int(*id)));
     }
     if let Some(ids) = &filters.plugin_ids {
         conditions.push(format!(
             "plugin_publication_requests.source_plugin_id IN ({})",
-            placeholders(ids.len())
+            id_list(ids)
         ));
-        args.extend(ids.iter().map(|id| SqlArg::Int(*id)));
     }
     if let Some(after) = params.submitted_after {
-        conditions.push(format!("{EFFECTIVE_SUBMITTED_AT} >= ?"));
-        args.push(SqlArg::DateTime(after));
+        conditions.push(format!("{EFFECTIVE_SUBMITTED_AT} >= '{after}'"));
     }
     if let Some(before) = params.submitted_before {
-        conditions.push(format!("{EFFECTIVE_SUBMITTED_AT} <= ?"));
-        args.push(SqlArg::DateTime(before));
+        conditions.push(format!("{EFFECTIVE_SUBMITTED_AT} <= '{before}'"));
     }
-    let clause = if conditions.is_empty() {
-        String::new()
-    } else {
-        format!(" WHERE {}", conditions.join(" AND "))
-    };
-    (clause, args)
+    conditions
 }
 
-/// A bound-value placeholder list; SQLAlchemy renders an empty `in_` as `(NULL)`.
-fn placeholders(len: usize) -> String {
-    if len == 0 {
+/// The submitter `WHERE` chain rendered by `list_requests` with
+/// `is_admin=False`: the owner filter first, then the route's own filters.
+pub(super) fn user_conditions(user_id: i32, params: &UserListParams) -> Vec<String> {
+    let mut conditions = vec![format!(
+        "plugin_publication_requests.submitter_user_id = {user_id}"
+    )];
+    if let Some(source_plugin_id) = params.source_plugin_id {
+        conditions.push(format!(
+            "plugin_publication_requests.source_plugin_id = {source_plugin_id}"
+        ));
+    }
+    if params.active_only {
+        conditions.push(
+            "(plugin_publication_requests.aggregate_status NOT IN ('published', 'withdrawn', 'closed'))"
+                .to_string(),
+        );
+    }
+    if let Some(after) = params.submitted_after {
+        conditions.push(format!("{EFFECTIVE_SUBMITTED_AT} >= '{after}'"));
+    }
+    if let Some(before) = params.submitted_before {
+        conditions.push(format!("{EFFECTIVE_SUBMITTED_AT} <= '{before}'"));
+    }
+    conditions
+}
+
+/// A literal id list; SQLAlchemy renders an empty `in_` as `(NULL)`.
+fn id_list(ids: &[i64]) -> String {
+    if ids.is_empty() {
         "NULL".to_string()
     } else {
-        vec!["?"; len].join(", ")
+        ids.iter()
+            .map(std::string::ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
     }
+}
+
+/// Escape single quotes in a literal string the way SQLAlchemy's
+/// `literal_binds` rendering does.
+fn escape_sql_literal(value: &str) -> String {
+    value.replace('\'', "''")
 }
 
 /// `db.get(Plugin, request.source_plugin_id)`.

@@ -18,7 +18,8 @@ use crate::state::AppState;
 use crate::task_creation::{TaskCrdInput, WorkspaceRepository};
 
 use super::model::parse_model_string;
-use super::resolution::{kinds_row, model_by_name_namespace, resolve_team_bots};
+use super::model_selection;
+use super::resolution::{kinds_row, resolve_team_bots};
 use super::schema::{ResponseCreateInput, extract_input_text, parse_wegent_tools};
 use super::seam::{self, BodyStream, DispatchInput};
 use super::session::{SetupChatSessionInput, setup_chat_session};
@@ -34,6 +35,8 @@ async fn create_response(
     #[auth] user: ResponsesUser,
     #[header("x-forwarded-for")] x_forwarded_for: Option<&str>,
     #[header("x-request-id")] request_id: Option<&str>,
+    #[header("auto_delete_executor")] auto_delete_executor: Option<&str>,
+    #[header("auto-delete-executor")] auto_delete_executor_dash: Option<&str>,
     body: serde_json::Value,
 ) -> Result<CreateResponse, FastApiError> {
     // `@limiter.limit(settings.RATE_LIMIT_CREATE_RESPONSE)`.
@@ -56,7 +59,16 @@ async fn create_response(
     }
 
     let input: ResponseCreateInput = serde_json::from_value(body).map_err(invalid_body)?;
-    create_response_flow(state, &user, input, request_id.unwrap_or_default()).await
+    let auto_delete_executor =
+        normalize_auto_delete_executor(auto_delete_executor.or(auto_delete_executor_dash))?;
+    create_response_flow(
+        state,
+        &user,
+        input,
+        request_id.unwrap_or_default(),
+        auto_delete_executor.as_deref(),
+    )
+    .await
 }
 
 /// The `create_response` flow after the body is parsed.
@@ -65,6 +77,7 @@ async fn create_response_flow(
     user: &ResponsesUser,
     input: ResponseCreateInput,
     request_id: &str,
+    auto_delete_executor: Option<&str>,
 ) -> Result<CreateResponse, FastApiError> {
     let user_id = i64::from(user.id);
     let model = parse_model_string(&input.model)?;
@@ -91,6 +104,21 @@ async fn create_response_flow(
         ));
     };
 
+    // `create_response`'s model selection (`openapi_responses.py:594-672`)
+    // runs before the task is created: an explicit `model_id` resolves that
+    // Model, and without one every team member's Bot is read and validated.
+    let model_type = model_selection::resolve_model_selection(
+        &kinds_cache,
+        user_id,
+        &model.namespace,
+        &model.team_name,
+        team.user_id,
+        &team.json.0,
+        model.model_id.as_deref(),
+    )
+    .await?;
+    let task_type = model_selection::model_task_type(model_type.as_deref());
+
     // `get_bot_ids_from_team`: one `kindReader` read per member.
     let bots = resolve_team_bots(&kinds_cache, team.user_id, &team.json.0)
         .await
@@ -100,26 +128,6 @@ async fn create_response_flow(
             StatusCode::BAD_REQUEST,
             "No valid bots found in team",
         ));
-    }
-
-    // `_resolve_requested_model`: the requested Model in the team namespace
-    // (direct then referenced), then the caller's `default` namespace.
-    if let Some(model_id) = model.model_id.as_deref() {
-        let mut resolved =
-            model_by_name_namespace(&state.mysql, user_id, model_id, &model.namespace)
-                .await
-                .map_err(dependency)?;
-        if resolved.is_none() && model.namespace != "default" {
-            resolved = model_by_name_namespace(&state.mysql, user_id, model_id, "default")
-                .await
-                .map_err(dependency)?;
-        }
-        if resolved.is_none() {
-            return Err(FastApiError::detail(
-                StatusCode::BAD_REQUEST,
-                format!("Model '{}/{}' not found", model.namespace, model_id),
-            ));
-        }
     }
 
     // The first team-member bot row (`_get_first_bot`): the same cached
@@ -150,6 +158,8 @@ async fn create_response_flow(
         state.task_store.as_ref(),
         &SetupChatSessionInput {
             user_id,
+            owner_user_id: user.id,
+            previous_response_id: input.previous_response_id.as_deref(),
             team_id: team.id,
             bot_ids: &bots.bot_ids,
             input_text: &input_text,
@@ -160,14 +170,14 @@ async fn create_response_flow(
                 team_user_id: team.user_id,
                 message: &input_text,
                 title: None,
-                task_type: None,
+                task_type,
                 source: "chat_shell",
-                api_key_name: None,
+                api_key_name: user.api_key_name.as_deref(),
                 model_id: model.model_id.as_deref(),
                 force_override_bot_model: model.model_id.is_some(),
                 is_group_chat: false,
                 is_api_call: true,
-                auto_delete_executor: None,
+                auto_delete_executor,
                 omit_mcp_binary_output: false,
                 device_id: None,
                 git_workspace: false,
@@ -191,14 +201,14 @@ async fn create_response_flow(
         team_user_id: team.user_id,
         message: &input_text,
         title: None,
-        task_type: None,
+        task_type,
         source: "chat_shell",
-        api_key_name: None,
+        api_key_name: user.api_key_name.as_deref(),
         model_id: model.model_id.as_deref(),
         force_override_bot_model: model.model_id.is_some(),
         is_group_chat: false,
         is_api_call: true,
-        auto_delete_executor: None,
+        auto_delete_executor,
         omit_mcp_binary_output: false,
         device_id: None,
         git_workspace: false,
@@ -240,8 +250,26 @@ fn invalid_body(error: serde_json::Error) -> FastApiError {
     FastApiError::detail(StatusCode::UNPROCESSABLE_ENTITY, error.to_string())
 }
 
+/// `_normalize_auto_delete_executor_header` (`openapi_responses.py:161-175`):
+/// the `auto_delete_executor` / `auto-delete-executor` request header carried
+/// into the Task CRD's `autoDeleteExecutor` label. An unrecognized value is the
+/// source's `400 Invalid auto_delete_executor header value.`.
+fn normalize_auto_delete_executor(value: Option<&str>) -> Result<Option<String>, FastApiError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" | "yes" | "on" => Ok(Some("true".to_string())),
+        "false" | "0" | "no" | "off" | "" => Ok(Some("false".to_string())),
+        _ => Err(FastApiError::detail(
+            StatusCode::BAD_REQUEST,
+            "Invalid auto_delete_executor header value. Expected true or false.",
+        )),
+    }
+}
+
 /// A dependency (MySQL) failure: the source propagates it, FastAPI renders 500.
-fn dependency(error: brz_mysql::MysqlError) -> FastApiError {
+pub(super) fn dependency(error: brz_mysql::MysqlError) -> FastApiError {
     tracing::error!(%error, "responses create dependency failure");
     FastApiError::internal()
 }

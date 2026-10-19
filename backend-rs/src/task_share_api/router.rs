@@ -4,21 +4,23 @@
 
 //! API export for `POST /api/tasks/{task_id}/share`.
 
-use crate::auth::SessionUser;
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 
+use super::auth::ExecutorUser;
 use super::handler;
 use super::models::TaskShareResponse;
 
-/// `POST /api/tasks/{task_id}/share`: the source route validates membership
-/// before delegating to `SharedTaskService.share_task`. A missing or
-/// unauthorized task is the route's own `404` detail.
+/// `POST /api/tasks/{task_id}/share`: the source route authenticates through
+/// `get_current_user_flexible_for_executor` (personal API key or user-session
+/// JWT), then validates membership before delegating to
+/// `SharedTaskService.share_task`. A missing or unauthorized task is the
+/// route's own `404` detail.
 #[brz_http_server::post("/api/tasks/:task_id/share")]
 async fn share_task_route(
     #[inject(state)] state: &AppState,
     task_id: i64,
-    #[auth] current_user: SessionUser,
+    #[auth] current_user: ExecutorUser,
 ) -> Result<TaskShareResponse, FastApiError> {
     let user_id = i64::from(current_user.id);
     if !handler::validate_task_exists(state, task_id, user_id).await? {

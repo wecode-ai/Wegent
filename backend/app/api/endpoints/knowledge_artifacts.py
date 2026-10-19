@@ -80,10 +80,11 @@ async def create_artifact(
     return await _execute(lambda: service.create(knowledge_base_id, request))
 
 
-@router.get(
-    "/{knowledge_base_id}/artifacts",
-    response_model=KnowledgeArtifactListResponse,
-)
+# MIGRATION-CANDIDATE(api="GET /api/knowledge-bases/:knowledge_base_id/artifacts"): remove after final confirmation.
+# @router.get(
+#     "/{knowledge_base_id}/artifacts",
+#     response_model=KnowledgeArtifactListResponse,
+# )
 @trace_async("list_artifacts", "knowledge.artifact.api")
 async def list_artifacts(
     knowledge_base_id: int,

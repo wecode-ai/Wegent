@@ -181,6 +181,9 @@ api_router.include_router(
     cloud_projects.router, prefix="/v1/projects", tags=["projects"]
 )
 api_router.include_router(
+    cloud_projects.legacy_router, prefix="/v1/projects", tags=["projects"]
+)
+api_router.include_router(
     workspaces.router, prefix="/v1/workspaces", tags=["workspaces"]
 )
 api_router.include_router(

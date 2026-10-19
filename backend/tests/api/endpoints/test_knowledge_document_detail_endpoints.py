@@ -4,6 +4,7 @@
 
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.models.knowledge import KnowledgeDocument
@@ -246,3 +247,19 @@ def test_kb_scoped_detail_maps_kb_access_denied_before_document_lookup(
     assert response.status_code == 403
     assert response.json()["detail"] == "Access denied to this knowledge base"
     mock_detail.assert_not_awaited()
+
+
+@pytest.fixture(autouse=True)
+def _retained_python_handler_contracts(test_client):
+    import app.api.endpoints.knowledge as endpoint_0
+    from tests.legacy_python_routes import legacy_python_handlers
+
+    with legacy_python_handlers(test_client.app) as register:
+        register(
+            "/api/knowledge-bases/{kb_id}/documents/{doc_id}/detail",
+            endpoint_0.get_document_detail,
+            endpoint_0.summary_router,
+            methods=["GET"],
+            response_model=endpoint_0.DocumentDetailResponse,
+        )
+        yield
