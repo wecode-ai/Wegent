@@ -128,9 +128,14 @@ class WorkspaceLifecycleService:
             .all()
         )
         workspaces = [workspace_from_kind(kind) for kind in kinds]
+        # A workspace created by an older migration can carry no timestamps; a
+        # missing one must not take the whole navigation list down.
         return sorted(
             workspaces,
-            key=lambda item: (not item.is_default, -item.updated_at.timestamp()),
+            key=lambda item: (
+                not item.is_default,
+                -(item.updated_at.timestamp() if item.updated_at else 0.0),
+            ),
         )
 
     def get(

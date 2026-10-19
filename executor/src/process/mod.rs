@@ -46,8 +46,10 @@ mod windows_batch;
 #[cfg(windows)]
 pub(crate) use windows_batch::shell_command as windows_shell_command;
 
+mod claude_resume;
 pub(crate) mod debug_stdout;
 mod stream_diagnostics;
+use claude_resume::follow_up_spec as claude_follow_up_resume_spec;
 use debug_stdout::line as debug_claude_stdout_line;
 #[cfg(test)]
 use debug_stdout::{
@@ -251,7 +253,10 @@ impl AgentEngine for StreamProcessEngine {
         let spec = self.spec.clone();
         let timeout_seconds = self.timeout_seconds;
         Box::pin(async move {
-            match run_command_output(spec.clone(), timeout_seconds).await {
+            let runner = FollowUpCommandRunner::<NoopEventSink>::Silent;
+            let (spec, outcome) =
+                claude_resume::run(&request, spec, timeout_seconds, &runner).await;
+            match outcome {
                 CommandOutcome::Success { stdout } => {
                     let summary = collect_claude_stream_summary(&stdout);
                     if let Some(session_id) = &summary.session_id {
@@ -326,16 +331,15 @@ impl AgentEngine for StreamProcessEngine {
         let spec = self.spec.clone();
         let timeout_seconds = self.timeout_seconds;
         Box::pin(async move {
-            match run_streaming_command_output(
-                spec.clone(),
-                timeout_seconds,
-                sink.clone(),
-                builder.clone(),
-                request.task_id.clone(),
-                request.subtask_id.clone(),
-            )
-            .await
-            {
+            let runner = FollowUpCommandRunner::Streaming {
+                sink: sink.clone(),
+                builder: Box::new(builder.clone()),
+                task_id: request.task_id.clone(),
+                subtask_id: request.subtask_id.clone(),
+            };
+            let (spec, outcome) =
+                claude_resume::run(&request, spec, timeout_seconds, &runner).await;
+            match outcome {
                 CommandOutcome::Success { stdout } => {
                     let summary = collect_claude_stream_summary(&stdout);
                     if let Some(session_id) = &summary.session_id {
@@ -625,45 +629,6 @@ fn answered_interactive_form_tool_use_id(request: &ExecutionRequest) -> Option<S
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
-}
-
-fn claude_follow_up_resume_spec(
-    base_spec: &CommandSpec,
-    session_id: &str,
-    query: ClaudeFollowUpQuery,
-) -> CommandSpec {
-    let mut spec = CommandSpec::new(base_spec.program.clone());
-    spec.env = base_spec.env.clone();
-    spec.cwd = base_spec.cwd.clone();
-    let mut skip_next = false;
-    for arg in &base_spec.args {
-        if skip_next {
-            skip_next = false;
-            continue;
-        }
-        if arg == "-p" || arg == "--print" {
-            continue;
-        }
-        if arg == "--resume" || arg == "--input-format" {
-            skip_next = true;
-            continue;
-        }
-        spec.args.push(arg.clone());
-    }
-    spec.args.push("--resume".to_owned());
-    spec.args.push(session_id.to_owned());
-    match query {
-        ClaudeFollowUpQuery::Prompt(prompt) => {
-            spec.args.push("-p".to_owned());
-            spec.args.push(prompt);
-        }
-        ClaudeFollowUpQuery::ToolResult(value) => {
-            spec.args.push("--input-format".to_owned());
-            spec.args.push("stream-json".to_owned());
-            spec.stdin = Some(format!("{value}\n"));
-        }
-    }
-    spec
 }
 
 /// Build a copy of the Claude command spec without `--resume` and `--input-format`.
@@ -1027,7 +992,9 @@ where
     let stderr = join_output(stderr_task).await;
     process_tree.disarm();
 
-    if let Some(error) = writer_error.filter(|_| status.is_ok()) {
+    if let Some(error) =
+        writer_error.filter(|_| status.as_ref().is_ok_and(|status| status.success()))
+    {
         return CommandOutcome::Failure {
             stderr: error.to_string(),
             stdout: String::new(),
@@ -1666,7 +1633,7 @@ async fn run_prepared_command(
     let output = child.wait_with_output().await;
     if let Some(writer) = writer {
         if let Ok(Err(error)) = writer.await {
-            if output.is_ok() {
+            if output.as_ref().is_ok_and(|output| output.status.success()) {
                 return Err(error);
             }
         }

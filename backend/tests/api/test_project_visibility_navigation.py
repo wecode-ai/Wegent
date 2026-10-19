@@ -5,7 +5,6 @@ from collections.abc import Generator
 from contextlib import contextmanager
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import event
 from sqlalchemy.orm import Session
 
@@ -76,69 +75,6 @@ def _member(
     db.add(member)
     db.commit()
     return member
-
-
-# MIGRATION-CANDIDATE: retired Python HTTP test; this API is owned by Rust.
-# @pytest.mark.parametrize("source", ["public", "project", "workspace"])
-# def test_visible_projects_include_parent_without_expanding_workspace_permissions(
-#     test_client: TestClient,
-#     test_db: Session,
-#     test_user: User,
-#     viewer: User,
-#     source: str,
-# ) -> None:
-#     workspace = workspace_service.create(
-#         test_db, test_user.id, WorkspaceCreate(name="Parent")
-#     )
-#     project = _project(test_db, test_user, workspace, public=source == "public")
-#     sibling = _project(test_db, test_user, workspace)
-#     if source != "public":
-#         _member(
-#             test_db,
-#             viewer,
-#             "Workspace" if source == "workspace" else "CloudProject",
-#             workspace.id if source == "workspace" else project.id,
-#         )
-#     headers = _headers(viewer)
-#     expected = {str(project.id)}
-#     if source == "workspace":
-#         expected.add(str(sibling.id))
-#
-#     for endpoint in (
-#         "/api/v1/cloud-projects",
-#         f"/api/v1/cloud-projects?workspace_id={workspace.id}",
-#         f"/api/v1/workspaces/{workspace.id}/projects",
-#     ):
-#         response = test_client.get(endpoint, headers=headers)
-#         assert response.status_code == 200, response.text
-#         items = response.json()["items"]
-#         assert {item["id"] for item in items} == expected
-#         assert len(items) == len(expected)
-#         for item in items:
-#             assert item["workspace_context"] == {
-#                 "id": str(workspace.id),
-#                 "public_id": workspace.public_id,
-#                 "name": workspace.name,
-#             }
-#             assert item["access_role"] == "Viewer"
-#
-#     detail = test_client.get(f"/api/v1/cloud-projects/{project.id}", headers=headers)
-#     assert detail.status_code == 200, detail.text
-#     sibling_detail = test_client.get(
-#         f"/api/v1/cloud-projects/{sibling.id}", headers=headers
-#     )
-#     assert sibling_detail.status_code == (200 if source == "workspace" else 404)
-#     members = test_client.get(
-#         f"/api/v1/workspaces/{workspace.id}/members", headers=headers
-#     )
-#     assert members.status_code == (200 if source == "workspace" else 404)
-#     # Inherited visibility must not confer project administration.
-#     update = test_client.patch(
-#         f"/api/v1/cloud-projects/{project.id}",
-#         headers=headers,
-#         json={"version": project.version, "name": "Unauthorized rename"},
-#     )
-#     assert update.status_code == 403
 
 
 @pytest.mark.parametrize(

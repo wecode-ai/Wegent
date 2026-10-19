@@ -21,6 +21,44 @@ afterEach(() => {
 })
 
 describe('application notification events', () => {
+  it.each(['0', '1'])(
+    'notifies local identity %s without an open Issue and deduplicates replayed assignments',
+    recipientUserId => {
+      windowLabel.mockReturnValue('main')
+      let handlers!: ChatStreamHandlers
+      const chatStream = {
+        subscribe: (listener: ChatStreamHandlers) => {
+          handlers = listener
+          return () => {}
+        },
+      } as WorkbenchServices['chatStream']
+      render(<NotificationEventsBridge chatStream={chatStream} currentUserId={1} localUserId={0} />)
+      const assignment = {
+        projectStore: 'local' as const,
+        projectId: 'local-project',
+        projectName: 'Offline project',
+        itemId: 'OFF-1',
+        itemTitle: 'Inspect memory',
+        assignerName: 'Coordinator',
+        assignmentId: 'human-assignment-1',
+        recipientUserId,
+      }
+      act(() => {
+        handlers.onProjectTaskAssigned?.({ ...assignment, recipientUserId: '2' })
+      })
+      expect(send).not.toHaveBeenCalled()
+      act(() => {
+        handlers.onProjectTaskAssigned?.(assignment)
+        handlers.onProjectTaskAssigned?.(assignment)
+      })
+      expect(send).toHaveBeenCalledExactlyOnceWith({
+        title: 'workbench.project_task_assigned_notification_title',
+        body: 'workbench.project_task_assigned_notification_body',
+        url: 'wework://boards/local/local-project/issues/OFF-1',
+      })
+    }
+  )
+
   it.each(['main', 'workspace-1'])(
     'owns one subscription and limits system delivery: %s',
     label => {

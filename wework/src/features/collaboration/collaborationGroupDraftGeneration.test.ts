@@ -100,11 +100,12 @@ describe('collaborationGroupDraftGeneration', () => {
       leader: {
         kind: 'agent',
         id: 'device-agent',
+        name: '当前设备智能体',
         responsibility: '',
       },
       members: [
-        { kind: 'human', id: '7' },
-        { kind: 'agent', id: 'design-agent' },
+        { kind: 'human', id: '7', name: '项目发起人' },
+        { kind: 'agent', id: 'design-agent', name: '设计智能体' },
       ],
     })
   })
@@ -116,6 +117,7 @@ describe('collaborationGroupDraftGeneration', () => {
     expect(parseCollaborationGroupDraft(incomplete, input).members).toContainEqual({
       kind: 'agent',
       id: 'design-agent',
+      name: '设计智能体',
       responsibility: '',
     })
   })

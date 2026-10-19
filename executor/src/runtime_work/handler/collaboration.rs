@@ -9,10 +9,33 @@ use crate::task_runtime::{
     mcp_http::register_cloud_collaboration_dispatcher,
 };
 
+#[path = "collaboration_manager.rs"]
+mod manager;
+#[cfg(test)]
+use manager::{
+    fresh_cloud_manager_payload, fresh_cloud_manager_task_id, fresh_cloud_manager_task_started,
+};
+
 const CLOUD_COLLABORATION_ROUND_KEY: &str = "cloudCollaborationRound";
 const TERMINAL_EXECUTION_STATUSES: &[&str] = &["completed", "failed", "cancelled"];
 const CLOUD_COLLABORATION_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const CLOUD_COLLABORATION_LAUNCH_RETRY_INTERVAL: Duration = Duration::from_secs(1);
+const CLOUD_COLLABORATION_LAUNCH_MAX_ATTEMPTS: u32 = 5;
+
+#[derive(Debug)]
+struct CollaborationReportError {
+    message: String,
+    retryable: bool,
+}
+
+impl From<String> for CollaborationReportError {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            retryable: true,
+        }
+    }
+}
 
 impl RuntimeWorkRpcHandler {
     pub(super) fn register_cloud_collaboration_dispatcher(&self) {
@@ -42,6 +65,13 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) fn resume_cloud_collaboration_rounds(&self) {
         for link in self.local_task_links(false) {
+            if link
+                .runtime_handle
+                .get(CLOUD_COLLABORATION_ROUND_KEY)
+                .is_some_and(|round| round.get("report_error").is_some())
+            {
+                continue;
+            }
             let Some(command) = link
                 .runtime_handle
                 .get(CLOUD_COLLABORATION_ROUND_KEY)
@@ -105,23 +135,67 @@ impl RuntimeWorkRpcHandler {
             }
         }
 
-        let result = match self.launch_cloud_collaboration_assignments(&command).await {
-            Ok(()) => self.wait_for_cloud_collaboration_round(&command).await,
-            Err(error) => Err(error),
+        log_executor_event(
+            "cloud collaboration round monitoring started",
+            &[
+                ("dispatch_id", command.dispatch_id.clone()),
+                ("round_id", command.round_id.clone()),
+                ("manager_task_id", command.manager_runtime_task_id.clone()),
+            ],
+        );
+        // A manager evaluates verified terminal outcomes. Missing human status
+        // is not delivery, so keep the persisted round until its barrier closes.
+        let unstarted_outcomes = match self
+            .launch_cloud_collaboration_assignments_with_retry(&command)
+            .await
+        {
+            Ok(()) => Vec::new(),
+            Err(error) => {
+                log_executor_event(
+                    "cloud collaboration round launch failed",
+                    &[
+                        ("dispatch_id", command.dispatch_id.clone()),
+                        ("round_id", command.round_id.clone()),
+                        ("error", error.clone()),
+                    ],
+                );
+                self.fail_unstarted_collaboration_assignments(&command, &error)
+                    .await
+            }
         };
-        let result = match result {
-            Ok(outcomes) => self.launch_fresh_cloud_manager(&command, outcomes).await,
-            Err(error) => Err(error),
-        };
-        if let Err(error) = result {
-            log_executor_event(
-                "cloud collaboration round failed",
-                &[
-                    ("dispatch_id", command.dispatch_id.clone()),
-                    ("round_id", command.round_id.clone()),
-                    ("error", error),
-                ],
-            );
+        match self
+            .wait_for_cloud_collaboration_round(&command, &unstarted_outcomes)
+            .await
+        {
+            Ok(outcomes) => {
+                log_executor_event(
+                    "cloud collaboration round outcomes ready",
+                    &[
+                        ("round_id", command.round_id.clone()),
+                        ("outcome_count", outcomes.len().to_string()),
+                    ],
+                );
+                if let Err(error) = self.launch_fresh_cloud_manager(&command, outcomes).await {
+                    log_executor_event(
+                        "fresh cloud collaboration manager launch failed",
+                        &[
+                            ("dispatch_id", command.dispatch_id.clone()),
+                            ("round_id", command.round_id.clone()),
+                            ("error", error),
+                        ],
+                    );
+                }
+            }
+            Err(error) => {
+                log_executor_event(
+                    "cloud collaboration round wait failed",
+                    &[
+                        ("dispatch_id", command.dispatch_id.clone()),
+                        ("round_id", command.round_id.clone()),
+                        ("error", error),
+                    ],
+                );
+            }
         }
         self.active_collaboration_rounds
             .lock()
@@ -129,24 +203,87 @@ impl RuntimeWorkRpcHandler {
             .remove(&key);
     }
 
+    /// Retry the member launch so a transient Backend or Runtime failure does
+    /// not abandon the round before every member has started.
+    async fn launch_cloud_collaboration_assignments_with_retry(
+        &self,
+        command: &CloudCollaborationRoundCommand,
+    ) -> Result<(), String> {
+        let mut last_error = String::new();
+        for attempt in 1..=CLOUD_COLLABORATION_LAUNCH_MAX_ATTEMPTS {
+            match self.launch_cloud_collaboration_assignments(command).await {
+                Ok(()) => return Ok(()),
+                Err(error) => {
+                    log_executor_event(
+                        "cloud collaboration assignment launch attempt failed",
+                        &[
+                            ("round_id", command.round_id.clone()),
+                            ("attempt", attempt.to_string()),
+                            ("error", error.clone()),
+                        ],
+                    );
+                    last_error = error;
+                }
+            }
+            if attempt < CLOUD_COLLABORATION_LAUNCH_MAX_ATTEMPTS {
+                sleep(CLOUD_COLLABORATION_LAUNCH_RETRY_INTERVAL).await;
+            }
+        }
+        Err(last_error)
+    }
+
+    /// Report every member that never started so the Backend activity reflects
+    /// reality, and hand the resumed manager a matching failed outcome.
+    async fn fail_unstarted_collaboration_assignments(
+        &self,
+        command: &CloudCollaborationRoundCommand,
+        error: &str,
+    ) -> Vec<Value> {
+        let Ok(dispatch_task_id) = self.collaboration_dispatch_task_id(command) else {
+            return Vec::new();
+        };
+        let mut outcomes = Vec::new();
+        for assignment in command.assignments.iter().filter(|assignment| {
+            assignment.get("assignee_type").and_then(Value::as_str) == Some("agent")
+        }) {
+            let Ok(runtime_task_id) =
+                collaboration_member_task_id(&dispatch_task_id, command, assignment)
+            else {
+                continue;
+            };
+            if self.local_task_link(&runtime_task_id).is_some() {
+                continue;
+            }
+            self.report_cloud_collaboration_assignment_best_effort(
+                command,
+                assignment,
+                &runtime_task_id,
+                "failed",
+                "",
+                error,
+            )
+            .await;
+            outcomes.push(json!({
+                "assignee_type": "agent",
+                "work_id": assignment.get("work_id"),
+                "runtime_task_id": runtime_task_id,
+                "assignment_id": assignment.get("assignment_id"),
+                "task_title": assignment.get("task_title"),
+                "agent_id": assignment.get("agent_id"),
+                "agent_name": assignment.get("agent_name"),
+                "status": "failed",
+                "result": "",
+                "error": error,
+            }));
+        }
+        outcomes
+    }
+
     async fn launch_cloud_collaboration_assignments(
         &self,
         command: &CloudCollaborationRoundCommand,
     ) -> Result<(), String> {
         let dispatch_task_id = self.collaboration_dispatch_task_id(command)?;
-        let profiles = self
-            .local_task_link(&command.manager_runtime_task_id)
-            .and_then(|link| {
-                link.runtime_handle
-                    .get("collaborationMemberRuntimeProfiles")
-                    .and_then(Value::as_array)
-                    .cloned()
-            })
-            .ok_or_else(|| {
-                format!(
-                    "Collaboration member profiles for dispatch {dispatch_task_id} are unavailable"
-                )
-            })?;
         for assignment in command.assignments.iter().filter(|assignment| {
             assignment.get("assignee_type").and_then(Value::as_str) == Some("agent")
         }) {
@@ -155,6 +292,19 @@ impl RuntimeWorkRpcHandler {
             if self.local_task_link(&runtime_task_id).is_some() {
                 continue;
             }
+            let profiles = self
+                .local_task_link(&command.manager_runtime_task_id)
+                .and_then(|link| {
+                    link.runtime_handle
+                        .get("collaborationMemberRuntimeProfiles")
+                        .and_then(Value::as_array)
+                        .cloned()
+                })
+                .ok_or_else(|| {
+                    format!(
+                        "Collaboration member profiles for dispatch {dispatch_task_id} are unavailable"
+                    )
+                })?;
             let assignee_id = required_assignment_string(assignment, "assignee_id")
                 .or_else(|_| required_assignment_string(assignment, "agent_id"))?;
             let profile = profiles
@@ -199,7 +349,9 @@ impl RuntimeWorkRpcHandler {
                     "Collaboration member Runtime rejected task {runtime_task_id}: {response}"
                 ));
             }
-            self.report_cloud_collaboration_assignment(
+            // Member progress reporting is a display side channel: a Backend
+            // blip must not abort a round whose member has already started.
+            self.report_cloud_collaboration_assignment_best_effort(
                 command,
                 assignment,
                 &runtime_task_id,
@@ -207,7 +359,7 @@ impl RuntimeWorkRpcHandler {
                 "",
                 "",
             )
-            .await?;
+            .await;
         }
         Ok(())
     }
@@ -215,9 +367,19 @@ impl RuntimeWorkRpcHandler {
     async fn wait_for_cloud_collaboration_round(
         &self,
         command: &CloudCollaborationRoundCommand,
+        unstarted_outcomes: &[Value],
     ) -> Result<Vec<Value>, String> {
         loop {
             let mut outcomes = self.local_collaboration_outcomes(command)?;
+            for failure in unstarted_outcomes {
+                if !outcomes
+                    .iter()
+                    .any(|outcome| outcome.get("assignment_id") == failure.get("assignment_id"))
+                {
+                    outcomes.push(failure.clone());
+                }
+            }
+            let mut all_reported = true;
             for outcome in &outcomes {
                 let status = outcome
                     .get("status")
@@ -240,33 +402,71 @@ impl RuntimeWorkRpcHandler {
                         .ok_or_else(|| {
                             format!("Collaboration assignment {assignment_id} is unavailable")
                         })?;
-                    self.report_cloud_collaboration_assignment(
-                        command,
-                        assignment,
-                        outcome
-                            .get("runtime_task_id")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default(),
-                        status,
-                        outcome
-                            .get("result")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default(),
-                        outcome
-                            .get("error")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default(),
-                    )
-                    .await?;
+                    if let Err(error) = self
+                        .report_cloud_collaboration_assignment(
+                            command,
+                            assignment,
+                            outcome
+                                .get("runtime_task_id")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default(),
+                            status,
+                            outcome
+                                .get("result")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default(),
+                            outcome
+                                .get("error")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default(),
+                        )
+                        .await
+                    {
+                        if !error.retryable {
+                            self.store
+                                .update_task(&command.manager_runtime_task_id, |link| {
+                                    if let Some(round) = link
+                                        .runtime_handle
+                                        .get_mut(CLOUD_COLLABORATION_ROUND_KEY)
+                                        .and_then(Value::as_object_mut)
+                                    {
+                                        round.insert(
+                                            "report_error".to_owned(),
+                                            json!(error.message),
+                                        );
+                                    }
+                                    link.runtime_handle["lastError"] = json!(error.message);
+                                });
+                            return Err(error.message);
+                        }
+                        all_reported = false;
+                        log_executor_event(
+                            "cloud collaboration terminal report failed",
+                            &[
+                                ("round_id", command.round_id.clone()),
+                                ("error", error.message),
+                            ],
+                        );
+                    }
                 }
             }
-            outcomes.extend(self.human_collaboration_outcomes(command).await?);
-            if outcomes.iter().all(|outcome| {
-                outcome
-                    .get("status")
-                    .and_then(Value::as_str)
-                    .is_some_and(|status| TERMINAL_EXECUTION_STATUSES.contains(&status))
-            }) {
+            let human_outcomes = match self.human_collaboration_outcomes(command).await {
+                Ok(outcomes) => outcomes,
+                Err(error) => {
+                    log_executor_event(
+                        "cloud collaboration human status unavailable",
+                        &[
+                            ("dispatch_id", command.dispatch_id.clone()),
+                            ("round_id", command.round_id.clone()),
+                            ("error", error),
+                        ],
+                    );
+                    sleep(CLOUD_COLLABORATION_POLL_INTERVAL).await;
+                    continue;
+                }
+            };
+            outcomes.extend(human_outcomes);
+            if all_reported && cloud_collaboration_round_is_complete(command, &outcomes) {
                 return Ok(outcomes);
             }
             sleep(CLOUD_COLLABORATION_POLL_INTERVAL).await;
@@ -281,7 +481,7 @@ impl RuntimeWorkRpcHandler {
         status: &str,
         result: &str,
         error: &str,
-    ) -> Result<(), String> {
+    ) -> Result<(), CollaborationReportError> {
         let connection = self
             .backend_connection_snapshot()
             .map_err(|value| value.message)?
@@ -315,9 +515,44 @@ impl RuntimeWorkRpcHandler {
             return Ok(());
         }
         let body = response.text().await.unwrap_or_default();
-        Err(format!(
-            "Collaboration assignment status report failed ({response_status}): {body}"
-        ))
+        Err(CollaborationReportError {
+            message: format!(
+                "Collaboration assignment status report failed ({response_status}): {body}"
+            ),
+            retryable: !response_status.is_client_error()
+                || matches!(response_status.as_u16(), 408 | 429),
+        })
+    }
+
+    async fn report_cloud_collaboration_assignment_best_effort(
+        &self,
+        command: &CloudCollaborationRoundCommand,
+        assignment: &Value,
+        runtime_task_id: &str,
+        status: &str,
+        result: &str,
+        error: &str,
+    ) {
+        if let Err(report_error) = self
+            .report_cloud_collaboration_assignment(
+                command,
+                assignment,
+                runtime_task_id,
+                status,
+                result,
+                error,
+            )
+            .await
+        {
+            log_executor_event(
+                "cloud collaboration assignment report failed",
+                &[
+                    ("round_id", command.round_id.clone()),
+                    ("status", status.to_owned()),
+                    ("error", report_error.message),
+                ],
+            );
+        }
     }
 
     fn local_collaboration_outcomes(
@@ -325,36 +560,36 @@ impl RuntimeWorkRpcHandler {
         command: &CloudCollaborationRoundCommand,
     ) -> Result<Vec<Value>, String> {
         let dispatch_task_id = self.collaboration_dispatch_task_id(command)?;
-        command
-            .assignments
-            .iter()
-            .filter(|assignment| {
-                assignment.get("assignee_type").and_then(Value::as_str) == Some("agent")
-            })
-            .map(|assignment| {
-                let runtime_task_id =
-                    collaboration_member_task_id(&dispatch_task_id, command, assignment)?;
-                let link = self.local_task_link(&runtime_task_id).ok_or_else(|| {
-                    format!("Collaboration member Runtime task {runtime_task_id} is unavailable")
-                })?;
-                let status = collaboration_member_status(&link);
-                Ok(json!({
-                    "assignee_type": "agent",
-                    "work_id": assignment.get("work_id"),
-                    "runtime_task_id": runtime_task_id,
-                    "assignment_id": assignment.get("assignment_id"),
-                    "task_title": assignment.get("task_title"),
-                    "agent_id": assignment.get("agent_id"),
-                    "agent_name": assignment.get("agent_name"),
-                    "status": status,
-                    "result": collaboration_member_result(&link),
-                    "error": link.runtime_handle
-                        .get("lastError")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default(),
-                }))
-            })
-            .collect()
+        let mut outcomes = Vec::new();
+        for assignment in command.assignments.iter().filter(|assignment| {
+            assignment.get("assignee_type").and_then(Value::as_str) == Some("agent")
+        }) {
+            let runtime_task_id =
+                collaboration_member_task_id(&dispatch_task_id, command, assignment)?;
+            // A member that never started is reported as failed by the launch
+            // failure path and excluded here, so the barrier always converges
+            // instead of aborting the round.
+            let Some(link) = self.local_task_link(&runtime_task_id) else {
+                continue;
+            };
+            let status = collaboration_member_status(&link);
+            outcomes.push(json!({
+                "assignee_type": "agent",
+                "work_id": assignment.get("work_id"),
+                "runtime_task_id": runtime_task_id,
+                "assignment_id": assignment.get("assignment_id"),
+                "task_title": assignment.get("task_title"),
+                "agent_id": assignment.get("agent_id"),
+                "agent_name": assignment.get("agent_name"),
+                "status": status,
+                "result": collaboration_member_result(&link),
+                "error": link.runtime_handle
+                    .get("lastError")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            }));
+        }
+        Ok(outcomes)
     }
 
     fn collaboration_dispatch_task_id(
@@ -414,78 +649,38 @@ impl RuntimeWorkRpcHandler {
             .cloned()
             .ok_or_else(|| "Collaboration human assignment response is invalid".to_owned())
     }
-
-    async fn launch_fresh_cloud_manager(
-        &self,
-        command: &CloudCollaborationRoundCommand,
-        outcomes: Vec<Value>,
-    ) -> Result<(), String> {
-        let fresh_task_id = fresh_cloud_manager_task_id(command);
-        loop {
-            if self
-                .local_task_link(&fresh_task_id)
-                .is_some_and(|link| fresh_cloud_manager_task_started(&link))
-            {
-                self.clear_cloud_collaboration_round(&command.manager_runtime_task_id);
-                return Ok(());
-            }
-
-            if self.local_task_link(&fresh_task_id).is_some() {
-                self.store.delete_task(&fresh_task_id);
-            }
-
-            let Some(source_link) = self.local_task_link(&command.manager_runtime_task_id) else {
-                return Err("Collaboration manager Runtime task was not found".to_owned());
-            };
-            let (mut request, payload) =
-                fresh_cloud_manager_payload(&source_link, command, &outcomes)?;
-            request.model_config = self
-                .runtime_model_config(&command.manager_runtime_task_id)
-                .ok_or_else(|| {
-                    "Collaboration manager model configuration is unavailable".to_owned()
-                })?;
-            self.apply_backend_connection(&mut request);
-            let mut payload = payload;
-            payload["executionRequest"] =
-                serde_json::to_value(request).unwrap_or_else(|_| json!({}));
-
-            match self.create_task(payload).await {
-                Ok(value)
-                    if value.get("success").and_then(Value::as_bool) == Some(true)
-                        && value.get("accepted").and_then(Value::as_bool) == Some(true) =>
-                {
-                    self.clear_cloud_collaboration_round(&command.manager_runtime_task_id);
-                    return Ok(());
-                }
-                Ok(value) => {
-                    log_executor_event(
-                        "fresh cloud collaboration manager launch rejected",
-                        &[
-                            ("round_id", command.round_id.clone()),
-                            ("response", value.to_string()),
-                        ],
-                    );
-                }
-                Err(error) => {
-                    log_executor_event(
-                        "fresh cloud collaboration manager launch failed",
-                        &[
-                            ("round_id", command.round_id.clone()),
-                            ("error", error.message),
-                        ],
-                    );
-                }
-            }
-            sleep(CLOUD_COLLABORATION_LAUNCH_RETRY_INTERVAL).await;
-        }
-    }
 }
 
-fn fresh_cloud_manager_task_id(command: &CloudCollaborationRoundCommand) -> String {
-    format!(
-        "{}-manager-after-{}",
-        command.manager_runtime_task_id, command.round_id
-    )
+fn cloud_collaboration_round_is_complete(
+    command: &CloudCollaborationRoundCommand,
+    outcomes: &[Value],
+) -> bool {
+    outcomes.iter().all(|outcome| {
+        outcome
+            .get("status")
+            .and_then(Value::as_str)
+            .is_some_and(|status| TERMINAL_EXECUTION_STATUSES.contains(&status))
+    }) && command
+        .assignments
+        .iter()
+        .filter(|assignment| {
+            assignment.get("assignee_type").and_then(Value::as_str) == Some("agent")
+        })
+        .all(|assignment| {
+            required_assignment_string(assignment, "assignment_id").is_ok_and(|id| {
+                outcomes.iter().any(|outcome| {
+                    outcome.get("assignee_type").and_then(Value::as_str) == Some("agent")
+                        && outcome.get("assignment_id").and_then(Value::as_str) == Some(id)
+                })
+            })
+        })
+        && command.human_assignment_ids.iter().all(|id| {
+            outcomes.iter().any(|outcome| {
+                outcome.get("assignee_type").and_then(Value::as_str) == Some("human")
+                    && outcome.get("human_assignment_id").and_then(Value::as_str)
+                        == Some(id.as_str())
+            })
+        })
 }
 
 fn required_assignment_string<'a>(assignment: &'a Value, key: &str) -> Result<&'a str, String> {
@@ -665,350 +860,6 @@ fn collaboration_member_result(link: &RuntimeTaskLink) -> String {
         .unwrap_or_default()
 }
 
-fn fresh_cloud_manager_task_started(link: &RuntimeTaskLink) -> bool {
-    link.thread_id.is_some()
-        || link.running
-        || link.turn_status.is_some()
-        || link
-            .runtime_handle
-            .get("queuePosition")
-            .is_some_and(|value| !value.is_null())
-}
-
-fn fresh_cloud_manager_payload(
-    source_link: &RuntimeTaskLink,
-    command: &CloudCollaborationRoundCommand,
-    outcomes: &[Value],
-) -> Result<(ExecutionRequest, Value), String> {
-    let task_id = fresh_cloud_manager_task_id(command);
-    let manager_context = source_link
-        .runtime_handle
-        .get(COLLABORATION_MANAGER_CONTEXT_KEY)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "Collaboration manager context is unavailable".to_owned())?;
-    let prompt = format!(
-        "{manager_context}\n\n<collaboration_round_results>\n上一轮任务已经全部结束。请读取以下执行结果，综合判断是否需要分配下一轮任务；如 Issue 已达到待确认或完成条件，请显式调用 update_issue_status。不要直接执行成员工作。\n\n{}\n</collaboration_round_results>",
-        serde_json::to_string_pretty(outcomes).unwrap_or_else(|_| "[]".to_owned()),
-    );
-    let mut request = runtime_event_request_from_link(source_link);
-    request.task_id = task_id.clone();
-    request.subtask_id = format!("{task_id}-initial");
-    request.prompt = Value::String(prompt.clone());
-    request.history.clear();
-    request.message_id = None;
-    request.new_session = true;
-    if let Some(origin) = request
-        .extra
-        .get_mut("origin")
-        .and_then(Value::as_object_mut)
-    {
-        origin.remove("executionId");
-        origin.remove("execution_id");
-    }
-
-    let mut payload = json!({
-        "schemaVersion": 1,
-        "taskId": task_id,
-        "runtime": source_link.runtime,
-        "collaboration_model": "single",
-        "title": source_link.title,
-        "message": prompt,
-        "workspacePath": source_link.workspace_path,
-        "executionRequest": request,
-        "runtimeHandle": {
-            "collaborationManagerContext": manager_context,
-            "collaborationDispatchTaskId": source_link
-                .runtime_handle
-                .get("collaborationDispatchTaskId")
-                .cloned()
-                .unwrap_or(Value::Null),
-            "collaborationMemberRuntimeProfiles": source_link
-                .runtime_handle
-                .get("collaborationMemberRuntimeProfiles")
-                .cloned()
-                .unwrap_or_else(|| json!([])),
-        },
-    });
-    if let Some(model_selection) = source_link
-        .runtime_handle
-        .get("modelSelection")
-        .or_else(|| source_link.runtime_handle.get("model_selection"))
-    {
-        payload["modelSelection"] = model_selection.clone();
-    }
-    if let Some(origin) = request.extra.get("origin") {
-        payload["origin"] = origin.clone();
-    }
-    Ok((request, payload))
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn command() -> CloudCollaborationRoundCommand {
-        CloudCollaborationRoundCommand {
-            manager_runtime_task_id: "manager-task-1".to_owned(),
-            project_id: "7".to_owned(),
-            item_id: "issue-1".to_owned(),
-            dispatch_id: "dispatch-1".to_owned(),
-            round_id: "round-1".to_owned(),
-            assignments: vec![json!({
-                "assignee_type": "agent",
-                "assignment_id": "member-1",
-                "assignee_id": "agent-2",
-                "agent_id": "agent-2",
-                "task_title": "Collect evidence",
-                "instructions": "Collect CPU evidence",
-            })],
-            human_assignment_ids: vec!["human-assignment-1".to_owned()],
-        }
-    }
-
-    fn source_link() -> RuntimeTaskLink {
-        let mut link = RuntimeTaskLink::new_pending_with_runtime(
-            "manager-task-1".to_owned(),
-            "/tmp/project".to_owned(),
-            "Issue manager".to_owned(),
-            "codex",
-        );
-        link.runtime_handle = json!({
-            "collaborationManagerContext": "Issue: 根 Issue 标题\n\n项目协作规则：每轮独立验收。",
-            "collaborationDispatchTaskId": "dispatch-task-1",
-            "modelSelection": {
-                "modelName": "gpt-6-sol",
-                "modelType": "runtime",
-            },
-            "collaborationMemberRuntimeProfiles": [{
-                "memberIds": ["agent-2"],
-                "runtimePayload": {
-                    "taskId": "member-template",
-                    "runtime": "codex"
-                }
-            }],
-            "executionRequest": {
-                "system_prompt": "manager system instructions",
-                "mcp_servers": [{"name": "wework_space"}],
-                "extra": {
-                    "origin": {
-                        "cloudProjectId": 7,
-                        "loopItemId": "issue-1",
-                        "dispatchId": "dispatch-1",
-                        "dispatchRole": "manager",
-                        "managerAgentId": "agent-1"
-                    }
-                }
-            },
-            "origin": {
-                "cloudProjectId": 7,
-                "loopItemId": "issue-1",
-                "dispatchId": "dispatch-1",
-                "dispatchRole": "manager",
-                "managerAgentId": "agent-1"
-            }
-        });
-        link
-    }
-
-    #[test]
-    fn fresh_manager_preserves_direct_runtime_home_classification() {
-        let mut source = source_link();
-        let request: ExecutionRequest = serde_json::from_value(json!({
-            "team_id": 0,
-            "user_id":7,
-            "user_name":"synthetic",
-            "team_name":"agent",
-            "team_namespace":"default",
-            "collaboration_model":"pipeline",
-            "bot": [{"id": 31, "shell_type": "Codex"}],
-            "auth_token": "synthetic-secret",
-            "runtime_auth_token": "synthetic-runtime-secret"
-        }))
-        .unwrap();
-        store_runtime_execution_request(&mut source.runtime_handle, &request);
-        let (resumed, _) = fresh_cloud_manager_payload(&source, &command(), &[]).unwrap();
-        assert_eq!(resumed.extra["team_id"], 0);
-        assert_eq!(resumed.extra["user_id"], 7);
-        assert_eq!(resumed.extra["team_name"], "agent");
-        assert_eq!(resumed.extra["collaboration_model"], "pipeline");
-        assert_eq!(resumed.user_name.as_deref(), Some("synthetic"));
-        assert_eq!(resumed.team_namespace.as_deref(), Some("default"));
-        assert_eq!(resumed.bot[0]["id"], 31);
-        assert!(resumed.auth_token.is_none());
-        assert!(resumed.runtime_auth_token.is_none());
-    }
-
-    #[test]
-    fn fresh_cloud_manager_payload_starts_new_session() {
-        let command = command();
-        let mut source = source_link();
-        source.runtime_handle["executionRequest"]["extra"]["origin"]["executionId"] = json!(91);
-        let outcomes = vec![json!({
-            "execution_id": "execution-1",
-            "status": "completed",
-            "result": "done",
-        })];
-
-        let (request, payload) = fresh_cloud_manager_payload(&source, &command, &outcomes).unwrap();
-
-        assert_eq!(request.task_id, "manager-task-1-manager-after-round-1");
-        assert_eq!(
-            request.subtask_id,
-            "manager-task-1-manager-after-round-1-initial"
-        );
-        assert!(request.new_session);
-        assert!(request.history.is_empty());
-        assert_eq!(request.message_id, None);
-        assert!(request.extra["origin"].get("executionId").is_none());
-        assert!(payload["origin"].get("executionId").is_none());
-        assert_eq!(request.system_prompt, "manager system instructions");
-        assert_eq!(request.mcp_servers, vec![json!({"name": "wework_space"})]);
-        assert_eq!(
-            request.extra["origin"]["dispatchRole"],
-            Value::String("manager".to_owned())
-        );
-        assert!(request
-            .prompt
-            .as_str()
-            .is_some_and(|prompt| prompt.contains("Issue: 根 Issue 标题")
-                && prompt.contains("项目协作规则：每轮独立验收。")
-                && prompt.contains("\"result\": \"done\"")));
-        assert_eq!(payload["runtime"], "codex");
-        assert_eq!(payload["workspacePath"], "/tmp/project");
-        assert_eq!(
-            payload["modelSelection"]["modelName"],
-            Value::String("gpt-6-sol".to_owned())
-        );
-        assert_eq!(
-            payload["origin"]["managerAgentId"],
-            Value::String("agent-1".to_owned())
-        );
-        assert_eq!(
-            payload["runtimeHandle"]["collaborationDispatchTaskId"],
-            "dispatch-task-1"
-        );
-        assert_eq!(
-            payload["runtimeHandle"]["collaborationMemberRuntimeProfiles"],
-            source.runtime_handle["collaborationMemberRuntimeProfiles"]
-        );
-    }
-
-    #[test]
-    fn fresh_cloud_manager_payload_keeps_single_collaboration_mode() {
-        let (mut request, payload) =
-            fresh_cloud_manager_payload(&source_link(), &command(), &[]).unwrap();
-
-        apply_runtime_payload_metadata(&mut request, &payload);
-
-        assert_eq!(payload["collaboration_model"], "single");
-        assert_eq!(request.extra["collaborationMode"], "single");
-    }
-
-    #[test]
-    fn executor_materializes_member_task_from_root_profile() {
-        let command = command();
-        let assignment = &command.assignments[0];
-        let mut payload = json!({
-            "taskId": "root-member-profile",
-            "title": "placeholder",
-            "message": "placeholder",
-            "projectInstructions": "member system instructions",
-            "origin": {
-                "executionId": 91,
-                "dispatchRole": "member"
-            },
-            "executionRequest": {
-                "task_id": "root-member-profile",
-                "subtask_id": "root-member-profile-initial",
-                "system_prompt": "manager system instructions",
-                "prompt": "placeholder",
-                "extra": {
-                    "origin": {
-                        "executionId": 91,
-                        "dispatchRole": "member"
-                    }
-                }
-            }
-        });
-
-        materialize_collaboration_member_payload(
-            &mut payload,
-            "dispatch-task-1-member-round-1-member-1",
-            &command,
-            assignment,
-        )
-        .unwrap();
-
-        assert_eq!(payload["taskId"], "dispatch-task-1-member-round-1-member-1");
-        assert_eq!(payload["title"], "Collect evidence");
-        assert_eq!(
-            payload["message"],
-            "任务标题：Collect evidence\n\n执行要求：Collect CPU evidence"
-        );
-        assert!(payload["origin"].get("executionId").is_none());
-        assert_eq!(payload["origin"]["assignmentId"], "member-1");
-        assert_eq!(
-            payload["executionRequest"]["extra"]["origin"]["coordinationRoundId"],
-            "round-1"
-        );
-        let system_prompt = payload["executionRequest"]["system_prompt"]
-            .as_str()
-            .expect("member system prompt");
-        assert!(system_prompt.starts_with("member system instructions"));
-        assert!(!system_prompt.contains("manager system instructions"));
-        assert!(system_prompt.contains("Executor 自动记录到当前 Issue 动态"));
-        assert!(system_prompt.contains("不要调用 add_board_item_comment"));
-        assert!(system_prompt.contains("必须调用 upload_item_attachment"));
-    }
-
-    #[test]
-    fn fresh_cloud_manager_reuses_the_in_memory_runtime_model_config() {
-        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-        let source = source_link();
-        let command = command();
-        let model_config = json!({
-            "model_id": "cloud-model",
-            "base_url": "https://models.example.com/v1",
-            "api_key": "runtime-secret",
-        });
-        handler.retain_runtime_model_config(&source.local_task_id, &model_config);
-
-        let (mut request, _) = fresh_cloud_manager_payload(&source, &command, &[]).unwrap();
-        request.model_config = handler
-            .runtime_model_config(&source.local_task_id)
-            .expect("source Runtime model config should stay available in memory");
-
-        assert_eq!(request.model_config, model_config);
-        assert!(source.runtime_handle["executionRequest"]["model_config"].is_null());
-    }
-
-    #[test]
-    fn fresh_cloud_manager_identity_is_stable_per_round() {
-        let command = command();
-
-        assert_eq!(
-            fresh_cloud_manager_task_id(&command),
-            fresh_cloud_manager_task_id(&command)
-        );
-        assert_ne!(
-            fresh_cloud_manager_task_id(&command),
-            command.manager_runtime_task_id
-        );
-    }
-
-    #[test]
-    fn fresh_cloud_manager_is_started_only_after_runtime_acceptance() {
-        let pending = RuntimeTaskLink::new_pending(
-            "manager-task-1-manager-after-round-1".to_owned(),
-            "/tmp/project".to_owned(),
-            "Issue manager".to_owned(),
-        );
-        assert!(!fresh_cloud_manager_task_started(&pending));
-
-        let mut started = pending;
-        started.thread_id = Some("thread-1".to_owned());
-        assert!(fresh_cloud_manager_task_started(&started));
-    }
-}
+#[path = "collaboration_tests.rs"]
+mod tests;

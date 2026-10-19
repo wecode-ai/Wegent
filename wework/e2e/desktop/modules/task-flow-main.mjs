@@ -1113,7 +1113,8 @@ async function main() {
     `${JSON.stringify({ telemetryConsentAsked: false, telemetryEnabled: false })}\n`,
     { flag: 'wx', mode: 0o600 }
   )
-  // Keep online update downloads from opening a dialog during unrelated scenarios.
+  // Background update dialogs steal focus from unrelated keyboard scenarios.
+  // Update scenarios still exercise explicit checks and downloads.
   await writeFile(
     join(electronUserDataDirectory, 'renderer-local-storage.json'),
     `${JSON.stringify({

@@ -21,6 +21,7 @@ from app.services import model_credential_service
 from app.services.chat.config.model_resolver import extract_and_process_model_config
 from app.services.group_permission import get_user_groups
 from app.services.wework_model_config import wework_model_config_options
+from shared.utils.crypto import CryptoConfigurationError
 
 logger = logging.getLogger(__name__)
 
@@ -354,11 +355,17 @@ def resolve_llm_proxy_model_config(
             detail="Cloud model not found",
         )
     model_spec = kind.json.get("spec", {})
-    config = extract_and_process_model_config(
-        model_spec=model_spec,
-        user_id=current_user.id,
-        user_name=current_user.user_name or "",
-    )
+    try:
+        config = extract_and_process_model_config(
+            model_spec=model_spec,
+            user_id=current_user.id,
+            user_name=current_user.user_name or "",
+        )
+    except CryptoConfigurationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cloud model credentials are unavailable; check the encryption configuration",
+        ) from error
     model_config = model_spec.get("modelConfig")
     upstream_api_format = None
     if (

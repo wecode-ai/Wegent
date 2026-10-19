@@ -179,11 +179,10 @@ path = "/api/devices"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/v1/cloud-projects/:project_id/loop-item-pages"
-# `POST /api/v1/loop-item-executions/claim-my-next` is served by the
-# `loop_item_executions::handler` device claim the local App puller uses.
-#[[routes]]
-#methods = ["POST"]
-#path = "/api/v1/loop-item-executions/claim-my-next"
+# Older wework clients still call this retired Python API; Rust returns a JSON 404.
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/loop-item-executions/claim-my-next"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/auth/oidc/callback"
@@ -545,9 +544,9 @@ path = "/api/v1/responses/:response_id"
 # `POST /api/auth/wework/refresh` — issue a desktop access token after proving
 # possession of the device key bound to the refresh token
 # (`wework_auth::refresh_wework_access_token`).
-#[[routes]]
-#methods = ["POST"]
-#path = "/api/auth/wework/refresh"
+[[routes]]
+methods = ["POST"]
+path = "/api/auth/wework/refresh"
 
 # Candidates from the traffic-E2E run `20261009112120` recording. Keep these
 # routes disabled until their Rust handlers are implemented and verified so

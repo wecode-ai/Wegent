@@ -1655,6 +1655,7 @@ function ProjectSendProbe({
               schemaVersion: 2,
               runtime: 'codex',
               message: '',
+              title: '核对人工交付证据',
               deviceId: 'shared-environment-device',
               workspacePath: '/workspace/prepared-environment',
               execution: {
@@ -10788,6 +10789,7 @@ describe('WorkbenchProvider runtime tasks', () => {
           workspace: { source: 'git_worktree' },
         },
         message: '处理项目 Issue',
+        title: '核对人工交付证据',
         modelId: 'deepseek-v4-pro',
         modelType: 'public',
         modelOptions: {
