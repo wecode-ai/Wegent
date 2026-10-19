@@ -287,7 +287,10 @@ class DatabaseHandler:
 
         except Exception:
             logger.exception("Error updating task %s status", task_id)
-            return TaskStatusUpdateResult()
+            # Task-level status persistence is part of the terminal write. A
+            # failure must reach StatusUpdatingEmitter instead of looking like
+            # a successful update while the task remains RUNNING.
+            raise
 
         return update_result
 
