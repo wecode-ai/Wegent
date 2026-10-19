@@ -5,6 +5,8 @@ export const ELECTRON_HOST_PROTOCOL_VERSION = 1
 const MAX_FRAME_BYTES = 64 * 1024 * 1024
 const DEFAULT_TIMEOUT_MS = 120_000
 const DEFAULT_PRINCIPAL = '@wegent/dsh-app-wework'
+// Native dialogs complete when the user responds, regardless of elapsed time.
+const USER_INTERACTION_CAPABILITIES = new Set(['dialog.open', 'dialog.save', 'dialog.message'])
 
 export class ElectronHostError extends Error {
   constructor(code, message, details = {}) {
@@ -130,8 +132,11 @@ export class ElectronHostClient {
     const id = `dsh-${++this.sequence}`
     const response = deferred()
     this.pending.set(id, response)
-    this.write({ type: 'request', id, capability, params })
     try {
+      this.write({ type: 'request', id, capability, params })
+      if (USER_INTERACTION_CAPABILITIES.has(capability)) {
+        return await response.promise
+      }
       return await withTimeout(
         response.promise,
         this.timeoutMs,
