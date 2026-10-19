@@ -210,6 +210,7 @@ def test_update_developer_settings_preserves_group_name(test_db, test_user):
                 "bind_group": True,
                 "group_conversation_id": "conversation-123",
                 "group_name": "测试机器人",
+                "group_mention_user_ids": ["user-1", "user-2"],
             }
         ],
     )
@@ -221,6 +222,7 @@ def test_update_developer_settings_preserves_group_name(test_db, test_user):
             "bind_group": True,
             "group_conversation_id": "conversation-123",
             "group_name": "测试机器人",
+            "group_mention_user_ids": ["user-1", "user-2"],
         }
     ]
 
@@ -243,5 +245,6 @@ def test_update_developer_settings_preserves_group_name(test_db, test_user):
             "bind_group": True,
             "group_conversation_id": "conversation-123",
             "group_name": "测试机器人",
+            "group_mention_user_ids": ["user-1", "user-2"],
         }
     ]

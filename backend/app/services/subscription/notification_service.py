@@ -350,6 +350,11 @@ class SubscriptionNotificationService:
                     "bind_group": bool(item_data.get("bind_group", False)),
                     "group_conversation_id": item_data.get("group_conversation_id"),
                     "group_name": item_data.get("group_name"),
+                    "group_mention_user_ids": [
+                        value
+                        for value in item_data.get("group_mention_user_ids", [])
+                        if isinstance(value, str) and value
+                    ],
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                 }
             internal["notification_channel_bindings"] = channel_binding_map
@@ -698,6 +703,11 @@ class SubscriptionNotificationService:
                     "bind_group": bool(cfg.get("bind_group", False)),
                     "group_conversation_id": cfg.get("group_conversation_id"),
                     "group_name": cfg.get("group_name"),
+                    "group_mention_user_ids": [
+                        value
+                        for value in cfg.get("group_mention_user_ids", [])
+                        if isinstance(value, str) and value
+                    ],
                 }
             )
         return result
@@ -745,6 +755,11 @@ class SubscriptionNotificationService:
             "bind_group": bool(cfg.get("bind_group", False)),
             "group_conversation_id": cfg.get("group_conversation_id"),
             "group_name": cfg.get("group_name"),
+            "group_mention_user_ids": [
+                value
+                for value in cfg.get("group_mention_user_ids", [])
+                if isinstance(value, str) and value
+            ],
         }
 
     def _upsert_subscription_channel_binding(
@@ -757,6 +772,7 @@ class SubscriptionNotificationService:
         bind_group: Optional[bool] = None,
         group_conversation_id: Optional[str] = None,
         group_name: Optional[str] = None,
+        group_mention_user_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         json_data = deepcopy(subscription.json or {})
         internal = json_data.get("_internal", {})
@@ -781,6 +797,11 @@ class SubscriptionNotificationService:
             ),
             "group_name": (
                 group_name if group_name is not None else existing.get("group_name")
+            ),
+            "group_mention_user_ids": (
+                group_mention_user_ids
+                if group_mention_user_ids is not None
+                else existing.get("group_mention_user_ids", [])
             ),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }

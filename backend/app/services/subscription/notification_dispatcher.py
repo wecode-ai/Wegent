@@ -309,10 +309,14 @@ class SubscriptionNotificationDispatcher:
                 send_private = True
                 send_group = False
                 group_conversation_id = None
+                group_mention_user_ids: List[str] = []
                 if binding_config:
                     send_private = bool(binding_config.get("bind_private", True))
                     send_group = bool(binding_config.get("bind_group", False))
                     group_conversation_id = binding_config.get("group_conversation_id")
+                    group_mention_user_ids = list(
+                        binding_config.get("group_mention_user_ids", [])
+                    )
                 tasks.append(
                     self._send_dingtalk_notification(
                         db=db,
@@ -326,6 +330,7 @@ class SubscriptionNotificationDispatcher:
                         send_private=send_private,
                         send_group=send_group,
                         group_conversation_id=group_conversation_id,
+                        group_mention_user_ids=group_mention_user_ids,
                     )
                 )
             elif channel_type == "telegram":
@@ -364,6 +369,7 @@ class SubscriptionNotificationDispatcher:
         send_private: bool = True,
         send_group: bool = False,
         group_conversation_id: Optional[str] = None,
+        group_mention_user_ids: Optional[List[str]] = None,
     ) -> None:
         """
         Send notification via DingTalk.
@@ -377,6 +383,7 @@ class SubscriptionNotificationDispatcher:
             subscription_id: Subscription ID
             execution_id: Background execution ID
             subscription_display_name: Display name of the subscription
+            group_mention_user_ids: DingTalk user IDs to mention in group cards
         """
         try:
             dingtalk_user_id = binding.sender_staff_id or binding.sender_id
@@ -465,6 +472,7 @@ class SubscriptionNotificationDispatcher:
                         status="",
                         enable_streaming=False,
                         open_space_id=group_open_space_id,
+                        mention_user_ids=group_mention_user_ids,
                     )
                     logger.info(
                         f"[_send_dingtalk_notification] Group AI card result: {group_result}"

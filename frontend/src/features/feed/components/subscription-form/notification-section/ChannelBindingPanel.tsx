@@ -19,6 +19,7 @@ interface ChannelBindingPanelProps {
   onCancelBinding: () => void
   onRebind: () => void
   onUnbind: () => void
+  onMentionUserIdsChange: (value: string) => void
 }
 
 const resolvePrivateStatusText = (bound: boolean, t: TFunction<string | string[]>) => {
@@ -61,6 +62,7 @@ export function ChannelBindingPanel({
   onCancelBinding,
   onRebind,
   onUnbind,
+  onMentionUserIdsChange,
 }: ChannelBindingPanelProps) {
   const { t } = useTranslation('feed')
   const groupBound = Boolean(config.group_conversation_id)
@@ -214,6 +216,32 @@ export function ChannelBindingPanel({
               ID: {config.group_conversation_id.slice(0, 20)}
               {config.group_conversation_id.length > 20 ? '...' : ''}
             </p>
+          )}
+
+          {groupBound && (
+            <div className="mt-3 space-y-2">
+              <Label htmlFor={`group-mention-users-${channelId}`}>
+                {t('notification_settings.group_mention_users', '@ 指定用户')}
+              </Label>
+              <input
+                id={`group-mention-users-${channelId}`}
+                type="text"
+                className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                data-testid={`group-mention-users-${channelId}`}
+                value={(config.group_mention_user_ids || []).join(',')}
+                onChange={event => onMentionUserIdsChange(event.target.value)}
+                placeholder={t(
+                  'notification_settings.group_mention_users_placeholder',
+                  '输入钉钉 userId，多个用英文逗号分隔'
+                )}
+              />
+              <p className="text-xs text-text-muted">
+                {t(
+                  'notification_settings.group_mention_users_hint',
+                  '仅对群聊通知生效；使用英文逗号分隔多个 userId'
+                )}
+              </p>
+            </div>
           )}
         </div>
       </div>

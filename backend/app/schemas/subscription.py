@@ -971,6 +971,10 @@ class NotificationChannelBindingConfig(BaseModel):
         None, description="Bound group conversation ID for group delivery"
     )
     group_name: Optional[str] = Field(None, description="Name of the bound group chat")
+    group_mention_user_ids: List[str] = Field(
+        default_factory=list,
+        description="DingTalk user IDs to mention in bound group notifications",
+    )
 
 
 class FollowSettingsResponse(BaseModel):

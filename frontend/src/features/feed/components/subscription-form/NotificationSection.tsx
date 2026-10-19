@@ -147,6 +147,7 @@ export function NotificationSection({
         channel_id: channelId,
         bind_private: true,
         bind_group: false,
+        group_mention_user_ids: [],
       },
     [channelBindingConfigs]
   )
@@ -206,6 +207,7 @@ export function NotificationSection({
         channel_id: channelId,
         bind_private: true,
         bind_group: false,
+        group_mention_user_ids: [],
       }
       const next = updater({
         bind_private: existing.bind_private,
@@ -236,9 +238,22 @@ export function NotificationSection({
           ...existing,
           group_conversation_id: undefined,
           group_name: undefined,
+          group_mention_user_ids: [],
         },
       ]
     })
+  }
+
+  const updateGroupMentionUserIds = (channelId: number, value: string) => {
+    const userIds = value
+      .split(',')
+      .map(item => item.trim())
+      .filter(Boolean)
+    setChannelBindingConfigs(prev =>
+      prev.map(config =>
+        config.channel_id === channelId ? { ...config, group_mention_user_ids: userIds } : config
+      )
+    )
   }
 
   const getPrivateBound = (channelId: number) => {
@@ -386,6 +401,7 @@ export function NotificationSection({
                       onUnbind={() => {
                         void handleUnbind(channel.id)
                       }}
+                      onMentionUserIdsChange={value => updateGroupMentionUserIds(channel.id, value)}
                     />
                   )
                 })}
