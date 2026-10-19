@@ -4615,10 +4615,10 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         teardownFailures.push({ error, label })
       }
     }
-    await runTeardownStep('cloud environment', async () => cloudEnvironment?.stop())
-    await runTeardownStep('blocking network proxy', async () => blockingNetworkProxy?.stop())
     await runTeardownStep('desktop application', async () => stopDesktopAppProcess(app))
     await runTeardownStep('desktop controller', async () => control.close())
+    await runTeardownStep('blocking network proxy', async () => blockingNetworkProxy?.stop())
+    await runTeardownStep('cloud environment', async () => cloudEnvironment?.stop())
     await runTeardownStep('desktop scenario', async () => desktopScenario?.cleanup?.())
     await runTeardownStep('Codex SQLite home', async () =>
       rm(codexSqliteHome, {
