@@ -183,6 +183,137 @@ pub async fn get_object(
     Ok(body.to_vec())
 }
 
+/// `MinIOStorageBackend.exists(key)` / minio-py `stat_object`:
+/// `HEAD {scheme}://{host}/{bucket}/{key}`. A `404` upstream status is
+/// reported as [`StorageError::NotFound`] so callers can render a missing
+/// object; every other non-success status and transport failure is
+/// [`StorageError::Unavailable`].
+pub async fn stat_object(
+    client: &HttpClient,
+    config: &MinioConfig,
+    key: &str,
+) -> Result<(), StorageError> {
+    let host = config.host();
+    let uri = format!("/{}/{}", config.bucket, encode_object_path(key));
+    let url = format!("{}://{host}{uri}", config.scheme());
+    let amz_date = s3_signing::amz_timestamp_now();
+    let signed = s3_signing::sign(
+        &config.access_key,
+        &config.secret_key,
+        &config.region,
+        host,
+        "HEAD",
+        &uri,
+        &amz_date,
+    );
+    let response = client
+        .request(brz_http::Method::HEAD, &url)
+        .map_err(|_| StorageError::Unavailable)?
+        .header("authorization", signed.authorization)
+        .header("x-amz-content-sha256", signed.content_sha256)
+        .header("x-amz-date", signed.amz_date)
+        .header("user-agent", "MinIO (Linux; x86_64) minio-py/7.2.20")
+        .send()
+        .await
+        .map_err(|_| StorageError::Unavailable)?;
+    if response.status().is_success() {
+        Ok(())
+    } else if response.status().as_u16() == 404 {
+        Err(StorageError::NotFound)
+    } else {
+        Err(StorageError::Unavailable)
+    }
+}
+
+/// minio-py `put_object` for a single-part upload:
+/// `PUT {scheme}://{host}/{bucket}/{key}` with the object bytes as the body.
+/// The payload hash signs the request (`x-amz-content-sha256`) over the
+/// cleartext-HTTP transport the deployment uses, and the object is stored as
+/// `application/octet-stream`.
+pub async fn put_object(
+    client: &HttpClient,
+    config: &MinioConfig,
+    key: &str,
+    body: &[u8],
+) -> Result<(), StorageError> {
+    let host = config.host();
+    let uri = format!("/{}/{}", config.bucket, encode_object_path(key));
+    let url = format!("{}://{host}{uri}", config.scheme());
+    let amz_date = s3_signing::amz_timestamp_now();
+    let payload_sha256 = s3_signing::hex_sha256(body);
+    let signed = s3_signing::sign_headers(
+        &config.access_key,
+        &config.secret_key,
+        &config.region,
+        "PUT",
+        &uri,
+        &amz_date,
+        &payload_sha256,
+        &[
+            ("host", host),
+            ("content-type", "application/octet-stream"),
+            ("x-amz-content-sha256", &payload_sha256),
+            ("x-amz-date", &amz_date),
+        ],
+    );
+    let response = client
+        .request(brz_http::Method::PUT, &url)
+        .map_err(|_| StorageError::Unavailable)?
+        .header("authorization", signed.authorization)
+        .header("x-amz-content-sha256", signed.content_sha256)
+        .header("x-amz-date", signed.amz_date)
+        .header("content-type", "application/octet-stream")
+        .header("user-agent", "MinIO (Linux; x86_64) minio-py/7.2.20")
+        .body(body.to_vec())
+        .send()
+        .await
+        .map_err(|_| StorageError::Unavailable)?;
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        Err(StorageError::Unavailable)
+    }
+}
+
+/// minio-py `remove_object`: `DELETE {scheme}://{host}/{bucket}/{key}` with
+/// an empty-payload signature. The source treats every failure as a storage
+/// error, so both a missing object and an unavailable store are
+/// [`StorageError::Unavailable`].
+pub async fn delete_object(
+    client: &HttpClient,
+    config: &MinioConfig,
+    key: &str,
+) -> Result<(), StorageError> {
+    let host = config.host();
+    let uri = format!("/{}/{}", config.bucket, encode_object_path(key));
+    let url = format!("{}://{host}{uri}", config.scheme());
+    let amz_date = s3_signing::amz_timestamp_now();
+    let signed = s3_signing::sign(
+        &config.access_key,
+        &config.secret_key,
+        &config.region,
+        host,
+        "DELETE",
+        &uri,
+        &amz_date,
+    );
+    let response = client
+        .request(brz_http::Method::DELETE, &url)
+        .map_err(|_| StorageError::Unavailable)?
+        .header("authorization", signed.authorization)
+        .header("x-amz-content-sha256", signed.content_sha256)
+        .header("x-amz-date", signed.amz_date)
+        .header("user-agent", "MinIO (Linux; x86_64) minio-py/7.2.20")
+        .send()
+        .await
+        .map_err(|_| StorageError::Unavailable)?;
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        Err(StorageError::Unavailable)
+    }
+}
+
 /// URL-encode an object key the way `minio-py` does for path-style requests:
 /// percent-encode every byte except unreserved characters and `/`.
 pub fn encode_object_path(key: &str) -> String {

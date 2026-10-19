@@ -13,7 +13,9 @@ fn normalize(sql: &str) -> String {
 
 /// `require_cloud_project_role` issues the source's single
 /// `project_access_query` statement with every value inlined, so it binds
-/// no parameters.
+/// no parameters. The recorded source renders the union with the creator
+/// grant: direct, workspace-inherited, public, and owned branches with the
+/// project id pushed into each one.
 #[tokio::test]
 async fn require_cloud_project_role_runs_the_source_access_query() {
     let mysql = crate::sql_test_support::KindQueryCapture::default();
@@ -27,13 +29,24 @@ async fn require_cloud_project_role_runs_the_source_access_query() {
     let queries = mysql.queries();
     assert_eq!(queries.len(), 1);
     let sql = normalize(&queries[0].sql);
-    assert!(sql.contains("caller.id = 3060 AND caller.is_active = true"));
+    assert!(sql.contains("resource_members.entity_id = '3060'"));
+    assert!(sql.contains("AND resource_members.resource_id = 1712605396200092385"));
     assert!(sql.contains("AND loop_items.id = '1712605396200092385'"));
-    assert!(sql.contains("HAVING COUNT(DISTINCT entity_id) = 1"));
-    assert!(sql.contains("kinds.is_active = true"));
-    assert!(sql.contains("THEN 4 END AS public_priority"));
-    assert!(!sql.contains("loop_items.created_by_user_id = 3060"));
+    assert!(sql.contains("UNION ALL SELECT loop_items.id AS project_id, 0 AS priority"));
+    assert!(sql.contains("loop_items.created_by_user_id = 3060"));
+    assert!(sql.contains("kinds.kind = 'CollaborationWorkspace' AND kinds.is_active IS true"));
+    assert!(sql.contains(
+        "resource_members.entity_type = 'authenticated_users' \
+         AND resource_members.entity_id = '*'"
+    ));
+    assert!(sql.contains("anon_1.priority AS anon_1_priority"));
+    assert!(sql.contains("GROUP BY anon_2.project_id"));
+    assert!(sql.contains(
+        "WHERE loop_items.status = 'active' AND loop_items.resource_type IN ('project')"
+    ));
     assert!(sql.ends_with("LIMIT 1"));
+    // The point read is the inline-literal union, not the later CTE form.
+    assert!(!sql.contains("WITH parents"));
     assert_eq!(queries[0].args, 0);
 }
 

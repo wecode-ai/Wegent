@@ -2,150 +2,34 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! `GET /api/admin/plugins/publication-requests` implementation.
+//! The shared `_summary` projection of one `plugin_publication_requests` row.
 //!
-//! Source: `app/api/endpoints/admin/plugin_publications.py`
-//! (`list_plugin_publication_requests`) -> `PluginPublicationService.list_requests`
-//! -> `PluginPublicationService._summary`. The router prefix
-//! `/plugins/publication-requests` is mounted under `/api/admin`.
-//!
-//! Request order matches the source: the session principal
-//! (`get_current_user`) is resolved first, then the `get_admin_user` role
-//! check, then FastAPI query validation. A non-admin session is rejected with
-//! `403 {"detail": "Permission denied. Admin access required."}`.
-//!
-//! For the recorded case the query runs `count(*)`, the ordered page, and then
-//! per row `plugins`, the current revision, the submitter, and the revision
-//! checks; `_summary` projects the response fields from those rows.
-
-mod query;
-mod sql;
+//! Source: `PluginPublicationService._summary`
+//! (`app/services/plugin_publication_service.py:2100`). Both route variants
+//! (`admin` and submitter) project identical response bodies from the same
+//! row lookups: `db.get(Plugin, source_plugin_id)`, `_current_revision`,
+//! `db.get(User, submitter_user_id)`, and the revision's `_checks`.
 
 use chrono::NaiveDateTime;
 use serde::Serialize;
 
 use brz_mysql::{Mysql, MysqlResult};
 
-use crate::auth::SessionUser;
-use crate::http_compat::FastApiError;
-use crate::state::AppState;
-
-use query::ListParams;
-pub use query::ListQuery;
-use sql::{CheckRow, Filters, PluginRow, RequestRow, RevisionRow, UserRow};
-
-/// Source `EPOCH_TIME` (`app/models/plugin_marketplace.py`).
-const EPOCH_TIME: NaiveDateTime = NaiveDateTime::new(
-    chrono::NaiveDate::from_ymd_opt(1970, 1, 1).expect("valid epoch date"),
-    chrono::NaiveTime::from_hms_opt(0, 0, 0).expect("valid epoch time"),
-);
-
-/// `get_admin_user` rejection detail (`app/core/security.py`).
-const ADMIN_REQUIRED_DETAIL: &str = "Permission denied. Admin access required.";
-
-/// Source `TERMINAL_PUBLICATION_STATUSES`.
-const TERMINAL_PUBLICATION_STATUSES: [&str; 3] = ["published", "withdrawn", "closed"];
-/// Source `ADMIN_REVIEW_STATUSES`.
-const ADMIN_REVIEW_STATUSES: [&str; 2] = ["awaiting_admin", "admin_review"];
-/// Source `CODE_REVIEW_STATUSES`.
-const CODE_REVIEW_STATUSES: [&str; 7] = [
-    "admin_accepted",
-    "materializing",
-    "draft_mr_open",
-    "ci_running",
-    "code_changes_requested",
-    "merge_ready",
-    "merged",
-];
-
-/// GET /api/admin/plugins/publication-requests: the list free function,
-/// injecting the process-lifetime application state.
-#[brz_http_server::get("/api/admin/plugins/publication-requests")]
-async fn list_plugin_publication_requests(
-    #[inject(state)] state: &AppState,
-    #[auth] user: SessionUser,
-    query: brz_http_server::Query<ListQuery>,
-) -> Result<ListResponse, FastApiError> {
-    list_requests(state, &user, &query).await
-}
-
-/// Handler body for `GET /api/admin/plugins/publication-requests`.
-async fn list_requests(
-    state: &AppState,
-    user: &SessionUser,
-    query: &ListQuery,
-) -> Result<ListResponse, FastApiError> {
-    require_admin(&user.role)?;
-    let params = query.validated()?;
-    match list(&state.mysql, &params).await {
-        Ok(response) => Ok(response),
-        Err(error) => {
-            tracing::error!(%error, "admin plugin publication list failed");
-            Err(FastApiError::internal())
-        }
-    }
-}
-
-/// `get_admin_user`: the session principal must carry the `admin` role.
-fn require_admin(role: &str) -> Result<(), FastApiError> {
-    if role == "admin" {
-        Ok(())
-    } else {
-        Err(FastApiError::forbidden(ADMIN_REQUIRED_DETAIL))
-    }
-}
-
-/// `list_requests`: count, page, then project each row through `_summary`.
-async fn list<M: Mysql>(mysql: &M, params: &ListParams) -> MysqlResult<ListResponse> {
-    let filters = resolve_filters(mysql, params).await?;
-    let total = sql::count_requests(mysql, params, &filters).await?;
-    let rows = sql::select_requests(mysql, params, &filters).await?;
-    let mut items = Vec::with_capacity(rows.len());
-    let now = chrono::Utc::now().naive_utc();
-    for row in &rows {
-        items.push(summary(mysql, row, now).await?);
-    }
-    Ok(ListResponse {
-        items,
-        total,
-        page: params.page,
-        limit: params.limit,
-    })
-}
-
-/// Resolve the `submitter` and `query` text filters into id lists, in the
-/// source order (`users` lookup, then `plugins` lookup).
-async fn resolve_filters<M: Mysql>(mysql: &M, params: &ListParams) -> MysqlResult<Filters> {
-    let submitter_ids = match &params.submitter {
-        Some(value) => Some(sql::user_ids_like(mysql, &like_pattern(value)).await?),
-        None => None,
-    };
-    let plugin_ids = match &params.query {
-        Some(value) => Some(sql::plugin_ids_like(mysql, &like_pattern(value)).await?),
-        None => None,
-    };
-    Ok(Filters {
-        submitter_ids,
-        plugin_ids,
-    })
-}
-
-/// `f"%{value.strip()}%"`.
-fn like_pattern(value: &str) -> String {
-    format!("%{}%", value.trim())
-}
+use super::sql::{CheckRow, PluginRow, RequestRow, RevisionRow, UserRow};
+use super::{ADMIN_REVIEW_STATUSES, CODE_REVIEW_STATUSES, TERMINAL_PUBLICATION_STATUSES};
 
 /// `_summary`: plugin, current revision, submitter, and checks for one request.
-async fn summary<M: Mysql>(
+pub(super) async fn summary<M: Mysql>(
     mysql: &M,
     request: &RequestRow,
     now: NaiveDateTime,
 ) -> MysqlResult<PluginPublicationRequestSummary> {
-    let plugin = sql::get_plugin(mysql, request.source_plugin_id).await?;
-    let revision = sql::current_revision(mysql, request.id, request.current_revision_id).await?;
-    let submitter = sql::get_user(mysql, request.submitter_user_id).await?;
+    let plugin = super::sql::get_plugin(mysql, request.source_plugin_id).await?;
+    let revision =
+        super::sql::current_revision(mysql, request.id, request.current_revision_id).await?;
+    let submitter = super::sql::get_user(mysql, request.submitter_user_id).await?;
     let checks = match &revision {
-        Some(revision) => sql::checks_for_revision(mysql, revision.id).await?,
+        Some(revision) => super::sql::checks_for_revision(mysql, revision.id).await?,
         None => Vec::new(),
     };
     Ok(summary_from(
@@ -159,7 +43,7 @@ async fn summary<M: Mysql>(
 }
 
 /// Build one `PluginPublicationRequestSummary` (pure projection).
-fn summary_from(
+pub(super) fn summary_from(
     request: &RequestRow,
     plugin: Option<&PluginRow>,
     revision: Option<&RevisionRow>,
@@ -220,14 +104,14 @@ fn summary_from(
 
 /// Source `unset_datetime(value) is None`: the 1970-01-01 sentinel maps to unset.
 fn unset_datetime(value: NaiveDateTime) -> bool {
-    value == EPOCH_TIME
+    value == super::EPOCH_TIME
 }
 
 /// `_waiting_duration_seconds`: seconds since `submitted_at`, using
 /// `updated_at` for a terminal status and the current UTC time otherwise.
 ///
 /// `waitingDurationSeconds` is derived from the request-time UTC clock, not a
-/// stored column: for the `awaiting_admin` status it grows by the elapsed time
+/// stored column: for a non-terminal status it grows by the elapsed time
 /// between two replays of the same recording. It is therefore not reproducible
 /// from stored state and is covered by a response `duration` rule (unit
 /// seconds) on `/items/*/waitingDurationSeconds` at replay time; no stored
@@ -283,7 +167,7 @@ fn iso_datetime(value: NaiveDateTime) -> String {
 
 /// `PluginPublicationSubmitter` (`app/schemas/plugin_publication.py`).
 #[derive(Debug, Serialize)]
-struct PluginPublicationSubmitter {
+pub(super) struct PluginPublicationSubmitter {
     id: i64,
     #[serde(rename = "userName")]
     user_name: String,
@@ -292,7 +176,7 @@ struct PluginPublicationSubmitter {
 
 /// `PluginPublicationRequestSummary`, in pydantic declaration order.
 #[derive(Debug, Serialize)]
-struct PluginPublicationRequestSummary {
+pub(super) struct PluginPublicationRequestSummary {
     id: i64,
     #[serde(rename = "pluginId")]
     plugin_id: i64,
@@ -325,13 +209,9 @@ struct PluginPublicationRequestSummary {
 
 /// `PluginPublicationRequestListResponse`.
 #[derive(Debug, Serialize)]
-struct ListResponse {
-    items: Vec<PluginPublicationRequestSummary>,
-    total: i64,
-    page: i64,
-    limit: i64,
+pub(super) struct ListResponse {
+    pub(super) items: Vec<PluginPublicationRequestSummary>,
+    pub(super) total: i64,
+    pub(super) page: i64,
+    pub(super) limit: i64,
 }
-
-#[cfg(test)]
-#[path = "tests.rs"]
-mod tests;

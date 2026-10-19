@@ -49,7 +49,7 @@ const MAX_TITLE_CHARS: usize = 512;
 /// `db.refresh(transcript)` — the ORM re-selects the row by primary key with
 /// unaliased columns after the committed update. Recorded immediately after
 /// `COMMIT` in the lease exchange.
-const REFRESH_TRANSCRIPT_QUERY: &str = "SELECT wework_transcripts.id, wework_transcripts.user_id, \
+pub(crate) const REFRESH_TRANSCRIPT_QUERY: &str = "SELECT wework_transcripts.id, wework_transcripts.user_id, \
      wework_transcripts.transcript_id, wework_transcripts.parent_transcript_id, \
      wework_transcripts.forked_at_sequence, wework_transcripts.title, \
      wework_transcripts.state, wework_transcripts.current_sequence, \

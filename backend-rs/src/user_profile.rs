@@ -129,6 +129,30 @@ pub trait UserViewExtension: Send + Sync {
     fn cached_user_ext(&self, _preferences: Option<&str>) -> UserViewExt {
         UserViewExt::empty()
     }
+
+    /// `GET /api/users/me/wegent-runtime`'s encrypted payload fields. The
+    /// public endpoint sends an empty `employee_id`, `user.user_name` as
+    /// `name`, and `str(user.id)` as `uid`; an application whose deployment
+    /// extends the endpoint can override these resolutions with its
+    /// own identity fields.
+    fn runtime_user_payload_fields(&self, user: &UserRow) -> RuntimeUserPayloadFields {
+        RuntimeUserPayloadFields {
+            employee_id: String::new(),
+            name: user.user_name.clone(),
+            uid: user.id.to_string(),
+        }
+    }
+}
+
+/// The application-resolved `GET /api/users/me/wegent-runtime` payload
+/// fields: `employee_id`, `name`, and `uid` of the encrypted JSON.
+pub struct RuntimeUserPayloadFields {
+    /// `payload["employee_id"]` (`""` in the public endpoint).
+    pub employee_id: String,
+    /// `payload["name"]` (`user.user_name` in the public endpoint).
+    pub name: String,
+    /// `payload["uid"]` (`str(user.id)` in the public endpoint).
+    pub uid: String,
 }
 
 /// The public response schema has no external account fields.

@@ -104,23 +104,23 @@ pub(crate) struct TranscriptRow {
 /// source column list. The result columns carry the
 /// `wework_transcript_archives_<column>` aliases, so every field is renamed.
 #[derive(Debug, FromMysqlRow)]
-struct ArchiveRow {
+pub(crate) struct ArchiveRow {
     #[mysql(rename = "wework_transcript_archives_id")]
-    id: i64,
+    pub(crate) id: i64,
     #[mysql(rename = "wework_transcript_archives_from_sequence")]
-    from_sequence: i64,
+    pub(crate) from_sequence: i64,
     #[mysql(rename = "wework_transcript_archives_to_sequence")]
-    to_sequence: i64,
+    pub(crate) to_sequence: i64,
     #[mysql(rename = "wework_transcript_archives_storage_key")]
-    storage_key: String,
+    pub(crate) storage_key: String,
     #[mysql(rename = "wework_transcript_archives_sha256")]
-    sha256: String,
+    pub(crate) sha256: String,
     #[mysql(rename = "wework_transcript_archives_size_bytes")]
-    size_bytes: i64,
+    pub(crate) size_bytes: i64,
     #[mysql(rename = "wework_transcript_archives_format")]
-    format: String,
+    pub(crate) format: String,
     #[mysql(rename = "wework_transcript_archives_created_at")]
-    created_at: chrono::NaiveDateTime,
+    pub(crate) created_at: chrono::NaiveDateTime,
 }
 
 /// The source `wework_transcripts` query
@@ -214,7 +214,7 @@ const ARCHIVES_FLOOR_QUERY: &str = "SELECT wework_transcript_archives.to_sequenc
 /// `transcript_db_id` and `to_sequence >= retained_floor`, ordered by
 /// `to_sequence`. The projection mirrors the source SQLAlchemy labeled
 /// rendering.
-const ARCHIVES_QUERY: &str = "SELECT wework_transcript_archives.id AS wework_transcript_archives_id, \
+pub(crate) const ARCHIVES_QUERY: &str = "SELECT wework_transcript_archives.id AS wework_transcript_archives_id, \
      wework_transcript_archives.transcript_db_id AS wework_transcript_archives_transcript_db_id, \
      wework_transcript_archives.from_sequence AS wework_transcript_archives_from_sequence, \
      wework_transcript_archives.to_sequence AS wework_transcript_archives_to_sequence, \
@@ -611,7 +611,7 @@ fn archive_not_found() -> FastApiError {
 
 /// `WeworkTranscriptStorageError` rendered by `_translate`:
 /// `503 {"detail": {"code": "transcript_storage_unavailable", "message": ...}}`.
-fn storage_unavailable() -> FastApiError {
+pub(crate) fn storage_unavailable() -> FastApiError {
     FastApiError::json_body(
         brz_http_server::StatusCode::SERVICE_UNAVAILABLE,
         TranscriptErrorResponse {
@@ -639,7 +639,7 @@ struct TranscriptErrorBody {
 /// snapshot `to_sequence` values for the transcript; the floor is the second
 /// value, or `0` when fewer than two snapshots exist. A database failure here
 /// surfaces as the source global exception handler's 500 response.
-async fn retained_archive_floor<M: brz_mysql::Mysql>(
+pub(crate) async fn retained_archive_floor<M: brz_mysql::Mysql>(
     mysql: &M,
     transcript_db_id: i64,
 ) -> brz_mysql::MysqlResult<i64> {

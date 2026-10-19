@@ -60,11 +60,12 @@ use crate::state::AppState;
 
 pub(crate) mod convert;
 mod create;
+mod preview;
 pub mod workspaces;
 
 use convert::{
-    SubscriptionListResponse, convert_to_subscription_in_db, internal_datetime, internal_flag,
-    internal_i64, internal_object, internal_string, set_internal_flag,
+    ParsedDatetime, SubscriptionListResponse, convert_to_subscription_in_db, internal_datetime,
+    internal_flag, internal_i64, internal_object, internal_string, set_internal_flag,
 };
 
 /// Query parameters of the list endpoint.
@@ -275,11 +276,17 @@ async fn subscriptions_list(
 
     // Check and auto-disable expired subscriptions (`datetime.now(utc)`).
     let now = chrono::Utc::now().naive_utc();
+    let now_aware = chrono::Utc::now();
     let mut expired_updated = false;
     for row in &mut subscriptions {
         let internal = internal_object(&row.json.0);
         if let Some(expires_at) = internal_datetime(&internal, "expires_at")
-            && now >= expires_at
+            && match expires_at {
+                ParsedDatetime::Naive(value) => now >= value,
+                // `is_subscription_expired` compares an aware expires_at
+                // against aware UTC now.
+                ParsedDatetime::Aware(value) => now_aware >= value,
+            }
             && internal_flag(&internal, "enabled", true)
         {
             set_internal_flag(&mut row.json.0, "enabled", false);
@@ -574,6 +581,50 @@ mod tests {
     fn pydantic_datetime_renders() {
         let dt = NaiveDateTime::parse_from_str("2026-09-10T04:59:37", "%Y-%m-%dT%H:%M:%S").unwrap();
         assert_eq!(pydantic_datetime(dt), "2026-09-10T04:59:37");
+    }
+
+    #[test]
+    fn aware_expires_at_renders_z_suffix() {
+        let mut json = subscription_json();
+        json["_internal"]["expires_at"] = json!("2026-10-30T11:53:00+00:00");
+        let item = convert_to_subscription_in_db(&kind_row(json), &HashMap::new());
+        assert_eq!(item.expires_at.as_deref(), Some("2026-10-30T11:53:00Z"));
+        assert!(!item.is_expired);
+    }
+
+    #[test]
+    fn aware_expires_at_keeps_non_utc_offset() {
+        let mut json = subscription_json();
+        json["_internal"]["expires_at"] = json!("2026-10-30T11:53:00+05:30");
+        let item = convert_to_subscription_in_db(&kind_row(json), &HashMap::new());
+        assert_eq!(
+            item.expires_at.as_deref(),
+            Some("2026-10-30T11:53:00+05:30")
+        );
+    }
+
+    #[test]
+    fn naive_expires_at_renders_without_offset() {
+        let mut json = subscription_json();
+        json["_internal"]["expires_at"] = json!("2026-10-30T11:53:00");
+        let item = convert_to_subscription_in_db(&kind_row(json), &HashMap::new());
+        assert_eq!(item.expires_at.as_deref(), Some("2026-10-30T11:53:00"));
+    }
+
+    #[test]
+    fn aware_last_and_next_execution_times_render_offset() {
+        let mut json = subscription_json();
+        json["_internal"]["last_execution_time"] = json!("2026-10-15T15:30:37.274857+00:00");
+        json["_internal"]["next_execution_time"] = json!("2026-10-15T15:45:00+02:00");
+        let item = convert_to_subscription_in_db(&kind_row(json), &HashMap::new());
+        assert_eq!(
+            item.last_execution_time.as_deref(),
+            Some("2026-10-15T15:30:37.274857Z")
+        );
+        assert_eq!(
+            item.next_execution_time.as_deref(),
+            Some("2026-10-15T15:45:00+02:00")
+        );
     }
 
     #[test]

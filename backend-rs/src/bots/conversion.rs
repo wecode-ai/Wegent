@@ -60,6 +60,46 @@ pub struct BotSpec {
     pub capability_mode: Option<String>,
     #[serde(rename = "secondaryModelRef")]
     pub secondary_model_ref: Option<Reference>,
+    pub execution_policy: Option<ExecutionPolicy>,
+    pub model_policy: Option<ModelPolicy>,
+}
+
+/// `ExecutionPolicy` (`app/schemas/runner_routing.py`); the serialized field
+/// order matches the pydantic declaration order.
+#[derive(Debug, Default, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct ExecutionPolicy {
+    pub mode: Option<String>,
+    pub environment_id: Option<String>,
+}
+
+/// `ModelPolicy` (`app/schemas/runner_routing.py`).
+#[derive(Debug, Default, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct ModelPolicy {
+    pub mode: Option<String>,
+    pub model: Option<ModelIdentity>,
+}
+
+/// `ModelIdentity` (`app/schemas/runner_routing.py`).
+#[derive(Debug, Default, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct ModelIdentity {
+    pub runtime: Option<String>,
+    pub provider: Option<String>,
+    pub model_id: Option<String>,
+    pub source: Option<String>,
+    pub cloud_model: Option<CloudModelReference>,
+}
+
+/// `CloudModelReference` (`app/schemas/runner_routing.py`).
+#[derive(Debug, Default, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct CloudModelReference {
+    pub name: Option<String>,
+    pub r#type: Option<String>,
+    pub namespace: Option<String>,
+    pub resource_user_id: Option<i64>,
 }
 
 /// Read projection of one Ghost `kinds.json` document.
@@ -179,6 +219,8 @@ pub struct BotItem {
     pub mcp_servers: RawJson,
     pub plugins: RawJson,
     pub capability_mode: String,
+    pub execution_policy: Option<ExecutionPolicy>,
+    pub model_policy: Option<ModelPolicy>,
     pub inherit_base_capabilities: bool,
     pub default_knowledge_base_refs: RawJson,
     pub skills: RawJson,
@@ -239,6 +281,8 @@ pub fn bot_item(
         mcp_servers: capabilities.mcp_servers,
         plugins: capabilities.plugins,
         capability_mode: spec.capability_mode.unwrap_or_else(|| "manual".to_string()),
+        execution_policy: spec.execution_policy.clone(),
+        model_policy: spec.model_policy.clone(),
         inherit_base_capabilities: capabilities.inherit_base_capabilities,
         default_knowledge_base_refs: capabilities.default_knowledge_base_refs,
         skills: capabilities.skills,
@@ -532,7 +576,42 @@ mod tests {
         let body = serde_json::to_string(&item).unwrap();
         assert_eq!(
             body,
-            r#"{"id":281639,"user_id":1214,"name":"bot1","namespace":"default","shell_name":"ClaudeCode","shell_type":"ClaudeCode","agent_config":{"bind_model":"openai-x","bind_model_type":"public"},"system_prompt":"hi","mcp_servers":{},"plugins":[],"capability_mode":"manual","inherit_base_capabilities":false,"default_knowledge_base_refs":[{"id":257123,"name":"kb"}],"skills":["s1"],"skill_refs":{"s1":{"skill_id":262433,"namespace":"default","is_public":false,"content_hash":"sha256:abc"}},"preload_skills":[],"preload_skill_refs":{},"is_active":true,"created_at":"2026-09-10T08:49:57","updated_at":"2026-09-10T08:49:57","secondary_model_name":null,"secondary_model_namespace":null}"#
+            r#"{"id":281639,"user_id":1214,"name":"bot1","namespace":"default","shell_name":"ClaudeCode","shell_type":"ClaudeCode","agent_config":{"bind_model":"openai-x","bind_model_type":"public"},"system_prompt":"hi","mcp_servers":{},"plugins":[],"capability_mode":"manual","execution_policy":null,"model_policy":null,"inherit_base_capabilities":false,"default_knowledge_base_refs":[{"id":257123,"name":"kb"}],"skills":["s1"],"skill_refs":{"s1":{"skill_id":262433,"namespace":"default","is_public":false,"content_hash":"sha256:abc"}},"preload_skills":[],"preload_skill_refs":{},"is_active":true,"created_at":"2026-09-10T08:49:57","updated_at":"2026-09-10T08:49:57","secondary_model_name":null,"secondary_model_namespace":null}"#
+        );
+    }
+
+    #[test]
+    fn stored_policies_render_in_pydantic_field_order() {
+        // `bot_crd.spec.execution_policy` / `model_policy` are re-serialized
+        // through `BotInDB.model_dump`, preserving each pydantic model's field
+        // declaration order.
+        let mut bot = bot_json();
+        bot["spec"]["execution_policy"] = json!({"mode": "fixed", "environment_id": "123"});
+        bot["spec"]["model_policy"] = json!({
+            "mode": "fixed",
+            "model": {
+                "runtime": "claude_code",
+                "provider": "p",
+                "model_id": "m",
+                "source": "cloud",
+                "cloud_model": {
+                    "name": "m",
+                    "type": "public",
+                    "namespace": "default",
+                    "resource_user_id": 0
+                }
+            }
+        });
+        let bot = bot_row(bot);
+        let item = bot_item(&bot, None, None, None);
+        let value = serde_json::to_value(&item).unwrap();
+        assert_eq!(
+            serde_json::to_string(&value["execution_policy"]).unwrap(),
+            r#"{"mode":"fixed","environment_id":"123"}"#
+        );
+        assert_eq!(
+            value["model_policy"]["model"]["cloud_model"],
+            json!({"name":"m","type":"public","namespace":"default","resource_user_id":0})
         );
     }
 

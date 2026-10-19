@@ -288,3 +288,19 @@ class TestUserMcpsAPI:
 
         assert list_response.status_code == 404
         assert update_response.status_code == 404
+
+
+@pytest.fixture(autouse=True)
+def _retained_python_handler_contracts(user_mcps_client):
+    import app.api.endpoints.users as endpoint_0
+    from tests.legacy_python_routes import legacy_python_handlers
+
+    with legacy_python_handlers(user_mcps_client.app) as register:
+        register(
+            "/api/users/me/mcps/providers/{provider_id}/services",
+            endpoint_0.list_mcp_provider_services,
+            endpoint_0.router,
+            methods=["GET"],
+            response_model=list[endpoint_0.MCPProviderServiceConfigResponse],
+        )
+        yield

@@ -35,15 +35,15 @@ pub struct ListQuery {
 
 /// Validated list parameters.
 #[derive(Debug)]
-pub(super) struct ListParams {
-    pub(super) page: i64,
-    pub(super) limit: i64,
-    pub(super) status: Option<String>,
-    pub(super) risk_level: Option<String>,
-    pub(super) submitter: Option<String>,
-    pub(super) query: Option<String>,
-    pub(super) submitted_after: Option<NaiveDateTime>,
-    pub(super) submitted_before: Option<NaiveDateTime>,
+pub struct ListParams {
+    pub page: i64,
+    pub limit: i64,
+    pub status: Option<String>,
+    pub risk_level: Option<String>,
+    pub submitter: Option<String>,
+    pub query: Option<String>,
+    pub submitted_after: Option<NaiveDateTime>,
+    pub submitted_before: Option<NaiveDateTime>,
 }
 
 /// One entry of FastAPI's 422 validation-error array.
@@ -61,7 +61,7 @@ impl ListQuery {
     /// `1 <= limit <= 100`, and ISO-8601 datetimes for the submitted bounds.
     /// Pydantic reports every field error at once; the cross-field ordering
     /// check is a separate `HTTPException(422)` with a string `detail`.
-    pub(super) fn validated(&self) -> Result<ListParams, FastApiError> {
+    pub fn validated(&self) -> Result<ListParams, FastApiError> {
         let mut errors: Vec<ValidationError<'_>> = Vec::new();
         let page = parse_int(&self.page, "page", 1, 1, i64::MAX, &mut errors);
         let limit = parse_int(&self.limit, "limit", 20, 1, 100, &mut errors);

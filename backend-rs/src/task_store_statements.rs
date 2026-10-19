@@ -211,15 +211,17 @@ pub fn subtasks_by_owner_statement(table: &str) -> String {
     )
 }
 
-/// `task_store.get_task_by_states` with `states = [STATE_ACTIVE]` and no owner
-/// (the internal workspace-archive endpoints' `_get_active_task`), read from
-/// `table`. The caller passes no `user_id`/`owner_user_id`/`client_origin`, so
-/// the statement carries `id`, `kind`, and `is_active` alone.
+/// `task_store.get_task_by_states` with `states =
+/// TaskResource.is_active_query()` — `[STATE_ACTIVE, STATE_SUBSCRIPTION]`, so
+/// active *and* subscription tasks — and no owner (the internal
+/// workspace-archive endpoints' `_get_active_task`), read from `table`. The
+/// caller passes no `user_id`/`owner_user_id`/`client_origin`, so the statement
+/// carries `id`, `kind`, and the two-state `is_active` list alone.
 pub fn active_task_no_owner_statement(table: &str) -> String {
     format!(
         "SELECT id, user_id, kind, name, namespace, json, is_active, created_at, updated_at, project_id, \
         client_origin, is_group_chat \n    FROM `{table}` \n    \
-        WHERE id = ? AND kind = 'Task' AND is_active IN (1) \n LIMIT 1"
+        WHERE id = ? AND kind = 'Task' AND is_active IN (1, 2) \n LIMIT 1"
     )
 }
 
@@ -264,6 +266,19 @@ pub fn active_task_owned_statement(table: &str) -> String {
         "SELECT id, user_id, kind, name, namespace, json, is_active, created_at, updated_at, project_id, \
         client_origin, is_group_chat \n    FROM `{table}` \n    \
         WHERE id = ? AND kind = 'Task' AND is_active IN (1) AND user_id = ? \n    \
+        LIMIT 1"
+    )
+}
+
+/// `task_store.get_task_by_states` with `states = TaskResource.is_active_query()`
+/// (`[STATE_ACTIVE, STATE_SUBSCRIPTION]`) and an explicit `user_id`, read from
+/// `table` (`SharedTaskService.get_public_shared_task`). Unlike
+/// [`active_task_owned_statement`], the state filter keeps both active states.
+pub fn active_states_task_owned_statement(table: &str) -> String {
+    format!(
+        "SELECT id, user_id, kind, name, namespace, json, is_active, created_at, updated_at, project_id, \
+        client_origin, is_group_chat \n    FROM `{table}` \n    \
+        WHERE id = ? AND kind = 'Task' AND is_active IN (1, 2) AND user_id = ? \n    \
         LIMIT 1"
     )
 }
@@ -324,18 +339,7 @@ pub fn subtask_column_index(column: &str) -> Option<usize> {
 /// and labeled `{table}_{column}` in mapper order; `role` renders backticked
 /// because it is a reserved word.
 pub fn subtask_by_id_statement(table: &str) -> String {
-    let projection = SUBTASK_MAPPED_COLUMNS
-        .iter()
-        .map(|column| {
-            let qualified = if *column == "role" {
-                format!("`{column}`")
-            } else {
-                (*column).to_owned()
-            };
-            format!("{table}.{qualified} AS {table}_{column}")
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
+    let projection = subtask_projection(table);
     format!("SELECT {projection} \nFROM {table} \nWHERE {table}.id = ? \n LIMIT 1")
 }
 
@@ -518,16 +522,35 @@ pub fn subtasks_by_message_ordered_statement(table: &str) -> String {
     )
 }
 
+/// `subtask_store.list_by_task_ordered` with `exclude_deleted=True` and the
+/// default `order_by` (`message_id`, `created_at`), read from `table`
+/// (`SharedTaskService.get_public_shared_task`): the source adds the
+/// `Subtask.status != DELETE` predicate before ordering.
+pub fn non_deleted_subtasks_by_message_ordered_statement(table: &str) -> String {
+    format!(
+        "SELECT id, user_id, task_id, team_id, title, bot_ids, `role`, executor_namespace, executor_name, \
+        executor_deleted_at, prompt, message_id, parent_id, status, progress, result, error_message, \
+        created_at, updated_at, completed_at, sender_type, sender_user_id, reply_to_subtask_id \n    \
+        FROM {table} \n    \
+        WHERE task_id = ? AND status != 'DELETE' \n    \
+        ORDER BY message_id ASC, created_at ASC"
+    )
+}
+
 /// The `subtasks` column projection every subtask statement selects.
 const SUBTASK_COLUMNS: &str = "id, user_id, task_id, team_id, title, bot_ids, `role`, \
     executor_namespace, executor_name, executor_deleted_at, prompt, message_id, parent_id, \
     status, progress, result, error_message, created_at, updated_at, completed_at, \
     sender_type, sender_user_id, reply_to_subtask_id";
 
-/// The owner filter the base subtask store appends when an owner is supplied
-/// (`_filter_owner_user_id`): the task id must belong to that owner's tasks.
-const SUBTASK_OWNER_FILTER: &str =
-    " AND task_id IN (SELECT tasks.id FROM tasks WHERE tasks.user_id = ?)";
+/// The owner-filtered predicate prefix the ORM renders: both `task_id`
+/// references stay qualified (`{table}.task_id`), and the `IN` subquery
+/// spans three lines.
+fn qualified_task_predicate(table: &str) -> String {
+    format!(
+        "{table}.task_id = ? AND {table}.task_id IN (SELECT tasks.id \nFROM tasks \nWHERE tasks.user_id = ?)"
+    )
+}
 
 /// `task_store.get_active_or_archived_task`
 /// (`db.query(TaskResource).filter(id == task_id, kind == 'Task',
@@ -582,26 +605,38 @@ pub fn owned_active_task_statement(table: &str, client_origin: bool) -> String {
 /// `subtask_store.list_by_task_unfiltered` (`query.all()`): the task's
 /// subtasks read from `table`, with the owner filter the base store appends.
 pub fn subtasks_by_task_unfiltered_statement(table: &str, owner_filter: bool) -> String {
-    let mut sql = format!("SELECT {SUBTASK_COLUMNS} \nFROM {table} \nWHERE task_id = ?");
     if owner_filter {
-        sql.push_str(SUBTASK_OWNER_FILTER);
+        // The base store's ORM query: labeled projection and qualified
+        // predicates (`db.query(Subtask)`), compared token-exactly in Replay.
+        return format!(
+            "SELECT {projection} \nFROM {table} \nWHERE {predicate}",
+            projection = subtask_projection(table),
+            predicate = qualified_task_predicate(table)
+        );
     }
-    sql
+    format!("SELECT {SUBTASK_COLUMNS} \nFROM {table} \nWHERE task_id = ?")
 }
 
 // Replay contract for the failed-assistant read below: `owner_filter` is set
 // only on the legacy-id path. The task id there is a legacy id resolved by the
 // sharded store through the base owner index and the migrated-copy probe, so
 // the read targets the base `subtasks` table and adds the
-// `task_id IN (SELECT tasks.id ...)` owner subquery. Replay matches this
-// statement by semantic SQL comparison, not by literal text.
+// `task_id IN (SELECT tasks.id ...)` owner subquery. The nested SELECT
+// disables Replay's projection pass, so the owner-filtered variant keeps the
+// source ORM's token-exact rendering; the plain variant is matched through
+// the projection pass and keeps the compact rendering.
 /// `_queue_bulk_status_metrics`: the failed assistant subtasks of the task the
 /// caller is about to mark deleted, read from `table`.
 pub fn failed_assistant_subtasks_statement(table: &str, owner_filter: bool) -> String {
-    let mut sql = format!("SELECT {SUBTASK_COLUMNS} \nFROM {table} \nWHERE task_id = ?");
     if owner_filter {
-        sql.push_str(SUBTASK_OWNER_FILTER);
+        return format!(
+            "SELECT {projection} \nFROM {table} \nWHERE {predicate} \
+             AND {table}.`role` = 'ASSISTANT' AND {table}.status = 'FAILED'",
+            projection = subtask_projection(table),
+            predicate = qualified_task_predicate(table)
+        );
     }
+    let mut sql = format!("SELECT {SUBTASK_COLUMNS} \nFROM {table} \nWHERE task_id = ?");
     sql.push_str(" AND `role` = 'ASSISTANT' AND status = 'FAILED'");
     sql
 }
@@ -610,11 +645,13 @@ pub fn failed_assistant_subtasks_statement(table: &str, owner_filter: bool) -> S
 /// SQLAlchemy issues this read itself before a `synchronize_session='fetch'`
 /// bulk update, so the caller repeats it ahead of the update.
 pub fn subtask_ids_for_update_statement(table: &str, owner_filter: bool) -> String {
-    let mut sql = format!("SELECT id \nFROM {table} \nWHERE task_id = ?");
     if owner_filter {
-        sql.push_str(SUBTASK_OWNER_FILTER);
+        return format!(
+            "SELECT {table}.id \nFROM {table} \nWHERE {predicate}",
+            predicate = qualified_task_predicate(table)
+        );
     }
-    sql
+    format!("SELECT id \nFROM {table} \nWHERE task_id = ?")
 }
 
 /// `subtask_store.mark_task_subtasks_deleted`: the bulk update that sets every
@@ -625,7 +662,7 @@ pub fn mark_subtasks_deleted_statement(table: &str, owner_filter: bool) -> Strin
     );
     if owner_filter {
         sql.push_str(&format!(
-            " AND {table}.task_id IN (SELECT tasks.id FROM tasks WHERE tasks.user_id = ?)"
+            " AND {table}.task_id IN (SELECT tasks.id \nFROM tasks \nWHERE tasks.user_id = ?)"
         ));
     }
     sql
@@ -798,6 +835,118 @@ pub fn insert_subtask_statement(table: &str, with_id: bool) -> String {
 /// `NULL`, which the caller maps to `next_message_id = 1`).
 pub fn max_subtask_message_id_statement(table: &str) -> String {
     format!("SELECT max({table}.message_id) AS max_1 \nFROM {table} \nWHERE {table}.task_id = ?")
+}
+
+/// The `tasks` columns in the ORM mapper's order (`TaskResource.__table__`),
+/// as the task projections select them.
+pub const TASK_MAPPED_COLUMNS: [&str; 12] = [
+    "id",
+    "user_id",
+    "kind",
+    "name",
+    "namespace",
+    "json",
+    "is_active",
+    "created_at",
+    "updated_at",
+    "project_id",
+    "client_origin",
+    "is_group_chat",
+];
+
+/// Zero-based position of `column` inside a task projection, so a caller can
+/// decode a row positionally: the recorded source query aliases every column
+/// with the resolved physical table name, which a caller cannot know.
+pub fn task_column_index(column: &str) -> Option<usize> {
+    TASK_MAPPED_COLUMNS.iter().position(|name| *name == column)
+}
+
+/// The `tasks` projection of one table, with every mapped column labeled
+/// `{table}_{column}` in mapper order — the ORM rendering SQLAlchemy emits for
+/// `db.query(TaskResource)`.
+pub fn task_projection(table: &str) -> String {
+    TASK_MAPPED_COLUMNS
+        .iter()
+        .map(|column| format!("{table}.{column} AS {table}_{column}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The active, non-system `Task` row of one id, read from `table`, matching
+/// `app/stores/tasks/sqlalchemy_task_store.py`.
+///
+/// `CollaborationStrategyFactory.get_strategy_for_task`
+/// (`app/services/adapters/collaboration_strategy.py:418`) issues this read on
+/// every terminal status update.
+pub fn regular_active_task_statement(table: &str) -> String {
+    format!(
+        "SELECT id, user_id, kind, name, namespace, json, is_active, \
+         created_at, updated_at, project_id, client_origin, is_group_chat \n\
+         FROM `{table}` \n\
+         WHERE id = ? AND kind = 'Task' AND namespace != 'system' AND is_active = 1 \n LIMIT 1"
+    )
+}
+
+/// The completion flow emits [`owner_matches_task_id_statement`] before an
+/// owner-scoped assistant-subtask listing.
+///
+/// The `subtasks` projection of one table, with every mapped column labeled
+/// `{table}_{column}` in mapper order.
+pub fn subtask_projection(table: &str) -> String {
+    SUBTASK_MAPPED_COLUMNS
+        .iter()
+        .map(|column| {
+            let qualified = if *column == "role" {
+                format!("`{column}`")
+            } else {
+                (*column).to_owned()
+            };
+            format!("{table}.{qualified} AS {table}_{column}")
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// `subtask_store.list_assistant_by_task`: the task's ASSISTANT subtasks in
+/// message order, read from `table`.
+pub fn assistant_subtasks_by_task_statement(table: &str) -> String {
+    let projection = subtask_projection(table);
+    format!(
+        "SELECT {projection} \nFROM {table} \n\
+         WHERE {table}.task_id = ? AND {table}.`role` = 'ASSISTANT' \n\
+         ORDER BY {table}.message_id ASC"
+    )
+}
+
+/// `subtask_store.update_fields` flush for a terminal subtask update
+/// (`app/services/chat/storage/db.py:199`): the mapped columns that changed,
+/// in SQLAlchemy's mapper order — `executor_namespace`, `executor_name`,
+/// `status`, `result`, `error_message`, `updated_at`, `completed_at`.
+///
+/// `with_executor` mirrors the source's "only save executor info when it is
+/// provided and the row has none" branch; `with_error` mirrors the `FAILED`
+/// branch that also writes `error_message`.
+pub fn update_subtask_terminal_statement(
+    table: &str,
+    with_error: bool,
+    with_executor: bool,
+) -> String {
+    let mut sets: Vec<&str> = Vec::new();
+    if with_executor {
+        sets.push("executor_namespace=?");
+        sets.push("executor_name=?");
+    }
+    sets.push("status=?");
+    sets.push("result=?");
+    if with_error {
+        sets.push("error_message=?");
+    }
+    sets.push("updated_at=?");
+    sets.push("completed_at=?");
+    format!(
+        "UPDATE {table} SET {} WHERE {table}.id = ?",
+        sets.join(", ")
+    )
 }
 
 #[cfg(test)]

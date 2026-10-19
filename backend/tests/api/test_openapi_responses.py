@@ -2674,3 +2674,19 @@ class TestOpenAPIResponsesHelpers:
         assert subtask_status_to_message_status("RUNNING") == "in_progress"
         assert subtask_status_to_message_status("COMPLETED") == "completed"
         assert subtask_status_to_message_status("FAILED") == "incomplete"
+
+
+@pytest.fixture(autouse=True)
+def _retained_python_handler_contracts(test_client):
+    import app.api.endpoints.openapi_responses as endpoint_0
+    from tests.legacy_python_routes import legacy_python_handlers
+
+    with legacy_python_handlers(test_client.app) as register:
+        register(
+            "/api/v1/responses/{response_id}",
+            endpoint_0.delete_response,
+            endpoint_0.router,
+            methods=["DELETE"],
+            response_model=endpoint_0.ResponseDeletedObject,
+        )
+        yield

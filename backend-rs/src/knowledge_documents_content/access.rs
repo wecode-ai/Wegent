@@ -46,7 +46,7 @@ pub(super) const NAMESPACE_COLUMNS: &str = "namespace.id AS namespace_id, \
      namespace.updated_at AS namespace_updated_at";
 
 /// `resource_members` columns as rendered by `db.query(ResourceMember)`.
-pub(super) const MEMBER_COLUMNS: &str = "resource_members.id AS resource_members_id, \
+pub(crate) const MEMBER_COLUMNS: &str = "resource_members.id AS resource_members_id, \
      resource_members.resource_type AS resource_members_resource_type, \
      resource_members.resource_id AS resource_members_resource_id, \
      resource_members.entity_type AS resource_members_entity_type, \
@@ -322,11 +322,19 @@ where
 
 /// The raw ACL facts of `resolve_knowledge_base_permission` before an
 /// action-specific access policy is applied: the merged `has_access` flag, the
-/// highest granted role, and whether the caller created the knowledge base.
+/// highest granted role, whether the caller created the knowledge base, and
+/// whether the resolution hit an explicit denial (`is_denied`).
+///
+/// The source sets `is_denied` for the restricted-analyst pre-check and for a
+/// direct membership whose role is `RestrictedAnalyst`, but *not* for a group
+/// whose effective role is `RestrictedAnalyst` (that branch returns the
+/// default `is_denied=False`). `GET /api/share/KnowledgeBase/*/my-permission`
+/// uses the flag to decide whether a pending request is reported.
 pub(crate) struct PermissionFacts {
     pub(crate) has_access: bool,
     pub(crate) role: Option<String>,
     pub(crate) is_creator: bool,
+    pub(crate) is_denied: bool,
 }
 
 /// `get_user_knowledge_base_permission`'s Kind lookup, used when the caller
@@ -410,6 +418,7 @@ where
                 has_access: false,
                 role: None,
                 is_creator,
+                is_denied: true,
             });
         }
     }
@@ -422,6 +431,7 @@ where
                 has_access: false,
                 role: None,
                 is_creator,
+                is_denied: true,
             });
         }
         roles.push(role);
@@ -456,6 +466,9 @@ where
                     has_access: false,
                     role: None,
                     is_creator,
+                    // `_append_group_source` returning True renders the
+                    // source's default `is_denied=False`.
+                    is_denied: false,
                 });
             }
             let base = match group_role.as_str() {
@@ -475,6 +488,7 @@ where
         has_access: !roles.is_empty() || is_creator,
         role: highest_role(&roles),
         is_creator,
+        is_denied: false,
     })
 }
 

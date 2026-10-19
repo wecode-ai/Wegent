@@ -280,7 +280,8 @@ def get_compatible_models(
     return {"models": compatible_models}
 
 
-@router.get("/error-recommendations")
+# MIGRATION-CANDIDATE(api="GET /api/models/error-recommendations"): remove after final confirmation.
+# @router.get("/error-recommendations")
 def get_error_recommendations(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),

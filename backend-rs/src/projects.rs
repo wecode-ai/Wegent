@@ -861,6 +861,9 @@ fn delete_project_error(error: brz_mysql::MysqlError) -> FastApiError {
 #[path = "projects_add_task.rs"]
 pub(super) mod add_task;
 
+#[path = "projects_update/mod.rs"]
+mod update;
+
 #[cfg(test)]
 #[path = "projects_tests.rs"]
 mod tests;

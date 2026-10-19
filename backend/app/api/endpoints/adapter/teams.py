@@ -97,7 +97,8 @@ def create_team(
     )
 
 
-@router.get("/default")
+# MIGRATION-CANDIDATE(api="GET /api/teams/default"): remove after final confirmation.
+# @router.get("/default")
 @trace_sync(span_name="teams.default", tracer_name="backend.teams")
 def get_default_team(
     mode: Literal["chat", "code", "knowledge", "task"] = Query("chat"),

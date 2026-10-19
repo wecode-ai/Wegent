@@ -65,11 +65,12 @@ def get_transcript_endpoint(
     )
 
 
-@router.post(
-    "/{transcript_id}/lease",
-    response_model=TranscriptLeaseResponse,
-    response_model_by_alias=True,
-)
+# MIGRATION-CANDIDATE(api="POST /api/wework-transcripts/:transcript_id/lease"): remove after final confirmation.
+# @router.post(
+#     "/{transcript_id}/lease",
+#     response_model=TranscriptLeaseResponse,
+#     response_model_by_alias=True,
+# )
 def acquire_lease_endpoint(
     transcript_id: str,
     request: TranscriptLeaseRequest,

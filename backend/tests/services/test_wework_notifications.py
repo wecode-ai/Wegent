@@ -717,3 +717,19 @@ def test_all_disabled_channels_drop_general_notification(
     assert response.status_code == 201
     assert test_db.query(WeworkNotification).count() == 0
     no_external_delivery.assert_not_called()
+
+
+@pytest.fixture(autouse=True)
+def _retained_python_handler_contracts(test_client):
+    from app.api.endpoints import wework_notifications
+    from tests.legacy_python_routes import legacy_python_handlers
+
+    with legacy_python_handlers(test_client.app) as register:
+        register(
+            "/api/v1/wework-notifications/preferences",
+            wework_notifications.read_notification_preferences,
+            wework_notifications.router,
+            methods=["GET"],
+            response_model=wework_notifications.NotificationPreferences,
+        )
+        yield

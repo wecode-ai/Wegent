@@ -33,7 +33,8 @@ def send_notification(
     return send_wework_notification(db, user_id=user.id, values=values)
 
 
-@router.get("/preferences", response_model=NotificationPreferences)
+# MIGRATION-CANDIDATE(api="GET /api/v1/wework-notifications/preferences"): remove after final confirmation.
+# @router.get("/preferences", response_model=NotificationPreferences)
 def read_notification_preferences(
     user: User = Depends(get_current_user),
 ) -> NotificationPreferences:

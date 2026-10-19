@@ -88,9 +88,9 @@ def test_rust_owned_route_is_not_registered_in_python(method: str, path: str) ->
     ("method", "path"),
     [
         ("POST", "/teams"),
-        ("GET", "/teams/default"),
+        ("PUT", "/teams/{team_id}"),
         ("POST", "/v1/wework-notifications"),
-        ("GET", "/v1/wework-notifications/preferences"),
+        ("PUT", "/v1/wework-notifications/preferences"),
         ("GET", "/tasks/lite/group"),
         ("GET", "/tasks/{task_id}/remote-workspace/file"),
         ("GET", "/apps/list"),

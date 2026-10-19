@@ -5,10 +5,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.api.endpoints import cloud_projects
 from app.core.security import create_access_token
 from app.models.kind import Kind
 from app.models.user import User
 from app.services.collaboration_permissions import collaboration_permission_service
+from tests.legacy_python_routes import legacy_python_handlers
 
 
 @pytest.fixture
@@ -40,13 +42,21 @@ def scope(test_client, test_db, test_token, monkeypatch):
     member = {
         "Authorization": f"Bearer {create_access_token(data={'sub': user.user_name})}"
     }
-    return {
-        "owner": owner,
-        "member": member,
-        "user": user,
-        "space": space.json(),
-        "project": project.json(),
-    }
+    with legacy_python_handlers(test_client.app) as register:
+        register(
+            "/api/v1/cloud-projects/{project_id}",
+            cloud_projects.get_cloud_project,
+            cloud_projects.legacy_router,
+            methods=["GET"],
+            response_model=cloud_projects.CloudProjectResponse,
+        )
+        yield {
+            "owner": owner,
+            "member": member,
+            "user": user,
+            "space": space.json(),
+            "project": project.json(),
+        }
 
 
 def invite(client, scope, role, *, project=False):

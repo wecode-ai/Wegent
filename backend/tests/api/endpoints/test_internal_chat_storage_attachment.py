@@ -248,3 +248,19 @@ def test_non_ready_attachment_returns_404(
         params={"session_id": f"task-{task_id}", "offset": 0, "limit": 10},
     )
     assert resp.status_code == 404
+
+
+@pytest.fixture(autouse=True)
+def _retained_python_handler_contracts(test_client):
+    import app.api.endpoints.internal.chat_storage as endpoint_0
+    from tests.legacy_python_routes import legacy_python_handlers
+
+    with legacy_python_handlers(test_client.app) as register:
+        register(
+            "/api/internal/chat/attachments/{attachment_id}/text",
+            endpoint_0.get_attachment_text,
+            endpoint_0.router,
+            methods=["GET"],
+            response_model=endpoint_0.AttachmentTextResponse,
+        )
+        yield

@@ -64,10 +64,14 @@ pub(crate) async fn update_task(
         update_workspace(state, user_id, &task_json, update).await?;
     }
 
-    let updated_at = task_update_timestamp();
-    task_crd::apply_update(&mut task_json, update, &updated_at);
+    // `task_crd.status.updatedAt = datetime.now()` is a CRD `datetime`
+    // rendered by `model_dump(mode="json")`; the row's `updated_at` onupdate
+    // stamp is a separate clock.
+    let status_timestamp = crd_timestamp();
+    task_crd::apply_update(&mut task_json, update, &status_timestamp);
 
     let payload = task_crd::dump(&task_json);
+    let updated_at = task_update_timestamp();
     state
         .task_store
         .update_task_json(task_id, user_id, &payload, &updated_at)
@@ -79,9 +83,32 @@ pub(crate) async fn update_task(
         .await
         .map_err(|error| internal(&error))?;
 
-    // `db.refresh(task)` then `convert_to_task_dict(task, db, user_id)`.
-    let document = CrdDocument::project(&task_json);
-    build_task_in_db(state, &row, &document, user_id).await
+    // `db.refresh(task)` re-reads the row by primary key after the commit;
+    // `convert_to_task_dict` then reads that refreshed document.
+    let refreshed = state
+        .task_store
+        .refresh_task(task_id, user_id)
+        .await
+        .map_err(|error| internal(&error))?
+        .ok_or_else(|| {
+            FastApiError::detail(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+        })?;
+    let refreshed_json = refreshed
+        .get_required::<brz_mysql::Json<Value>>("json")
+        .map_err(|error| internal(&error))?
+        .0;
+    let document = CrdDocument::project(&refreshed_json);
+    build_task_in_db(state, &refreshed, &document, user_id).await
+}
+
+/// `datetime.now()` rendered for a CRD `datetime` field: the `mode="json"`
+/// serialization of a naive local datetime
+/// (`2026-10-10T14:21:49.917575`).
+pub(super) fn crd_timestamp() -> String {
+    chrono::Local::now()
+        .naive_local()
+        .format("%Y-%m-%dT%H:%M:%S%.6f")
+        .to_string()
 }
 
 /// `_update_workspace_if_needed`: rewrite the referenced workspace's json.
@@ -148,7 +175,8 @@ async fn build_task_in_db(
     let spec = document.spec.as_ref();
     let status = document.status.as_ref();
 
-    // Workspace git fields.
+    // Workspace git fields: `convert_to_task_dict` resolves the workspace for
+    // the requesting user.
     let mut git_url = String::new();
     let mut git_repo = String::new();
     let mut git_repo_id = 0i64;
@@ -157,7 +185,7 @@ async fn build_task_in_db(
     if let Some((name, namespace)) =
         spec.and_then(|spec| crate::crd::reference_parts(&spec.workspace_ref))
         && let Some(workspace) =
-            get_workspace_by_ref(&*state.task_store, owner_user_id, &name, &namespace)
+            get_workspace_by_ref(&*state.task_store, user_id, &name, &namespace)
                 .await
                 .map_err(|error| internal(&error))?
         && let Some(repository) = workspace
@@ -303,7 +331,27 @@ async fn resolve_team_id(
                 FastApiError::detail(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
             })
     } else {
-        Ok(None)
+        // An explicit owner (including 0) queries the kinds table directly
+        // with that owner instead of the viewer's cached reader.
+        let kinds = crate::remote_workspace_tree::kinds::KindStore {
+            mysql: &state.mysql,
+            redis: state.redis.as_ref(),
+        };
+        kinds
+            .get_team_by_owner(
+                owner
+                    .as_ref()
+                    .and_then(crate::crd::NumericId::json_integer)
+                    .unwrap_or(0),
+                &namespace,
+                &name,
+            )
+            .await
+            .map(|team| team.map(|team| team.id))
+            .map_err(|error| {
+                warn!(?error, "[update_task] team resolution failed");
+                FastApiError::detail(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+            })
     }
 }
 

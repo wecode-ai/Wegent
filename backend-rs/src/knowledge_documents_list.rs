@@ -937,6 +937,15 @@ fn build_item(doc: DocumentListRow, created_by: Option<String>) -> Value {
         .as_ref()
         .map(|config| normalize_splitter_config(&config.0));
 
+    // Both datetime columns are NOT NULL in the source schema; the
+    // Option only models the driver decode, and a missing value renders
+    // as the naive datetime epoch like pydantic's default.
+    let created_at = doc.knowledge_documents_created_at.unwrap_or_default();
+    let updated_at = doc
+        .knowledge_documents_updated_at
+        .map(|ts| serialize_updated_at(ts, created_at))
+        .unwrap_or_default();
+
     // `source_config` `None` becomes `{}` for backward compatibility; the
     // modeled keys are popped (processing_error) and the remainder echoes.
     // The recorded payloads are empty objects.
@@ -962,13 +971,25 @@ fn build_item(doc: DocumentListRow, created_by: Option<String>) -> Value {
         "origin": doc.knowledge_documents_origin,
         "folder_id": doc.knowledge_documents_folder_id,
         "doc_ref": null,
-        "created_at": doc
-            .knowledge_documents_created_at
-            .map(|ts| ts.format("%Y-%m-%dT%H:%M:%S").to_string())
-            .unwrap_or_default(),
-        "updated_at": doc
-            .knowledge_documents_updated_at
-            .map(|ts| ts.format("%Y-%m-%dT%H:%M:%S").to_string())
-            .unwrap_or_default(),
+        "created_at": created_at.format("%Y-%m-%dT%H:%M:%S").to_string(),
+        "updated_at": updated_at.format("%Y-%m-%dT%H:%M:%S").to_string(),
     })
+}
+
+/// `KnowledgeDocumentResponse.serialize_updated_at`: repair a legacy naive
+/// UTC `updated_at` that precedes the naive local `created_at` by shifting
+/// it +8h, and keep the repaired value only when it then no longer precedes
+/// the creation time. Both timestamps are naive session-local values here,
+/// mirroring the pydantic serializer's `tzinfo is None` fast path.
+fn serialize_updated_at(
+    updated_at: chrono::NaiveDateTime,
+    created_at: chrono::NaiveDateTime,
+) -> chrono::NaiveDateTime {
+    if updated_at < created_at {
+        let corrected = updated_at + chrono::Duration::hours(8);
+        if corrected >= created_at {
+            return corrected;
+        }
+    }
+    updated_at
 }

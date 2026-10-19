@@ -1233,3 +1233,20 @@ def test_llm_responses_proxy_endpoint_rejects_missing_authorization(
     )
 
     assert response.status_code == 401
+
+
+@pytest.fixture(autouse=True)
+def _retained_python_handler_contracts(test_client):
+    import app.api.endpoints.runtime_work as endpoint_0
+    from tests.legacy_python_routes import legacy_python_handlers
+
+    with legacy_python_handlers(test_client.app) as register:
+        register(
+            "/api/runtime-work/im-notifications",
+            endpoint_0.get_im_notification_settings_endpoint,
+            endpoint_0.router,
+            methods=["GET"],
+            response_model=endpoint_0.RuntimeIMNotificationSettingsResponse,
+            response_model_by_alias=True,
+        )
+        yield

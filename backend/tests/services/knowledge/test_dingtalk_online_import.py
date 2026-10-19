@@ -995,3 +995,19 @@ async def test_sync_preserves_original_metadata_and_replaces_snapshot(
     test_db.refresh(node)
     assert node.raw_metadata == child
     assert DingtalkDocNode.model_validate(node).extension == ""
+
+
+@pytest.fixture(autouse=True)
+def _retained_python_handler_contracts(test_client):
+    from app.api.endpoints import knowledge
+    from tests.legacy_python_routes import legacy_python_handlers
+
+    with legacy_python_handlers(test_client.app) as register:
+        register(
+            "/api/knowledge-bases/{kb_id}/documents/{doc_id}/detail",
+            knowledge.get_document_detail,
+            knowledge.summary_router,
+            methods=["GET"],
+            response_model=knowledge.DocumentDetailResponse,
+        )
+        yield

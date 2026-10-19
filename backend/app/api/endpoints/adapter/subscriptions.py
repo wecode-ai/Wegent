@@ -47,7 +47,8 @@ router = APIRouter()
 # ========== Subscription Configuration Endpoints ==========
 
 
-@router.get("", response_model=SubscriptionListResponse)
+# MIGRATION-CANDIDATE(api="GET /api/subscriptions"): remove after final confirmation.
+# @router.get("", response_model=SubscriptionListResponse)
 def list_subscriptions(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(20, ge=1, le=100, description="Items per page"),
