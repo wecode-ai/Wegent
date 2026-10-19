@@ -42,16 +42,9 @@ export function canCommentCollaborationIssue(
 }
 
 export function canAssignCollaborationIssue(
-  project: ProjectRoleSource & Pick<CollaborationProject, "current_user_id">,
-  issue?: Pick<CollaborationIssue, "created_by_user_id">,
+  project: ProjectRoleSource,
 ): boolean {
-  if (canModifyIssues(resolveProjectRole(project))) return true;
-  // The Issue creator keeps control of their own assignee regardless of role.
-  return (
-    issue?.created_by_user_id !== undefined &&
-    project.current_user_id !== undefined &&
-    issue.created_by_user_id === project.current_user_id
-  );
+  return canModifyIssues(resolveProjectRole(project));
 }
 
 export function canStartWorkOnCollaborationIssue(
@@ -87,7 +80,7 @@ export function getCollaborationIssueActionPermissions(
   return {
     canEdit: canEditCollaborationIssue(issue),
     canComment: canCommentCollaborationIssue(project, issue),
-    canAssign: canViewDetail && canAssignCollaborationIssue(project, issue),
+    canAssign: canViewDetail && canAssignCollaborationIssue(project),
     canStartWork: canWork,
   };
 }

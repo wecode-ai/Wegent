@@ -469,6 +469,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('waitFor', '[data-testid="cloud-task-activity-composer"]', {
         timeoutMs: uiTimeoutMs,
       })
+      await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
+        text: PROJECT_AI.name,
+        timeoutMs: uiTimeoutMs,
+      })
       const detailSnapshot = await snapshot(control)
       assert.equal(
         detailSnapshot.testIds.includes(`cloud-todo-card-progress-popup-${WEBSITE_TODO.id}`),

@@ -16,31 +16,53 @@ from app.schemas.runtime_work import RuntimeTaskCreateRequest, RuntimeTranscript
 from app.services.collaboration_member_activity import (
     project_collaboration_member_activity,
 )
+from app.services.collaboration_round_assignment import assign_round_owner
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.project_chat.comment_execution import _execution, execute_comment
 from app.services.project_chat.runtime_binding import collaboration_manager_task_id
 from app.services.project_chat.session_access import resolve_project_transcript
 from tests.services.test_project_comment_execution import comment, scenario
+from tests.utils.collaboration import authorize_project_agent
 
 
 @pytest.fixture
 def group_scenario(scenario, monkeypatch):
     s = scenario
-    device = Kind(
-        kind="Device",
-        name="admin-cloud",
-        namespace="default",
-        user_id=s.owner.id,
-        is_active=True,
-        json={"spec": {"deviceType": "cloud"}, "metadata": {"name": "admin-cloud"}},
+    from app.models.resource_member import ResourceMember
+
+    device = (
+        s.db.query(Kind)
+        .filter_by(
+            kind="Device", name="admin-cloud", namespace="default", user_id=s.owner.id
+        )
+        .one()
     )
-    s.db.add(device)
-    s.db.flush()
     group = {
         "id": "group-1",
         "leader": {"kind": "agent", "id": s.agent.id},
         "members": [],
     }
+    record = Kind(
+        kind="CollaborationGroup",
+        name="Comment group",
+        namespace=f"projects/{s.project.id}",
+        user_id=s.owner.id,
+        is_active=True,
+        json={"spec": group},
+    )
+    s.db.add(record)
+    s.db.flush()
+    group["id"] = str(record.id)
+    s.db.add(
+        ResourceMember.create(
+            resource_type="CollaborationGroup",
+            resource_id=record.id,
+            entity_type="project",
+            entity_id=str(s.project.id),
+            role="Developer",
+            status="approved",
+        )
+    )
     context = {
         "dispatch_kind": "collaboration_group",
         "dispatch_role": "manager",
@@ -126,6 +148,7 @@ def member_scenario(group_scenario):
             "model_type": "runtime",
         },
     )
+    authorize_project_agent(s.db, agent)
     s.db.add(agent)
     device = s.db.query(Kind).filter_by(kind="Device", name="admin-cloud").one()
     device.json = {
@@ -138,6 +161,8 @@ def member_scenario(group_scenario):
         "members": [{"kind": "agent", "id": agent.id}],
     }
     context["collaboration_group"] = group
+    record = s.db.get(Kind, int(group["id"]))
+    record.json = {"spec": group}
     s.execution.execution_payload = json.dumps(
         {**s.execution.execution_intent, "origin_context": context}
     )
@@ -376,3 +401,41 @@ def test_member_activity_binds_its_session_after_the_issue_is_reassigned(
     assert binding.task_user_id == s.owner.id
     assert binding.task_id == message.runtime_task_id == s.root.runtime_task_id
     assert binding.device_id == message.runtime_device_id == s.root.runtime_device_id
+    assert message.metadata_json["task_binding_id"] == str(binding.id)
+    assert binding.metadata_json["dispatch_id"] == "group-dispatch-1"
+    assert binding.metadata_json["dispatch_round_id"] == "round-1"
+    assert binding.metadata_json["assignment_id"] == "assignment-1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("human_owner", [False, True])
+async def test_member_reply_uses_upstream_session_after_round_owner_handoff(
+    member_scenario, human_owner
+):
+    s = member_scenario
+    assignment = (
+        {
+            "assignee_type": "human",
+            "human_user_id": s.member.id,
+            "human_user_name": s.member.user_name,
+        }
+        if human_owner
+        else {
+            "assignee_type": "agent",
+            "agent_id": s.member_agent.id,
+            "agent_name": s.member_agent.name,
+        }
+    )
+    assign_round_owner(s.db, item=s.issue, assignments=[assignment], user_id=s.owner.id)
+    s.db.commit()
+
+    rows = await execute_comment(
+        s.db, user_id=s.member.id, request=comment(s, text="Check memory")
+    )
+
+    queued = s.db.get(LoopItemExecution, rows[0].metadata["execution_id"])
+    assert queued.runtime_task_id == s.root.runtime_task_id
+    assert queued.executor_owner_user_id == s.owner.id
+    assert queued.runtime_request["newSession"] is False
+    assert queued.runtime_request["modelId"] == "member-model"
+    assert queued.runtime_request["origin"]["assignmentId"] == "assignment-1"

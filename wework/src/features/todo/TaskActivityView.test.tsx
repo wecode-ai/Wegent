@@ -24,6 +24,8 @@ const getLoopItem = vi.fn()
 const markLoopItemRead = vi.fn()
 const approveLoopItemRun = vi.fn()
 const rejectLoopItemRun = vi.fn()
+const importLoopItemAttachments = vi.fn()
+const uploadLocalAttachmentToCloud = vi.fn()
 const cancelCloudAutomationRun = vi.fn()
 const listModels = vi.fn()
 const modelListeners = new Set<() => void>()
@@ -75,6 +77,13 @@ vi.mock('@/lib/external-links', async importOriginal => ({
 }))
 
 const workbenchServices = {
+  attachmentApi: { uploadLocalAttachmentToCloud },
+  projectSpaceApis: undefined as
+    | undefined
+    | {
+        local: { markLoopItemRead: typeof markLoopItemRead }
+        cloud: { markLoopItemRead: typeof markLoopItemRead }
+      },
   deliveryApi: {
     bindTask,
     updateLoopItem,
@@ -82,6 +91,7 @@ const workbenchServices = {
     markLoopItemRead,
     approveLoopItemRun,
     rejectLoopItemRun,
+    importLoopItemAttachments,
     unbindTask: vi.fn(),
   },
   projectChatAgentApi: { list: vi.fn(async () => agentsMock.value) },
@@ -261,8 +271,11 @@ describe('TaskActivityView', () => {
     updateLoopItem.mockReset()
     getLoopItem.mockReset()
     markLoopItemRead.mockReset()
+    workbenchServices.projectSpaceApis = undefined
     approveLoopItemRun.mockReset()
     rejectLoopItemRun.mockReset()
+    importLoopItemAttachments.mockReset()
+    uploadLocalAttachmentToCloud.mockReset()
     cancelCloudAutomationRun.mockReset()
     listModels.mockReset()
     modelListeners.clear()
@@ -292,6 +305,169 @@ describe('TaskActivityView', () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
+  })
+
+  it.each(['cloud', 'local'] as const)(
+    'persists read state for a %s Issue with only a creation record',
+    async location => {
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+        top: 0,
+        bottom: 400,
+        height: 400,
+      } as DOMRect)
+      const project = { id: '11', name: 'Wework', location } as never
+      const task = {
+        id: 'WEG-1',
+        title: 'Inspect changes',
+        status: 'inbox',
+        version: 1,
+        is_unread: true,
+        content_revision: 1,
+        activity_read_sequence: 0,
+      } as never
+      const updated = { ...task, is_unread: false }
+      const localRead = vi.fn().mockResolvedValue(updated)
+      const cloudRead = vi.fn().mockResolvedValue(updated)
+      workbenchServices.projectSpaceApis = {
+        local: { markLoopItemRead: localRead },
+        cloud: { markLoopItemRead: cloudRead },
+      }
+      const expectedRead = location === 'local' ? localRead : cloudRead
+      const client = {
+        subscribe: vi.fn().mockResolvedValue({
+          snapshot: { messages: [], latestSequence: 0, currentUserId: '1' },
+          unsubscribe: vi.fn(),
+        }),
+      } as unknown as ProjectChatClient
+      const onTaskUpdated = vi.fn()
+      const { rerender } = render(
+        <TaskActivityView
+          client={client}
+          project={project}
+          task={task}
+          onTaskUpdated={onTaskUpdated}
+          issueTimeline
+          linear
+        />
+      )
+
+      await waitFor(() => expect(expectedRead).toHaveBeenCalledExactlyOnceWith(task.id, 0))
+      expect(onTaskUpdated).toHaveBeenCalledExactlyOnceWith(updated)
+      rerender(
+        <TaskActivityView
+          client={client}
+          project={project}
+          task={updated}
+          onTaskUpdated={onTaskUpdated}
+          issueTimeline
+          linear
+        />
+      )
+      expect(expectedRead).toHaveBeenCalledOnce()
+      expect(location === 'local' ? cloudRead : localRead).not.toHaveBeenCalled()
+      expect(markLoopItemRead).not.toHaveBeenCalled()
+    }
+  )
+
+  it('waits for activity to load before reading and leaves subscription failures unread', async () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      top: 0,
+      bottom: 400,
+      height: 400,
+    } as DOMRect)
+    let rejectSubscription!: (cause: Error) => void
+    const client = {
+      subscribe: vi.fn(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectSubscription = reject
+          })
+      ),
+    } as unknown as ProjectChatClient
+    render(
+      <TaskActivityView
+        client={client}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={{ id: 'WEG-1', version: 1, is_unread: true, content_revision: 1 } as never}
+        issueTimeline
+        linear
+      />
+    )
+    await waitFor(() => expect(client.subscribe).toHaveBeenCalledOnce())
+    expect(markLoopItemRead).not.toHaveBeenCalled()
+    await act(async () => rejectSubscription(new Error('subscription unavailable')))
+    expect(await screen.findByRole('alert')).toHaveTextContent('subscription unavailable')
+    expect(markLoopItemRead).not.toHaveBeenCalled()
+  })
+
+  it('persists the highest visible message sequence through the desktop adapter', async () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      top: 0,
+      bottom: 400,
+      height: 400,
+    } as DOMRect)
+    const client = {
+      subscribe: vi.fn().mockResolvedValue({
+        snapshot: {
+          messages: [userMessage, { ...agentMessage, status: 'completed', content: 'Done' }],
+          latestSequence: 2,
+        },
+        unsubscribe: vi.fn(),
+      }),
+    } as unknown as ProjectChatClient
+    const task = {
+      id: 'WEG-1',
+      version: 1,
+      is_unread: true,
+      content_revision: 2,
+      activity_read_sequence: 0,
+    } as never
+    markLoopItemRead.mockResolvedValue({ ...task, is_unread: false, activity_read_sequence: 2 })
+    render(
+      <TaskActivityView
+        client={client}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={task}
+        issueTimeline
+        linear
+      />
+    )
+    await waitFor(() => expect(markLoopItemRead).toHaveBeenCalledExactlyOnceWith(task.id, 2))
+  })
+
+  it('keeps failed reads retryable and clears the read error after a successful scroll retry', async () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      top: 0,
+      bottom: 400,
+      height: 400,
+    } as DOMRect)
+    const task = { id: 'WEG-1', version: 1, is_unread: true, content_revision: 1 } as never
+    markLoopItemRead
+      .mockRejectedValueOnce(new Error('read persistence failed'))
+      .mockResolvedValue({ ...task, is_unread: false })
+    const client = {
+      subscribe: vi.fn().mockResolvedValue({ snapshot: { messages: [] }, unsubscribe: vi.fn() }),
+    } as unknown as ProjectChatClient
+    const onTaskUpdated = vi.fn()
+    render(
+      <TaskActivityView
+        client={client}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={task}
+        onTaskUpdated={onTaskUpdated}
+        issueTimeline
+        linear
+      />
+    )
+    expect(await screen.findByRole('alert')).toHaveTextContent('read persistence failed')
+    expect(onTaskUpdated).not.toHaveBeenCalled()
+    fireEvent.scroll(screen.getByTestId('cloud-task-activity-list'))
+    await waitFor(() => expect(onTaskUpdated).toHaveBeenCalledOnce())
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(markLoopItemRead.mock.calls).toEqual([
+      [task.id, 0],
+      [task.id, 0],
+    ])
   })
 
   it('reloads project activity after the Issue version changes', async () => {
@@ -1714,6 +1890,295 @@ describe('TaskActivityView', () => {
     expect(replyToggle).toHaveAttribute('aria-expanded', 'false')
     expect(screen.queryByTestId('issue-reply-composer')).toBeNull()
   })
+
+  function humanAssignmentMessages(humanUserId: number): ProjectChatMessage[] {
+    const comment: ProjectChatMessage = {
+      ...userMessage,
+      sequenceNumber: 1,
+      messageId: 'message-1',
+      rootMessageId: null,
+      content: '看看 CPU',
+      metadata: {},
+    }
+    const managerAssignment: ProjectChatMessage = {
+      ...userMessage,
+      sequenceNumber: 2,
+      messageId: 'manager-assignment',
+      rootMessageId: null,
+      type: 'text',
+      content: '',
+      sender: { type: 'agent', id: 'manager-1', name: '负责人' },
+      metadata: {
+        dispatch_role: 'manager',
+        activity_type: 'manager_assignment',
+        dispatch_id: 'dispatch-1',
+        coordination_round_id: 'round-1',
+        dispatch_assignments: [
+          {
+            assignee_type: 'human',
+            human_assignment_id: 'human-1',
+            human_user_id: humanUserId,
+            assignment_id: 'assignment-1',
+            task_title: '核对发布清单',
+            workflow_stage_id: 'review',
+          },
+        ],
+      },
+      status: 'completed',
+    }
+    return [comment, managerAssignment]
+  }
+
+  function humanAssignmentClient(
+    messages: ProjectChatMessage[],
+    currentUserId = '1'
+  ): ProjectChatClient {
+    return {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages, latestSequence: messages.length, currentUserId },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => messages[0]),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+  }
+
+  it.each([1, 2])(
+    'does not offer a task bound to an older assignment (new owner=%s)',
+    async nextUserId => {
+      const user = userEvent.setup()
+      const messages = humanAssignmentMessages(1)
+      const latest = humanAssignmentMessages(nextUserId)[1]
+      latest.messageId = 'new-manager-assignment'
+      latest.sequenceNumber = 3
+      latest.metadata = {
+        ...latest.metadata,
+        coordination_round_id: 'round-2',
+        dispatch_assignments: [
+          {
+            assignee_type: 'human',
+            human_assignment_id: 'human-2',
+            human_user_id: nextUserId,
+            assignment_id: 'assignment-2',
+            task_title: 'Current work',
+          },
+        ],
+      }
+      messages.push(latest)
+      render(
+        <TaskActivityView
+          client={humanAssignmentClient(messages)}
+          currentUserId={1}
+          project={{ id: '11', name: 'Cloud', location: 'cloud' } as never}
+          task={{ id: 'WEG-1', title: 'CPU', status: 'in_progress', version: 1 } as never}
+          issueTimeline
+          linear
+          onStartHumanTaskFromReply={vi.fn()}
+        />
+      )
+
+      await screen.findByTestId('cloud-task-activity-card-new-manager-assignment')
+      expect(screen.queryByTestId('cloud-task-activity-reply-toggle-manager-assignment')).toBeNull()
+      if (nextUserId === 1) {
+        await user.click(
+          screen.getByTestId('cloud-task-activity-reply-toggle-new-manager-assignment')
+        )
+        expect(screen.getByTestId('issue-reply-starts-task-hint')).toHaveTextContent('Current work')
+      } else {
+        expect(
+          screen.queryByTestId('cloud-task-activity-reply-toggle-new-manager-assignment')
+        ).toBeNull()
+        expect(screen.queryByTestId('issue-reply-starts-task-hint')).not.toBeInTheDocument()
+      }
+    }
+  )
+
+  it.each([
+    [false, 'cloud', '1'],
+    [true, 'cloud', '1'],
+    [false, 'local', '0'],
+    [true, 'local', '0'],
+  ] as const)(
+    'starts human work without continuing the manager session (address=%s, store=%s, chatUser=%s)',
+    async (hasManagerAddress, location, chatUserId) => {
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+        top: 0,
+        bottom: 400,
+        height: 400,
+      } as DOMRect)
+      markLoopItemRead.mockResolvedValue({ id: 'WEG-1', is_unread: false })
+      const user = userEvent.setup()
+      const onStartHumanTaskFromReply = vi.fn()
+      const messages = humanAssignmentMessages(1)
+      if (hasManagerAddress)
+        messages[1].runtimeAddress = { deviceId: 'manager-device', taskId: 'manager-task' }
+      const client = humanAssignmentClient(messages, chatUserId)
+      client.executeTaskComment = vi.fn()
+
+      render(
+        <TaskActivityView
+          client={client}
+          currentUserId={1}
+          project={{ id: '11', name: 'Wework', location } as never}
+          task={
+            {
+              id: 'WEG-1',
+              title: '干啥呢',
+              status: 'in_progress',
+              version: 1,
+              is_unread: true,
+              content_revision: 2,
+              activity_read_sequence: 0,
+            } as never
+          }
+          issueTimeline
+          linear
+          onStartHumanTaskFromReply={onStartHumanTaskFromReply}
+        />
+      )
+
+      const card = await screen.findByTestId('cloud-task-activity-card-manager-assignment')
+      await waitFor(() => expect(markLoopItemRead).toHaveBeenCalledWith('WEG-1', 2))
+      await user.click(
+        within(card).getByTestId('cloud-task-activity-reply-toggle-manager-assignment')
+      )
+      expect(screen.getByTestId('issue-reply-starts-task-hint')).toHaveTextContent('核对发布清单')
+
+      await user.type(screen.getByTestId('cloud-task-activity-composer'), '补充 CPU 占用')
+      await user.click(sendButtonFor('cloud-task-activity-composer'))
+
+      await waitFor(() =>
+        expect(onStartHumanTaskFromReply).toHaveBeenCalledWith({
+          issueId: 'WEG-1',
+          dispatch: {
+            humanAssignmentId: 'human-1',
+            dispatchId: 'dispatch-1',
+            roundId: 'round-1',
+            assignmentId: 'assignment-1',
+            taskTitle: '核对发布清单',
+            workflowStageId: 'review',
+          },
+          replyText: '补充 CPU 占用',
+        })
+      )
+      expect(client.executeTaskComment).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([
+    { succeeds: true, local: false },
+    { succeeds: false, local: false },
+    { succeeds: true, local: true },
+    { succeeds: false, local: true },
+  ])(
+    'persists cloud human-assignment reply attachments before starting work (%j)',
+    async ({ succeeds, local }) => {
+      const user = userEvent.setup()
+      const attachment: Attachment = {
+        id: local ? -42 : 42,
+        filename: 'evidence.txt',
+        file_size: 24,
+        mime_type: 'text/plain',
+        status: 'ready',
+        file_extension: 'txt',
+        created_at: '2026-10-14T00:00:00Z',
+        ...(local ? { local_path: 'C:\\workspace\\evidence.txt' } : {}),
+      }
+      attachmentSelectionMock.attachments = [attachment]
+      uploadLocalAttachmentToCloud.mockResolvedValue({ ...attachment, id: 42 })
+      const imported = {
+        display_name: 'evidence.txt',
+        markdown: '[evidence.txt](/attachments/evidence)',
+      }
+      if (succeeds) importLoopItemAttachments.mockResolvedValue([imported])
+      else importLoopItemAttachments.mockRejectedValue(new Error('Attachment import failed'))
+      const onStartHumanTaskFromReply = vi.fn()
+      const messages = humanAssignmentMessages(1)
+      const client = humanAssignmentClient(messages)
+      client.send = vi.fn(async input => ({ ...userMessage, content: input.text }))
+      client.executeTaskComment = vi.fn()
+      render(
+        <TaskActivityView
+          client={client}
+          currentUserId={1}
+          project={{ id: '11', name: 'Cloud', location: 'cloud' } as never}
+          task={{ id: 'WEG-1', title: 'CPU', status: 'in_progress', version: 1 } as never}
+          issueTimeline
+          linear
+          onStartHumanTaskFromReply={onStartHumanTaskFromReply}
+        />
+      )
+      await user.click(
+        await screen.findByTestId('cloud-task-activity-reply-toggle-manager-assignment')
+      )
+      await user.type(screen.getByTestId('cloud-task-activity-composer'), 'See evidence')
+      await user.click(sendButtonFor('cloud-task-activity-composer'))
+      await waitFor(() =>
+        expect(importLoopItemAttachments).toHaveBeenCalledWith('WEG-1', [
+          expect.objectContaining({ id: 42, filename: attachment.filename }),
+        ])
+      )
+      expect(importLoopItemAttachments.mock.calls[0][1][0]).not.toHaveProperty('local_path')
+      if (local) expect(uploadLocalAttachmentToCloud).toHaveBeenCalledWith(attachment)
+      else expect(uploadLocalAttachmentToCloud).not.toHaveBeenCalled()
+      if (succeeds) {
+        await waitFor(() => expect(onStartHumanTaskFromReply).toHaveBeenCalledOnce())
+        expect(client.send).toHaveBeenCalledWith(
+          expect.objectContaining({
+            text: 'See evidence\n\n[evidence.txt](/attachments/evidence)',
+          })
+        )
+        expect(importLoopItemAttachments.mock.invocationCallOrder[0]).toBeLessThan(
+          vi.mocked(client.send).mock.invocationCallOrder[0]
+        )
+      } else {
+        const key = 'task-activity:cloud:11:WEG-1:manager-assignment'
+        await waitFor(() =>
+          expect(replyQueueStoreMock.value!.get(key)[0]).toMatchObject({
+            content: 'See evidence',
+            attachments: [expect.objectContaining({ id: attachment.id })],
+            status: 'failed',
+            error: 'Attachment import failed',
+          })
+        )
+        expect(client.send).not.toHaveBeenCalled()
+        expect(onStartHumanTaskFromReply).not.toHaveBeenCalled()
+      }
+      expect(client.executeTaskComment).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([1, 7])(
+    'keeps ordinary discussion replies as comments even with a human assignment (owner=%s)',
+    async owner => {
+      const user = userEvent.setup()
+      const onStartHumanTaskFromReply = vi.fn()
+
+      render(
+        <TaskActivityView
+          client={humanAssignmentClient(humanAssignmentMessages(owner))}
+          currentUserId={1}
+          project={{ id: '11', name: 'Wework' } as never}
+          task={{ id: 'WEG-1', title: '干啥呢', status: 'in_progress', version: 1 } as never}
+          issueTimeline
+          linear
+          onStartHumanTaskFromReply={onStartHumanTaskFromReply}
+        />
+      )
+
+      const card = await screen.findByTestId('cloud-task-activity-card-message-1')
+      await user.click(within(card).getByTestId('cloud-task-activity-reply-toggle-message-1'))
+      expect(screen.queryByTestId('issue-reply-starts-task-hint')).not.toBeInTheDocument()
+
+      await user.type(screen.getByTestId('cloud-task-activity-composer'), '补充 CPU 占用')
+      await user.click(sendButtonFor('cloud-task-activity-composer'))
+
+      await waitFor(() =>
+        expect(screen.queryByTestId('issue-reply-composer')).not.toBeInTheDocument()
+      )
+      expect(onStartHumanTaskFromReply).not.toHaveBeenCalled()
+    }
+  )
 
   it('allows replies to queue while the comment execution is running', async () => {
     const runningComment = {

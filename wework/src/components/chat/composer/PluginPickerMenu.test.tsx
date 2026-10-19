@@ -61,7 +61,7 @@ describe('PluginPickerMenu', () => {
     const store = createComposerCatalogStore<LocalDeviceApp>()
     render(
       <ComposerCatalogContext.Provider
-        value={{ appsStore: store, catalogEvents: {}, listApps: scoped, prefetchLocalAuth: false }}
+        value={{ appsStore: store, catalogEvents: {}, listApps: scoped }}
       >
         <PluginPickerMenu onInsertReference={vi.fn()} onListLocalApps={inherited} />
       </ComposerCatalogContext.Provider>

@@ -14,36 +14,40 @@
 //! - [`orjson_dumps`] mirrors `orjson.dumps(value)`: compact separators and
 //!   UTF-8 with no ASCII escaping (used by the cache manager for the
 //!   task-streaming status object).
+//! - [`python_dumps_utf8`] mirrors `json.dumps(value, ensure_ascii=False)`,
+//!   the CLI OIDC callback's `users.preferences` rendering.
 use serde_json::Value;
 
 /// `json.dumps(value)` with CPython's default separators and ASCII escaping.
 pub(crate) fn python_dumps(value: &Value) -> String {
     let mut out = String::new();
-    write_python(&mut out, value);
+    write_python_with(&mut out, value, write_python_string);
     out
 }
 
-/// `orjson.dumps(value)`: compact separators, UTF-8, no ASCII escaping.
-pub(crate) fn orjson_dumps(value: &Value) -> String {
+/// `json.dumps(value, ensure_ascii=False)`: CPython's default separators and
+/// number rendering, with characters outside `!`..`~` kept as UTF-8.
+pub(crate) fn python_dumps_utf8(value: &Value) -> String {
     let mut out = String::new();
-    write_compact(&mut out, value);
+    write_python_with(&mut out, value, write_compact_string);
     out
 }
 
-fn write_python(out: &mut String, value: &Value) {
+/// CPython's JSON encoder body: `write_string` selects the escaping mode.
+fn write_python_with(out: &mut String, value: &Value, write_string: fn(&mut String, &str)) {
     match value {
         Value::Null => out.push_str("null"),
         Value::Bool(true) => out.push_str("true"),
         Value::Bool(false) => out.push_str("false"),
         Value::Number(number) => out.push_str(&python_number(number)),
-        Value::String(text) => write_python_string(out, text),
+        Value::String(text) => write_string(out, text),
         Value::Array(items) => {
             out.push('[');
             for (index, item) in items.iter().enumerate() {
                 if index > 0 {
                     out.push_str(", ");
                 }
-                write_python(out, item);
+                write_python_with(out, item, write_string);
             }
             out.push(']');
         }
@@ -53,13 +57,20 @@ fn write_python(out: &mut String, value: &Value) {
                 if index > 0 {
                     out.push_str(", ");
                 }
-                write_python_string(out, key);
+                write_string(out, key);
                 out.push_str(": ");
-                write_python(out, item);
+                write_python_with(out, item, write_string);
             }
             out.push('}');
         }
     }
+}
+
+/// `orjson.dumps(value)`: compact separators, UTF-8, no ASCII escaping.
+pub(crate) fn orjson_dumps(value: &Value) -> String {
+    let mut out = String::new();
+    write_compact(&mut out, value);
+    out
 }
 
 fn write_compact(out: &mut String, value: &Value) {
@@ -209,6 +220,17 @@ mod tests {
     fn python_dumps_keeps_float_suffix() {
         assert_eq!(python_dumps(&json!(1.0)), "1.0");
         assert_eq!(python_dumps(&json!(2)), "2");
+    }
+
+    #[test]
+    fn python_dumps_utf8_keeps_non_ascii_and_python_spacing() {
+        let value = json!({"name": "胡伟", "employee_id": "220577", "n": 2});
+        assert_eq!(
+            python_dumps_utf8(&value),
+            "{\"name\": \"胡伟\", \"employee_id\": \"220577\", \"n\": 2}"
+        );
+        // Control characters keep CPython's escapes under `ensure_ascii=False`.
+        assert_eq!(python_dumps_utf8(&json!("a\nb")), "\"a\\nb\"");
     }
 
     #[test]

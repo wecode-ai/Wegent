@@ -82,6 +82,7 @@ import { prepareDevelopmentHistory } from './runtime/development-history-migrati
 import { FeedbackBundleManager } from './host/feedback-bundle-manager.js'
 import {
   createStartupReadyHandler,
+  resolveStartupSplashHoldMs,
   resolveStartupSplashTheme,
   StartupSplash,
   startupSplashBlocksMainWindowActivation,
@@ -90,10 +91,17 @@ import {
 import { assertStartupRecoverySender, StartupRecoveryService } from './host/startup-recovery.js'
 import { clearStartupRuntimeFiles, clearStartupUserFiles } from './host/startup-recovery-files.js'
 import { ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
-import { createTrayIcon } from './host/tray-icon.js'
+import { createTrayIcon, trayIconFilename } from './host/tray-icon.js'
 import { trayGuidForApplicationId } from './host/tray-guid.js'
+import { openApplicationLogDirectory } from './host/application-log-directory.js'
 import { TrayNativeStatusController } from './host/tray-native-status.js'
 import { WindowClosePolicy, type WindowCloseDecision } from './host/window-close-policy.js'
+import {
+  ApplicationMenu,
+  EMPTY_APPLICATION_MENU_CAPABILITIES,
+  type ApplicationMenuAction,
+  type ApplicationMenuCapabilityState,
+} from './host/application-menu.js'
 import { AppUpdateService } from './host/app-update-service.js'
 import { AppUpdateLogger } from './host/app-update-logger.js'
 import { CloudCredentialError, CloudCredentialService } from './host/cloud-credential-service.js'
@@ -119,10 +127,8 @@ import {
   prepareWorkbenchEnvironment,
   resolveWorkbenchPaths,
 } from './runtime/workbench-environment.js'
-import {
-  packagedUpdaterCache,
-  migrateDesktopControlRegistry,
-} from './runtime/workbench-desktop-data.js'
+import { migrateDesktopControlRegistry } from './runtime/workbench-desktop-data.js'
+import { packagedUpdaterCache, restoreNativeUpdaterCache } from './host/app-update-cache.js'
 import { initializeWorkbenchDesktopData } from './runtime/workbench-desktop-startup.js'
 import { executorMigrationLock } from './runtime/workbench-migration-lock.js'
 import { assertExecutorWorkbenchCompatibility } from './runtime/workbench-executor-schema.js'
@@ -249,11 +255,6 @@ if (desktopDataPaths) {
           join(process.resourcesPath, 'bin', 'wegent-executor.exe'),
         { wait: true }
       ),
-      updaterCache: packagedUpdaterCache(
-        process.env.HOME?.trim() || app.getPath('home'),
-        process.resourcesPath,
-        process.env
-      ),
     })
     hasSingleInstanceLock = migrated !== null
     if (migrated) {
@@ -284,6 +285,9 @@ let mainWindow: BrowserWindow | null = null
 let startupSplashWindow: BrowserWindow | null = null
 const workspaceWindows = new Map<string, BrowserWindow>()
 const dshWindowLabels = new Map<number, string>()
+let applicationMenu: ApplicationMenu | null = null
+let lastMenuWindow: BrowserWindow | null = null
+const menuCapabilities = new Map<string, ApplicationMenuCapabilityState>()
 let primaryDshLoaded = false
 let primaryDshSecurityInstalled = false
 let desktopRuntime: DesktopRuntime | null = null
@@ -394,6 +398,10 @@ const appUpdateLogger = new AppUpdateLogger(join(app.getPath('logs'), 'app-updat
 const runtimeDiagnosticsLog = new RuntimeDiagnosticsLog(
   join(app.getPath('logs'), 'runtime-launch.log')
 )
+const conversationSearchDiagnosticsLog = new RuntimeDiagnosticsLog(
+  join(app.getPath('logs'), 'conversation-search.log'),
+  '[Wework] Conversation search diagnostic '
+)
 app.on('web-contents-created', (_event, contents) => {
   const logLoadEvent = (event: string) => () => {
     console.info('[renderer-load]', { event, webContentsId: contents.id })
@@ -423,6 +431,9 @@ app.on('web-contents-created', (_event, contents) => {
     }
     void runtimeDiagnosticsLog.record(contents.id, message).catch(error => {
       console.warn('[Wework] Failed to write runtime diagnostics', error)
+    })
+    void conversationSearchDiagnosticsLog.record(contents.id, message).catch(error => {
+      console.warn('[Wework] Failed to write conversation search diagnostics', error)
     })
   })
 })
@@ -454,6 +465,16 @@ const appUpdates = new AppUpdateService({
   prepareUpdate: async (version, channel, onProgress) => {
     if (!componentUpdates) throw new Error('Component update manager is not initialized.')
     await componentUpdates.stageUpdateForApp(version, channel, false, onProgress)
+    if (desktopDataPaths) {
+      const cache = packagedUpdaterCache(
+        process.env.HOME?.trim() || app.getPath('home'),
+        process.resourcesPath,
+        process.env
+      )
+      if (restoreNativeUpdaterCache(cache, desktopDataPaths.desktop)) {
+        appUpdateLogger.info({ event: 'legacy-updater-cache-bridge-removed', directory: cache })
+      }
+    }
   },
   prepareInstall: async () => {
     await prepareApplicationShutdown()
@@ -916,6 +937,8 @@ async function openWorkspaceWindow(input: {
     if (workspaceWindows.get(input.label) === workspaceWindow) {
       workspaceWindows.delete(input.label)
     }
+    menuCapabilities.delete(input.label)
+    syncApplicationMenuCapabilities()
   })
   try {
     await workspaceWindow.loadURL(target.toString(), {
@@ -1219,6 +1242,13 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
       },
     },
     theme: startupTheme,
+    // The splash is the only visible window until the workbench reports
+    // readiness, so a user closing it through the native close button means
+    // quitting the application instead of dismissing the window.
+    onCloseRequest: () => {
+      if (quitting) return
+      requestApplicationShutdown(() => app.quit())
+    },
   })
   startupSplashWindow.on('closed', () => {
     startupSplashWindow = null
@@ -1270,6 +1300,16 @@ async function setDockVisible(visible: boolean): Promise<void> {
   if (visible) await app.dock.show()
   else await app.dock.hide()
   dockVisible = visible
+}
+
+async function holdStartupSplashForDesktopE2e(): Promise<void> {
+  const holdMs = resolveStartupSplashHoldMs(process.env)
+  if (holdMs <= 0) return
+  logStartupStep('startup-splash-hold', 'started', { holdMs })
+  await new Promise<void>(resolve => {
+    setTimeout(resolve, holdMs)
+  })
+  logStartupStep('startup-splash-hold', 'completed')
 }
 
 async function applyWindowCloseDecision(decision: WindowCloseDecision): Promise<void> {
@@ -1353,9 +1393,85 @@ function dispatchTrayAction(action: TrayAction): void {
   }
 }
 
+/**
+ * Resolves the workbench window a menu action should target: the focused
+ * workspace/main window, falling back to the most recently focused one.
+ */
+function applicationMenuWindow(label?: string): BrowserWindow | null {
+  if (label) return label === 'main' ? mainWindow : (workspaceWindows.get(label) ?? null)
+  const focused = BrowserWindow.getFocusedWindow()
+  if (focused && (focused === mainWindow || [...workspaceWindows.values()].includes(focused))) {
+    return focused
+  }
+  return lastMenuWindow && !lastMenuWindow.isDestroyed() ? lastMenuWindow : mainWindow
+}
+
+function menuLabelForWindow(window: BrowserWindow): string {
+  return dshWindowLabels.get(window.webContents.id) ?? 'main'
+}
+
+/** Applies the capabilities of the window that currently owns the menu. */
+function syncApplicationMenuCapabilities(): void {
+  const window = applicationMenuWindow()
+  if (!window) {
+    applicationMenu?.setCapabilities(EMPTY_APPLICATION_MENU_CAPABILITIES)
+    return
+  }
+  applicationMenu?.setCapabilities(
+    menuCapabilities.get(menuLabelForWindow(window)) ?? EMPTY_APPLICATION_MENU_CAPABILITIES
+  )
+}
+
+function installApplicationMenu(): void {
+  applicationMenu = new ApplicationMenu({
+    platform: process.platform,
+    appName: app.getName(),
+    buildMenu: template => Menu.buildFromTemplate(template),
+    setApplicationMenu: menu => {
+      Menu.setApplicationMenu(menu)
+      // Windows and Linux windows are frameless, and Electron never creates a
+      // native menu bar in a frameless window (RootView::SetMenu returns early
+      // when the window has no frame), so there is nothing to hide. The
+      // workbench exposes its own application-menu button instead, while the
+      // menu accelerators stay registered and active.
+    },
+    targetWindow: applicationMenuWindow,
+    dispatch: (action: ApplicationMenuAction, window: BrowserWindow) =>
+      desktopHostEvents.publish('application-menu.action', {
+        action,
+        windowLabel: menuLabelForWindow(window),
+      }),
+    openDevTools: window => openWindowDevTools(window),
+    openLogDirectory: openApplicationLogDirectory,
+    showMain: reactivateMainWindow,
+    quit: () => requestApplicationShutdown(() => app.quit()),
+    openExternal: url => shell.openExternal(url),
+    reportError: error => console.error('[application-menu] action failed', error),
+  })
+  // Bootstrap with the OS locale; the renderer reports the Wework language
+  // preference through applicationMenu.setLanguage once it mounts, so the menu
+  // follows the in-app language instead of the system locale.
+  applicationMenu.setLanguage(app.getLocale())
+  app.on('browser-window-created', (_event, window) => {
+    window.on('focus', () => {
+      if (window === mainWindow || [...workspaceWindows.values()].includes(window)) {
+        lastMenuWindow = window
+        syncApplicationMenuCapabilities()
+      }
+    })
+  })
+  syncApplicationMenuCapabilities()
+}
+
+function openWindowDevTools(window: BrowserWindow): void {
+  const contents = window.webContents
+  if (contents.isDestroyed()) return
+  contents.openDevTools({ mode: 'detach', activate: true })
+}
+
 function createTrayManager(): ElectronTrayManager<Electron.Menu | null, Tray> {
   const resourcesRoot = packagedApplication ? process.resourcesPath : developmentResourcesRoot
-  const iconPath = join(resourcesRoot, 'icons', '128x128.png')
+  const iconPath = join(resourcesRoot, 'icons', trayIconFilename())
   const trayGuid = trayGuidForApplicationId(applicationId)
   return new ElectronTrayManager({
     createTray: () => new Tray(createTrayIcon(nativeImage, iconPath), trayGuid),
@@ -1497,6 +1613,11 @@ async function shutdown(): Promise<void> {
   }
   workspaceWindows.clear()
   disposeSystemDragWindow()
+  // The startup splash refuses native close requests until the workbench is
+  // ready. When the app quits within that window, an open splash cancels
+  // app.quit() and strands the app on the splash, so close it through the
+  // controlled-close path as part of every shutdown.
+  await startupSplash?.close()
   popoutWindow?.destroy()
   popoutWindow = null
   popoutWindowCreationPromise = null
@@ -1730,6 +1851,13 @@ async function configureDesktopRuntime(): Promise<void> {
           cleanupStaleTemporaryImages,
           events: desktopHostEvents,
           feedback,
+          applicationMenu: () => applicationMenu,
+          updateApplicationMenuCapabilities: (label, capabilities) => {
+            menuCapabilities.set(label, capabilities)
+            const window = applicationMenuWindow()
+            if (window && menuLabelForWindow(window) === label) syncApplicationMenuCapabilities()
+          },
+          updateApplicationMenuLanguage: language => applicationMenu?.setLanguage(language),
           quitApplication: () => requestApplicationShutdown(() => app.quit()),
           relaunchApplication: () => {
             app.relaunch()
@@ -1779,6 +1907,10 @@ async function configureDesktopRuntime(): Promise<void> {
             if (!mainWindow || mainWindow.isDestroyed()) return
             logStartupStep('renderer-startup-ready', 'completed', { source })
             startupTelemetrySuccess.markRendererReady()
+            await holdStartupSplashForDesktopE2e()
+            // A quit request during startup owns the exit: never present the
+            // workbench while shutdown is already tearing the app down.
+            if (quitting || !mainWindow || mainWindow.isDestroyed()) return
             if (!keepE2EWindowInBackground) mainWindow.show()
             logStartupStep('main-window-show', 'completed')
             await startupSplash?.close({
@@ -1797,6 +1929,12 @@ async function configureDesktopRuntime(): Promise<void> {
             return startupSplash?.showError()
           },
           startupSplashSnapshot: () => startupSplash?.snapshot() ?? null,
+          closeStartupSplash: () => {
+            const target = startupSplashWindow
+            if (!target || target.isDestroyed()) return false
+            target.close()
+            return true
+          },
           trayActivate: activation => trayManager?.activate(activation) ?? false,
           traySetState: state => {
             trayManager?.setState(state)
@@ -2117,6 +2255,9 @@ if (hasSingleInstanceLock) {
     } catch (error) {
       console.warn('[popout-window] failed to register global shortcut', error)
     }
+    // Install the menu before any window is created so the
+    // browser-window-created focus hook covers every workbench window.
+    installApplicationMenu()
     await createWindow(
       resolveStartupSplashTheme(startupPreferences.appearanceMode, nativeTheme.shouldUseDarkColors)
     )

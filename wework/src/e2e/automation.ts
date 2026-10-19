@@ -67,6 +67,10 @@ import type {
   WeworkConversationSnapshot,
 } from '../../dsh/app-wework/client'
 import { suspendDshTerminalEventDelivery } from '@/api/dsh/terminalTransport'
+import {
+  collectLocalHarnessDiagnostics,
+  installLocalHarnessDiagnostics,
+} from './local-harness-diagnostics'
 import { requestLocalExecutor } from '@/desktop/localExecutor'
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import { checkForWeworkUpdate, downloadPendingWeworkUpdate } from '@/lib/app-updater'
@@ -511,6 +515,7 @@ export async function installWeworkAutomationBridge(
 
   if (isDesktopRuntime()) {
     await loadDesktopE2ERuntimeConfig()
+    installLocalHarnessDiagnostics()
   }
   installDesktopE2EClipboard()
   window.__WEWORK_E2E__ = createBridge()
@@ -1508,6 +1513,18 @@ function desktopControlComposerDisplayValue(element: HTMLElement, value: string)
   return displayValue
 }
 
+function applyDesktopControlTextSelection(range: Range, target: Element): void {
+  const activeElement = desktopControlDeepActiveElement()
+  if (activeElement && !activeElement.contains(range.commonAncestorContainer)) {
+    activeElement.blur()
+  }
+  const selection = window.getSelection()
+  selection?.removeAllRanges()
+  selection?.addRange(range)
+  document.dispatchEvent(new Event('selectionchange'))
+  target.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+}
+
 function selectDesktopControlText(selector: string, value: string): string {
   const elements = findDesktopControlElements(selector)
   const wholeElement = value
@@ -1516,11 +1533,7 @@ function selectDesktopControlText(selector: string, value: string): string {
   if (wholeElement) {
     const range = document.createRange()
     range.selectNodeContents(wholeElement)
-    const selection = window.getSelection()
-    selection?.removeAllRanges()
-    selection?.addRange(range)
-    document.dispatchEvent(new Event('selectionchange'))
-    document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    applyDesktopControlTextSelection(range, wholeElement)
     return value
   }
   let selectedNode: Node | null = null
@@ -1558,11 +1571,7 @@ function selectDesktopControlText(selector: string, value: string): string {
   const range = document.createRange()
   range.setStart(selectedNode, start)
   range.setEnd(selectedNode, start + selectedValue.length)
-  const selection = window.getSelection()
-  selection?.removeAllRanges()
-  selection?.addRange(range)
-  document.dispatchEvent(new Event('selectionchange'))
-  document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+  applyDesktopControlTextSelection(range, selectedNode.parentElement!)
   return selectedValue
 }
 
@@ -1797,6 +1806,17 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return JSON.stringify(await invokeDesktopHost('e2e.getStartupSplashSnapshot'))
     case 'getTraySnapshot':
       return JSON.stringify(await invokeDesktopHost('e2e.getTraySnapshot'))
+    case 'getApplicationMenuSnapshot':
+      return JSON.stringify(await invokeDesktopHost('e2e.getApplicationMenuSnapshot'))
+    case 'activateApplicationMenu': {
+      const request = JSON.parse(command.value ?? '{}') as { id?: string; windowLabel?: string }
+      return JSON.stringify(
+        await invokeDesktopHost('e2e.activateApplicationMenu', {
+          id: request.id,
+          windowLabel: request.windowLabel,
+        })
+      )
+    }
     case 'activateTray':
       return JSON.stringify(
         await invokeDesktopHost('e2e.activateTray', {
@@ -1850,6 +1870,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'closeMainWindowToTray':
       return ''
     case 'requestMainWindowClose':
+      return ''
+    case 'requestStartupSplashClose':
       return ''
     case 'reloadMainWindow': {
       if (command.value === 'capture') return captureDesktopControlScreenshot(command.selector)
@@ -1947,6 +1969,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       })
       return ''
     }
+    case 'activateSystemNotification':
+      await invokeDesktopHost('e2e.activateNotification', { url: command.value ?? '' })
+      return ''
     case 'openWeworkScheme':
       await invokeDesktopHost('shell.openExternal', { url: command.value ?? '' })
       return ''
@@ -2904,6 +2929,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'getWorkbenchDebugSnapshot':
       return JSON.stringify(getWorkbenchDebugSnapshot())
+    case 'getLocalHarnessDiagnostics':
+      return JSON.stringify(await collectLocalHarnessDiagnostics())
     case 'getConversationDiagnosticsSnapshot':
       return JSON.stringify(getConversationDiagnosticsSnapshot())
     case 'setConversationFrameProbeEnabled': {
@@ -3209,6 +3236,8 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
           await invokeDesktopHost('e2e.hideMainWindow')
         } else if (command.action === 'requestMainWindowClose') {
           await invokeDesktopHost('e2e.closeMainWindow')
+        } else if (command.action === 'requestStartupSplashClose') {
+          await invokeDesktopHost('e2e.closeStartupSplash')
         } else if (command.action === 'restartCoreDsh') {
           // A Core DSH restart replaces this renderer, so acknowledge the
           // command before starting it. The scenario verifies the replacement

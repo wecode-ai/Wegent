@@ -12,7 +12,7 @@ fn normalize(sql: &str) -> String {
 }
 
 fn list_sql_raw(workspace_id: Option<i64>) -> String {
-    project_access_statement(ProjectAccessMode::List { workspace_id }, 52, None)
+    super::super::collaboration_access::access_sql(52, None, workspace_id)
 }
 
 fn list_sql(workspace_id: Option<i64>) -> String {
@@ -20,57 +20,20 @@ fn list_sql(workspace_id: Option<i64>) -> String {
 }
 
 fn point_sql() -> String {
-    normalize(&project_access_statement(
-        ProjectAccessMode::Point,
-        52,
-        Some(8308220868516891581),
-    ))
+    normalize(&project_access_point_statement(52, 8308220868516891581))
 }
 
-/// The list form is the union with no per-branch project push-down, ordered
-/// newest first. Every grant value is inlined, so it carries no bind markers.
 #[test]
-fn list_form_keeps_every_source_grant_branch() {
+fn cp02_cp03_cp04_cp06_sources_are_explicit_and_public_is_read_only() {
     let sql = list_sql(None);
-    assert!(sql.starts_with("SELECT loop_items.id AS loop_items_id, "));
-    assert!(sql.contains(
-        "loop_items.deleted_at AS loop_items_deleted_at, anon_1.priority AS anon_1_priority"
-    ));
-    assert!(sql.ends_with(
-        "WHERE loop_items.status = 'active' AND loop_items.resource_type IN ('project') \
-         ORDER BY loop_items.updated_at DESC, loop_items.id"
-    ));
-    // direct membership, inherited workspace grants, public grants,
-    // caller ownership.
-    assert_eq!(sql.matches("UNION ALL").count(), 3);
-    // No bind parameters: the source inlines every grant value.
-    assert_eq!(sql.matches('?').count(), 0);
-    assert!(sql.contains(
-        "CASE resource_members.`role` WHEN 'Owner' THEN 0 WHEN 'Maintainer' THEN 1 WHEN 'Developer' THEN 2 WHEN 'Reporter' THEN 3 WHEN 'Viewer' THEN 4 WHEN 'RestrictedAnalyst' THEN 5 END"
-    ));
-    assert!(sql.contains("min(anon_2.priority) AS priority"));
-    assert!(sql.contains("anon_1.priority AS anon_1_priority"));
-    assert!(sql.contains("kinds.kind = 'CollaborationWorkspace' AND kinds.is_active IS true"));
-    // Direct grants admit the four project member roles (Viewer only).
-    assert!(
-        sql.contains("resource_members.`role` IN ('Owner', 'Maintainer', 'Developer', 'Viewer')")
-    );
-    // Inherited workspace grants stop at Reporter, after the active-workspace
-    // predicates.
-    assert!(sql.contains(
-        "kinds.kind = 'CollaborationWorkspace' AND kinds.is_active IS true AND resource_members.`role` IN ('Owner', 'Maintainer', 'Developer', 'Reporter')) AS anon_3 ON CAST(resource_members.entity_id AS SIGNED INTEGER) = anon_3.resource_id"
-    ));
-    // Public grants are held by every signed-in user.
-    assert!(sql.contains(
-        "resource_members.entity_type = 'authenticated_users' AND resource_members.entity_id = '*'"
-    ));
-    assert!(sql.contains("resource_members.`role` IN ('Developer', 'Viewer')"));
-    // The caller id is inlined as a string for `entity_id` and as an integer
-    // for `created_by_user_id`.
-    assert!(sql.contains("resource_members.entity_id = '52'"));
-    assert!(sql.contains("loop_items.created_by_user_id = 52"));
+    assert!(sql.contains("HAVING COUNT(DISTINCT entity_id) = 1"));
+    assert!(sql.contains("WHEN 'Owner' THEN 1"));
+    assert!(sql.contains("WHEN 'Reporter' THEN 4"));
+    assert!(sql.contains("THEN 4 END AS public_priority"));
+    assert!(!sql.contains("loop_items.created_by_user_id = 52"));
+    assert!(sql.contains("caller.is_active = true"));
+    assert!(sql.contains("kinds.is_active = true"));
 }
-
 /// The shared projection must carry every mapped `loop_items` column in the
 /// source's order. A dropped column — for example `start_at`, which sits
 /// between `priority` and `due_at` in the recorded rendering — makes every
@@ -143,70 +106,51 @@ fn projection_matches_the_source_loop_items_column_list() {
     assert_eq!(normalize(LOOP_ITEMS_COLUMNS), expected);
 }
 
-/// A `workspace_id` filter adds the grant restriction before the ordering.
 #[test]
-fn workspace_filter_adds_the_grant_restriction_before_ordering() {
-    // Compared unnormalized: the restriction must carry the source fragment
-    // verbatim, including its internal line breaks.
-    let raw = list_sql_raw(Some(1200));
-    assert!(raw.contains(&format!(
-        " AND loop_items.id IN ({})",
-        workspace_project_ids_statement(1200)
-    )));
-    // The unrestricted form never carries the restriction.
-    assert!(!list_sql_raw(None).contains("workspace_project_ids"));
-
-    let sql = list_sql(Some(1200));
-    assert!(sql.ends_with("ORDER BY loop_items.updated_at DESC, loop_items.id"));
-    assert_eq!(sql.matches('?').count(), 0);
+fn list_and_point_filters_keep_their_recorded_contracts() {
+    let list = list_sql(None);
+    let point = point_sql();
+    // The list read keeps the unified catalog CTE; the point read keeps the
+    // recorded union with the project id pushed into every branch.
+    assert!(list.contains("WITH parents AS ("));
+    assert!(list.contains("ORDER BY loop_items.updated_at DESC, loop_items.id"));
+    assert!(list_sql(Some(1200)).contains("AND access.workspace_id = 1200"));
+    assert!(point.contains("AND resource_members.resource_id = 8308220868516891581"));
+    assert!(point.contains("AND loop_items.id = '8308220868516891581'"));
+    assert!(point.ends_with("LIMIT 1"));
 }
 
-/// The point form pushes the requested project into each of the four branches
-/// and keeps a single row.
+/// The point form renders the recorded `union_all(direct, inherited, public,
+/// owned)` statement: every branch in source order, the creator grant at
+/// Owner priority 0, and the workspace-inherited grant at Viewer priority 4.
+/// A reordered branch or a lost predicate stops matching the recorded
+/// dependency during replay and fails the whole request.
 #[test]
-fn point_form_narrows_every_branch() {
+fn point_form_renders_the_recorded_union_with_the_creator_grant() {
     let sql = point_sql();
-    assert!(sql.ends_with(
-        "WHERE loop_items.status = 'active' AND loop_items.resource_type IN ('project') LIMIT 1"
-    ));
-    assert_eq!(sql.matches("UNION ALL").count(), 3);
-    assert_eq!(sql.matches('?').count(), 0);
-    // The direct and inherited branches narrow on the numeric membership
-    // resource id; the public branch does too; the owned branch narrows on the
-    // string project primary key.
-    assert!(sql.contains(
-        "resource_members.`role` IN ('Owner', 'Maintainer', 'Developer', 'Viewer') AND resource_members.resource_id = 8308220868516891581"
-    ));
-    let inherited_branch = &sql[sql.find("entity_type = 'workspace'").unwrap()..];
-    assert!(inherited_branch.starts_with(
-        "entity_type = 'workspace' AND resource_members.status = 'approved' AND resource_members.resource_id = 8308220868516891581"
-    ));
-    assert!(sql.contains(
-        "resource_members.`role` IN ('Developer', 'Viewer') AND resource_members.resource_id = 8308220868516891581"
-    ));
-    assert!(sql.contains(
-        "loop_items.created_by_user_id = 52 AND loop_items.status = 'active' AND loop_items.id = '8308220868516891581' AND loop_items.resource_type IN ('project')"
-    ));
-}
-
-/// The two modes are one statement: stripping the permitted per-mode segments
-/// must leave identical token streams. This is the property that lets the
-/// shared builder replace the two hand-written renderings.
-#[test]
-fn the_two_modes_differ_only_by_the_pushdowns_and_the_tail() {
-    let list = list_sql(None)
-        .strip_suffix(" ORDER BY loop_items.updated_at DESC, loop_items.id")
-        .expect("list form ends with the source ordering")
-        .to_owned();
-    let point = point_sql()
-        .strip_suffix(" LIMIT 1")
-        .expect("point form ends with LIMIT 1")
-        .replace(
-            " AND resource_members.resource_id = 8308220868516891581",
-            "",
+    let branches: Vec<&str> = sql.matches("UNION ALL").collect();
+    assert_eq!(branches.len(), 3);
+    let direct = sql.find("FROM resource_members").expect("direct branch");
+    let inherited = sql
+        .find("AS anon_3 ON CAST(resource_members.entity_id AS SIGNED INTEGER)")
+        .expect("inherited branch");
+    let public = sql
+        .find("entity_type = 'authenticated_users'")
+        .expect("public branch");
+    let owned = sql
+        .find("SELECT loop_items.id AS project_id, 0 AS priority")
+        .expect("creator branch");
+    assert!(direct < inherited && inherited < public && public < owned);
+    assert!(sql.contains("resource_members.entity_id = '52'"));
+    assert!(sql.contains("loop_items.created_by_user_id = 52"));
+    assert!(sql.contains("kinds.is_active IS true"));
+    assert!(sql.contains("GROUP BY anon_2.project_id"));
+    assert!(sql.contains("min(anon_2.priority)"));
+    assert!(
+        sql.contains(
+            "AND resource_members.`role` IN ('Owner', 'Maintainer', 'Developer', 'Viewer')"
         )
-        .replace(" AND loop_items.id = '8308220868516891581'", "");
-    assert_eq!(list, point);
+    );
 }
 
 /// `ROLES_BY_PRIORITY` maps the aggregated priorities and nothing else.

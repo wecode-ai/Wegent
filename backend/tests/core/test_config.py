@@ -118,6 +118,34 @@ class TestSettings:
         assert s.ACCESS_TOKEN_EXPIRE_MINUTES == 120
         assert s.ENABLE_API_DOCS is False
 
+    def test_task_source_group_names_load_from_environment(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(
+            "TASK_SOURCE_GROUP_NAMES",
+            '{"api":" API jobs ","dingtalk":" DingTalk conversations "}',
+        )
+
+        assert build_settings_from_env().TASK_SOURCE_GROUP_NAMES == {
+            "api": "API jobs",
+            "dingtalk": "DingTalk conversations",
+        }
+
+    @pytest.mark.parametrize(
+        "group_names",
+        [
+            {"api": "API jobs"},
+            {"dingtalk": "DingTalk conversations"},
+            {"api": "   ", "dingtalk": "DingTalk"},
+            {"api": "API", "dingtalk": "x" * 101},
+        ],
+    )
+    def test_task_source_group_names_reject_invalid_configuration(
+        self, group_names: dict[str, str]
+    ) -> None:
+        with pytest.raises(ValidationError, match="TASK_SOURCE_GROUP_NAMES"):
+            build_settings(TASK_SOURCE_GROUP_NAMES=group_names)
+
     def test_scheduled_tasks_switch_defaults_to_enabled_and_reads_environment(
         self, monkeypatch
     ):

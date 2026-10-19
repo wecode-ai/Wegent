@@ -9,7 +9,7 @@ import secrets
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import and_, func
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import (
@@ -29,7 +29,6 @@ from app.models.work_queue import (
 )
 from app.schemas.work_queue import (
     AutoProcessConfig,
-    ForwardRecipient,
     MessageContentSnapshot,
     QueueMessageCreate,
     QueueMessageResponse,
@@ -1205,28 +1204,6 @@ class QueueMessageService:
             logger.info(f"Archived queue message: id={message_id}, user_id={user_id}")
 
             return True
-
-    def get_unread_counts(self, user_id: int) -> Tuple[int, Dict[int, int]]:
-        """Get unread message counts for all queues."""
-        with self.get_db() as db:
-            # Get counts grouped by queue
-            results = (
-                db.query(
-                    QueueMessage.queue_id,
-                    func.count(QueueMessage.id).label("count"),
-                )
-                .filter(
-                    QueueMessage.recipient_user_id == user_id,
-                    QueueMessage.status == QueueMessageStatus.UNREAD,
-                )
-                .group_by(QueueMessage.queue_id)
-                .all()
-            )
-
-            by_queue = {r.queue_id: r.count for r in results}
-            total = sum(by_queue.values())
-
-            return total, by_queue
 
     def batch_update_status(
         self, user_id: int, message_ids: List[int], status: QueueMessageStatus

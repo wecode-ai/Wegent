@@ -408,7 +408,7 @@ export function useWorkbenchPaneSession({
     attempts: number
   } | null>(null)
   const messageActionFrameRef = useRef<number | null>(null)
-  const retryInFlightRef = useRef(false)
+  const continuationInFlightRef = useRef(false)
   const currentRuntimeTaskLoadTarget = useMemo(
     () => (currentRuntimeTask ? runtimeTaskLoadTargetFromAddress(currentRuntimeTask) : null),
     [currentRuntimeTask]
@@ -1324,64 +1324,92 @@ export function useWorkbenchPaneSession({
     ]
   )
 
-  const retryFailedMessageInPane = useCallback(
-    async (message: WorkbenchMessage): Promise<boolean> => {
-      if (retryInFlightRef.current) return false
+  const dispatchContinuation = useCallback(
+    async (input: string, displayContent?: string): Promise<boolean> => {
       if (!currentRuntimeTask) return false
-
-      retryInFlightRef.current = true
-      setError(null)
-      try {
-        const currentMessages = messagesRef.current
-        const failedMessage = currentMessages.find(
-          currentMessage =>
-            currentMessage.id === message.id &&
-            currentMessage.role === 'assistant' &&
-            currentMessage.status === 'failed'
-        )
-        if (!failedMessage) {
-          setError('未找到可重试的失败消息')
-          return false
-        }
-
-        const continuationMessage: RuntimePaneQueuedMessage = {
-          id: `runtime-retry-continuation-${Date.now()}`,
-          content: RUNTIME_RETRY_CONTINUATION_PROMPT,
-          displayContent: i18n.t('workbench.retry_continue_message', '继续'),
-          status: 'queued',
-          createdAt: new Date().toISOString(),
-          ...getRuntimeModelFields(),
-        }
-        debugRuntimePaneMessageFlow('retry-failed-message', {
-          address: runtimeAddressDebug(currentRuntimeTask),
-          failedMessageId: message.id,
-          failedTurnId: failedMessage.turnId ?? failedMessage.subtaskId ?? null,
-          continuationMessageId: continuationMessage.id,
-        })
-        const result = await sendRuntimeMessage(continuationMessage)
-        if (result.queued) {
-          retainRuntimeQueuedMessage(continuationMessage, result.queuePosition)
-        }
-        return result.accepted
-      } catch (error) {
-        console.error('[Wework] Runtime failed message retry failed', {
-          address: runtimeAddressDebug(currentRuntimeTask),
-          messageId: message.id,
-          error,
-        })
-        setError(error instanceof Error ? error.message : '重试失败')
-        return false
-      } finally {
-        retryInFlightRef.current = false
+      const message: RuntimePaneQueuedMessage = {
+        id: `runtime-retry-continuation-${crypto.randomUUID()}`,
+        content: input,
+        ...(displayContent === undefined ? {} : { displayContent }),
+        status: 'queued',
+        createdAt: new Date().toISOString(),
+        ...getRuntimeModelFields(),
       }
+      const lifecycleBeforeSend = lifecycleStore.getTask(currentRuntimeTask)
+      let sendError: string | null = null
+      const result = await sendRuntimeMessage(message, {
+        appendLocalMessage: false,
+        onError: error => {
+          sendError = error
+        },
+      })
+      if (result.queued) retainRuntimeQueuedMessage(message, result.queuePosition)
+      if (result.accepted) return true
+      if (!isRuntimeTaskBusyError(sendError)) {
+        setError(sendError ?? i18n.t('workbench.project_chat_send_failed'))
+        return false
+      }
+      const lifecycleAfterSend = lifecycleStore.getTask(currentRuntimeTask)
+      if (!runtimeTaskLifecycleTransitionChanged(lifecycleBeforeSend, lifecycleAfterSend)) {
+        queuedMessageBusyBlockSnapshotsRef.current.set(message.id, lifecycleBeforeSend)
+      }
+      setQueuedMessages(messages => [...messages, message])
+      return true
     },
     [
       currentRuntimeTask,
       getRuntimeModelFields,
+      lifecycleStore,
       retainRuntimeQueuedMessage,
       sendRuntimeMessage,
       setError,
+      setQueuedMessages,
     ]
+  )
+
+  const sendContinuation = useCallback(
+    async (input: string, displayContent?: string): Promise<boolean> => {
+      if (!currentRuntimeTask || !input.trim() || continuationInFlightRef.current) return false
+      continuationInFlightRef.current = true
+      setError(null)
+      try {
+        return await dispatchContinuation(input.trim(), displayContent)
+      } catch (error) {
+        setError(
+          error instanceof Error ? error.message : i18n.t('workbench.project_chat_send_failed')
+        )
+        return false
+      } finally {
+        continuationInFlightRef.current = false
+      }
+    },
+    [currentRuntimeTask, dispatchContinuation, setError]
+  )
+
+  const retryFailedMessageInPane = useCallback(
+    async (message: WorkbenchMessage): Promise<boolean> => {
+      if (!currentRuntimeTask || continuationInFlightRef.current) return false
+      const failedMessage = messagesRef.current.find(
+        currentMessage =>
+          currentMessage.id === message.id &&
+          currentMessage.role === 'assistant' &&
+          currentMessage.status === 'failed'
+      )
+      if (!failedMessage) {
+        setError('未找到可重试的失败消息')
+        return false
+      }
+      debugRuntimePaneMessageFlow('retry-failed-message', {
+        address: runtimeAddressDebug(currentRuntimeTask),
+        failedMessageId: message.id,
+        failedTurnId: failedMessage.turnId ?? failedMessage.subtaskId ?? null,
+      })
+      return sendContinuation(
+        RUNTIME_RETRY_CONTINUATION_PROMPT,
+        i18n.t('workbench.retry_continue_message', '继续')
+      )
+    },
+    [currentRuntimeTask, sendContinuation, setError]
   )
 
   const editLastUserMessageInPane = useCallback(
@@ -3050,6 +3078,7 @@ export function useWorkbenchPaneSession({
     loadTranscriptTurnNavigationItem,
     loadTranscriptGap,
     send,
+    sendContinuation,
     retryFailedMessage: retryFailedMessageInPane,
     editLastUserMessage: editLastUserMessageInPane,
     sendRequestUserInputResponse,

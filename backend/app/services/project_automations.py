@@ -1014,6 +1014,7 @@ class ProjectAutomationService:
             resolve_routing(
                 db,
                 config=config,
+                agent_id=agent.id,
                 project_id=project_id,
                 issue_id="",
                 user_id=user_id,

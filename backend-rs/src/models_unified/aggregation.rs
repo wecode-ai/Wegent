@@ -45,6 +45,27 @@ pub async fn list_available_models<M, R: brz_redis::Redis>(
 where
     M: Mysql + Sync,
 {
+    Ok(
+        list_available_model_resources(mysql, erp, redis, current_user, query)
+            .await?
+            .into_iter()
+            .map(|(model, _)| model.into_response(query.include_config))
+            .collect(),
+    )
+}
+
+/// Authorized entries and their source CRDs from the same fresh visibility read.
+/// Execution consumers must keep the CRD private and project a safe catalog.
+pub(crate) async fn list_available_model_resources<M, R: brz_redis::Redis>(
+    mysql: &M,
+    erp: &dyn ErpProvider<R>,
+    redis: Option<&R>,
+    current_user: &UserRow,
+    query: &UnifiedQuery,
+) -> anyhow::Result<Vec<(UnifiedModel, KindRow)>>
+where
+    M: Mysql + Sync,
+{
     let (support_model, actual_shell_type) = match &query.shell_type {
         Some(shell_type) => {
             get_shell_support_model(mysql, erp, redis, shell_type, current_user.id).await?
@@ -52,7 +73,7 @@ where
         None => (Vec::new(), String::new()),
     };
 
-    let mut result: Vec<UnifiedModel> = Vec::new();
+    let mut result: Vec<(UnifiedModel, KindRow)> = Vec::new();
     let mut seen_names: BTreeMap<String, &'static str> = BTreeMap::new();
 
     let namespaces_to_query = match resolve_scope(
@@ -122,6 +143,7 @@ where
             let info = extract_model_info(model_data);
             if query.shell_type.is_some()
                 && !is_model_compatible_with_shell(
+                    &info.model_category_type,
                     info.provider.as_deref(),
                     &actual_shell_type,
                     &support_model,
@@ -142,7 +164,7 @@ where
             if seen_names.contains_key(&resource.name) {
                 continue;
             }
-            result.push(UnifiedModel {
+            let model = UnifiedModel {
                 name: resource.name.clone(),
                 model_type: resource_type,
                 display_name: info.display_name,
@@ -165,8 +187,9 @@ where
                 created_at: Some(resource.created_at.format("%Y-%m-%dT%H:%M:%S").to_string()),
                 updated_at: Some(resource.updated_at.format("%Y-%m-%dT%H:%M:%S").to_string()),
                 is_reference: referenced_ids.contains(&resource.id),
-            });
+            };
             seen_names.insert(resource.name.clone(), resource_type);
+            result.push((model, resource));
         }
     }
 
@@ -176,6 +199,7 @@ where
         let info = public_model_info(&model_dict);
         if query.shell_type.is_some()
             && !is_model_compatible_with_shell(
+                &info.model_category_type,
                 info.provider.as_deref(),
                 &actual_shell_type,
                 &support_model,
@@ -193,7 +217,7 @@ where
             continue;
         }
         let model_name = info.name.clone().unwrap_or_default();
-        result.push(UnifiedModel {
+        let model = UnifiedModel {
             name: model_name.clone(),
             model_type: MODEL_TYPE_PUBLIC,
             display_name: info.display_name,
@@ -216,15 +240,13 @@ where
             created_at: info.created_at,
             updated_at: info.updated_at,
             is_reference: false,
-        });
+        };
+        result.push((model, model_dict));
         seen_names.entry(model_name).or_insert(MODEL_TYPE_PUBLIC);
     }
 
-    result.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(result
-        .into_iter()
-        .map(|model| model.into_response(query.include_config))
-        .collect())
+    result.sort_by(|(a, _), (b, _)| a.name.cmp(&b.name));
+    Ok(result)
 }
 
 struct PublicModelInfo {

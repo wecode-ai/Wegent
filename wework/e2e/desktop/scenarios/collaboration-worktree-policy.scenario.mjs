@@ -10,6 +10,7 @@ import {
   configureFirstProjectExecutionEnvironment,
   openProjectAgentCreator,
   selectProjectRunnerModel,
+  selectCollaborationIssueAgent,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
 import {
@@ -86,7 +87,10 @@ async function createIssue(control, label) {
 
 async function createTask(control, label, timeoutMs, executionMode = 'current_workspace') {
   await createIssue(control, label)
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-create-task"]'))
+  await control.command(
+    'clickWhenEnabled',
+    scoped('[data-testid="cloud-todo-personal-task-start"]')
+  )
   await control.command('waitFor', COMPOSER)
   const projectButton = `${PANEL} [data-testid="project-work-button"]`
   if (!(await control.command('getText', projectButton)).includes('Worktree policy E2E')) {
@@ -148,10 +152,10 @@ async function addAgent(control, timeoutMs) {
 async function runAgent(control, agentId, label, timeoutMs) {
   await createIssue(control, label)
   const before = new Set((await tasks(control)).map(task => task.taskId))
-  await control.command('click', scoped('[data-testid="cloud-todo-detail-assignee"]'))
-  await control.command(
-    'click',
-    `[data-testid="cloud-todo-detail-assignee-option-agent:${agentId}"]`
+  await selectCollaborationIssueAgent(
+    control,
+    scoped('[data-testid="cloud-todo-detail-assignee"]'),
+    agentId
   )
   await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'))
   await control.command('waitFor', scoped('[data-testid="cloud-task-activity-list"]'), {

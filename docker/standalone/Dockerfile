@@ -35,6 +35,7 @@ RUN corepack enable \
 # Copy source code
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages ./packages
+COPY shared/assets/codex-models ./shared/assets/codex-models
 COPY frontend ./frontend
 
 # App version injected at build time (e.g. "0.1.5")
@@ -78,7 +79,9 @@ COPY shared/assets ./shared/assets
 COPY wework ./wework
 
 ARG WEWORK_APP_BASE_PATH="/wework"
+ARG WEWORK_SOURCE_SHA
 ENV VITE_APP_BASE_PATH=${WEWORK_APP_BASE_PATH}
+ENV WEWORK_SOURCE_SHA=${WEWORK_SOURCE_SHA}
 ENV HUSKY=0
 
 WORKDIR /app/wework
@@ -94,7 +97,9 @@ WORKDIR /app
 # Verify Node.js is available (already installed in base image)
 RUN node --version && npm --version
 
-# Install system packages for document generation and Redis
+# Install system packages for document generation and embedded services.
+# AlmaLinux MySQL requests CAP_SYS_NICE as an effective file capability.
+# Default Docker containers exclude it, so execve rejects mysqld with EPERM.
 RUN dnf install -y \
     # LibreOffice for document conversion and PDF operations
     libreoffice-core libreoffice-writer libreoffice-calc libreoffice-impress \
@@ -107,12 +112,15 @@ RUN dnf install -y \
     # Public reverse proxy for the bundled frontend applications
     nginx \
     # Development environment and runtime diagnostics
-    procps-ng iproute lsof less tree unzip ripgrep \
+    procps-ng iproute lsof less tree unzip ripgrep libcap \
     # Redis server for standalone mode (embedded)
     redis \
     # MySQL server for standalone mode (embedded)
     mysql-server \
     && npm install -g @anthropic-ai/claude-code@2.1.277 @openai/codex@0.155.1 \
+    && { ! getcap /usr/libexec/mysqld | grep -q . || setcap -r /usr/libexec/mysqld; } \
+    && test -z "$(getcap /usr/libexec/mysqld)" \
+    && /usr/sbin/mysqld --version \
     && dnf clean all \
     && rm -rf /var/cache/dnf/*
 

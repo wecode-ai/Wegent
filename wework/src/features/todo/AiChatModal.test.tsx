@@ -370,6 +370,45 @@ describe('AiChatModal', () => {
     expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-auto-submit', 'no')
   })
 
+  it('preserves assignment identity in both the task request and runtime context', async () => {
+    const origin = {
+      type: 'issue_dispatch' as const,
+      cloudProjectId: String(project.id),
+      loopItemId: task.id,
+      projectStore: 'backend' as const,
+      humanAssignmentId: 'human-work',
+      dispatchId: 'dispatch',
+      roundId: 'round',
+      assignmentId: 'assignment',
+    }
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        initialTaskRequest={{
+          runtime: 'codex',
+          message: 'Assigned work',
+          title: 'Assigned title',
+          origin,
+        }}
+        open
+        onClose={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('mock-chat-send'))
+
+    expect(mocks.createProjectRuntimeTask).toHaveBeenCalledWith(
+      '给出任务列表',
+      expect.objectContaining({
+        origin,
+        taskRequest: expect.objectContaining({ title: 'Assigned title', origin }),
+        additionalContext: expect.objectContaining({ issueEnvironment: expect.any(Object) }),
+      })
+    )
+  })
+
   it('always creates private AI conversations with the Codex runtime', async () => {
     render(
       <AiChatModal

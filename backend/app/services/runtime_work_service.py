@@ -53,8 +53,6 @@ from app.schemas.runtime_work import (
     RuntimeGlobalIMNotificationUpdateRequest,
     RuntimeGuidanceRequest,
     RuntimeGuidanceResponse,
-    RuntimeIMNotificationPresenceResponse,
-    RuntimeIMNotificationPresenceUpdateRequest,
     RuntimeIMNotificationSession,
     RuntimeIMNotificationSettingsResponse,
     RuntimeModelSelection,
@@ -103,7 +101,6 @@ from app.services.device.runtime_rpc_service import (
 from app.services.device_service import device_service
 from app.services.im.notification_dispatcher import im_notification_dispatcher
 from app.services.im.session_service import (
-    IM_NOTIFICATION_PRESENCE_TTL_SECONDS,
     im_session_service,
 )
 from app.services.object_storage import object_storage_presign_service
@@ -947,24 +944,6 @@ async def update_global_im_notification(
         session_key=request.session_key,
     )
     return await get_im_notification_settings(db=db, user_id=user_id)
-
-
-async def update_im_notification_presence(
-    *,
-    user_id: int,
-    request: RuntimeIMNotificationPresenceUpdateRequest,
-) -> RuntimeIMNotificationPresenceResponse:
-    """Refresh Wework foreground presence for away-only global IM delivery."""
-
-    away = await im_session_service.update_im_notification_presence(
-        user_id=user_id,
-        client_id=request.client_id,
-        away=request.away,
-    )
-    return RuntimeIMNotificationPresenceResponse(
-        away=away,
-        ttlSeconds=IM_NOTIFICATION_PRESENCE_TTL_SECONDS,
-    )
 
 
 async def subscribe_runtime_task_im_notification(
@@ -4174,7 +4153,9 @@ def _build_team_runtime_execution_request(
     from app.services.project_automation_domain import runnable_wegent_team
 
     user = _get_user(db, user_id)
-    team = runnable_wegent_team(db, user_id, team_id)
+    team = runnable_wegent_team(
+        db, user_id, team_id, project_id=request.cloud_project_id
+    )
     task_id, subtask_id = _runtime_execution_ids()
     title = _runtime_task_title(request)
     message = _message_with_application_context(

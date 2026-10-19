@@ -20,6 +20,37 @@ class TestWebSocketResultEmitter:
     """Tests for WebSocketResultEmitter."""
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("project_id", [None, 17])
+    async def test_task_created_payload_preserves_project_id(self, project_id):
+        """Grouped tasks must retain their association in task list events."""
+        from app.api.ws.events import ServerEvents
+        from app.services.chat.webpage_ws_chat_emitter import WebPageSocketEmitter
+        from app.services.execution.emitters import WebSocketResultEmitter
+
+        socket = AsyncMock()
+        ws_emitter = WebPageSocketEmitter(socket)
+        emitter = WebSocketResultEmitter(
+            task_id=1,
+            subtask_id=2,
+            user_id=7,
+            team_id=3,
+            team_name="Test agent",
+            task_title="API task",
+            project_id=project_id,
+        )
+        with patch(
+            "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter",
+            return_value=ws_emitter,
+        ):
+            await emitter.emit_start(task_id=1, subtask_id=2, message_id=4)
+
+        event, payload = socket.emit.call_args.args
+        assert event == ServerEvents.TASK_CREATED
+        assert payload["task_id"] == 1
+        assert payload["project_id"] == project_id
+        assert socket.emit.call_args.kwargs["room"] == "user:7"
+
+    @pytest.mark.asyncio
     async def test_emit_start(self):
         """Test emitting start event."""
         from app.services.execution.emitters import WebSocketResultEmitter

@@ -66,6 +66,7 @@ class WorkspaceLifecycleService:
                 namespace=values.namespace,
                 public_id=public_id,
                 is_default=is_default,
+                created_by_user_id=user_id,
             ),
             is_active=True,
         )
@@ -127,9 +128,14 @@ class WorkspaceLifecycleService:
             .all()
         )
         workspaces = [workspace_from_kind(kind) for kind in kinds]
+        # A workspace created by an older migration can carry no timestamps; a
+        # missing one must not take the whole navigation list down.
         return sorted(
             workspaces,
-            key=lambda item: (not item.is_default, -item.updated_at.timestamp()),
+            key=lambda item: (
+                not item.is_default,
+                -(item.updated_at.timestamp() if item.updated_at else 0.0),
+            ),
         )
 
     def get(
@@ -145,6 +151,50 @@ class WorkspaceLifecycleService:
     def access(self, db: Session, workspace_id: int, user_id: int) -> WorkspaceAccess:
         return require_workspace_role(db, workspace_id, user_id)
 
+    def transfer_ownership(self, db: Session, workspace_id: int, user_id: int, values):
+        from app.models.user import User
+
+        require_workspace_role(db, workspace_id, user_id, BaseRole.Owner)
+        kind = db.query(Kind).filter_by(id=workspace_id).with_for_update().one()
+        if workspace_from_kind(kind).version != values.version:
+            raise HTTPException(409, "Workspace changed")
+        target = db.get(User, values.user_id)
+        if target is None or not target.is_active:
+            raise HTTPException(404, "User not found")
+        if kind.user_id == target.id:
+            raise HTTPException(409, "User already owns the Workspace")
+        conflict = (
+            db.query(Kind.id)
+            .filter(
+                Kind.user_id == target.id,
+                Kind.namespace == kind.namespace,
+                Kind.kind == kind.kind,
+                Kind.name == kind.name,
+                Kind.id != kind.id,
+            )
+            .first()
+        )
+        if conflict:
+            raise HTTPException(
+                409, "The new owner already has a Workspace with this name"
+            )
+        payload = dict(kind.json or {})
+        metadata = dict(payload.get("metadata") or {})
+        metadata.setdefault("createdByUserId", kind.user_id)
+        kind.json = {**payload, "metadata": metadata}
+        self._set_kind_values(kind, is_default=False)
+        for member_user_id in (kind.user_id, target.id):
+            member = ensure_human_member(
+                db,
+                workspace_id=workspace_id,
+                user_id=member_user_id,
+                role=BaseRole.Maintainer,
+            )
+            member.role = BaseRole.Maintainer.value
+        kind.user_id = target.id
+        db.commit()
+        return workspace_from_kind(kind)
+
     def summary_counts(self, db: Session, workspace_id: int) -> dict[str, int]:
         member_count = self._grant_count(
             db,
@@ -155,11 +205,7 @@ class WorkspaceLifecycleService:
         )
         return {
             "member_count": member_count,
-            "project_count": self._grant_count(
-                db,
-                resource_type=ResourceType.CLOUD_PROJECT.value,
-                workspace_id=workspace_id,
-            ),
+            "project_count": len(active_project_ids_for_workspace(db, workspace_id)),
             "agent_count": self._grant_count(
                 db,
                 resource_type=ResourceType.TEAM.value,
@@ -202,7 +248,7 @@ class WorkspaceLifecycleService:
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "A Group Workspace cannot be the personal default Workspace",
                 )
-            self._clear_other_defaults(db, current.created_by_user_id, workspace_id)
+            self._clear_other_defaults(db, current.owner_user_id, workspace_id)
         self._set_kind_values(
             kind,
             name=values.name,
@@ -254,6 +300,7 @@ class WorkspaceLifecycleService:
                 namespace="default",
                 public_id=public_id,
                 is_default=True,
+                created_by_user_id=user_id,
             ),
             is_active=True,
         )
@@ -322,6 +369,7 @@ class WorkspaceLifecycleService:
                 else current.execution_environment
             ),
             version=current.version + 1,
+            created_by_user_id=current.created_by_user_id,
         )
         kind.json["status"]["state"] = state
 
@@ -338,6 +386,6 @@ def _owner_membership(workspace_id: int, user_id: int) -> ResourceMember:
         resource_type=ResourceType.WORKSPACE.value,
         resource_id=workspace_id,
         entity_id=str(user_id),
-        role=BaseRole.Owner.value,
+        role=BaseRole.Maintainer.value,
         status=MemberStatus.APPROVED.value,
     )

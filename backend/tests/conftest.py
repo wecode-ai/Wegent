@@ -16,6 +16,13 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import Session, sessionmaker
 
+# Test crypto must be configured before parameterized modules encrypt at collection.
+os.environ["GIT_TOKEN_AES_KEY"] = "12345678901234567890123456789012"
+os.environ["GIT_TOKEN_AES_IV"] = "1234567890123456"
+os.environ["SHARE_TOKEN_AES_KEY"] = "12345678901234567890123456789012"
+os.environ["SHARE_TOKEN_AES_IV"] = "1234567890123456"
+os.environ["LOG_LEVEL"] = "INFO"
+
 from app.core.config import Settings
 from app.core.security import create_access_token, get_password_hash, pwd_context
 from app.db.base import Base

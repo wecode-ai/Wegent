@@ -31,6 +31,7 @@ from app.services.project_automations import (
     project_automation_execution,
     project_automation_service,
 )
+from tests.utils.collaboration import authorize_project
 
 
 def test_external_events_default_to_creating_an_issue() -> None:
@@ -138,6 +139,7 @@ def test_migrate_workflow_atomically_promotes_legacy_definition(
             }
         },
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.commit()
     test_db.refresh(project)
@@ -175,6 +177,7 @@ def test_migrate_workflow_rejects_stale_project_without_creating_rule(
         created_by_user_id=test_user.id,
         storage_prefix="projects/stale-migration",
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.commit()
     test_db.refresh(project)
@@ -212,6 +215,7 @@ def test_delete_canonical_workflow_clears_project_binding(
         created_by_user_id=test_user.id,
         storage_prefix="projects/delete-workflow",
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.flush()
     rule = ProjectAutomationRule(
@@ -262,6 +266,7 @@ def test_list_runs_repairs_terminal_execution_projection(
         created_by_user_id=test_user.id,
         storage_prefix="projects/run-repair",
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.flush()
     rule = ProjectAutomationRule(
@@ -325,6 +330,7 @@ async def test_cancel_waiting_runtime_automation_run(
         created_by_user_id=test_user.id,
         storage_prefix="projects/cancel-waiting-runtime",
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.flush()
     rule = ProjectAutomationRule(
@@ -396,6 +402,7 @@ def test_create_generic_manual_rule_does_not_persist_null_robot_id(
         created_by_user_id=test_user.id,
         storage_prefix="projects/generic-automation",
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.commit()
     monkeypatch.setattr(
@@ -451,6 +458,7 @@ def test_create_rejects_invalid_runtime_workflow_definition(
         created_by_user_id=test_user.id,
         storage_prefix="projects/invalid-workflow",
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.commit()
     monkeypatch.setattr(
@@ -509,6 +517,7 @@ def test_status_rule_create_and_update_persist_only_canonical_transition(
         created_by_user_id=test_user.id,
         storage_prefix="projects/status-automation",
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.commit()
     monkeypatch.setattr(

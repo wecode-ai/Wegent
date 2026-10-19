@@ -981,18 +981,18 @@
   align-items: center;
   justify-content: center;
   border-radius: 10px;
-  color: #2563eb;
-  background: #eff6ff;
+  color: rgb(var(--color-focus));
+  background: rgb(var(--color-focus) / 0.1);
 }
 
 .collaboration-home-attention-list > button[data-tone="review"] > i {
-  color: #d97706;
-  background: #fffbeb;
+  color: rgb(var(--color-warning));
+  background: rgb(var(--color-warning) / 0.1);
 }
 
 .collaboration-home-attention-list > button[data-tone="failed"] > i {
-  color: #dc2626;
-  background: #fef2f2;
+  color: rgb(var(--color-destructive));
+  background: rgb(var(--color-destructive) / 0.1);
 }
 
 .collaboration-home-attention-list > button > i svg {
@@ -1162,12 +1162,12 @@
 
 .collaboration-platform-secondary-button {
   display: inline-flex;
-  min-height: 34px;
+  min-height: 36px;
   align-items: center;
   justify-content: center;
   gap: 6px;
   border: 1px solid rgb(var(--color-border));
-  border-radius: 9px;
+  border-radius: 8px;
   padding: 0 12px;
   color: rgb(var(--color-text-primary));
   background: rgb(var(--color-bg-base));
@@ -1185,8 +1185,8 @@
 }
 
 .collaboration-platform-secondary-button > svg {
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
 }
 
 .collaboration-platform-search {
@@ -1224,7 +1224,7 @@
   border: 1px solid rgb(var(--color-border));
   border-radius: 10px;
   color: rgb(var(--color-text-secondary));
-  background: #fff;
+  background: rgb(var(--color-bg-base));
   font-size: 13px;
 }
 
@@ -1574,16 +1574,16 @@
 
 .collaboration-resource-row-status[data-tone="available"]::before,
 .collaboration-resource-row-status[data-tone="online"]::before {
-  background: #22c55e;
+  background: rgb(var(--color-success));
 }
 
 .collaboration-resource-row-status[data-tone="provisioning"]::before {
-  background: #d97706;
+  background: rgb(var(--color-warning));
 }
 
 .collaboration-resource-row-status[data-tone="error"]::before,
 .collaboration-resource-row-status[data-tone="unavailable"]::before {
-  background: #dc2626;
+  background: rgb(var(--color-destructive));
 }
 
 .collaboration-resource-row-members,
@@ -1744,6 +1744,7 @@
 }
 
 .collaboration-resource-dialog {
+  color: rgb(var(--color-text-primary));
   width: min(520px, 100%);
   overflow: hidden;
   border: 1px solid rgb(var(--color-border));
@@ -1766,7 +1767,7 @@
   width: min(760px, calc(100vw - 32px));
   max-height: min(760px, calc(100vh - 40px));
   flex-direction: column;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-team-settings-header {
@@ -1799,7 +1800,7 @@
   min-height: 0;
   padding: 0;
   overflow: hidden;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-detail-dialog {
@@ -1827,7 +1828,7 @@
   border: 0;
   border-bottom: 1px solid rgb(var(--color-border));
   border-radius: 0;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-dialog-section-title {
@@ -1877,7 +1878,7 @@
   overflow: hidden;
   border: 0;
   border-radius: 0;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-detail-dialog .collaboration-group-detail-tabs {
@@ -1885,7 +1886,7 @@
   box-sizing: border-box;
   flex-shrink: 0;
   padding: 0 24px;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-detail-dialog .collaboration-group-detail-tab-panel {
@@ -1895,7 +1896,7 @@
   flex: 1;
   padding: 22px 24px 24px;
   overflow-y: auto;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-detail-dialog .collaboration-group-people-editor {
@@ -1910,7 +1911,7 @@
   flex-shrink: 0;
   padding: 14px 24px;
   border-top: 1px solid rgb(var(--color-border));
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-resource-dialog > header h2 {
@@ -2239,7 +2240,7 @@
   border: 1px solid rgb(var(--color-border));
   border-radius: 12px;
   padding: 24px;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-workspace-starter > small {
@@ -2260,19 +2261,8 @@
 .collaboration-workspace-starter > div {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
-}
-
-.collaboration-workspace-starter
-  > div
-  > button:not(.collaboration-primary-button) {
-  min-height: 32px;
-  border: 1px solid rgb(var(--color-border));
-  border-radius: 8px;
-  padding: 0 12px;
-  color: rgb(var(--color-text-primary));
-  background: rgb(var(--color-bg-base));
-  cursor: pointer;
 }
 
 .collaboration-workspace-operation-metrics {
@@ -2325,18 +2315,18 @@
 }
 
 .collaboration-workspace-operation-metrics > div[data-tone="running"] > span {
-  color: #2563eb;
-  background: #eff6ff;
+  color: rgb(var(--color-focus));
+  background: rgb(var(--color-focus) / 0.1);
 }
 
 .collaboration-workspace-operation-metrics > div[data-tone="review"] > span {
-  color: #7c3aed;
-  background: #f5f3ff;
+  color: rgb(var(--color-warning));
+  background: rgb(var(--color-warning) / 0.1);
 }
 
 .collaboration-workspace-operation-metrics > div[data-tone="failed"] > span {
-  color: #dc2626;
-  background: #fef2f2;
+  color: rgb(var(--color-destructive));
+  background: rgb(var(--color-destructive) / 0.1);
 }
 
 .collaboration-workspace-operations-layout {
@@ -2473,7 +2463,7 @@
 }
 
 .collaboration-workspace-operation-counts > span[data-tone="failed"] {
-  color: #dc2626;
+  color: rgb(var(--color-destructive));
 }
 
 .collaboration-workspace-operation-state {
@@ -2494,31 +2484,31 @@
 }
 
 .collaboration-workspace-operation-state[data-tone="running"] > i {
-  background: #2563eb;
+  background: rgb(var(--color-focus));
 }
 
 .collaboration-workspace-operation-state[data-tone="review"] > i {
-  background: #7c3aed;
+  background: rgb(var(--color-warning));
 }
 
 .collaboration-workspace-operation-state[data-tone="failed"] {
-  color: #dc2626;
+  color: rgb(var(--color-destructive));
 }
 
 .collaboration-workspace-operation-state[data-tone="unavailable"] {
-  color: #dc2626;
+  color: rgb(var(--color-destructive));
 }
 
 .collaboration-workspace-operation-state[data-tone="failed"] > i {
-  background: #dc2626;
+  background: rgb(var(--color-destructive));
 }
 
 .collaboration-workspace-operation-state[data-tone="unavailable"] > i {
-  background: #dc2626;
+  background: rgb(var(--color-destructive));
 }
 
 .collaboration-workspace-operation-state[data-tone="completed"] > i {
-  background: #16a34a;
+  background: rgb(var(--color-success));
 }
 
 .collaboration-workspace-attention-list > button {
@@ -2571,7 +2561,7 @@
   width: 24px;
   height: 24px;
   margin-bottom: 10px;
-  color: #16a34a;
+  color: rgb(var(--color-success));
   stroke-width: 1.75;
 }
 
@@ -2616,7 +2606,7 @@
   border: 1px solid rgb(var(--color-border));
   border-radius: 12px;
   margin-bottom: 18px;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-resource-form > label {
@@ -2704,7 +2694,7 @@
   padding: 20px;
   border: 1px solid rgb(var(--color-border));
   border-radius: 14px;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-create-dialog {
@@ -2716,7 +2706,7 @@
   padding: 0;
   border-color: rgb(var(--color-border) / 0.8);
   border-radius: 16px;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
   box-shadow:
     0 24px 64px rgb(0 0 0 / 18%),
     0 2px 8px rgb(0 0 0 / 8%);
@@ -2806,14 +2796,14 @@
   flex: 1;
   flex-direction: column;
   overflow: hidden;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-create-content {
   min-height: 0;
   flex: 1;
   overflow-y: auto;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-create-panel {
@@ -2821,7 +2811,7 @@
   align-content: start;
   gap: 20px;
   padding: 20px;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-create-actions {
@@ -2830,7 +2820,7 @@
   box-sizing: border-box;
   padding: 11px 20px;
   border-top: 1px solid rgb(var(--color-border));
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-people-editor,
@@ -2893,7 +2883,7 @@
   padding: 10px 12px;
   border: 1px solid rgb(var(--color-border));
   border-radius: 10px;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-roster {
@@ -2965,7 +2955,7 @@
   padding: 0 12px;
   border: 1px dashed rgb(var(--color-border));
   border-radius: 10px;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-person {
@@ -3040,7 +3030,7 @@
   border-radius: 7px;
   outline: 0;
   color: rgb(var(--color-text-primary));
-  background: #fff;
+  background: rgb(var(--color-bg-base));
   font: inherit;
   font-size: 12px;
 }
@@ -3110,16 +3100,17 @@
   border: 1px solid rgb(var(--color-border));
   border-radius: 8px;
   color: rgb(var(--color-text-primary));
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-people-picker {
+  color: rgb(var(--color-text-primary));
   z-index: 100;
   width: min(292px, calc(100vw - 32px));
   padding: 6px;
   border: 1px solid rgb(var(--color-border) / 0.9);
   border-radius: 10px;
-  background: #fff;
+  background: rgb(var(--color-popover));
   box-shadow:
     0 16px 40px rgb(0 0 0 / 16%),
     0 2px 8px rgb(0 0 0 / 8%);
@@ -3140,7 +3131,7 @@
   border-radius: 8px;
   outline: 0;
   color: rgb(var(--color-text-primary));
-  background: #fff;
+  background: rgb(var(--color-bg-base));
   font: inherit;
   font-size: 12px;
 }
@@ -3253,15 +3244,13 @@
   border: 1px solid rgb(var(--color-border));
   border-radius: 8px;
   color: rgb(var(--color-text-primary));
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-create-actions .collaboration-primary-button {
   min-height: 34px;
   padding: 6px 14px;
   border-radius: 8px;
-  color: #fff;
-  background: rgb(var(--color-text-primary));
 }
 
 .collaboration-group-create-actions .collaboration-primary-button:disabled {
@@ -3300,7 +3289,7 @@
 .collaboration-group-create-fields input {
   min-height: 40px;
   border-radius: 9px;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-field-grid input,
@@ -3343,7 +3332,7 @@
   border: 1px solid rgb(var(--color-border));
   border-radius: 12px;
   margin-top: 12px;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-card {
@@ -3354,7 +3343,7 @@
   align-items: center;
   gap: 12px;
   padding: 8px 12px;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-card + .collaboration-group-card {
@@ -3941,8 +3930,8 @@
   height: 32px;
   flex: none;
   border-radius: 50%;
-  color: #fff;
-  background: #6366f1;
+  color: rgb(var(--color-text-primary));
+  background: rgb(var(--color-bg-muted));
   font-size: 12px;
   font-weight: 700;
 }
@@ -3975,7 +3964,7 @@
 .collaboration-resource-remove {
   min-height: 32px;
   padding: 4px 8px;
-  color: #dc2626;
+  color: rgb(var(--color-destructive));
 }
 
 .collaboration-resource-empty {
@@ -4007,19 +3996,19 @@
 .collaboration-run-status.queued,
 .collaboration-run-status.waiting_runtime,
 .collaboration-run-status.waiting_device {
-  color: #b45309;
-  background: #fef3c7;
+  color: rgb(var(--color-warning));
+  background: rgb(var(--color-warning) / 0.1);
 }
 
 .collaboration-run-status.succeeded {
-  color: #047857;
-  background: #d1fae5;
+  color: rgb(var(--color-success));
+  background: rgb(var(--color-success) / 0.1);
 }
 
 .collaboration-run-status.failed,
 .collaboration-run-status.cancelled {
-  color: #b91c1c;
-  background: #fee2e2;
+  color: rgb(var(--color-destructive));
+  background: rgb(var(--color-destructive) / 0.1);
 }
 
 .collaboration-run-summary {
@@ -4042,7 +4031,7 @@
 }
 
 .collaboration-run-summary em {
-  color: #b91c1c;
+  color: rgb(var(--color-destructive));
   font-size: 12px;
   font-style: normal;
 }
@@ -4061,7 +4050,9 @@
   margin-top: 18px;
 }
 
-.collaboration-resource-dialog footer button {
+.collaboration-resource-dialog
+  footer
+  button:not(.collaboration-primary-button) {
   min-height: 34px;
   padding: 0 14px;
   border: 1px solid rgb(var(--color-border));
@@ -4725,6 +4716,7 @@
   }
 
   .collaboration-platform-page-header button,
+  .collaboration-workspace-starter button,
   .collaboration-workspace-create-dialog footer > button {
     min-height: 44px;
   }

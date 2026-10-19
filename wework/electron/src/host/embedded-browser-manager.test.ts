@@ -7,9 +7,12 @@ import type { WebContents } from 'electron'
 import { EmbeddedBrowserManager, type BrowserHostEvent } from './embedded-browser-manager.js'
 
 const electronMocks = vi.hoisted(() => ({
+  authCookiesGet: vi.fn(),
+  authCookiesSet: vi.fn(),
   appGetLocale: vi.fn(() => 'zh-CN'),
   createBackgroundWebContents: vi.fn(),
   browserSession: {
+    cookies: { set: (...args: unknown[]) => electronMocks.authCookiesSet(...args) },
     clearCache: vi.fn(),
     clearStorageData: vi.fn(),
     on: vi.fn(),
@@ -38,6 +41,9 @@ vi.mock('electron', () => ({
     buildFromTemplate: electronMocks.menuBuildFromTemplate,
   },
   session: {
+    defaultSession: {
+      cookies: { get: (...args: unknown[]) => electronMocks.authCookiesGet(...args) },
+    },
     fromPartition: vi.fn(() => electronMocks.browserSession),
   },
   shell: {
@@ -135,6 +141,40 @@ function emitBeforeInput(
 describe('EmbeddedBrowserManager lifecycle', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+  })
+
+  test('authenticates a Smart app browser session before navigating to the runtime', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-auth-'))
+    const manager = new EmbeddedBrowserManager(directory)
+    const contents = Object.assign(new FakeWebContents(), { session: electronMocks.browserSession })
+    electronMocks.authCookiesGet.mockResolvedValue([{ name: 'dsh-auth-fixture', value: 'private' }])
+    contents.loadURL.mockImplementation(async () => {
+      expect(electronMocks.authCookiesSet).toHaveBeenCalledWith(
+        expect.objectContaining({
+          url: 'http://127.0.0.1:12345/',
+          name: 'dsh-auth-fixture',
+          value: 'private',
+        })
+      )
+    })
+    manager.attach('smart-app', contents as unknown as WebContents)
+    try {
+      await manager.open({
+        label: 'smart-app',
+        url: 'http://127.0.0.1:12345/',
+        bounds: { x: 0, y: 0, width: 800, height: 600 },
+        visible: true,
+        navigateExisting: true,
+      })
+      expect(electronMocks.authCookiesGet).toHaveBeenCalledWith({
+        url: 'http://127.0.0.1:12345/',
+        name: expect.stringMatching(/^dsh-auth-[a-zA-Z0-9_-]{43}$/),
+      })
+      expect(contents.loadURL).toHaveBeenCalledOnce()
+    } finally {
+      manager.stop()
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 
   test('applies request headers only to an exact HTTPS origin and path prefix', async () => {

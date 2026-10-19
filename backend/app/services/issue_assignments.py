@@ -21,7 +21,7 @@ from app.models.delivery import (
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.base_role import BaseRole
-from app.services.cloud_project_visibility import explicit_project_member_ids
+from app.services.cloud_project_visibility import project_participant_ids
 from app.services.cloud_projects.access import (
     IssueAction,
     require_cloud_project_role,
@@ -132,6 +132,7 @@ class IssueAssignmentService:
         trigger: str,
         comment_id: str | None = None,
         comment_body: str | None = None,
+        replace_root_assignments: bool = False,
     ) -> tuple[AssignmentEvent, bool]:
         del workspace_id
         normalized_type = self._member_type(member_type)
@@ -143,11 +144,17 @@ class IssueAssignmentService:
             member_id=normalized_id,
             workflow_step=workflow_step,
         )
-        if existing is not None and not (
-            existing.metadata.get("trigger") == "default" and trigger != "default"
+        if (
+            existing is not None
+            and not replace_root_assignments
+            and not (
+                existing.metadata.get("trigger") == "default" and trigger != "default"
+            )
         ):
             return existing, False
-        if normalized_type == "human" and not self._workflow_step(workflow_step):
+        if (
+            normalized_type == "human" or replace_root_assignments
+        ) and not self._workflow_step(workflow_step):
             for previous in self._active_events(db, issue_id).values():
                 if previous.workflow_step:
                     continue
@@ -266,7 +273,9 @@ class IssueAssignmentService:
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "Human member id must be numeric",
                 ) from exc
-            if user_id not in explicit_project_member_ids(db, project):
+            if user_id not in project_participant_ids(
+                db, project, required_role=BaseRole.Developer
+            ):
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "Assignee is not a member of this Project",

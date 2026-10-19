@@ -19,7 +19,6 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
-from slowapi import Limiter
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -723,7 +722,6 @@ async def _create_non_streaming_response_unified(
     import asyncio
 
     from app.db.session import SessionLocal
-    from app.services.chat.storage import session_manager
     from app.services.chat.trigger.unified import build_execution_request
     from app.services.execution import execution_dispatcher
     from app.services.execution.emitters import SSEResultEmitter
@@ -1270,7 +1268,6 @@ async def _create_streaming_response_unified(
 
         from app.services.execution.emitters import SSEResultEmitter
         from app.services.openapi.streaming import StreamingChunk
-        from shared.models import ExecutionEvent
 
         accumulated_content = ""
         accumulated_reasoning = ""
@@ -1742,97 +1739,6 @@ async def _create_streaming_response_unified(
     )
 
 
-# MIGRATION-CANDIDATE(api="GET /api/v1/responses/{response_id}"): remove after final confirmation.
-# @router.get("/{response_id}", response_model=WeworkResponseObject | ResponseObject)
-@limiter.limit(settings.RATE_LIMIT_GET_RESPONSE)
-async def get_response(
-    request: Request,
-    response_id: str,
-    stream: bool = False,
-    starting_after: int | None = None,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user_flexible),
-):
-    """
-    Retrieve a response by ID.
-
-    Args:
-        response_id: Response ID in format "resp_{task_id}"
-
-    Returns:
-        ResponseObject with current status and output
-    """
-    if is_wework_response_id(response_id):
-        user = wework_api.current_api_user(request, db)
-        return await wework_api.get_response(
-            response_id, stream, starting_after, db, user
-        )
-
-    # Extract task_id from response_id
-    if not response_id.startswith("resp_"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid response_id format: '{response_id}'. Expected format: 'resp_{{task_id}}'",
-        )
-
-    try:
-        task_id = int(response_id[5:])
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid response_id format: '{response_id}'",
-        )
-
-    # Get task detail
-    try:
-        task_dict = task_kinds_service.get_task_by_id(
-            db, task_id=task_id, user_id=current_user.id
-        )
-    except HTTPException as e:
-        if e.status_code == 404:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Response '{response_id}' not found",
-            )
-        raise
-
-    # Get subtasks for output
-    subtasks = subtask_store.list_by_task_for_user_ordered(
-        db,
-        task_id=task_id,
-        user_id=current_user.id,
-    )
-
-    # Reconstruct model string from task team reference
-    task_kind = task_store.get_task_by_states(
-        db,
-        task_id=task_id,
-        states=[TaskResource.STATE_ACTIVE],
-        owner_user_id=current_user.id,
-    )
-
-    model_string = "unknown"
-    omit_mcp_binary_output = False
-    if task_kind and task_kind.json:
-        task_crd = Task.model_validate(task_kind.json)
-        team_name = task_crd.spec.teamRef.name
-        team_namespace = task_crd.spec.teamRef.namespace
-        labels = task_crd.metadata.labels or {}
-        model_id = labels.get("modelId")
-        omit_mcp_binary_output = labels.get("omitMcpBinaryOutput") == "true"
-        if model_id:
-            model_string = f"{team_namespace}#{team_name}#{model_id}"
-        else:
-            model_string = f"{team_namespace}#{team_name}"
-
-    return _task_to_response_object(
-        task_dict,
-        model_string,
-        subtasks=subtasks,
-        omit_mcp_binary_output=omit_mcp_binary_output,
-    )
-
-
 @router.post(
     "/{response_id}/cancel", response_model=WeworkResponseObject | ResponseObject
 )
@@ -1862,7 +1768,7 @@ async def cancel_response(
         user = wework_api.current_api_user(request, db)
         return await wework_api.cancel_response(response_id, db, user)
 
-    from app.services.chat.storage import db_handler, session_manager
+    from app.services.chat.storage import session_manager
 
     # Extract task_id from response_id
     if not response_id.startswith("resp_"):
@@ -2038,7 +1944,8 @@ async def cancel_response(
     )
 
 
-@router.delete("/{response_id}", response_model=ResponseDeletedObject)
+# MIGRATION-CANDIDATE(api="DELETE /api/v1/responses/:response_id"): remove after final confirmation.
+# @router.delete("/{response_id}", response_model=ResponseDeletedObject)
 @limiter.limit(settings.RATE_LIMIT_DELETE_RESPONSE)
 async def delete_response(
     request: Request,

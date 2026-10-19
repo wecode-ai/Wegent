@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { parse } from 'postcss'
 import { describe, expect, test } from 'vitest'
 
 const sourceRoot = resolve(process.cwd(), 'src')
@@ -157,20 +158,87 @@ describe('theme token guard', () => {
     expect(source).toContain("system: 'var(--z-system)'")
   })
 
-  test('soft scrollbar uses a visible light gray thumb before hover', () => {
+  test('native scrollbars share the quiet workbench colors without requiring a utility class', () => {
     const globalsPath = resolve(process.cwd(), 'src/styles/globals.css')
     const source = readFileSync(globalsPath, 'utf8')
 
-    expect(source).toContain('scrollbar-color: rgb(170 170 170 / 0.85) transparent;')
-    expect(source).toContain('width: 7px;')
-    expect(source).toContain('height: 7px;')
-    expect(source).toContain('background-color: rgb(170 170 170 / 0.85);')
-    expect(source).toContain('.scrollbar-soft::-webkit-scrollbar-track {')
+    expect(source).toContain('*,\n  .scrollbar-soft {')
+    expect(source).toContain('scrollbar-color: rgb(var(--color-scrollbar-thumb)) transparent;')
+    expect(source).not.toContain(
+      'scrollbar-color: rgb(var(--color-scrollbar-thumb-hover)) transparent;'
+    )
+    expect(source).toContain('--color-scrollbar-thumb: 0 0 0 / 0.08;')
+    expect(source).toContain('--color-scrollbar-thumb-hover: 0 0 0 / 0.12;')
+    expect(source).not.toContain('--color-sidebar-scrollbar')
+    expect(source).toContain('width: 8px;')
+    expect(source).toContain('height: 8px;')
+    expect(source).toContain('background-color: rgb(var(--color-scrollbar-thumb));')
+    expect(source).toContain('background-color: rgb(var(--color-scrollbar-thumb-hover));')
+    expect(source).toContain('::-webkit-scrollbar-track,')
     expect(source).toContain('background: transparent;')
-    expect(source).toContain('.scrollbar-soft::-webkit-scrollbar-track-piece {')
-    expect(source).toContain('.scrollbar-soft::-webkit-scrollbar-corner {')
-    expect(source).toContain('border: 1px solid transparent;')
+    expect(source).toContain('::-webkit-scrollbar-track-piece,')
+    expect(source).toContain('::-webkit-scrollbar-corner {')
+    expect(source).toContain('border: 0;')
     expect(source).toContain('border-radius: 999px;')
+  })
+
+  test('WebKit scrollbar rules are not suppressed by standard scrollbar properties', () => {
+    const styles = parse(readFileSync(resolve(sourceRoot, 'styles/globals.css'), 'utf8'))
+    const overrides = new Map<string, Record<string, string>>()
+    styles.walkAtRules('supports', support => {
+      if (support.params !== 'selector(::-webkit-scrollbar)') return
+      support.walkRules(rule => {
+        const declarations: Record<string, string> = {}
+        rule.walkDecls(declaration => {
+          declarations[declaration.prop] = declaration.value
+        })
+        rule.selectors.forEach(selector => overrides.set(selector, declarations))
+      })
+    })
+
+    for (const selector of ['*', '.scrollbar-soft']) {
+      expect(overrides.get(selector)).toEqual({
+        'scrollbar-color': 'auto',
+        'scrollbar-width': 'auto',
+      })
+    }
+    const hiddenWidths: string[] = []
+    styles.walkRules('.scrollbar-none', rule => {
+      rule.walkDecls('scrollbar-width', declaration => {
+        hiddenWidths.push(declaration.value)
+      })
+    })
+    expect(hiddenWidths).toEqual(['none'])
+  })
+
+  test('dark scrollbar thumbs remain distinguishable on the default app surfaces', () => {
+    const source = readFileSync(resolve(sourceRoot, 'styles/globals.css'), 'utf8')
+    const tokens = new Map<string, string>()
+    parse(source).walkRules("[data-theme='dark']", rule => {
+      rule.walkDecls(declaration => {
+        tokens.set(declaration.prop, declaration.value)
+      })
+    })
+    const luminance = (rgb: number[]) =>
+      rgb.reduce((sum, value, index) => {
+        const channel = value / 255
+        const linear = channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
+        return sum + linear * [0.2126, 0.7152, 0.0722][index]
+      }, 0)
+
+    for (const surface of ['--color-bg-base', '--color-bg-surface', '--color-popover']) {
+      const background = tokens.get(surface)!.split(/\s+/).map(Number)
+      for (const thumb of ['--color-scrollbar-thumb', '--color-scrollbar-thumb-hover']) {
+        const [color, opacity] = tokens.get(thumb)!.split('/')
+        const alpha = Number(opacity)
+        const foreground = color
+          .trim()
+          .split(/\s+/)
+          .map((value, index) => Number(value) * alpha + background[index] * (1 - alpha))
+        const contrast = (luminance(foreground) + 0.05) / (luminance(background) + 0.05)
+        expect(contrast, `${thumb} on ${surface}`).toBeGreaterThanOrEqual(3)
+      }
+    }
   })
 
   test('browser annotation toolbar surface derives from theme tokens for dark mode', () => {

@@ -76,7 +76,8 @@ def search_managed_resources(
     )
 
 
-@router.get("/assets/team-icons/{asset_id}", include_in_schema=False)
+# MIGRATION-CANDIDATE(api="GET /api/resource-library/assets/team-icons/:asset_id"): remove after final confirmation.
+# @router.get("/assets/team-icons/{asset_id}", include_in_schema=False)
 def get_public_team_icon(
     asset_id: int,
     db: Session = Depends(get_db),
@@ -102,7 +103,8 @@ def get_public_team_icon(
     )
 
 
-@router.get("/tags", response_model=MarketplaceTagsResponse)
+# MIGRATION-CANDIDATE(api="GET /api/resource-library/tags"): remove after final confirmation.
+# @router.get("/tags", response_model=MarketplaceTagsResponse)
 def get_marketplace_tags(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
@@ -111,7 +113,8 @@ def get_marketplace_tags(
     return marketplace_tag_service.get_config(db)
 
 
-@router.get("/listings", response_model=ResourceLibraryDiscoveryList)
+# MIGRATION-CANDIDATE(api="GET /api/resource-library/listings"): remove after final confirmation.
+# @router.get("/listings", response_model=ResourceLibraryDiscoveryList)
 def list_resource_library(
     resource_type: str | None = Query(
         default=None, pattern="^(agent|skill|model|shell|retriever)$"
@@ -328,7 +331,8 @@ def sync_agent_bindings(
     )
 
 
-@router.get("/users/me/published", response_model=ResourceLibraryListingList)
+# MIGRATION-CANDIDATE(api="GET /api/resource-library/users/me/published"): remove after final confirmation.
+# @router.get("/users/me/published", response_model=ResourceLibraryListingList)
 def list_my_resource_library_publications(
     resource_type: str | None = Query(
         default=None, pattern="^(agent|skill|model|shell|retriever)$"

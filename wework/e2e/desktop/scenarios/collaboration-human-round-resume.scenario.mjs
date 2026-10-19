@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 
+import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   assistantMessage,
@@ -15,6 +16,8 @@ import {
 } from '../modules/response-protocol.mjs'
 import { selectE2EModel } from '../modules/shared.mjs'
 import {
+  openDirectProjectCreation,
+  openProjectAgentCreator,
   selectCloudAgentModel,
   selectCollaborationDomain,
   waitForTestIdByText,
@@ -34,6 +37,8 @@ const AI_TASK = `智能体采集证据-${process.pid}`
 const MARKER = `HUMAN_ROUND_RESUME_${process.pid}`
 const ROUND_ID = `${MARKER}-round-1`
 const HUMAN_ASSIGNMENT_ID = `${MARKER}-human-assignment`
+const HUMAN_TIMELINE_COMMENT = `${MARKER}-人工时间线评论`
+const HUMAN_REPLY = `${MARKER}-人工回复开始任务`
 const HUMAN_DELIVERY_COMPLETION = `${HUMAN_TASK} 已交付：人工证据已核对。`
 const REMOTE_DOCKER_DEVICE_ID = 'wework-e2e-remote-docker-device'
 const CALLS = {
@@ -160,6 +165,24 @@ async function waitForPromise(promise, timeoutMs, message) {
   }
 }
 
+async function waitForReplyCard(control, text, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const snapshot = JSON.parse(await control.command('snapshot', CONTENT))
+    for (const testId of snapshot.testIds) {
+      if (!testId.startsWith('cloud-task-activity-reply-toggle-')) continue
+      const rootId = testId.slice('cloud-task-activity-reply-toggle-'.length)
+      const body = await control.command(
+        'getText',
+        scoped(`[data-testid="cloud-task-activity-card-${rootId}"]`)
+      )
+      if (body.includes(text)) return rootId
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.fail(`No reply action for activity: ${text}`)
+}
+
 async function createWorkspaceAndProject(control, request, uiTimeoutMs) {
   await control.command('waitFor', scoped('[data-testid="collaboration-workspace-create"]'), {
     timeoutMs: uiTimeoutMs,
@@ -179,8 +202,7 @@ async function createWorkspaceAndProject(control, request, uiTimeoutMs) {
     '端上创建 Workspace 未持久化',
     uiTimeoutMs
   )
-  await control.command('click', scoped('[data-testid="collaboration-workspace-project-create"]'))
-  await control.command('click', '[data-testid="collaboration-workspace-project-create-blank"]')
+  await openDirectProjectCreation(control, CONTENT)
   await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {
     value: PROJECT,
   })
@@ -205,12 +227,12 @@ async function createWorkspaceAndProject(control, request, uiTimeoutMs) {
 }
 
 async function createAgent(control, request, projectId, name, prompt, uiTimeoutMs) {
-  await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
-    timeoutMs: uiTimeoutMs,
-  })
-  await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
-    timeoutMs: uiTimeoutMs,
-  })
+  await openProjectAgentCreator(
+    control,
+    scoped('[data-testid="project-agent-add"]'),
+    uiTimeoutMs,
+    'wework-agent-resource-creator'
+  )
   await control.command('fill', '[data-testid="wework-agent-display-name"]', { value: name })
   await selectCloudAgentModel(control, request, MODEL, uiTimeoutMs)
   await control.command('fill', '[data-testid="wework-agent-system-prompt"]', { value: prompt })
@@ -648,6 +670,18 @@ export function createDesktopScenario({
         text: owner.user_name,
         timeoutMs: modelResponseTimeoutMs,
       })
+      const assignedIssue = await request(`/api/v1/loop-items/${rootIssue.id}`)
+      assert.equal(String(assignedIssue.assignee_user_id), String(owner.id))
+      assert.equal(assignedIssue.assignee_group_id, null)
+      assert.ok(!assignedIssue.assignee_agent_id)
+      await control.command('waitFor', scoped('[data-testid="cloud-todo-personal-task-action"]'), {
+        text: '让 AI 帮我处理',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', scoped('[data-testid="cloud-todo-personal-task-start"]'), {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
       const loopItems = await request(`/api/v1/cloud-projects/${project.id}/loop-items`)
       assert.equal(
         loopItems.items.some(
@@ -663,6 +697,19 @@ export function createDesktopScenario({
       assert.equal(humanAssignment.payload.assignmentId, HUMAN_ASSIGNMENT_ID)
       assert.ok(humanAssignment.payload.humanAssignmentId)
       await captureScreenshot(control, 'human-round-01-human-and-ai-assigned.png', CONTENT)
+      await control.command('click', scoped('[data-testid="cloud-todo-personal-task-start"]'))
+      const directTaskPanel = scoped('[data-testid="work-item-new-task-chat-panel"]')
+      await control.command('waitFor', directTaskPanel, { timeoutMs: uiTimeoutMs })
+      assert.ok(
+        (
+          await control.command('getValue', `${directTaskPanel} [data-testid="chat-message-input"]`)
+        ).includes(HUMAN_TASK)
+      )
+      await control.command('click', scoped('[data-testid="ai-chat-modal-close"]'))
+      await control.command('waitFor', scoped('[data-testid="ai-chat-modal"]'), {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
 
       releaseAi()
       await waitForPromise(
@@ -680,6 +727,81 @@ export function createDesktopScenario({
       )
       await captureScreenshot(control, 'human-round-02-ai-finished-human-pending.png', CONTENT)
 
+      // A human acknowledges their assignment activity and opens a new task.
+      // Unrelated discussion must not be treated as an assignment acceptance.
+      const timelineComposer = scoped('[data-testid="cloud-task-activity-composer"]')
+      await control.command('scrollIntoView', timelineComposer)
+      await control.command('waitFor', timelineComposer, { visible: true, timeoutMs: uiTimeoutMs })
+      await control.command('fill', timelineComposer, { value: HUMAN_TIMELINE_COMMENT })
+      await control.command('press', timelineComposer, { key: 'Enter' })
+      await control.command('waitFor', scoped('[data-testid="cloud-task-activity-list"]'), {
+        text: HUMAN_TIMELINE_COMMENT,
+        timeoutMs: uiTimeoutMs,
+      })
+      const replyRootId = await waitForReplyCard(control, HUMAN_TASK, uiTimeoutMs)
+      // The timeline scrolls, so the newest thread action can sit below the
+      // fold; the synthetic click does not require the button to be on screen.
+      await control.command(
+        'click',
+        scoped(`[data-testid="cloud-task-activity-reply-toggle-${replyRootId}"]`)
+      )
+      await control.command('waitFor', scoped('[data-testid="issue-reply-starts-task-hint"]'), {
+        text: HUMAN_TASK,
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'human-round-02b-reply-offers-assigned-task.png', CONTENT)
+      const replyComposer = scoped(
+        '[data-testid="issue-reply-composer"] [data-testid="cloud-task-activity-composer"]'
+      )
+      await control.command('scrollIntoView', replyComposer)
+      await control.command('fill', replyComposer, { value: HUMAN_REPLY })
+      await control.command('press', replyComposer, { key: 'Enter' })
+      await control.command(
+        'waitFor',
+        scoped(`[data-testid="cloud-task-activity-replies-${replyRootId}"]`),
+        { text: HUMAN_REPLY, timeoutMs: uiTimeoutMs }
+      )
+      const assignedTaskPanel = scoped('[data-testid="work-item-new-task-chat-panel"]')
+      await control.command('waitFor', assignedTaskPanel, { timeoutMs: uiTimeoutMs })
+      const assignedTaskInput = await control.command(
+        'getValue',
+        `${assignedTaskPanel} [data-testid="chat-message-input"]`
+      )
+      assert.ok(
+        !assignedTaskInput.includes(HUMAN_REPLY),
+        `人工确认不应成为个人 Task 指令: ${assignedTaskInput}`
+      )
+      assert.ok(
+        assignedTaskInput.includes(HUMAN_TASK),
+        `从回复打开的个人 Task 面板没有带入负责人分配的工作项: ${assignedTaskInput}`
+      )
+      await captureScreenshot(control, 'human-round-02c-reply-starts-assigned-task.png', CONTENT)
+      await control.command('click', scoped('[data-testid="ai-chat-modal-close"]'), {
+        visible: true,
+      })
+      await control.command('waitFor', scoped('[data-testid="ai-chat-modal"]'), {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
+
+      // The assignment is answered from another tab, so the click itself has to
+      // bring the project that owns the Issue back on screen.
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+      await control.command(
+        'waitFor',
+        '[data-testid="workspace-tab-select-fixed-task"][aria-selected="true"]',
+        { timeoutMs: uiTimeoutMs }
+      )
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            scoped('[data-testid="collaboration-platform-root"]')
+          )
+        ),
+        0,
+        '人工任务通知必须在项目之外打开，才能验证点击会切回项目'
+      )
       await control.command('click', '[data-testid="wework-notifications-button"]')
       await control.command('click', '[data-testid="wework-notifications-refresh"]')
       await control.command('click', '[data-testid="wework-notifications-category-collaboration"]')
@@ -688,9 +810,20 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', '[data-testid="issue-dispatch-notification-create-task"]')
+      await control.command(
+        'waitFor',
+        '[data-testid="workspace-tab-select-fixed-board"][aria-selected="true"]',
+        { timeoutMs: uiTimeoutMs }
+      )
       await control.command('waitFor', scoped('[data-testid="ai-chat-modal"]'), {
         timeoutMs: uiTimeoutMs,
       })
+      await control.command('click', scoped('[data-testid="ai-chat-modal-close"]'))
+      await control.command('waitFor', scoped('[data-testid="ai-chat-modal"]'), {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', scoped('[data-testid="cloud-todo-personal-task-start"]'))
       const taskPanel = scoped('[data-testid="work-item-new-task-chat-panel"]')
       const taskComposer = `${taskPanel} [data-testid="chat-message-input"]`
       await control.command('waitFor', taskComposer, { timeoutMs: uiTimeoutMs })
@@ -714,6 +847,30 @@ export function createDesktopScenario({
       )
       assert.equal(binding.assignment_id, HUMAN_ASSIGNMENT_ID)
       assert.equal(binding.task_title, HUMAN_TASK)
+      const runtimeTask = await waitForValue(
+        () =>
+          requestExecutor(control, 'runtime.tasks.get', { taskId: binding.task_id }, uiTimeoutMs),
+        result => result.success === true && result.task,
+        'The bound human task must be created on the owning Runtime',
+        uiTimeoutMs
+      )
+      assert.equal(runtimeTask.title, HUMAN_TASK)
+      // Task lookup returns continuation identity; the work list exposes board ownership.
+      const assignedTask = await waitForValue(
+        () => requestExecutor(control, 'runtime.tasks.list', { preferCached: true }, uiTimeoutMs),
+        runtimeWork =>
+          runtimeWork.workspaces
+            .flatMap(workspace => workspace.tasks)
+            .find(task => task.taskId === binding.task_id),
+        'The assigned task must appear in the Runtime work list',
+        uiTimeoutMs
+      )
+      assert.equal(assignedTask.runtimeHandle.origin.type, 'issue_dispatch')
+      assert.equal(
+        assignedTask.runtimeHandle.origin.humanAssignmentId,
+        humanAssignment.payload.humanAssignmentId
+      )
+      assert.equal(assignedTask.runtimeHandle.origin.assignmentId, HUMAN_ASSIGNMENT_ID)
       await waitForPromise(
         humanCompleted,
         modelResponseTimeoutMs,

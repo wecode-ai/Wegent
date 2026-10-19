@@ -1070,6 +1070,14 @@ async function verifyLocalModelRouting({
   })
 }
 
+async function writeLocalHarnessDiagnostics(control, resultDir) {
+  await writeFile(
+    join(resultDir, 'local-harness-diagnostics.json'),
+    `${await control.command('getLocalHarnessDiagnostics', 'body', { timeoutMs: 5000 })}\n`,
+    'utf8'
+  )
+}
+
 async function main() {
   validateDesktopSegmentOptions()
   const runsProjectPluginE2E = DESKTOP_SEGMENT === 'project-ai-settings'
@@ -1077,7 +1085,7 @@ async function main() {
   await markDesktopE2EResultActive(resultDir, { ownerProcessId: process.pid })
   console.log(`[desktop-e2e] result directory: ${resultDir}`)
   const workspacePath = join(resultDir, 'workspace')
-  const secondaryProjectPath = join(resultDir, 'secondary-project-root')
+  const secondaryProjectPath = join(resultDir, 'Codex', 'secondary-project-root')
   const composerProjectPath = join(resultDir, 'composer-project')
   const homePath = join(resultDir, 'home')
   const executorHome = join(resultDir, 'executor-home')
@@ -1103,6 +1111,16 @@ async function main() {
   await writeFile(
     join(electronUserDataDirectory, 'app-preferences.json'),
     `${JSON.stringify({ telemetryConsentAsked: false, telemetryEnabled: false })}\n`,
+    { flag: 'wx', mode: 0o600 }
+  )
+  // Background update dialogs steal focus from unrelated keyboard scenarios.
+  // Update scenarios still exercise explicit checks and downloads.
+  await writeFile(
+    join(electronUserDataDirectory, 'renderer-local-storage.json'),
+    `${JSON.stringify({
+      version: 1,
+      entries: { 'wework:autoDownloadUpdates': 'false' },
+    })}\n`,
     { flag: 'wx', mode: 0o600 }
   )
   await writeFile(join(homePath, '.zshrc'), '# Wework desktop E2E shell\n')
@@ -1593,6 +1611,9 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     if (desktopScenario && DESKTOP_SCENARIO_ONLY) {
       phase = 'desktop-extension-scenario'
       await desktopScenario.verify(control)
+      if (DESKTOP_SEGMENT === 'local-harness') {
+        await writeLocalHarnessDiagnostics(control, resultDir)
+      }
       await writeFile(
         join(resultDir, 'model-requests.json'),
         `${JSON.stringify(control.modelRequests, null, 2)}\n`,
@@ -2419,6 +2440,23 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     const secondaryProjectId = secondaryProjectMenuTestId.slice('project-menu-'.length)
     const secondaryProjectRowSelector = `[data-testid="project-row-${secondaryProjectId}"]`
     await control.command('waitFor', secondaryProjectRowSelector, {
+      text: 'secondary-project',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+
+    phase = 'codex-directory-project-reload'
+    const readyCountBeforeProjectReload = control.readyCount
+    await control.command('reloadMainWindow', 'body')
+    await withTimeout(
+      control.awaitReadyAfter(readyCountBeforeProjectReload),
+      WORKBENCH_READY_TIMEOUT_MS,
+      'The workbench did not reconnect after reloading the Codex-directory project'
+    )
+    await control.command('waitFor', secondaryProjectRowSelector, {
+      text: 'secondary-project',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('waitFor', '[data-testid="project-work-button"]', {
       text: 'secondary-project',
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
@@ -4465,6 +4503,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         desktopScenarioVerified = true
         await desktopScenario.verify(control)
       }
+      await writeLocalHarnessDiagnostics(control, resultDir)
       if (shouldStopAfterDesktopCheckpoint('local-harness')) {
         console.log(`Wework desktop local-harness checkpoint passed. Evidence: ${resultDir}`)
         return
@@ -4560,18 +4599,25 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         composerFocus,
         workbenchDebug,
         conversationDiagnostics,
+        localHarnessDiagnostics,
       ] = await Promise.all([
         control.command('snapshot', 'body', { timeoutMs: 5000 }),
         control.command('getComposerDiagnosticsSnapshot', 'body', { timeoutMs: 5000 }),
         control.command('getComposerFocusSnapshot', 'body', { timeoutMs: 5000 }),
         control.command('getWorkbenchDebugSnapshot', 'body', { timeoutMs: 5000 }),
         control.command('getConversationDiagnosticsSnapshot', 'body', { timeoutMs: 5000 }),
+        control.command('getLocalHarnessDiagnostics', 'body', { timeoutMs: 5000 }),
       ])
       await Promise.all([
         writeFile(join(resultDir, 'ui-snapshot.json'), `${snapshot}\n`, 'utf8'),
         writeFile(join(resultDir, 'composer-diagnostics.json'), `${composerDiagnostics}\n`, 'utf8'),
         writeFile(join(resultDir, 'composer-focus.json'), `${composerFocus}\n`, 'utf8'),
         writeFile(join(resultDir, 'workbench-debug.json'), `${workbenchDebug}\n`, 'utf8'),
+        writeFile(
+          join(resultDir, 'local-harness-diagnostics.json'),
+          `${localHarnessDiagnostics}\n`,
+          'utf8'
+        ),
         writeFile(
           join(resultDir, 'conversation-diagnostics.json'),
           `${conversationDiagnostics}\n`,

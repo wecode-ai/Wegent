@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 import type {
   Attachment,
@@ -68,6 +68,7 @@ export function AssistantMessage({
   runtimeTurn,
   conversationKey,
   isActiveTurn = false,
+  forceExpanded = false,
   devices,
   onRetryFailedMessage,
   onSwitchModelForFailedMessage,
@@ -85,11 +86,15 @@ export function AssistantMessage({
   onFork,
 }: {
   imageServices: AttachmentImageServices<Attachment>;
-  renderVisualization?: AssistantMarkdownProps["renderVisualization"];
+  renderVisualization?: (
+    part: { file: string; mode?: "wide"; title?: string },
+    message: WorkbenchMessage,
+  ) => ReactNode;
   message: WorkbenchMessage;
   runtimeTurn?: RuntimeConversationTurn;
   conversationKey?: string | number | null;
   isActiveTurn?: boolean;
+  forceExpanded?: boolean;
   devices: Array<{ device_id: string; status: string }>;
   onRetryFailedMessage?: (message: WorkbenchMessage) => void;
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void;
@@ -210,7 +215,7 @@ export function AssistantMessage({
         !message.runtimeGuidanceSplitBefore &&
         !message.runtimeGuidanceContinuation));
   const isFinalProcessingExpanded =
-    finalProcessingExpanded || hasExpandedToolDetail;
+    forceExpanded || finalProcessingExpanded || hasExpandedToolDetail;
   const toggleFinalProcessing = () => {
     if (isFinalProcessingExpanded) {
       setFinalProcessingExpanded(false);
@@ -240,15 +245,15 @@ export function AssistantMessage({
   );
   const [areHoverActionsVisible, setAreHoverActionsVisible] = useState(false);
 
-  const openFileFromLink = onOpenWorkspaceFile
-    ? (path: string, options?: WorkspaceFileOpenOptions) => {
-        if (options) {
-          onOpenWorkspaceFile(path, options);
-          return;
-        }
-        onOpenWorkspaceFile(path);
-      }
-    : undefined;
+  const renderMessageVisualization = useMemo<
+    AssistantMarkdownProps["renderVisualization"]
+  >(
+    () =>
+      renderVisualization
+        ? (part) => renderVisualization(part, message)
+        : undefined,
+    [renderVisualization, message],
+  );
   const references = getAssistantReferences(
     message.references,
     visibleContent,
@@ -312,8 +317,8 @@ export function AssistantMessage({
               <AssistantMarkdown
                 content={segment.content}
                 isStreaming={isStreaming}
-                onOpenFile={openFileFromLink}
-                renderVisualization={renderVisualization}
+                onOpenFile={onOpenWorkspaceFile}
+                renderVisualization={renderMessageVisualization}
               />
             </div>
           );
@@ -472,8 +477,8 @@ export function AssistantMessage({
               <AssistantMarkdown
                 content={visibleContent}
                 isStreaming={isStreaming}
-                onOpenFile={openFileFromLink}
-                renderVisualization={renderVisualization}
+                onOpenFile={onOpenWorkspaceFile}
+                renderVisualization={renderMessageVisualization}
               />
             </div>
           ) : null}
@@ -490,10 +495,10 @@ export function AssistantMessage({
           )}
           {canShowFinalArtifacts &&
             references.length > 0 &&
-            openFileFromLink && (
+            onOpenWorkspaceFile && (
               <CodexReferenceList
                 references={references}
-                onOpenFile={openFileFromLink}
+                onOpenFile={onOpenWorkspaceFile}
               />
             )}
           {message.status === "failed" && (

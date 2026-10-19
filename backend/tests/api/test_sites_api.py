@@ -935,3 +935,19 @@ def test_delete_site_removes_owned_platform_project(
         "username": "testuser",
         "project_id": "prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
     }
+
+
+@pytest.fixture(autouse=True)
+def _retained_python_handler_contracts(test_client):
+    import app.api.endpoints.sites as endpoint_0
+    from tests.legacy_python_routes import legacy_python_handlers
+
+    with legacy_python_handlers(test_client.app) as register:
+        register(
+            "/api/sites/app-types",
+            endpoint_0.list_site_app_types,
+            endpoint_0.router,
+            methods=["GET"],
+            response_model=endpoint_0.ApplicationTypeListResponse,
+        )
+        yield

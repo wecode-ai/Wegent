@@ -4,6 +4,7 @@ set -euo pipefail
 
 declare -A changed=(
   [backend]=false
+  [backend_rs]=false
   [executor]=false
   [executor_manager]=false
   [shared]=false
@@ -76,7 +77,16 @@ classify_path() {
       changed[wegent_cli]=true
       changed[platform_e2e]=true
       ;;
+    docs/*/wegent/developer-guide/collaboration-permissions.md)
+      changed[backend]=true
+      ;;
+    backend-rs/src/cloud_projects* | backend-rs/src/loop_item_executions/device.rs | backend-rs/config/routes.toml)
+      changed[backend]=true
+      changed[platform_e2e]=true
+      changed[wework_e2e]=true
+      ;;
     backend-rs/*)
+      changed[backend_rs]=true
       changed[platform_e2e]=true
       changed[wework_e2e]=true
       ;;
@@ -141,6 +151,6 @@ else
 fi
 
 output_file="${GITHUB_OUTPUT:-/dev/stdout}"
-for key in backend executor executor_manager shared knowledge_engine frontend wework wegent_cli platform_e2e wework_e2e; do
+for key in backend backend_rs executor executor_manager shared knowledge_engine frontend wework wegent_cli platform_e2e wework_e2e; do
   printf '%s=%s\n' "$key" "${changed[$key]}" >> "$output_file"
 done

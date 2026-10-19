@@ -181,6 +181,10 @@ async function verifyCloudTerminalCompatibility(control, cloudEnvironment) {
   } finally {
     await cloudEnvironment.restartBackendWithTerminalProtocolV2(true)
   }
+  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
 }
 
 async function waitForWorkbenchDeviceStatus(control, deviceId, expectedStatus, message) {

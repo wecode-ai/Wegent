@@ -177,9 +177,11 @@ def _load_system_initialization_state(logger: logging.Logger) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Keep the cache available through startup, channel draining and shutdown.
+    from app.services.execution.chat_shell_client import chat_shell_clients
+
     await cache_manager.start()
     try:
-        async with _application_lifespan(app):
+        async with chat_shell_clients.lifespan(), _application_lifespan(app):
             yield
     finally:
         await cache_manager.aclose()
@@ -269,6 +271,7 @@ async def _application_lifespan(app: FastAPI):
                     logger.info("✓ Alembic migrations completed successfully")
                 except subprocess.CalledProcessError as e:
                     logger.error(f"✗ Error running Alembic migrations: {e}")
+                    raise
                 except Exception as e:
                     logger.error(f"✗ Unexpected error running Alembic migrations: {e}")
                     raise

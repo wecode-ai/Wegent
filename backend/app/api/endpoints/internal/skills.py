@@ -28,7 +28,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/skills", tags=["internal-skills"])
 
 
-@router.get("/{skill_id}/binary")
+# MIGRATION-CANDIDATE(api="GET /api/internal/skills/:skill_id/binary"): remove after final confirmation.
+# @router.get("/{skill_id}/binary")
 def get_skill_binary(
     skill_id: int,
     _: None = Depends(verify_internal_service_token),

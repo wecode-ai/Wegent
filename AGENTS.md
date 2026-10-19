@@ -80,6 +80,8 @@ Code uses CRD terms. In Chinese UI, `Team` is “智能体” and `Bot` is “�
 
 ## Engineering rules
 
+- Collaboration permission changes must follow [the permission contract](docs/en/wegent/developer-guide/collaboration-permissions.md) and preserve its CP invariants. Update the architecture transaction and contract tests together; changing an invariant requires explicit user authorization. Never weaken, skip, or delete security assertions to make an incompatible implementation pass.
+
 - Diagnose problems from logs, actual code, and other concrete evidence first. When evidence is insufficient, add focused diagnostic logging before changing behavior; do not guess.
 - Comments are English. Use clear names, type hints for Python, and keep functions focused (prefer under 50 lines).
 - Before adding code, search for and reuse existing components, services, utilities, and patterns. Extract shared logic instead of duplicating it.
@@ -132,6 +134,8 @@ pnpm --dir frontend test
 - For changed Backend or Executor critical paths, use the tracing helpers in `shared/telemetry/decorators.py` instead of creating uninstrumented asynchronous main flows.
 
 ## Security
+
+- Architecture ledgers and evidence are local-only. Never commit `.live-architecture/` or include it in build, container, or deployment artifacts.
 
 - Never commit credentials or session files. Use environment configuration for secrets.
 - Only expose client-safe frontend settings through the appropriate public environment variable convention.

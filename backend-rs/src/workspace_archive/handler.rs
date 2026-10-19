@@ -84,11 +84,13 @@ impl SandboxArchiveRequest {
 }
 
 /// `SandboxRestoreResponse` (`workspace_archives.py`): the restore outcome and
-/// the echoed task id, in the source model's field order.
+/// the echoed task id, in the source model's field order. `success` reports the
+/// request was accepted and `skipped` the no-archive fast path.
 #[derive(Debug, Serialize)]
 struct SandboxRestoreResponse {
     success: bool,
     task_id: i64,
+    skipped: bool,
 }
 
 /// `POST /api/internal/workspace-archives/{task_id}/restore-sandbox`.
@@ -129,7 +131,7 @@ async fn restore_sandbox_workspace(
         .0;
 
     // `archive_service.restore_workspace(..., runtime_type="sandbox")`; the
-    // endpoint reports only whether a restore happened.
+    // endpoint acknowledges either way, and only reports whether it skipped.
     let restored = service::restore_workspace(
         state,
         task_id,
@@ -138,10 +140,89 @@ async fn restore_sandbox_workspace(
         &request.executor_namespace,
     )
     .await;
-    Ok(SandboxRestoreResponse {
-        success: restored,
-        task_id,
-    })
+    restore_response(task_id, restored, &task_json)
+}
+
+/// The source endpoint's decision after `restore_workspace` returns: an
+/// acknowledged restore, the no-archive skip, or a 409 when a stored archive
+/// exists but no restore happened.
+///
+/// ```python
+/// if restored:
+///     return SandboxRestoreResponse(success=True, task_id=task_id)
+/// status = (task.json or {}).get("status") or {}
+/// archive = status.get("archive") or {}
+/// if not archive.get("storageKey"):
+///     return SandboxRestoreResponse(success=True, task_id=task_id, skipped=True)
+/// raise HTTPException(status_code=409, detail="sandbox_archive_restore_failed")
+/// ```
+fn restore_response(
+    task_id: i64,
+    restored: bool,
+    task_json: &Value,
+) -> Result<SandboxRestoreResponse, FastApiError> {
+    if restored {
+        return Ok(SandboxRestoreResponse {
+            success: true,
+            task_id,
+            skipped: false,
+        });
+    }
+    // A falsy `storageKey` ("", JSON null, a missing field) means the task has
+    // no stored archive to restore, so the endpoint reports a skip.
+    if !stored_archive_key_is_truthy(task_json)? {
+        return Ok(SandboxRestoreResponse {
+            success: true,
+            task_id,
+            skipped: true,
+        });
+    }
+    Err(FastApiError::detail(
+        StatusCode::CONFLICT,
+        "sandbox_archive_restore_failed",
+    ))
+}
+
+/// `status.get("archive") or {}` -> `archive.get("storageKey")` evaluated for
+/// Python truthiness, as the endpoint re-reads the descriptor from `task.json`.
+///
+/// A falsy value stands in for `{}`, so an absent, empty, or `null`
+/// `status`/`archive` has no storage key. A truthy non-object raises
+/// `AttributeError` in the source, which the application's `Exception` handler
+/// renders as the 500 body.
+fn stored_archive_key_is_truthy(task_json: &Value) -> Result<bool, FastApiError> {
+    let Some(task) = object_or_empty(task_json)? else {
+        return Ok(false);
+    };
+    let Some(status) = field_or_empty(task, "status")? else {
+        return Ok(false);
+    };
+    let Some(archive) = field_or_empty(status, "archive")? else {
+        return Ok(false);
+    };
+    Ok(archive
+        .get("storageKey")
+        .is_some_and(brz_json::adapters::python_truthy))
+}
+
+/// `object.get(key) or {}`: the object at `key`, or `None` when the key is
+/// absent or its value is falsy. A truthy non-object raises the source's
+/// `AttributeError`.
+fn field_or_empty<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<Option<&'a serde_json::Map<String, Value>>, FastApiError> {
+    object.get(key).map_or(Ok(None), object_or_empty)
+}
+
+/// `value or {}`: a falsy value becomes an empty object; a truthy non-object
+/// is the source's `AttributeError`.
+fn object_or_empty(value: &Value) -> Result<Option<&serde_json::Map<String, Value>>, FastApiError> {
+    match value {
+        Value::Object(object) => Ok((!object.is_empty()).then_some(object)),
+        value if brz_json::adapters::python_truthy(value) => Err(FastApiError::unhandled()),
+        _ => Ok(None),
+    }
 }
 
 /// An unwrapped dependency failure renders the application's
@@ -204,13 +285,84 @@ mod tests {
     #[test]
     fn response_serializes_the_source_field_order() {
         let body = SandboxRestoreResponse {
-            success: false,
-            task_id: 204_921_479_781_245,
+            success: true,
+            task_id: 228_011_223_960_243,
+            skipped: true,
         };
         assert_eq!(
             serde_json::to_string(&body).unwrap(),
-            r#"{"success":false,"task_id":204921479781245}"#
+            r#"{"success":true,"task_id":228011223960243,"skipped":true}"#
         );
+    }
+
+    /// `SandboxRestoreResponse.skipped` defaults to `False`, and FastAPI
+    /// serializes model defaults, so the restored path still emits the field.
+    #[test]
+    fn a_restored_task_acknowledges_without_the_skip_marker() {
+        let response = restore_response(228_011_223_960_243, true, &json!({"status": {}})).unwrap();
+        assert_eq!(
+            serde_json::to_string(&response).unwrap(),
+            r#"{"success":true,"task_id":228011223960243,"skipped":false}"#
+        );
+    }
+
+    /// The recorded skip path: no stored archive, so the endpoint answers 200
+    /// with `success` and `skipped` both true (the recorded body is
+    /// `{"success":true,"task_id":228011223960243,"skipped":true}`).
+    #[test]
+    fn a_task_without_a_stored_archive_is_skipped() {
+        for task_json in [
+            json!({}),
+            json!({"status": null}),
+            json!({"status": {}}),
+            json!({"status": {"archive": null}}),
+            json!({"status": {"archive": {}}}),
+            json!({"status": {"archive": {"storageKey": null}}}),
+            json!({"status": {"archive": {"storageKey": ""}}}),
+            json!({"status": {"archive": {"storageKey": false}}}),
+            json!({"status": []}),
+            json!({"status": 0}),
+        ] {
+            let response = restore_response(7, false, &task_json).unwrap();
+            assert!(response.success, "{task_json}");
+            assert!(response.skipped, "{task_json}");
+        }
+    }
+
+    /// A stored archive that failed to restore is the source's 409 with the
+    /// `sandbox_archive_restore_failed` detail, not a skip.
+    #[test]
+    fn a_stored_archive_that_did_not_restore_conflicts() {
+        let error = restore_response(
+            7,
+            false,
+            &json!({"status": {"archive": {"storageKey": "workspace-archives/7/a.tar.gz"}}}),
+        )
+        .unwrap_err();
+        assert_eq!(error.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            error.validation_detail(),
+            "\"sandbox_archive_restore_failed\""
+        );
+    }
+
+    /// A truthy non-object `status` or `archive` is the source's
+    /// `AttributeError`, rendered by the application's `Exception` handler.
+    #[test]
+    fn a_non_object_descriptor_is_an_unhandled_failure() {
+        for task_json in [
+            json!({"status": "not an object"}),
+            json!({"status": {"archive": "not an object"}}),
+            json!({"status": [1]}),
+            json!({"status": 1}),
+        ] {
+            let error = restore_response(7, false, &task_json).unwrap_err();
+            assert_eq!(
+                error.status(),
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "{task_json}"
+            );
+        }
     }
 
     #[test]

@@ -287,7 +287,7 @@ function createApi({
           _workspaceId: string,
           input: {
             userId: number;
-            role?: "Maintainer" | "Developer" | "Reporter";
+            role?: "Maintainer" | "Developer" | "Viewer";
           },
         ) => {
           const added: CollaborationMember = {
@@ -305,7 +305,7 @@ function createApi({
         async (
           _workspaceId: string,
           userId: number,
-          input: { role: "Maintainer" | "Developer" | "Reporter" },
+          input: { role: "Maintainer" | "Developer" | "Viewer" },
         ) => {
           const current =
             workspaceMembers.find(
@@ -713,8 +713,11 @@ async function click(element: Element) {
 async function chooseBlankProjectCreation(
   triggerTestId = "collaboration-first-project-create",
 ) {
-  await click(byTestId(triggerTestId));
-  await click(portalByTestId(`${triggerTestId}-blank`));
+  const trigger = byTestId(triggerTestId);
+  await click(trigger);
+  if (trigger.getAttribute("aria-haspopup") === "menu") {
+    await click(portalByTestId(`${triggerTestId}-blank`));
+  }
 }
 
 async function renderIssueWithCollaborationGroup() {
@@ -1007,7 +1010,7 @@ describe("CollaborationPlatformApp real component flow", () => {
 
   it("hides archive for read-only cloud members", async () => {
     const { api, projects } = createApi();
-    projects[0] = { ...project, access_role: "Reporter" };
+    projects[0] = { ...project, access_role: "Viewer" };
     await render(<PlatformHarness api={api} />);
     expect(
       byTestId(`collaboration-workspace-project-${project.id}`),
@@ -2761,7 +2764,7 @@ describe("CollaborationPlatformApp real component flow", () => {
 
   it("lets read-only members view environment details and tells them to contact a manager", async () => {
     const { api } = createApi({
-      initialProjects: [{ ...project, access_role: "Reporter" }],
+      initialProjects: [{ ...project, access_role: "Viewer" }],
     });
     api.projects.listExecutionEnvironments = vi.fn(async () => []);
     await render(<PlatformHarness api={api} />);
@@ -4276,6 +4279,29 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(byTestId("collaboration-workspace-settings-save")).toBeTruthy();
   });
 
+  it.each([
+    "collaboration-workspace-project-create",
+    "collaboration-workspace-starter-create-project",
+  ])("opens the cloud project form directly from %s", async (testId) => {
+    const { api } = createApi({ initialProjects: [] });
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{ ...initialLocation, workspaceId: workspace.id }}
+      />,
+    );
+
+    const trigger = byTestId(testId);
+    expect(trigger.getAttribute("aria-haspopup")).toBeNull();
+    expect(trigger.querySelector(".lucide-chevron-down")).toBeNull();
+    await click(trigger);
+    expect(portalByTestId("collaboration-project-create-dialog")).toBeTruthy();
+    expect(
+      document.body.querySelector(`[data-testid="${testId}-menu"]`),
+    ).toBeNull();
+    expect(api.projects.create).not.toHaveBeenCalled();
+  });
+
   it("keeps the workspace overview available when one project snapshot fails", async () => {
     const unavailableProject = {
       ...project,
@@ -4388,7 +4414,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     pendingWorkspaces.resolve([workspace]);
   });
 
-  it.each(["Developer", "Reporter", "Member"] as const)(
+  it.each(["Developer", "Viewer", "Member"] as const)(
     "hides workspace settings from %s even for a direct settings location",
     async (role) => {
       const restrictedWorkspace = { ...workspace, access_role: role };
@@ -4418,7 +4444,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     },
   );
 
-  it.each(["Reporter", "RestrictedAnalyst"] as const)(
+  it.each(["Viewer", "RestrictedAnalyst"] as const)(
     "discovers a %s project from home without workspace membership or extra requests",
     async (role) => {
       const visibleProject = {
@@ -4456,6 +4482,100 @@ describe("CollaborationPlatformApp real component flow", () => {
       expect(api.workspaces!.listMembers).not.toHaveBeenCalled();
       expect(api.workspaces!.listAgents).not.toHaveBeenCalled();
       expect(container.querySelector('[role="alert"]')).toBeNull();
+    },
+  );
+
+  it.each([
+    { role: "Viewer" as const, visibility: "public" as const },
+    { role: "Viewer" as const, visibility: "private" as const },
+    { role: "Developer" as const, visibility: "private" as const },
+    { role: "Maintainer" as const, visibility: "private" as const },
+    { role: "RestrictedAnalyst" as const, visibility: "private" as const },
+  ])(
+    "preserves $visibility project-only $role navigation across workspace switching",
+    async ({ role, visibility }) => {
+      const guestProject = {
+        ...project,
+        access_role: role,
+        visibility,
+        workspace_context: {
+          id: workspace.id,
+          public_id: "parent-public",
+          name: workspace.name,
+        },
+      };
+      const { api } = createApi({
+        initialWorkspaces: [localWorkspace, groupWorkspace],
+        initialProjects: [guestProject],
+      });
+      api.workspaces!.get = vi.fn(async (id) => {
+        const accessible = [localWorkspace, groupWorkspace].find(
+          (candidate) => candidate.id === id,
+        );
+        if (!accessible) throw new Error("Parent workspace access denied");
+        return accessible;
+      });
+      const renderProject = vi.fn(
+        (context: CollaborationProjectRendererContext) => (
+          <div
+            data-testid="project-only-content"
+            data-role={context.project.access_role}
+          >
+            Project content
+          </div>
+        ),
+      );
+      await render(
+        <PlatformHarness
+          api={api}
+          start={{ ...initialLocation, workspaceId: groupWorkspace.id }}
+          renderProject={renderProject}
+        />,
+      );
+      await click(byTestId(`collaboration-workspace-toggle-${workspace.id}`));
+      const assertGuestNavigation = () => {
+        const parent = byTestId(`collaboration-workspace-tree-${workspace.id}`);
+        expect(parent.textContent).toContain(workspace.name);
+        expect(
+          parent.querySelector(
+            '[data-testid="collaboration-project-parent-workspace-context"]',
+          )?.tagName,
+        ).toBe("DIV");
+        expect(
+          parent.querySelector(".collaboration-workspace-actions"),
+        ).toBeNull();
+        expect(
+          byTestId(`collaboration-workspace-project-${project.id}`),
+        ).toBeTruthy();
+      };
+      assertGuestNavigation();
+      await click(
+        byTestId(`collaboration-workspace-home-${localWorkspace.id}`),
+      );
+      assertGuestNavigation();
+      await click(byTestId("collaboration-workspace-nav-projects"));
+      assertGuestNavigation();
+      await click(
+        byTestId(`collaboration-workspace-home-${groupWorkspace.id}`),
+      );
+      assertGuestNavigation();
+      await click(
+        byTestId(`collaboration-workspace-home-${localWorkspace.id}`),
+      );
+      await click(byTestId(`collaboration-workspace-project-${project.id}`));
+      expect(byTestId("project-only-content")).toBeTruthy();
+      expect(renderProject.mock.calls.at(-1)?.[0].project.access_role).toBe(
+        role,
+      );
+      expect(api.workspaces!.get).not.toHaveBeenCalledWith(workspace.id);
+      expect(api.workspaces!.listMembers).not.toHaveBeenCalledWith(
+        workspace.id,
+      );
+      expect(api.workspaces!.listAgents).not.toHaveBeenCalledWith(workspace.id);
+      expect(
+        api.workspaces!.listExecutionEnvironments,
+      ).not.toHaveBeenCalledWith(workspace.id);
+      expect(api.workspaces!.addMember).not.toHaveBeenCalled();
     },
   );
 
@@ -4702,10 +4822,10 @@ describe("CollaborationPlatformApp real component flow", () => {
 
     await change(
       byTestId("collaboration-workspace-member-role-8") as HTMLSelectElement,
-      "Reporter",
+      "Viewer",
     );
     expect(api.workspaces?.updateMember).toHaveBeenCalledWith(workspace.id, 8, {
-      role: "Reporter",
+      role: "Viewer",
     });
     await click(byTestId("collaboration-workspace-member-remove-8"));
     expect(api.workspaces?.removeMember).toHaveBeenCalledWith(workspace.id, 8);

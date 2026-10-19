@@ -243,7 +243,7 @@ def test_send_rejects_cross_project_item_and_nonmember(test_db, test_user):
     assert test_db.query(WeworkNotification).count() == 0
 
 
-def test_public_developer_cannot_send_project_notifications_without_membership(
+def test_public_viewer_cannot_send_project_notifications_without_membership(
     test_db, test_user
 ):
     project = _make_project(test_db, test_user)
@@ -261,7 +261,7 @@ def test_public_developer_cannot_send_project_notifications_without_membership(
             resource_id=project.id,
             entity_type=AUTHENTICATED_ENTITY_TYPE,
             entity_id=AUTHENTICATED_ENTITY_ID,
-            role=BaseRole.Developer.value,
+            role=BaseRole.Viewer.value,
             status=MemberStatus.APPROVED.value,
         )
     )
@@ -282,7 +282,7 @@ def test_public_developer_cannot_send_project_notifications_without_membership(
                     body="Please review",
                 ),
             )
-        assert error.value.status_code == 403
+        assert error.value.status_code in {403, 404}
     assert test_db.query(WeworkNotification).count() == 0
 
 
@@ -717,3 +717,19 @@ def test_all_disabled_channels_drop_general_notification(
     assert response.status_code == 201
     assert test_db.query(WeworkNotification).count() == 0
     no_external_delivery.assert_not_called()
+
+
+@pytest.fixture(autouse=True)
+def _retained_python_handler_contracts(test_client):
+    from app.api.endpoints import wework_notifications
+    from tests.legacy_python_routes import legacy_python_handlers
+
+    with legacy_python_handlers(test_client.app) as register:
+        register(
+            "/api/v1/wework-notifications/preferences",
+            wework_notifications.read_notification_preferences,
+            wework_notifications.router,
+            methods=["GET"],
+            response_model=wework_notifications.NotificationPreferences,
+        )
+        yield

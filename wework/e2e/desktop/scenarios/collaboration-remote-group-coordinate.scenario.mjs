@@ -12,6 +12,8 @@ import {
 } from '../modules/response-protocol.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
+  openDirectProjectCreation,
+  openProjectAgentCreator,
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
   selectCloudAgentModel,
@@ -21,7 +23,6 @@ import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const MODEL = 'desktop-e2e-cloud-responses'
-const MODEL_LABEL = 'gpt-6-astra'
 const WORKSPACE = `远程协作调度空间-${process.pid}`
 const PROJECT = `远程协作调度项目-${process.pid}`
 const LEADER = `远程负责人智能体-${process.pid}`
@@ -31,18 +32,24 @@ const GROUP = `远程并发执行小组-${process.pid}`
 const ISSUE = `核验远程协作调度-${process.pid}`
 const FIRST_TASK = `远程采集运行证据-${process.pid}`
 const SECOND_TASK = `远程独立复核结论-${process.pid}`
-const THIRD_TASK = `远程补充最终验收证据-${process.pid}`
 const MARKER = `REMOTE_GROUP_COORDINATE_${process.pid}`
 const MANAGER_REPLY = `${MARKER} 请负责人继续说明最终结论。`
 const MANAGER_REPLY_RESULT = '负责人已收到你的回复，并沿用原协作小组会话继续回答。'
 const MEMBER_REPLY = `${MARKER} 请采集成员继续检查 CPU。`
 const MEMBER_REPLY_RESULT = '采集成员已收到你的回复，并沿用原成员会话继续回答 CPU 情况。'
 const MANAGER_REQUEST_CONTEXT = 'You are the manager for one project Issue.'
-const GROUP_RULES = `${MARKER} 协作规则：每轮任务必须独立可验收，全部返回后由负责人继续决策。`
+const GROUP_RULES = `${MARKER} 协作规则：每轮任务必须独立可验收，全部返回后由负责人评估并显式提交待确认。`
 const CALLS = {
   firstPlan: `${MARKER}-plan-1`,
-  secondPlan: `${MARKER}-plan-2`,
   updateStatus: `${MARKER}-update-status`,
+}
+
+function updateStatusArguments() {
+  return {
+    status: 'in_review',
+    reason: '本轮两项成员任务均已完成，负责人已综合核验。',
+    comment: '负责人已核验本轮两项任务的执行证据，提交 Issue 待确认。',
+  }
 }
 
 function scoped(selector) {
@@ -61,6 +68,28 @@ async function replyToActivity(control, cardTestId, text) {
     value: text,
   })
   await control.command('clickWhenEnabled', `${composer} [data-testid="send-message-button"]`)
+}
+
+async function replyToManagerConclusion(control, cardTestId, text, timeoutMs) {
+  const messageId = cardTestId.slice('cloud-task-activity-card-'.length)
+  await control.command('scrollIntoView', scoped(`[data-testid="${cardTestId}"]`))
+  await control.command(
+    'click',
+    scoped(`[data-testid="cloud-task-activity-open-task-${messageId}"]`)
+  )
+  const panel = scoped('[data-testid="work-item-task-chat-panel"]')
+  const composer = `${panel} [data-testid="chat-message-input"]`
+  await control.command('waitFor', composer, { timeoutMs })
+  await control.command('fill', composer, { value: text })
+  await control.command('clickWhenEnabled', `${panel} [data-testid="send-message-button"]`, {
+    timeoutMs,
+  })
+  await control.command('waitFor', `${panel} [data-testid="message-assistant"]`, {
+    text: MANAGER_REPLY_RESULT,
+    timeoutMs,
+  })
+  await control.command('click', scoped('[data-testid="ai-chat-modal-close"]'))
+  await control.command('waitFor', panel, { visible: false, timeoutMs })
 }
 
 function writeEvents(response, responseId, events) {
@@ -141,33 +170,6 @@ function firstRoundPlan(collectorAgentId, reviewerAgentId) {
   }
 }
 
-function secondRoundPlan(reviewerAgentId) {
-  return {
-    plan: {
-      round_id: `${MARKER}-round-2`,
-      summary: '根据第一轮两项结果补充最终验收证据。',
-      items: [
-        {
-          assignment_id: `${MARKER}-assignment-3`,
-          title: THIRD_TASK,
-          instructions: `${MARKER}。根据第一轮两项结果补充最终验收证据，不修改 Issue 状态。`,
-          assignee_type: 'agent',
-          assignee_id: reviewerAgentId,
-        },
-      ],
-    },
-  }
-}
-
-function updateStatusArguments() {
-  return {
-    idempotency_key: `${MARKER}-final-status`,
-    status: 'in_review',
-    reason: '第一轮两个并发子任务和第二轮补充任务均已完成，负责人已综合核验。',
-    comment: '负责人已核验两轮三个任务的执行证据，提交 Issue 待确认。',
-  }
-}
-
 async function createWorkspaceAndProject(control, request, timeoutMs) {
   await control.command('waitFor', scoped('[data-testid="collaboration-workspace-create"]'), {
     timeoutMs,
@@ -188,16 +190,7 @@ async function createWorkspaceAndProject(control, request, timeoutMs) {
     timeoutMs
   )
 
-  await control.command(
-    'waitFor',
-    scoped('[data-testid="collaboration-workspace-project-create"]'),
-    {
-      visible: true,
-      timeoutMs,
-    }
-  )
-  await control.command('click', scoped('[data-testid="collaboration-workspace-project-create"]'))
-  await control.command('click', '[data-testid="collaboration-workspace-project-create-blank"]')
+  await openDirectProjectCreation(control, CONTENT)
   await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {
     value: PROJECT,
   })
@@ -227,12 +220,12 @@ async function addAgent(control, request, projectId, name, prompt, timeoutMs, en
     'The remote execution environment must be authorized before creating its Agent'
   )
   await control.command('click', scoped('[data-testid="collaboration-project-settings-agents"]'))
-  await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
+  await openProjectAgentCreator(
+    control,
+    scoped('[data-testid="project-agent-add"]'),
     timeoutMs,
-  })
-  await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
-    timeoutMs,
-  })
+    'wework-agent-resource-creator'
+  )
   await control.command('fill', '[data-testid="wework-agent-display-name"]', {
     value: name,
   })
@@ -441,6 +434,11 @@ async function waitForCompletedMemberTasks(control, expected, timeoutMs) {
     completed = 0
     for (const taskSummaryTestId of taskSummaries) {
       const activityId = taskSummaryTestId.slice('cloud-task-activity-task-summary-'.length)
+      const title = await control.command(
+        'getText',
+        scoped(`[data-testid="cloud-task-activity-task-title-${activityId}"]`)
+      )
+      if (![FIRST_TASK, SECOND_TASK].includes(title.trim())) continue
       const badgeTestId = `cloud-task-activity-execution-badge-${activityId}`
       if (!snapshot.testIds.includes(badgeTestId)) continue
       const text = await control.command('getText', `[data-testid="${badgeTestId}"]`)
@@ -501,9 +499,7 @@ export async function createDesktopScenario({
   let childCompletions = 0
   let releaseFirstChild
   let releaseSecondChild
-  let releaseThirdChild
   let resolveBothChildrenStarted
-  let resolveThirdChildStarted
   let releaseManagerPlanning
   let resolveManagerPlanningStarted
   const managerPlanningRelease = new Promise(resolve => {
@@ -518,14 +514,8 @@ export async function createDesktopScenario({
   const secondChildRelease = new Promise(resolve => {
     releaseSecondChild = resolve
   })
-  const thirdChildRelease = new Promise(resolve => {
-    releaseThirdChild = resolve
-  })
   const bothChildrenStarted = new Promise(resolve => {
     resolveBothChildrenStarted = resolve
-  })
-  const thirdChildStarted = new Promise(resolve => {
-    resolveThirdChildStarted = resolve
   })
   const request = (pathname, options) => requestJson(backendUrl, authToken, pathname, options)
 
@@ -577,25 +567,17 @@ export async function createDesktopScenario({
           ? 1
           : requestText.includes(SECOND_TASK)
             ? 2
-            : requestText.includes(THIRD_TASK)
-              ? 3
-              : 0
+            : 0
         assert.notEqual(childOrdinal, 0, '执行成员请求没有包含负责人分配的任务标题')
+        assert.ok(childRequests <= 2, '纯 AI 小组完成后不应再派发成员任务')
         if (childRequests === 2) resolveBothChildrenStarted()
-        if (childOrdinal === 3) resolveThirdChildStarted()
-        await (childOrdinal === 1
-          ? firstChildRelease
-          : childOrdinal === 2
-            ? secondChildRelease
-            : thirdChildRelease)
+        await (childOrdinal === 1 ? firstChildRelease : secondChildRelease)
         childCompletions += 1
         writeEvents(response, responseId, [
           assistantMessage(
             childOrdinal === 1
               ? `${FIRST_TASK} 已完成：证据完整。`
-              : childOrdinal === 2
-                ? `${SECOND_TASK} 已完成：复核通过。`
-                : `${THIRD_TASK} 已完成：验收证据齐全。`
+              : `${SECOND_TASK} 已完成：复核通过。`
           ),
         ])
         return true
@@ -610,16 +592,7 @@ export async function createDesktopScenario({
       }
       if (requestContainsToolOutput(body, CALLS.updateStatus)) {
         parentStage = 'complete'
-        writeEvents(response, responseId, [
-          assistantMessage('负责人已综合两轮执行结果，并将 Issue 提交待确认。'),
-        ])
-        return true
-      }
-      if (requestContainsToolOutput(body, CALLS.secondPlan)) {
-        parentStage = 'second-round-dispatched'
-        writeEvents(response, responseId, [
-          assistantMessage('第二轮任务已交给 Executor，等待独立执行结果。'),
-        ])
+        writeEvents(response, responseId, [assistantMessage(updateStatusArguments().comment)])
         return true
       }
       if (requestContainsToolOutput(body, CALLS.firstPlan)) {
@@ -654,50 +627,14 @@ export async function createDesktopScenario({
       }
 
       if (parentStage === 'first-round-dispatched') {
-        assert.equal(
-          requestContainsToolOutput(body, CALLS.firstPlan),
-          false,
-          '第一轮 barrier 后恢复了旧负责人会话，而不是启动新的 Runtime Task'
-        )
+        assert.equal(requestContainsToolOutput(body, CALLS.firstPlan), false)
         assert.equal(
           requestText.includes(CALLS.firstPlan),
           false,
-          '第一轮 barrier 后的新负责人运行仍携带上一轮工具调用历史'
+          '负责人必须使用新会话，不能复用上一轮工具历史'
         )
-        assert.ok(
-          requestText.includes(`${FIRST_TASK} 已完成：证据完整。`) &&
-            requestText.includes(`${SECOND_TASK} 已完成：复核通过。`),
-          '第一轮 barrier 后的新负责人运行没有收到两项执行结果'
-        )
-        const selection = managerToolEvents(
-          body,
-          'submit_workflow_plan',
-          CALLS.secondPlan,
-          secondRoundPlan(reviewerAgentId)
-        )
-        if (selection.mode === 'direct') {
-          managerRuns += 1
-          parentStage = 'second-round-dispatched'
-        }
-        writeEvents(response, responseId, selection.events)
-        return true
-      }
-
-      if (parentStage === 'second-round-dispatched') {
-        assert.equal(
-          requestContainsToolOutput(body, CALLS.secondPlan),
-          false,
-          '第二轮 barrier 后恢复了旧负责人会话，而不是启动新的 Runtime Task'
-        )
-        assert.equal(
-          requestText.includes(CALLS.secondPlan),
-          false,
-          '第二轮 barrier 后的新负责人运行仍携带上一轮工具调用历史'
-        )
-        assert.ok(
-          requestText.includes(`${THIRD_TASK} 已完成：验收证据齐全。`),
-          '第二轮 barrier 后的新负责人运行没有收到执行结果'
-        )
+        assert.ok(requestText.includes(`${FIRST_TASK} 已完成：证据完整。`))
+        assert.ok(requestText.includes(`${SECOND_TASK} 已完成：复核通过。`))
         const selection = managerToolEvents(
           body,
           'update_issue_status',
@@ -744,7 +681,7 @@ export async function createDesktopScenario({
         request,
         project.id,
         LEADER,
-        `${MARKER}。你是负责人，每轮必须通过 wework_space.submit_workflow_plan 分配独立任务；Executor 在整轮 barrier 后启动新的负责人运行，最终由你显式调用 update_issue_status。`,
+        `${MARKER}。你是负责人，通过 wework_space.submit_workflow_plan 分配独立任务，Executor 在本轮结果到齐后启动新的负责人运行，最终由你显式调用 update_issue_status。`,
         uiTimeoutMs,
         remoteDevice.id
       )
@@ -850,44 +787,23 @@ export async function createDesktopScenario({
       )
 
       releaseSecondChild()
-      await waitForPromise(
-        thirdChildStarted,
-        modelResponseTimeoutMs,
-        '第一轮并发子任务完成后，同一负责人没有继续分配第二轮任务'
-      )
-      await waitForActivityText(control, THIRD_TASK, modelResponseTimeoutMs)
       await waitForCompletedMemberTasks(control, 2, modelResponseTimeoutMs)
-      assert.equal(
-        await control.command('getValue', scoped('[data-testid="cloud-todo-detail-status"]')),
-        'in_progress',
-        '第二轮执行完成前 Issue 状态被错误迁移'
-      )
-      assert.equal(parentStage, 'second-round-dispatched', '负责人没有进入第二轮 barrier')
-      await captureScreenshot(
-        control,
-        'remote-group-coordinate-03-manager-second-round.png',
-        CONTENT
-      )
-
-      releaseThirdChild()
-      await waitForCompletedMemberTasks(control, 3, modelResponseTimeoutMs)
       await waitForIssueStatus(control, 'in_review', modelResponseTimeoutMs)
       await waitForActivityText(control, '待确认', modelResponseTimeoutMs)
-      await waitForActivityText(
-        control,
-        '负责人已核验两轮三个任务的执行证据，提交 Issue 待确认。',
-        modelResponseTimeoutMs
-      )
       await waitForCondition(
         () => parentStage,
         value => value === 'complete',
         modelResponseTimeoutMs,
-        '负责人未在成员完成后继续运行并完成显式决策'
+        '本轮结果到齐后负责人没有恢复并显式提交待确认'
       )
-      assert.equal(parentStage, 'complete', '负责人未在成员完成后继续运行并完成显式决策')
-      assert.equal(managerRuns, 3, 'Executor 没有为两次 barrier 各启动一次新的负责人运行')
-      assert.equal(childRequests, 3, '负责人没有按两轮启动三个子任务')
-      assert.equal(childCompletions, 3, '两轮三个子任务没有全部完成')
+      assert.equal(managerRuns, 2, '本轮 barrier 后应恰好启动一次新的负责人运行')
+      assert.equal(childRequests, 2, '应仅启动最初派发的两个成员任务')
+      assert.equal(childCompletions, 2, '两个成员任务都应完成')
+      await captureScreenshot(
+        control,
+        'remote-group-coordinate-03-agent-owner-awaiting-review.png',
+        CONTENT
+      )
 
       const executionResponse = await waitForValue(
         () => request(`/api/v1/cloud-projects/${project.id}/executions?include_terminal=true`),
@@ -933,39 +849,43 @@ export async function createDesktopScenario({
 
       await captureScreenshot(
         control,
-        'remote-group-coordinate-04-manager-status-decision.png',
+        'remote-group-coordinate-04-round-awaiting-human-review.png',
         'body'
       )
 
-      const decisionCard = await waitForTestIdByText(
+      const managerConclusionCard = await waitForTestIdByText(
         control,
         CONTENT,
         'cloud-task-activity-card-',
         updateStatusArguments().comment,
         uiTimeoutMs
       )
-      const managerTaskId = `${initialManagerTaskId}-manager-after-${MARKER}-round-1-manager-after-${MARKER}-round-2`
+      const managerTaskId = `${initialManagerTaskId}-manager-after-${MARKER}-round-1`
       const bindingsBeforeReply = await request(`/api/v1/loop-items/${rootIssue.id}/tasks`)
       assert.ok(
         bindingsBeforeReply.some(binding => binding.task_id === managerTaskId),
-        '负责人最终动态没有绑定实际等待回复的会话'
+        '负责人评估动态没有绑定新的负责人会话'
       )
-      await replyToActivity(control, decisionCard, MANAGER_REPLY)
-      await waitForActivityText(control, MANAGER_REPLY_RESULT, modelResponseTimeoutMs)
-      const continuation = await waitForValue(
-        () => request(`/api/v1/cloud-projects/${project.id}/executions?include_terminal=true`),
-        response =>
-          response.items.find(
-            candidate =>
-              issueExecution(candidate, rootIssue.id) &&
-              candidate.id !== dispatch.id &&
-              candidate.runtimeTaskId === managerTaskId &&
-              terminalExecution(candidate)
-          ),
-        '回复没有通过真实队列完成原负责人会话的续聊',
+      await replyToManagerConclusion(
+        control,
+        managerConclusionCard,
+        MANAGER_REPLY,
         modelResponseTimeoutMs
       )
-      assert.equal(runtimeDeviceId(continuation), REMOTE_DOCKER_DEVICE_ID)
+      const continuedTranscript = await request('/api/runtime-work/transcript', {
+        method: 'POST',
+        body: JSON.stringify({
+          deviceId: runtimeDeviceId(dispatch),
+          taskId: managerTaskId,
+        }),
+      })
+      assert.equal(continuedTranscript.taskId, managerTaskId)
+      assert.ok(
+        JSON.stringify(continuedTranscript.turns).includes(updateStatusArguments().comment),
+        'The continued manager session must retain its original conversation'
+      )
+      assert.ok(JSON.stringify(continuedTranscript.turns).includes(MANAGER_REPLY))
+      assert.ok(JSON.stringify(continuedTranscript.turns).includes(MANAGER_REPLY_RESULT))
       assert.equal(managerReplyRequests, 1, '负责人回复被重复执行')
       const bindingsAfterReply = await request(`/api/v1/loop-items/${rootIssue.id}/tasks`)
       assert.deepEqual(
@@ -1010,7 +930,8 @@ export async function createDesktopScenario({
       )
       assert.equal(runtimeDeviceId(memberContinuation), REMOTE_DOCKER_DEVICE_ID)
       assert.equal(memberReplyRequests, 1, '成员回复被重复执行')
-      assert.equal(childRequests, 3, '成员回复创建了新的协作分配任务')
+      assert.equal(childRequests, 2, '成员回复创建了新的协作分配任务')
+      assert.equal(managerRuns, 2, '显式续聊不应重新运行协作调度')
       const bindingsAfterMemberReply = await request(`/api/v1/loop-items/${rootIssue.id}/tasks`)
       assert.deepEqual(
         bindingsAfterMemberReply.map(binding => [binding.device_id, binding.task_id]).sort(),
@@ -1024,7 +945,6 @@ export async function createDesktopScenario({
       releaseManagerPlanning()
       releaseFirstChild()
       releaseSecondChild()
-      releaseThirdChild()
     },
 
     diagnostics() {

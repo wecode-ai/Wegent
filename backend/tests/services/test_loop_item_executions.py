@@ -64,6 +64,11 @@ from app.services.loop_item_executions.service import (
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.project_automation_execution import project_automation_execution
 from app.services.runtime_profiles import runtime_profile_service
+from tests.utils.collaboration import (
+    authorize_project,
+    authorize_project_agent,
+    authorize_resource,
+)
 from tests.utils.devices import SHARED_APP_DEVICE_ID, create_app_device
 
 
@@ -140,9 +145,12 @@ def test_project_automation_activity_push_commits_before_network(
     ]
 
 
-def _make_project(db: Session, user: User) -> CloudProject:
+def _make_project(
+    db: Session, user: User, *, project_id: str | None = None
+) -> CloudProject:
     public_id = str(uuid.uuid4())
     project = CloudProject(
+        id=project_id,
         public_id=public_id,
         project_key=f"EXEC{uuid.uuid4().hex[:6].upper()}",
         name="Execution project",
@@ -151,6 +159,7 @@ def _make_project(db: Session, user: User) -> CloudProject:
         storage_prefix=f"projects/{public_id}",
         metadata_json={},
     )
+    authorize_project(db, project)
     db.add(project)
     db.commit()
     db.refresh(project)
@@ -176,6 +185,7 @@ def _make_bot(
             "visibility": "public",
         },
     )
+    authorize_project_agent(db, bot)
     db.add(bot)
     db.commit()
     db.refresh(bot)
@@ -359,7 +369,9 @@ def _make_native_team_binding(
             "visibility": "public",
         },
     )
+    authorize_project_agent(db, binding)
     db.add(binding)
+    authorize_resource(db, project, team)
     db.commit()
     db.refresh(binding)
     db.refresh(team)
@@ -451,17 +463,7 @@ def _authorize_project_device(
     device: Kind,
     user: User,
 ) -> None:
-    db.add(
-        ResourceMember(
-            resource_type=ResourceType.DEVICE.value,
-            resource_id=device.id,
-            entity_type="project",
-            entity_id=str(project.id),
-            role=BaseRole.Developer.value,
-            status=MemberStatus.APPROVED.value,
-            invited_by_user_id=user.id,
-        )
-    )
+    authorize_resource(db, project, device)
     db.commit()
 
 
@@ -474,7 +476,8 @@ def _make_execution(
     priority: str = "medium",
     automation_context: dict | None = None,
 ) -> LoopItemExecution:
-    _ensure_device(db, user, "cloud-device-1")
+    device = _ensure_device(db, user, "cloud-device-1")
+    authorize_resource(db, db.get(CloudProject, item.cloud_project_id), device)
     metadata = dict(bot.metadata_json or {})
     model_name = str(metadata.get("model") or "test-model")
     model = (
@@ -842,6 +845,11 @@ def test_claim_next_for_device_accepts_app_registration_id(
     test_db.commit()
 
     device = _ensure_device(test_db, test_user, "local-device", device_type="app")
+    authorize_resource(
+        test_db,
+        project,
+        _ensure_device(test_db, test_user, "local-device", device_type="app"),
+    )
     spec = dict(device.json["spec"])
     spec["deviceId"] = "local-device"
     spec["appDeviceId"] = "electron-app-1"
@@ -1371,6 +1379,9 @@ def test_runtime_retry_uses_a_new_execution_attempt(
     test_db.commit()
     test_db.refresh(run_owner)
     _ensure_device(test_db, run_owner, "cloud-device-1")
+    authorize_resource(
+        test_db, project, _ensure_device(test_db, run_owner, "cloud-device-1")
+    )
     original = _make_execution(
         test_db, _make_item(test_db, project, test_user), bot, test_user
     )
@@ -1455,6 +1466,9 @@ def test_claim_filters_by_execution_owner_not_agent_creator(
     test_db.commit()
     test_db.refresh(run_owner)
     _ensure_device(test_db, run_owner, "cloud-device-1")
+    authorize_resource(
+        test_db, project, _ensure_device(test_db, run_owner, "cloud-device-1")
+    )
     execution = _make_execution(
         test_db, _make_item(test_db, project, test_user), bot, test_user
     )
@@ -2263,6 +2277,9 @@ def test_approve_accepts_complete_issue_runtime_without_profile(
     bot = _make_bot(test_db, project, test_user, mode="manual_approval")
     item = _make_item(test_db, project, test_user)
     _ensure_device(test_db, test_user, "cloud-device-1")
+    authorize_resource(
+        test_db, project, _ensure_device(test_db, test_user, "cloud-device-1")
+    )
     execution = loop_item_execution_service.create_for_assignment(
         test_db,
         loop_item_id=item.id,
@@ -2497,6 +2514,9 @@ def test_team_reference_compiles_to_native_project_runtime(
     )
     item = _make_item(test_db, project, test_user)
     _ensure_device(test_db, test_user, "cloud-device-1")
+    authorize_resource(
+        test_db, project, _ensure_device(test_db, test_user, "cloud-device-1")
+    )
 
     config = project_robot_execution_config(test_db, agent)
 
@@ -2505,6 +2525,7 @@ def test_team_reference_compiles_to_native_project_runtime(
         "wegent_team_id": team.id,
         "execution_mode": "auto",
         "visibility": "public",
+        "authorization_version": 2,
     }
     assert config.runtime == runtime
     assert config.model and config.model.startswith("native-model-")
@@ -2961,7 +2982,13 @@ def test_issue_cloud_moonshot_intent_overrides_local_robot_default_immutably(
     project = _make_project(test_db, test_user)
     item = _make_item(test_db, project, test_user, title="Use issue runtime")
     _ensure_device(test_db, test_user, "local-device", "local")
+    authorize_resource(
+        test_db, project, _ensure_device(test_db, test_user, "local-device", "local")
+    )
     _ensure_device(test_db, test_user, "cloud-device-1", "cloud")
+    authorize_resource(
+        test_db, project, _ensure_device(test_db, test_user, "cloud-device-1", "cloud")
+    )
     local_profile = RuntimeProfile(
         user_id=test_user.id,
         created_by_user_id=test_user.id,
@@ -2996,6 +3023,7 @@ def test_issue_cloud_moonshot_intent_overrides_local_robot_default_immutably(
             "visibility": "public",
         },
     )
+    authorize_project_agent(test_db, bot)
     test_db.add(bot)
     test_db.flush()
 
@@ -4658,6 +4686,7 @@ def test_unbound_project_robot_is_claimed_by_project_authorized_device(
             "visibility": "public",
         },
     )
+    authorize_project_agent(test_db, bot)
     test_db.add(bot)
     test_db.commit()
     test_db.refresh(bot)
@@ -4714,6 +4743,7 @@ def test_follow_device_project_robot_uses_device_runtime_without_saved_model(
             "visibility": "public",
         },
     )
+    authorize_project_agent(test_db, bot)
     test_db.add(bot)
     test_db.commit()
     item = _make_item(test_db, project, test_user)
@@ -4747,7 +4777,7 @@ def test_follow_device_project_robot_uses_device_runtime_without_saved_model(
     assert claimed.execution_device_id == "follow-device"
 
 
-def test_unbound_project_robot_allows_owned_device_when_project_has_no_allowlist(
+def test_unbound_project_robot_rejects_owned_device_without_project_authorization(
     test_db: Session, test_user: User
 ) -> None:
     project = _make_project(test_db, test_user)
@@ -4767,6 +4797,7 @@ def test_unbound_project_robot_allows_owned_device_when_project_has_no_allowlist
             "visibility": "public",
         },
     )
+    authorize_project_agent(test_db, bot)
     test_db.add(bot)
     test_db.commit()
     item = _make_item(test_db, project, test_user)
@@ -4790,9 +4821,8 @@ def test_unbound_project_robot_allows_owned_device_when_project_has_no_allowlist
         runtime_instance_id="runtime-1",
     )
 
-    assert claimed is not None
-    assert claimed.id == execution.id
-    assert claimed.execution_device_id == "unapproved-device"
+    assert claimed is None
+    assert execution.status == "queued"
 
 
 def test_unbound_project_robot_enforces_explicit_project_device_allowlist(
@@ -4819,6 +4849,7 @@ def test_unbound_project_robot_enforces_explicit_project_device_allowlist(
             "visibility": "public",
         },
     )
+    authorize_project_agent(test_db, bot)
     test_db.add(bot)
     test_db.commit()
     item = _make_item(test_db, project, test_user)
@@ -4882,6 +4913,7 @@ def test_unbound_execution_keeps_issue_on_latest_runtime_device(
             "visibility": "public",
         },
     )
+    authorize_project_agent(test_db, bot)
     test_db.add(bot)
     test_db.commit()
     item = _make_item(test_db, project, test_user)
@@ -5062,6 +5094,9 @@ def test_waiting_execution_can_select_owned_runtime_once(
     item = _make_item(test_db, project, test_user)
     bot = _make_bot(test_db, project, test_user, mode=mode)
     _ensure_device(test_db, test_user, "cloud-device-1")
+    authorize_resource(
+        test_db, project, _ensure_device(test_db, test_user, "cloud-device-1")
+    )
     execution = loop_item_execution_service.create_for_assignment(
         test_db,
         loop_item_id=item.id,
@@ -5311,6 +5346,11 @@ def test_enqueue_generic_robot_normalizes_app_device_id(
     project = _make_project(test_db, test_user)
     item = _make_item(test_db, project, test_user)
     device = _ensure_device(test_db, test_user, "local-device", device_type="app")
+    authorize_resource(
+        test_db,
+        project,
+        _ensure_device(test_db, test_user, "local-device", device_type="app"),
+    )
     spec = dict(device.json["spec"])
     spec["deviceId"] = "local-device"
     spec["appDeviceId"] = "electron-app-1"
@@ -5368,6 +5408,11 @@ def test_enqueue_generic_robot_uses_codex_runtime_default_model(
     project = _make_project(test_db, test_user)
     item = _make_item(test_db, project, test_user)
     _ensure_device(test_db, test_user, "local-device", device_type="app")
+    authorize_resource(
+        test_db,
+        project,
+        _ensure_device(test_db, test_user, "local-device", device_type="app"),
+    )
     rule = ProjectAutomationRule(
         id="generic-default-model-rule",
         cloud_project_id=project.id,
@@ -5503,6 +5548,11 @@ def test_enqueue_notifies_the_task_assignee_that_the_run_started(
     item.assignee_user_id = assignee.id
     test_db.commit()
     device = _ensure_device(test_db, test_user, "local-device", device_type="app")
+    authorize_resource(
+        test_db,
+        project,
+        _ensure_device(test_db, test_user, "local-device", device_type="app"),
+    )
     _set_app_device_id(test_db, device, "electron-app-1")
     run = _generic_rule_and_run(
         test_db,
@@ -5539,6 +5589,11 @@ def test_enqueue_notifies_the_task_creator_when_unassigned(
     project = _make_project(test_db, test_user)
     item = _make_item(test_db, project, test_user)
     device = _ensure_device(test_db, test_user, "local-device", device_type="app")
+    authorize_resource(
+        test_db,
+        project,
+        _ensure_device(test_db, test_user, "local-device", device_type="app"),
+    )
     _set_app_device_id(test_db, device, "electron-app-1")
     run = _generic_rule_and_run(
         test_db,
@@ -5576,6 +5631,9 @@ def test_enqueue_notifies_the_runtime_wait_when_approval_also_waits(
     item = _make_item(test_db, project, test_user)
     bot = _make_bot(test_db, project, test_user, mode="manual_approval")
     _ensure_device(test_db, test_user, "cloud-device-1")
+    authorize_resource(
+        test_db, project, _ensure_device(test_db, test_user, "cloud-device-1")
+    )
 
     execution = loop_item_execution_service.create_for_assignment(
         test_db,
@@ -5627,16 +5685,7 @@ def test_managed_team_run_announces_its_start_once(
     project = _make_project(test_db, test_user)
     item = _make_item(test_db, project, test_user)
     item.assignee_user_id = test_user.id
-    team = Kind(
-        kind="Team",
-        name="board-team",
-        namespace="default",
-        user_id=test_user.id,
-        is_active=True,
-        json={"spec": {}},
-    )
-    test_db.add(team)
-    test_db.commit()
+    _, team = _make_wegent_bot(test_db, project, test_user)
 
     execution = loop_item_execution_service.create_for_team_assignment(
         test_db,

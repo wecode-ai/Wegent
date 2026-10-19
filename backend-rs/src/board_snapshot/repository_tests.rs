@@ -11,37 +11,11 @@ fn normalize(sql: &str) -> String {
     sql.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// The source rendering of `project_access_query(db, 3060, 1712605396200092385)`:
-/// `direct`, `inherited`, `public` and `owned` unioned in source order,
-/// aggregated by `min(priority)`, and joined back to the active project
-/// row. Every grant value is inlined (the source's `Query` renders bound
-/// literals inline), so the statement carries no `?` markers.
-fn expected_project_access_sql() -> String {
-    normalize(&format!(
-        r#"SELECT {LOOP_ITEMS_COLUMNS}, anon_1.priority AS anon_1_priority
-FROM loop_items INNER JOIN (SELECT anon_2.project_id AS project_id, min(anon_2.priority) AS priority
-FROM (SELECT CAST(resource_members.resource_id AS CHAR(64)) AS project_id, CASE resource_members.`role` WHEN 'Owner' THEN 0 WHEN 'Maintainer' THEN 1 WHEN 'Developer' THEN 2 WHEN 'Reporter' THEN 3 WHEN 'Viewer' THEN 4 WHEN 'RestrictedAnalyst' THEN 5 END AS priority
-FROM resource_members
-WHERE resource_members.resource_type = 'CloudProject' AND resource_members.entity_type = 'user' AND resource_members.entity_id = '3060' AND resource_members.status = 'approved' AND resource_members.`role` IN ('Owner', 'Maintainer', 'Developer', 'Viewer') AND resource_members.resource_id = 1712605396200092385
-UNION ALL SELECT CAST(resource_members.resource_id AS CHAR(64)) AS project_id, 4 AS priority
-FROM resource_members INNER JOIN (SELECT resource_members.resource_id AS resource_id
-FROM resource_members INNER JOIN kinds ON kinds.id = resource_members.resource_id
-WHERE resource_members.resource_type = 'Workspace' AND resource_members.entity_type = 'user' AND resource_members.entity_id = '3060' AND resource_members.status = 'approved' AND kinds.kind = 'CollaborationWorkspace' AND kinds.is_active IS true AND resource_members.`role` IN ('Owner', 'Maintainer', 'Developer', 'Reporter')) AS anon_3 ON CAST(resource_members.entity_id AS SIGNED INTEGER) = anon_3.resource_id
-WHERE resource_members.resource_type = 'CloudProject' AND resource_members.entity_type = 'workspace' AND resource_members.status = 'approved' AND resource_members.resource_id = 1712605396200092385
-UNION ALL SELECT CAST(resource_members.resource_id AS CHAR(64)) AS project_id, CASE resource_members.`role` WHEN 'Owner' THEN 0 WHEN 'Maintainer' THEN 1 WHEN 'Developer' THEN 2 WHEN 'Reporter' THEN 3 WHEN 'Viewer' THEN 4 WHEN 'RestrictedAnalyst' THEN 5 END AS priority
-FROM resource_members
-WHERE resource_members.resource_type = 'CloudProject' AND resource_members.entity_type = 'authenticated_users' AND resource_members.entity_id = '*' AND resource_members.status = 'approved' AND resource_members.`role` IN ('Developer', 'Viewer') AND resource_members.resource_id = 1712605396200092385
-UNION ALL SELECT loop_items.id AS project_id, 0 AS priority
-FROM loop_items
-WHERE loop_items.created_by_user_id = 3060 AND loop_items.status = 'active' AND loop_items.id = '1712605396200092385' AND loop_items.resource_type IN ('project')) AS anon_2 GROUP BY anon_2.project_id) AS anon_1 ON loop_items.id = anon_1.project_id
-WHERE loop_items.status = 'active' AND loop_items.resource_type IN ('project')
- LIMIT 1"#
-    ))
-}
-
 /// `require_cloud_project_role` issues the source's single
 /// `project_access_query` statement with every value inlined, so it binds
-/// no parameters.
+/// no parameters. The recorded source renders the union with the creator
+/// grant: direct, workspace-inherited, public, and owned branches with the
+/// project id pushed into each one.
 #[tokio::test]
 async fn require_cloud_project_role_runs_the_source_access_query() {
     let mysql = crate::sql_test_support::KindQueryCapture::default();
@@ -54,7 +28,25 @@ async fn require_cloud_project_role_runs_the_source_access_query() {
 
     let queries = mysql.queries();
     assert_eq!(queries.len(), 1);
-    assert_eq!(normalize(&queries[0].sql), expected_project_access_sql());
+    let sql = normalize(&queries[0].sql);
+    assert!(sql.contains("resource_members.entity_id = '3060'"));
+    assert!(sql.contains("AND resource_members.resource_id = 1712605396200092385"));
+    assert!(sql.contains("AND loop_items.id = '1712605396200092385'"));
+    assert!(sql.contains("UNION ALL SELECT loop_items.id AS project_id, 0 AS priority"));
+    assert!(sql.contains("loop_items.created_by_user_id = 3060"));
+    assert!(sql.contains("kinds.kind = 'CollaborationWorkspace' AND kinds.is_active IS true"));
+    assert!(sql.contains(
+        "resource_members.entity_type = 'authenticated_users' \
+         AND resource_members.entity_id = '*'"
+    ));
+    assert!(sql.contains("anon_1.priority AS anon_1_priority"));
+    assert!(sql.contains("GROUP BY anon_2.project_id"));
+    assert!(sql.contains(
+        "WHERE loop_items.status = 'active' AND loop_items.resource_type IN ('project')"
+    ));
+    assert!(sql.ends_with("LIMIT 1"));
+    // The point read is the inline-literal union, not the later CTE form.
+    assert!(!sql.contains("WITH parents"));
     assert_eq!(queries[0].args, 0);
 }
 

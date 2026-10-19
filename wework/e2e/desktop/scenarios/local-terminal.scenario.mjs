@@ -193,6 +193,21 @@ async function waitForSnapshot(control, validate, message, timeoutMs) {
   throw new Error(`${message}: ${JSON.stringify(lastSnapshot)}`)
 }
 
+async function waitForHarnessExit(control, harnessId, timeoutMs) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const sessions = JSON.parse(await control.command('getLocalHarnessDiagnostics', 'body'))
+    const session = sessions.find(candidate => candidate.harnessId === harnessId)
+    if (session?.history?.exit) {
+      assert.equal(session.history.exit.code, 0, 'The local harness CLI did not exit successfully')
+      assert.match(session.history.output, /Local harness CLI reply/u)
+      return session.sessionId
+    }
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  throw new Error(`The ${harnessId} CLI did not finish within ${timeoutMs}ms`)
+}
+
 async function readJsonBody(request) {
   const chunks = []
   for await (const chunk of request) chunks.push(chunk)
@@ -757,6 +772,8 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         modelMenuScreenshot: 'local-harness-11-kimi-code-model-menu.png',
         readyScreenshot: 'local-harness-12-kimi-code-ready.png',
       })
+      const completedKimiSessionId = await waitForHarnessExit(control, 'kimi_code', uiTimeoutMs)
+      await control.command('waitFor', CENTRAL_HARNESS_SELECTOR, { timeoutMs: uiTimeoutMs })
       await captureWorkbench(control, 'local-harness-13-kimi-code-running.png')
       await verifyHarnessWorkbenchChrome({
         control,
@@ -771,6 +788,19 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
           assertPromptRequest(requests, 'Inspect the project with Kimi', 'kimi-k3', 'chat'),
         uiTimeoutMs
       )
+
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command(
+        'click',
+        `[data-testid="local-harness-session-row-${completedKimiSessionId}"]`
+      )
+      await control.command('waitFor', `${CENTRAL_HARNESS_SELECTOR} .xterm-accessibility-tree`, {
+        text: 'Local harness CLI reply',
+        timeoutMs: uiTimeoutMs,
+      })
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]', {

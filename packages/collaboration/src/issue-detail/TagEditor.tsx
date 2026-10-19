@@ -139,7 +139,7 @@ export function TagEditor({
       {showSuggestions && (
         <span
           data-testid={`${testIdPrefix}-suggestions`}
-          className="absolute left-0 top-full z-20 mt-1 block max-h-48 min-w-36 overflow-y-auto rounded-xl border border-border bg-background py-1 shadow-lg"
+          className="task-detail-tag-suggestions absolute left-0 top-full z-20 mt-1 block max-h-48 min-w-36 overflow-y-auto rounded-xl border border-border bg-background py-1 shadow-lg"
           onMouseDown={(event) => event.preventDefault()}
         >
           {candidates.map((candidate, index) => (

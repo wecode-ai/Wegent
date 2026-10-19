@@ -2,25 +2,27 @@
 sidebar_position: 35
 ---
 
-# Project roles and issue visibility
+# Project roles and Issue visibility
 
-Cloud projects use one set of roles: Owner, Maintainer, Developer, and Viewer. Owners administer the project and members. Maintainers manage settings, members, and issue security. Developers create and edit visible issues and can assign the owner; the issue creator can also assign their own issue. Viewers have read-only access. Project creators retain Owner access. Workspace members inherit Viewer access through the existing project association; direct project grants can raise their role.
+See the complete [collaboration permission contract](../wegent/developer-guide/collaboration-permissions.md). Project roles are Administrator (Maintainer), Member (Developer), and Viewer. Creation is audit information; project creation separately grants the creator Maintainer.
 
-Private and public access are represented by grants in `resource_members`. A public project grants Viewer or Developer to all signed-in users; a private project has no such grant. Direct, inherited, and all-user grants combine using the strongest role. Pending, rejected, and invalid grants have no effect. Archived projects remain inaccessible.
+Each project has one parent through its existing `CloudProject → workspace` relationship; `workspace_id` is a query property, not a new column. Ordinary projects inherit space roles. Restricted projects retain only space owner and administrator governance. Direct invitations and valid inheritance combine using the strongest role. Public access grants only Viewer and never creates assignment candidates.
 
-Issue visibility is configured separately. Project settings define the default security level for new issues. Each issue can be `open` (visible to project members) or `related` (visible only to related people). Owners and Maintainers see all issues. Other roles see open issues and related issues they created, are assigned to, collaborate on, have an active task binding for, or that are assigned to a robot they created. Lists, details, deliveries, executions, and project conversations use the same check; unrelated issue reads return 404.
+Issue access first requires project access, then applies `open` or `related` security. Project administrators see every Issue. Other readers see open Issues and Issues they created, are assigned to, collaborate on, have an active task binding for, or that are assigned to an Agent they own. Lists, details, deliveries, execution records and conversations use the same decision; unrelated reads return 404. Being the creator does not confer additional editing, commenting or assignment authority.
 
-DingTalk AI Table records are served directly by DingTalk, so DingTalk controls record access. Wework project roles control entry and editing in the table view; Wework issue security levels do not apply to those records.
+DingTalk controls AI Table record access. Project roles control entry and operation capabilities.
 
 ```mermaid
 flowchart LR
-    A[Direct project grants] --> D[Effective project role]
-    B[Workspace inherited grants] --> D
-    C[All signed-in users grant] --> D
-    D --> E[Project access]
-    E --> F[Issue security and relevance check]
+    Space[Valid space roles] --> Union[Union of inheritance and direct grants]
+    Mode[Inherited or restricted membership] --> Union
+    Invite[Direct invitation] --> Union
+    Public[Public read-only access] --> Access[Project access]
+    Union --> Access
+    Access --> Issue[Issue security and relevance]
+    Issue --> Operation[Action role and current resource authority]
 ```
 
-Project lists and detail checks share `cloud_project_visibility.py`. Lists batch authorization, the public role, and parent workspace context in three queries when nonempty. `workspace_context` contains only the parent's ID, public ID, and name. Displaying the parent does not grant access to workspace settings, members, or other private projects.
+Project lists use four batched queries for projects, parents, public access and permission sources, regardless of project count. `workspace_context` supports parent navigation; `workspace_access_role` explicitly indicates space authority. Project-only access never grants space member lists, resource catalogs or other projects.
 
-The data migration updates existing `resource_members` rows and issue metadata. It adds no table or column. Issues in existing public projects default to `related` so migration does not widen visibility.
+No table changes or bulk data rewrite are required. Membership mode uses existing JSON, roles are normalized on read, and parent relationships remain intact. Valid legacy installations retain use within their original project; explicit private definitions stay creator-only. New bindings use explicit grants. Old backends still apply old policies, so new permission features require a unified backend policy; see the collaboration contract.

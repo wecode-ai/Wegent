@@ -22,6 +22,7 @@ import {
 import {
   inCollaborationSidebar,
   inProjectCreateDialog,
+  openDirectProjectCreation,
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
 } from '../modules/workspace-flows.mjs'
@@ -218,8 +219,7 @@ async function createWorkspaceAndProject(control, request, uiTimeoutMs) {
       timeoutMs: uiTimeoutMs,
     }
   )
-  await control.command('click', scoped('[data-testid="collaboration-workspace-project-create"]'))
-  await control.command('click', '[data-testid="collaboration-workspace-project-create-blank"]')
+  await openDirectProjectCreation(control, CONTENT)
   await control.command(
     'fill',
     inProjectCreateDialog('[data-testid="collaboration-project-name-input"]'),
@@ -654,6 +654,24 @@ export function createDesktopScenario({
         '直接分人错误创建了人工子 Issue'
       )
 
+      // A notification hands the reader the project it names, so the click has
+      // to switch the workbench back even when another tab is on screen.
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+      await control.command(
+        'waitFor',
+        '[data-testid="workspace-tab-select-fixed-task"][aria-selected="true"]',
+        { timeoutMs: uiTimeoutMs }
+      )
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            scoped('[data-testid="collaboration-platform-root"]')
+          )
+        ),
+        0,
+        '分配通知必须在项目之外打开，才能验证点击会切回项目'
+      )
       await control.command('click', '[data-testid="wework-notifications-button"]')
       await control.command('click', '[data-testid="wework-notifications-refresh"]')
       await control.command('click', '[data-testid="wework-notifications-category-collaboration"]')
@@ -663,6 +681,11 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', notificationRow)
+      await control.command(
+        'waitFor',
+        '[data-testid="workspace-tab-select-fixed-board"][aria-selected="true"]',
+        { timeoutMs: uiTimeoutMs }
+      )
       await control.command('clickElementWithText', '[data-testid="human-issue-start"]', {
         text: '接手处理',
         timeoutMs: uiTimeoutMs,

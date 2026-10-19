@@ -220,7 +220,8 @@ def _connection_references(
     ]
 
 
-@router.get("/wiki/connections", response_model=WikiConnectionsResponse)
+# MIGRATION-CANDIDATE(api="GET /api/wiki/connections"): remove after final confirmation.
+# @router.get("/wiki/connections", response_model=WikiConnectionsResponse)
 async def list_wiki_connections(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),

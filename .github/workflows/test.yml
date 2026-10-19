@@ -29,6 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       backend: ${{ steps.classify.outputs.backend }}
+      backend_rs: ${{ steps.classify.outputs.backend_rs }}
       executor: ${{ steps.classify.outputs.executor }}
       executor_manager: ${{ steps.classify.outputs.executor_manager }}
       shared: ${{ steps.classify.outputs.shared }}
@@ -80,6 +81,12 @@ jobs:
       - name: Install runtime dependencies for index-to-query contract tests
         run: uv sync --project knowledge_runtime --frozen
 
+      - name: Guard approved collaboration permission invariants
+        working-directory: ./backend
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: uv run pytest tests/test_collaboration_permission_guard.py tests/api/test_collaboration_permission_contract.py tests/api/test_collaboration_permission_resources.py tests/api/test_workspace_shared_agents.py tests/models/test_collaboration_permission_compatibility.py tests/test_startup_migration_failure.py tests/services/test_runner_routing.py -n 0
+
       - name: Run backend tests
         working-directory: ./backend
         env:
@@ -92,6 +99,42 @@ jobs:
           files: ./backend/coverage.xml
           flags: backend
           name: backend-coverage
+
+  test-backend-rs:
+    name: Test Backend Rust
+    needs: changes
+    if: needs.changes.outputs.backend_rs == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure backend Rust target directory
+        run: echo "CARGO_TARGET_DIR=$RUNNER_TEMP/backend-rs-target" >> "$GITHUB_ENV"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          components: rustfmt, clippy
+
+      - name: Set up sccache
+        uses: ./.github/actions/setup-sccache
+
+      - name: Check Rust backend formatting
+        working-directory: backend-rs
+        run: cargo fmt --check
+
+      - name: Run Rust backend tests
+        working-directory: backend-rs
+        run: cargo test --locked
+
+      - name: Check Rust backend lints
+        working-directory: backend-rs
+        run: cargo clippy --locked --all-targets -- -D warnings
 
   test-plugin-auth-mysql:
     name: Test Backend MySQL Regressions
@@ -131,6 +174,12 @@ jobs:
         env:
           TEAM_NAMESPACE_MYSQL_TEST_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/plugin_auth_test
         run: uv run pytest integration_checks/test_team_namespace_collation_mysql.py -n 0
+
+      - name: Verify populated legacy MySQL collaboration permission compatibility
+        working-directory: backend
+        env:
+          COLLABORATION_PERMISSION_MYSQL_TEST_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/plugin_auth_test
+        run: uv run pytest integration_checks/test_collaboration_permission_mysql.py integration_checks/test_rust_collaboration_permissions_mysql.py -n 0
 
   test-executor:
     name: Test Executor
@@ -400,11 +449,10 @@ jobs:
       - name: Run chat core tests
         run: pnpm --filter @wegent/chat-core test
 
-      - name: Run collaboration workspace controller tests
-        run: >-
+      - name: Verify shared collaboration types and permission UI regressions
+        run: |
+          pnpm --filter @wegent/collaboration build
           pnpm --filter @wegent/collaboration test
-          src/workspace-controller/useCollaborationWorkspaceController.test.ts
-          src/CollaborationApp.test.tsx
 
       - name: Run frontend tests
         env:
@@ -611,6 +659,7 @@ jobs:
       [
         changes,
         test-backend,
+        test-backend-rs,
         test-plugin-auth-mysql,
         test-executor,
         test-executor-local-auth-platforms,
@@ -640,6 +689,7 @@ jobs:
 
           [[ "${{ needs.changes.result }}" == "success" ]]
           assert_result "${{ needs.changes.outputs.backend }}" "${{ needs.test-backend.result }}" "Backend tests"
+          assert_result "${{ needs.changes.outputs.backend_rs }}" "${{ needs.test-backend-rs.result }}" "Backend Rust tests"
           assert_result "${{ needs.changes.outputs.backend }}" "${{ needs.test-plugin-auth-mysql.result }}" "Plugin auth MySQL transactions"
           assert_result "${{ needs.changes.outputs.executor }}" "${{ needs.test-executor.result }}" "Executor tests"
           assert_result "${{ needs.changes.outputs.executor }}" "${{ needs.test-executor-local-auth-platforms.result }}" "Executor local auth platform tests"

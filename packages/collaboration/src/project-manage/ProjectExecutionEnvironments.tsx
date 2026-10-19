@@ -768,7 +768,7 @@ export function ProjectExecutionEnvironments({
           />
           {environmentError ? (
             <p
-              className="mt-3 text-sm text-red-600"
+              className="mt-3 text-sm text-destructive"
               data-testid={`${testIdPrefix}-environment-error`}
               role="alert"
               title={environmentError}

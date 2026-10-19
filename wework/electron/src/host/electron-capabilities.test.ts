@@ -35,9 +35,9 @@ import type { RendererStorageStore } from './renderer-storage-store.js'
 const electronMocks = vi.hoisted(() => ({
   appGetPath: vi.fn(() => '/tmp'),
   appGetVersion: vi.fn(() => '0.0.0-test'),
-  clipboardAvailableFormats: vi.fn(() => [] as string[]),
-  clipboardRead: vi.fn(() => ''),
-  clipboardReadBuffer: vi.fn(() => Buffer.alloc(0)),
+  clipboardRead: vi.fn(
+    async () => [] as Array<{ types: string[]; getType: (type: string) => Promise<Blob> }>
+  ),
   clipboardReadText: vi.fn(() => 'native text'),
   clipboardWriteText: vi.fn(),
   dialogShowMessageBox: vi.fn(),
@@ -59,9 +59,7 @@ vi.mock('electron', () => ({
   },
   BrowserWindow: class BrowserWindow {},
   clipboard: {
-    availableFormats: electronMocks.clipboardAvailableFormats,
     read: electronMocks.clipboardRead,
-    readBuffer: electronMocks.clipboardReadBuffer,
     readText: electronMocks.clipboardReadText,
     writeText: electronMocks.clipboardWriteText,
   },
@@ -253,6 +251,7 @@ describe('showElectronNotification', () => {
   test.each([
     'wework://tasks/device-1/task-1',
     'wework://boards/12/issues/gitlab%3A12%2Fissue%233',
+    'wework://boards/local/local-project-1/issues/OFF-1',
   ])('queues the same destination as an in-app notification on click: %s', url => {
     const navigation = { openRuntimeTask: vi.fn(), openScheme: vi.fn() }
     const listeners = new Map<string, () => void>()
@@ -868,12 +867,80 @@ describe('registerDesktopServiceCapabilities', () => {
     expect(developer.openLogDirectory).toHaveBeenCalledOnce()
     expect(developer.openDevTools).toHaveBeenCalledOnce()
   })
+
+  test('forwards the application menu language reported by the renderer', async () => {
+    const handlers = new Map<HostCapability, HostCapabilityHandler>()
+    const router = {
+      register: vi.fn((capability: HostCapability, handler: HostCapabilityHandler) => {
+        handlers.set(capability, handler)
+      }),
+    } as unknown as HostCapabilityRouter
+    const updateApplicationMenuCapabilities = vi.fn()
+    const updateApplicationMenuLanguage = vi.fn()
+    registerDesktopServiceCapabilities(
+      router,
+      {
+        applicationMenu: () => null,
+        updateApplicationMenuCapabilities,
+        updateApplicationMenuLanguage,
+      } as unknown as ElectronDesktopServices,
+      { openDevTools: vi.fn(), openLogDirectory: vi.fn() }
+    )
+
+    await handlers.get('applicationMenu.setLanguage')?.(
+      { language: 'zh-CN' },
+      { principal: 'test' }
+    )
+    expect(updateApplicationMenuLanguage).toHaveBeenCalledWith('zh-CN')
+
+    await handlers.get('applicationMenu.setCapabilities')?.(
+      { windowLabel: 'main', capabilities: { taskSurface: true, canCloseTab: false } },
+      { principal: 'test' }
+    )
+    expect(updateApplicationMenuCapabilities).toHaveBeenCalledWith('main', {
+      taskSurface: true,
+      canCloseTab: false,
+    })
+
+    expect(() =>
+      handlers.get('applicationMenu.setCapabilities')?.(
+        { windowLabel: 'main', capabilities: { taskSurface: 'yes' } },
+        { principal: 'test' }
+      )
+    ).toThrow()
+  })
 })
 
 describe('isolated surface clipboard capabilities', () => {
+  test('inspects supplied workspace paths when the native clipboard is unavailable', async () => {
+    const { router } = createIsolatedClipboardRouter()
+    electronMocks.clipboardRead.mockRejectedValueOnce(new Error('Clipboard unavailable'))
+
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'clipboard.readWorkspacePaths', {
+        fallbackPaths: [resolve(import.meta.dirname, 'electron-capabilities.test.ts')],
+      })
+    ).resolves.toMatchObject([
+      { path: resolve(import.meta.dirname, 'electron-capabilities.test.ts'), isDirectory: false },
+    ])
+  })
+
   beforeEach(() => {
     electronMocks.clipboardReadText.mockClear()
     electronMocks.clipboardWriteText.mockClear()
+  })
+
+  test('propagates asynchronous clipboard write failures', async () => {
+    const { router } = createIsolatedClipboardRouter()
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'isolatedClipboard.activate', { leaseId: 'lease-1' })
+    electronMocks.clipboardWriteText.mockRejectedValueOnce(new Error('Clipboard unavailable'))
+
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'isolatedClipboard.writeText', {
+        leaseId: 'lease-1',
+        text: 'pending write',
+      })
+    ).rejects.toThrow('Clipboard unavailable')
   })
 
   test('read and write require a focused window with the active lease', async () => {

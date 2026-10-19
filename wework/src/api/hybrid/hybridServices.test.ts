@@ -277,7 +277,8 @@ const mocks = vi.hoisted(() => {
   }
 })
 
-vi.mock('@/api/local/localServices', () => ({
+vi.mock('@/api/local/localServices', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/api/local/localServices')>()),
   createLocalAppServices: (options: { materializeRuntimeTask?: unknown } | undefined) => {
     mocks.captureLocalAppOptions(options)
     return options?.materializeRuntimeTask ? mocks.localServices : mocks.localOnlyServices
@@ -993,6 +994,30 @@ describe('execution status write-back on history reads', () => {
 })
 
 describe('createHybridWorkbenchServices', () => {
+  it('sends current cloud credentials and model identity to the remote prediction device', async () => {
+    mocks.cloudRuntimeIpcRequest.mockResolvedValue({ suggestion: '请继续' })
+    const services = createServices()
+    await services.replyPredictionApi!.predict({
+      address: { deviceId: 'cloud-device', taskId: 'cloud-task' },
+      modelSelection: {
+        modelName: 'cloud-selected',
+        modelType: 'user',
+        options: { weworkCloudModelNamespace: 'default', weworkCloudModelResourceUserId: '42' },
+      },
+    })
+    expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledWith(
+      'runtime.text.predict_reply',
+      expect.objectContaining({
+        modelConfig: expect.objectContaining({
+          model_id: 'cloud-selected',
+          api_key: 'cloud-token',
+          default_headers: expect.objectContaining({ 'X-Wegent-Model-Namespace': 'default' }),
+        }),
+      }),
+      'cloud-device'
+    )
+  })
+
   it('routes predictions and cancellation to the session device', async () => {
     const services = createServices()
     const local = { address: { deviceId: 'local-device', taskId: 'local-task' } }
@@ -1212,7 +1237,10 @@ describe('createHybridWorkbenchServices', () => {
     expect(mocks.cloudRuntimeIpcReconnect).toHaveBeenCalledTimes(1)
   })
 
-  it('reads a local attachment through the Electron host before uploading it to cloud', async () => {
+  it.each([
+    '/Users/me/Downloads/screenshot.png',
+    '/Users/me/.wework/workspace/attachments/draft/screenshot.png',
+  ])('uploads a local attachment from %s through the existing cloud API', async localPath => {
     const services = createServices()
 
     const uploaded = await services.attachmentApi?.uploadLocalAttachmentToCloud?.({
@@ -1223,12 +1251,10 @@ describe('createHybridWorkbenchServices', () => {
       status: 'ready',
       file_extension: '.png',
       created_at: '2026-08-11T00:00:00.000Z',
-      local_path: '/Users/me/.wework/workspace/attachments/draft/screenshot.png',
+      local_path: localPath,
     })
 
-    expect(mocks.readElectronLocalFile).toHaveBeenCalledWith(
-      '/Users/me/.wework/workspace/attachments/draft/screenshot.png'
-    )
+    expect(mocks.readElectronLocalFile).toHaveBeenCalledWith(localPath)
     const file = mocks.cloudUploadAttachment.mock.calls[0][0] as File
     expect(Array.from(new Uint8Array(await file.arrayBuffer()))).toEqual([1, 2, 3, 4])
     expect(uploaded?.id).toBe(42)
@@ -1277,7 +1303,7 @@ describe('createHybridWorkbenchServices', () => {
     expect(onChatChunk.mock.calls.map(([payload]) => payload.content)).toEqual(['local', 'cloud'])
   })
 
-  it('routes project assignment notifications through the cloud runtime stream only', () => {
+  it('routes project assignment notifications by project storage', () => {
     const services = createServices()
     const onProjectTaskAssigned = vi.fn()
 
@@ -1293,11 +1319,22 @@ describe('createHybridWorkbenchServices', () => {
       assignerName: 'Alice',
     }
 
-    expect(localHandlers?.onProjectTaskAssigned).toBeUndefined()
+    const localPayload = {
+      ...payload,
+      projectStore: 'local' as const,
+      projectId: 'local-project',
+    }
+    localHandlers?.onProjectTaskAssigned?.(localPayload)
+    expect(onProjectTaskAssigned).toHaveBeenCalledExactlyOnceWith(localPayload)
+    cloudHandlers?.onProjectTaskAssigned?.(localPayload)
+    localHandlers?.onProjectTaskAssigned?.(payload)
+    expect(onProjectTaskAssigned).toHaveBeenCalledOnce()
     cloudHandlers?.onProjectTaskAssigned?.(payload)
 
-    expect(onProjectTaskAssigned).toHaveBeenCalledOnce()
-    expect(onProjectTaskAssigned).toHaveBeenCalledWith(payload)
+    expect(onProjectTaskAssigned.mock.calls.map(([notification]) => notification)).toEqual([
+      localPayload,
+      payload,
+    ])
   })
 
   it('loads cloud models in the background without delaying local models', async () => {

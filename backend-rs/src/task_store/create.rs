@@ -51,12 +51,13 @@ impl<M: Mysql> TaskStoreCreate for DefaultTaskStore<M> {
 
     async fn create_user_and_assistant_subtasks(
         &self,
+        savepoint: &str,
         request: &crate::task_store_create::CreateSubtasksRequest<'_>,
     ) -> MysqlResult<(i64, i64)> {
         crate::task_store_create::create_user_and_assistant_subtasks(
             &self.mysql,
             SUBTASKS_TABLE,
-            "sa_savepoint_2",
+            savepoint,
             false,
             request,
         )

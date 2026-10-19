@@ -34,7 +34,7 @@ import { decodeMarkdownFilePath } from '@/components/chat/assistantMarkdownLinks
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
 import { PluginWorkspaceConversationResult } from '@/components/plugins/PluginWorkspaceConversationResult'
-import { useLocalConnectorAuthGate } from '@/features/plugins/useLocalConnectorAuthGate'
+import { useLocalConnectorAuthRecovery } from '@/features/plugins/useLocalConnectorAuthRecovery'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import {
   SubagentConversationPanel,
@@ -784,18 +784,23 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
     },
     [onLocalHarnessSessionStarted]
   )
-  const removeLocalHarnessSession = useCallback(
+  const handleLocalHarnessSessionExit = useCallback(
     (sessionId: string) => {
       if (onLocalHarnessSessionExit) {
         onLocalHarnessSessionExit(sessionId)
         return
       }
+      const proxyToken = localHarnessSessions.find(
+        session => session.sessionId === sessionId
+      )?.proxyToken
+      if (proxyToken) void services?.localHarnessModelApi?.unregisterProxy(proxyToken)
       setInternalHarnessSessions(current =>
-        current.filter(session => session.sessionId !== sessionId)
+        current.map(session =>
+          session.sessionId === sessionId ? { ...session, proxyToken: undefined } : session
+        )
       )
-      setInternalActiveHarnessSessionId(current => (current === sessionId ? null : current))
     },
-    [onLocalHarnessSessionExit]
+    [localHarnessSessions, onLocalHarnessSessionExit, services?.localHarnessModelApi]
   )
   const closeHarnessSession = useCallback(
     async (sessionId: string) => {
@@ -804,9 +809,13 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
         return
       }
       await closeLocalTerminal(sessionId)
-      removeLocalHarnessSession(sessionId)
+      handleLocalHarnessSessionExit(sessionId)
+      setInternalHarnessSessions(current =>
+        current.filter(session => session.sessionId !== sessionId)
+      )
+      setInternalActiveHarnessSessionId(current => (current === sessionId ? null : current))
     },
-    [onLocalHarnessSessionClose, removeLocalHarnessSession]
+    [onLocalHarnessSessionClose, handleLocalHarnessSessionExit]
   )
   const [resourceOwnersByPane, setResourceOwnersByPane] = useState<Record<string, string[]>>({})
   const [pendingBrowserOpenRequests, setPendingBrowserOpenRequests] = useState<
@@ -1013,7 +1022,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
           getWorkbenchPaneKey(pane) === activePaneKey ? activeLocalHarnessSession : null
         }
         onLocalHarnessSessionClose={closeHarnessSession}
-        onLocalHarnessSessionExit={removeLocalHarnessSession}
+        onLocalHarnessSessionExit={handleLocalHarnessSessionExit}
       />
     ),
     [
@@ -1030,7 +1039,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       pendingBrowserOpenRequests,
       registerLocalHarnessSession,
       rememberPaneWorkspaceState,
-      removeLocalHarnessSession,
+      handleLocalHarnessSessionExit,
       markBrowserOpenRequestHandled,
       setPaneResourceRetained,
       sharedWorkbenchContentWidth,
@@ -1454,24 +1463,23 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     ]
   )
 
-  const connectorAuthGate = useLocalConnectorAuthGate({
+  const connectorAuthRecovery = useLocalConnectorAuthRecovery({
     active: paneActive && paneVisible && workbenchVisible,
     onError: message => paneSession.setError(message),
     messages: paneSession.messages,
     onResumeSend: async input => {
-      await sendPaneInputWithContext(input)
+      await paneSession.sendContinuation(input)
     },
-    onRetryMessage: message => paneSession.retryFailedMessage(message),
   })
 
-  const connectorAuthCard = connectorAuthGate.pending ? (
+  const connectorAuthCard = connectorAuthRecovery.pending ? (
     <ConnectorAuthCard
-      target={connectorAuthGate.pending.target}
-      title={connectorAuthGate.pending.title}
+      target={connectorAuthRecovery.pending.target}
+      title={connectorAuthRecovery.pending.title}
       onSuccess={() => {
-        void connectorAuthGate.completePending()
+        void connectorAuthRecovery.completePending()
       }}
-      onCancel={connectorAuthGate.clearPending}
+      onCancel={connectorAuthRecovery.clearPending}
     />
   ) : null
 
@@ -1488,18 +1496,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         wegentTeamId?: number
       }
     ) => {
-      const submitted = (value ?? paneSession.input).trim()
-      if (submitted) {
-        const gate = await connectorAuthGate.gateBeforeSend(submitted)
-        if (gate === 'blocked') {
-          // Keep composer text so cancel does not discard the draft; resume
-          // send still uses pendingInput and clears after a successful send.
-          return false
-        }
-      }
+      connectorAuthRecovery.clearPending()
       return sendPaneInputWithContext(value, options)
     },
-    [connectorAuthGate, paneSession, sendPaneInputWithContext]
+    [connectorAuthRecovery, sendPaneInputWithContext]
   )
 
   const setTaskSupervisor = useCallback(
@@ -2554,15 +2554,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       return
     }
     const sessionId = activeLocalHarnessSession.sessionId
-    let started = false
+    let workspaceCheckCompleted = false
     let cancelled = false
     resumeRequests.add(sessionId)
     const timer = window.setTimeout(() => {
-      started = true
       setHarnessResumeLaunchError(current => (current?.sessionId === sessionId ? null : current))
       void localPathExists(activeLocalHarnessSession.cwd)
         .then(exists => {
           if (cancelled) return
+          workspaceCheckCompleted = true
           if (!exists) {
             setHarnessResumeLaunchError({
               sessionId,
@@ -2585,6 +2585,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         })
         .catch(error => {
           if (!cancelled) {
+            workspaceCheckCompleted = true
             setHarnessResumeLaunchError({
               sessionId,
               message:
@@ -2598,7 +2599,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     return () => {
       cancelled = true
       window.clearTimeout(timer)
-      if (!started) {
+      // Release cancelled checks while keeping completed checks claimed to prevent duplicate launches.
+      if (!workspaceCheckCompleted) {
         resumeRequests.delete(sessionId)
       }
     }
@@ -5238,6 +5240,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   onClick={focusComposerFromConversationClick}
                 >
                   <ScrollableMessageArea
+                    searchActive={paneActive && paneVisible && workbenchVisible}
                     workspacePath={composerWorkspaceTarget?.path}
                     imageTarget={remoteImageTarget}
                     messages={paneMessages}
@@ -5629,6 +5632,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 </div>
               ) : displayedRightPanelExpanded ? null : (
                 <DesktopEmptyTaskLauncher
+                  searchActive={paneActive && paneVisible && workbenchVisible}
                   connectorAuthCard={connectorAuthCard}
                   compact={presentation === 'popout'}
                   projectName={currentProject?.name}

@@ -27,6 +27,7 @@ export function areMessageListPropsEqual(
       ? 'disableContentVisibility'
       : null,
     previous.forceVirtualMessageId !== next.forceVirtualMessageId ? 'forceVirtualMessageId' : null,
+    previous.searchMessageId !== next.searchMessageId ? 'searchMessageId' : null,
     previous.devices !== next.devices ? 'devices' : null,
     previous.onRetryFailedMessage !== next.onRetryFailedMessage ? 'onRetryFailedMessage' : null,
     previous.onSwitchModelForFailedMessage !== next.onSwitchModelForFailedMessage

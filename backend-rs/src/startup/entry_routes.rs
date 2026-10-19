@@ -75,6 +75,53 @@ async fn startup() -> StartupStatus {
     StartupStatus { status: "started" }
 }
 
+/// GET /api/health. Mirrors `health_check` in source
+/// app/api/endpoints/health.py: the database-aware liveness probe. A
+/// successful `SELECT COUNT(*) FROM users` answers 200
+/// `{"status":"healthy","shutting_down":<flag>}`; a database failure is
+/// caught by the source's `except` and still answers 200 with the
+/// unhealthy payload. The recorded session's trailing `ROLLBACK`s are
+/// driver session cleanup that Replay classifies as optional, so no
+/// rollback statements are issued here.
+#[brz_http_server::get("/api/health", access = public)]
+async fn health_check(#[inject(state)] state: &AppState) -> brz_http_server::Response {
+    health_response(&state.mysql, state.shutdown.is_shutting_down()).await
+}
+
+/// `health_check`'s liveness statement
+/// (source app/api/endpoints/health.py: `db.execute(text(...)).scalar()`).
+const HEALTH_USERS_COUNT_QUERY: &str = "SELECT COUNT(*) FROM users";
+
+/// Handler body for `GET /api/health`, generic over the MySQL boundary so
+/// the statement and both response branches stay testable without a database.
+async fn health_response<M: brz_mysql::Mysql>(
+    mysql: &M,
+    shutting_down: bool,
+) -> brz_http_server::Response {
+    // Source `.scalar()` reads the first column positionally and never
+    // inspects the value, so only a raised error selects the unhealthy body.
+    let result = mysql
+        .fetch_optional::<_, _, i64>(HEALTH_USERS_COUNT_QUERY, ())
+        .await;
+    let body = match result {
+        Ok(_) => healthy_body(shutting_down),
+        Err(error) => unhealthy_body(&error.to_string()),
+    };
+    let bytes = serde_json::to_vec(&body).unwrap_or_default();
+    brz_http_server::Response::owned_bytes(brz_http_server::StatusCode::OK, bytes)
+        .content_type("application/json")
+}
+
+/// `{"status":"healthy","shutting_down":<flag>}` with the source field order.
+fn healthy_body(shutting_down: bool) -> serde_json::Value {
+    serde_json::json!({"status": "healthy", "shutting_down": shutting_down})
+}
+
+/// The `except` branch payload; `error` carries `str(e)` of the failure.
+fn unhealthy_body(error: &str) -> serde_json::Value {
+    serde_json::json!({"status": "unhealthy", "database": "error", "error": error})
+}
+
 /// GET /api/shutdown/status. Mirrors `shutdown_status` in source
 /// app/api/endpoints/health.py: 200 with `{"is_shutting_down": false}`
 /// while running; 503 with a shutdown payload once graceful shutdown has
@@ -154,22 +201,13 @@ async fn chat_history(
 /// GET /api/auth/oidc/callback.
 #[brz_http_server::get("/api/auth/oidc/callback", access = public)]
 async fn oidc_callback(
-    #[inject(state)] state: &AppState,
-    code: Option<String>,
-    oidc_state: Option<String>,
-    error: Option<String>,
+    #[inject(state)] app: &AppState,
+    query: brz_http_server::Query<oidc_callback::CallbackQuery>,
 ) -> Result<brz_http_server::Redirect, FastApiError> {
-    state
-        .oidc_callback
-        .handle(
-            state,
-            oidc_callback::CallbackQuery {
-                code,
-                state: oidc_state,
-                error,
-            },
-        )
-        .await
+    // `CallbackQuery` binds the source's `code`/`state`/`error` query names
+    // through its serde fields; positional handler parameters would bind by
+    // Rust name and could silently miss `state`.
+    app.oidc_callback.handle(app, query.0).await
 }
 
 /// The source's 503 shutdown payload rendered with its field order.
@@ -279,5 +317,50 @@ mod tests {
             .filter(|path| *path == "/api/shutdown/wait")
             .collect();
         assert_eq!(paths, ["/api/shutdown/wait"]);
+    }
+
+    #[test]
+    fn health_check_is_registered_in_the_public_group() {
+        use brz_http_server::__private::inventory;
+        let paths: Vec<_> = inventory::iter::<crate::__http_registry_http_apis::Entry>()
+            .flat_map(|entry| (entry.0.routes)().iter().map(|route| route.path))
+            .filter(|path| *path == "/api/health")
+            .collect();
+        assert_eq!(paths, ["/api/health"]);
+    }
+
+    /// The recorded response body of `api-health/5f47f84b` (recording
+    /// 20261016030056): 200 with the healthy payload while running.
+    #[test]
+    fn health_bodies_match_source() {
+        assert_eq!(
+            healthy_body(false).to_string(),
+            r#"{"status":"healthy","shutting_down":false}"#
+        );
+        assert_eq!(
+            unhealthy_body("MySQL connection acquisition timed out").to_string(),
+            r#"{"status":"unhealthy","database":"error","error":"MySQL connection acquisition timed out"}"#
+        );
+    }
+
+    /// `KindQueryCapture` answers an empty row set. Source `.scalar()` treats
+    /// an executed statement without rows as healthy, so the probe pins both
+    /// the issued statement and the still-200 healthy render.
+    #[tokio::test]
+    async fn health_check_issues_the_source_liveness_statement() {
+        let capture = crate::sql_test_support::KindQueryCapture::default();
+        let response = health_response(&capture, false).await;
+        let queries = capture.queries();
+        assert_eq!(queries.len(), 1);
+        assert_eq!(queries[0].sql, "SELECT COUNT(*) FROM users");
+        assert_eq!(queries[0].args, 0);
+        assert_eq!(response.status(), brz_http_server::StatusCode::OK);
+        let brz_http_server::ResponseBody::Owned(body) = response.body() else {
+            panic!("health renders an owned JSON body");
+        };
+        assert_eq!(
+            body.as_ref(),
+            br#"{"status":"healthy","shutting_down":false}"#.as_slice()
+        );
     }
 }

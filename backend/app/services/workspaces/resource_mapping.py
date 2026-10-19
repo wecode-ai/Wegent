@@ -11,6 +11,7 @@ from app.models.share_link import ResourceType
 from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.services.device.runtime_route import runtime_device_route_id
+from app.services.team_access_policy import can_edit_team
 from app.services.workspaces.storage import workspace_from_kind
 
 
@@ -43,6 +44,7 @@ def agent_values(
         "execution_environment_ids": environment_ids,
         "owner_user_id": owner_user_id,
         "added_by_user_id": grant.invited_by_user_id,
+        "can_edit": can_edit_team(db, team, execution_user_id),
         "created_at": grant.created_at,
         "updated_at": grant.updated_at,
     }
@@ -55,6 +57,7 @@ def execution_environment_values(
     *,
     connection_status: str,
     workspace_id: str | None = None,
+    can_use: bool = True,
 ) -> dict[str, object]:
     spec = _kind_spec(device)
     device_type = str(spec.get("deviceType") or "local")
@@ -88,7 +91,9 @@ def execution_environment_values(
         "owner_type": owner_type,
         "owner_id": owner_id,
         "owner_name": owner_name,
-        "status": connection_status,
+        "status": connection_status if can_use else "error",
+        "can_use": can_use,
+        "unavailable_reason": None if can_use else "resource_authorization_revoked",
         "owner_user_id": owner_user_id,
         "added_by_user_id": grant.invited_by_user_id,
         "created_at": grant.created_at,

@@ -5,6 +5,65 @@ import { expect, it, vi } from 'vitest'
 import type { ProjectChatClient, ProjectChatMessage } from '@wegent/chat-core'
 import { useIssueProjectChat } from './useIssueProjectChat'
 
+it.each(['after failure', 'during failure'])(
+  'restores a failed initial subscription when reconnect occurs %s',
+  async timing => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    let reconnect!: () => void
+    let rejectInitial!: (error: Error) => void
+    const unsubscribe = vi.fn()
+    const stopReconnect = vi.fn()
+    const client = {
+      onReconnect: vi.fn(callback => {
+        reconnect = callback
+        return stopReconnect
+      }),
+      subscribe: vi
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise((_resolve, reject) => {
+              rejectInitial = reject
+            })
+        )
+        .mockResolvedValue({
+          snapshot: { messages: [], currentUserId: '42' },
+          unsubscribe,
+        }),
+    } as unknown as ProjectChatClient
+    let current!: ReturnType<typeof useIssueProjectChat>
+    function Harness() {
+      current = useIssueProjectChat(client, 'project-1', 'issue-1')
+      return <div>{current.error ?? current.currentUserId}</div>
+    }
+    try {
+      await act(async () => root.render(<Harness />))
+      await act(async () => {
+        if (timing === 'during failure') reconnect()
+        rejectInitial(new Error('websocket error'))
+      })
+      if (timing === 'after failure') {
+        expect(container.textContent).toBe('websocket error')
+        await act(async () => reconnect())
+      }
+      expect(current.error).toBeNull()
+      expect(current.loading).toBe(false)
+      expect(container.textContent).toBe('42')
+      expect(client.subscribe).toHaveBeenCalledTimes(2)
+      await act(async () => reconnect())
+      expect(client.subscribe).toHaveBeenCalledTimes(2)
+    } finally {
+      act(() => root.unmount())
+      expect(stopReconnect).toHaveBeenCalledTimes(1)
+      expect(unsubscribe).toHaveBeenCalledTimes(1)
+      reconnect()
+      expect(client.subscribe).toHaveBeenCalledTimes(2)
+    }
+  }
+)
+
 it('does not merge a late comment or runtime response into another Issue', async () => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   const container = document.createElement('div')
@@ -14,7 +73,7 @@ it('does not merge a late comment or runtime response into another Issue', async
     subscribe: vi.fn().mockResolvedValue({ snapshot: { messages: [] }, unsubscribe: vi.fn() }),
     send: vi.fn(
       () =>
-        new Promise<ProjectChatMessage>((resolve) => {
+        new Promise<ProjectChatMessage>(resolve => {
           resolveSend = resolve
         })
     ),
@@ -22,7 +81,7 @@ it('does not merge a late comment or runtime response into another Issue', async
   let current!: ReturnType<typeof useIssueProjectChat>
   function Harness({ issueId }: { issueId: string }) {
     current = useIssueProjectChat(client, 'project-1', issueId)
-    return <div>{current.messages.map((message) => message.content).join(',')}</div>
+    return <div>{current.messages.map(message => message.content).join(',')}</div>
   }
   try {
     await act(async () => root.render(<Harness issueId="issue-1" />))
@@ -90,7 +149,7 @@ it('reloads the canonical activity snapshot when the Issue revision changes', as
   } as unknown as ProjectChatClient
   function Harness({ revision }: { revision: number }) {
     const chat = useIssueProjectChat(client, 'project-1', 'issue-1', revision)
-    return <div>{chat.messages.map((message) => message.content).join(',')}</div>
+    return <div>{chat.messages.map(message => message.content).join(',')}</div>
   }
   try {
     await act(async () => root.render(<Harness revision={1} />))
@@ -127,7 +186,7 @@ it('keeps the activity and reply draft mounted while an Issue revision refreshes
       })
       .mockImplementationOnce(
         () =>
-          new Promise((resolve) => {
+          new Promise(resolve => {
             finishRefresh = resolve
           })
       ),
@@ -136,7 +195,7 @@ it('keeps the activity and reply draft mounted while an Issue revision refreshes
     const chat = useIssueProjectChat(client, 'project-1', 'issue-1', revision)
     return (
       <div>
-        {chat.messages.map((item) => (
+        {chat.messages.map(item => (
           <textarea key={item.messageId} />
         ))}
       </div>

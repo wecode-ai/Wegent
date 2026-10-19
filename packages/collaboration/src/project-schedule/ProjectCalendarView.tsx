@@ -344,10 +344,10 @@ export function DraggableScheduleBar({
     >
       {dragRange ? (
         <>
-          <span className="pointer-events-none absolute bottom-[calc(100%+8px)] left-0 z-30 -translate-x-[calc(100%+10px)] whitespace-nowrap rounded-lg bg-zinc-700 px-2 py-1 text-sm font-medium text-white shadow-md">
+          <span className="pointer-events-none absolute bottom-[calc(100%+8px)] left-0 z-30 -translate-x-[calc(100%+10px)] whitespace-nowrap rounded-lg bg-popover px-2 py-1 text-sm font-medium text-text-primary shadow-md">
             {scheduleDateLabel(dragRange.startAt, locale)}
           </span>
-          <span className="pointer-events-none absolute right-0 bottom-[calc(100%+8px)] z-30 translate-x-[calc(100%+10px)] whitespace-nowrap rounded-lg bg-zinc-700 px-2 py-1 text-sm font-medium text-white shadow-md">
+          <span className="pointer-events-none absolute right-0 bottom-[calc(100%+8px)] z-30 translate-x-[calc(100%+10px)] whitespace-nowrap rounded-lg bg-popover px-2 py-1 text-sm font-medium text-text-primary shadow-md">
             {scheduleDateLabel(dragRange.dueAt, locale)}
           </span>
         </>

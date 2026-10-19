@@ -28,7 +28,7 @@ from app.services.knowledge.knowledge_service import KnowledgeService
 
 
 @pytest.fixture
-def import_client(test_db: Session, test_user: User) -> TestClient:
+def import_client(test_db: Session, test_user: User):
     """Create a focused test client for the knowledge import endpoint."""
 
     app = FastAPI()
@@ -41,7 +41,7 @@ def import_client(test_db: Session, test_user: User) -> TestClient:
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[security.get_current_user] = lambda: test_user
 
-    return TestClient(app)
+    yield TestClient(app)
 
 
 @pytest.fixture

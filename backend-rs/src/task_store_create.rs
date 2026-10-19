@@ -50,10 +50,13 @@ pub trait TaskStoreCreate: Send + Sync {
     ) -> MysqlResult<(i64, i64)>;
 
     /// `subtask_store.create_user_and_assistant_subtasks`: insert the paired
-    /// user/assistant subtasks inside `SAVEPOINT sa_savepoint_2`, returning
-    /// `(user_subtask_id, assistant_subtask_id)`.
+    /// user/assistant subtasks inside one `SAVEPOINT`, returning
+    /// `(user_subtask_id, assistant_subtask_id)`. The savepoint index is the
+    /// session's nested-transaction counter, so a resumed Task that skipped the
+    /// task-creation savepoint uses `sa_savepoint_1`.
     async fn create_user_and_assistant_subtasks(
         &self,
+        savepoint: &str,
         request: &CreateSubtasksRequest<'_>,
     ) -> MysqlResult<(i64, i64)>;
 

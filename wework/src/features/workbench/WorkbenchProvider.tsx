@@ -20,7 +20,11 @@ import { navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { localSkillReference } from '@/lib/local-skill-reference'
 import { createConversationMentionReference } from '@/lib/conversation-mentions'
 import { runtimeContextUsageMetrics } from '@/lib/runtime-context-usage'
-import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
+import {
+  normalizeRuntimeWorkspacePath,
+  runtimeProjectToProject,
+  runtimeProjectUiId,
+} from '@/lib/runtime-project'
 import {
   runtimeProjectSyncTargetKey,
   type RuntimeProjectSyncTarget,
@@ -1506,10 +1510,23 @@ export function WorkbenchProvider({
           queueWorkbenchWorkspaceLaunch(response.deviceId, response.roots[0], launchOptions)
         }
         dispatch({
-          type: 'runtime_workspace_opened',
-          deviceId: response.deviceId,
-          workspacePath: response.roots[0],
-          label: response.name,
+          type: 'project_workspace_selected',
+          project: runtimeProjectToProject({
+            project: {
+              key: response.projectKey,
+              stateDeviceId: response.deviceId,
+              name: response.name,
+            },
+            deviceWorkspaces: [
+              {
+                deviceId: response.deviceId,
+                workspacePath: response.roots[0],
+                available: true,
+                tasks: [],
+              },
+            ],
+          }),
+          startFreshChat: true,
         })
         navigateTo('/')
         return

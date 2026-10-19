@@ -66,7 +66,7 @@ fn detects_user_default_and_group_bindings() {
 }
 
 #[test]
-fn source_info_defaults_type_and_keeps_all_keys() {
+fn source_info_defaults_type_and_keeps_schema_keys() {
     let spec = json!({
         "source": {
             "type": "marketplace", "repo_url": "https://example.com/repo",
@@ -82,21 +82,20 @@ fn source_info_defaults_type_and_keeps_all_keys() {
         Some(&json!("https://example.com/repo"))
     );
     assert_eq!(source.get("skill_path"), Some(&json!("skills/demo")));
-    assert_eq!(source.get("provider_key"), Some(&json!("provider")));
-    assert_eq!(source.get("skill_key"), Some(&json!("a/b")));
-    assert_eq!(source.get("original_skill_key"), Some(&json!("b")));
     assert_eq!(
         source.get("imported_at"),
         Some(&json!("2026-07-30T12:12:36Z"))
     );
+    // Marketplace-only keys are outside the response schema
+    // (`SkillSourceResponse`), so they are not rendered.
+    assert_eq!(source.get("provider_key"), None);
+    assert_eq!(source.get("skill_key"), None);
+    assert_eq!(source.get("original_skill_key"), None);
     // Missing optional keys echo as `null` rather than being dropped, matching
     // the source `source_data.get(...)` projection.
     let git = source_info(&json!({"source": {"type": "git"}}));
     assert_eq!(git.get("repo_url"), Some(&json!(null)));
     assert_eq!(git.get("skill_path"), Some(&json!(null)));
-    assert_eq!(git.get("provider_key"), Some(&json!(null)));
-    assert_eq!(git.get("skill_key"), Some(&json!(null)));
-    assert_eq!(git.get("original_skill_key"), Some(&json!(null)));
     assert_eq!(git.get("imported_at"), Some(&json!(null)));
     assert!(source_info(&json!({})).is_null());
     assert!(source_info(&json!({"source": null})).is_null());

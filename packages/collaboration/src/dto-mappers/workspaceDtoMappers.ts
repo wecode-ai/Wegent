@@ -245,12 +245,17 @@ export function mapCollaborationWorkspaceDto(
   return {
     id: String(row.id),
     location: "cloud",
+    ...((row.owner_user_id ?? row.ownerUserId) === undefined
+      ? {}
+      : { owner_user_id: Number(row.owner_user_id ?? row.ownerUserId) }),
     name: String(row.name ?? ""),
     description: String(row.description ?? ""),
     namespace: String(row.namespace ?? "default"),
-    access_role: (row.access_role ??
-      row.accessRole ??
-      "Member") as CollaborationWorkspace["access_role"],
+    access_role: ((row.access_role ?? row.accessRole) === "Reporter"
+      ? "Viewer"
+      : (row.access_role ??
+        row.accessRole ??
+        "Viewer")) as CollaborationWorkspace["access_role"],
     member_count: Number(row.member_count ?? row.memberCount ?? 0),
     agent_count: Number(row.agent_count ?? row.agentCount ?? 0),
     execution_environment_count: Number(
@@ -363,6 +368,10 @@ export function mapCollaborationExecutionEnvironmentDto(
     owner_name: String(row.owner_name ?? row.ownerName ?? ""),
     status: (row.status ??
       "offline") as CollaborationExecutionEnvironment["status"],
+    can_use: (row.can_use ?? row.canUse) !== false,
+    unavailable_reason: nullableString(
+      row.unavailable_reason ?? row.unavailableReason,
+    ),
     updated_at: String(row.updated_at ?? row.updatedAt ?? ""),
   };
 }
@@ -379,6 +388,7 @@ export function mapCollaborationOwnedAgentDto(
     (row.owner_type ?? row.ownerType) === "workspace" ? "workspace" : "user";
   return {
     id: String(resourceId ?? teamId ?? row.id),
+    can_edit: (row.can_edit ?? row.canEdit) === true,
     name: String(row.name ?? ""),
     ...((row.agent_id ?? row.agentId)
       ? { agent_id: String(row.agent_id ?? row.agentId) }

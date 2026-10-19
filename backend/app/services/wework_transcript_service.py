@@ -47,18 +47,6 @@ def utcnow() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
-def list_transcripts(
-    db: Session,
-    *,
-    user_id: int,
-    include_archived: bool,
-) -> list[WeworkTranscript]:
-    query = db.query(WeworkTranscript).filter(WeworkTranscript.user_id == user_id)
-    if not include_archived:
-        query = query.filter(WeworkTranscript.state == "active")
-    return query.order_by(WeworkTranscript.updated_at.desc()).all()
-
-
 def get_transcript(
     db: Session,
     *,

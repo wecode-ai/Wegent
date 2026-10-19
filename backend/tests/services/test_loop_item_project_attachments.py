@@ -24,6 +24,7 @@ from app.schemas.delivery import LoopItemCreate
 from app.services.attachment.storage_backend import generate_storage_key
 from app.services.delivery.storage import DeliveryStorageUnavailableError
 from app.services.loop_items.service import loop_item_service
+from tests.utils.collaboration import authorize_project
 
 
 class FakeDeliveryStorage:
@@ -131,6 +132,7 @@ def _make_project(db: Session, user: User, key: str) -> CloudProject:
         storage_prefix=f"projects/{public_id}",
         metadata_json={},
     )
+    authorize_project(db, project)
     db.add(project)
     db.commit()
     db.refresh(project)

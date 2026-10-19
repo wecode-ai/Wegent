@@ -16,6 +16,8 @@ Preserving the original prompt prefix helps reuse the model service's cache, but
 
 While generating, the composer toolbar shows a small “Generating a suggestion…” status. Typing hides it; completion, cancellation, or failure removes it.
 
+Predictions use fresh authentication for the conversation's selected model without saving credentials in task history. Failed or timed-out requests display a message below the composer asking you to check the current model's connection and authentication settings. Normal chat remains available. After fixing the settings and completing another turn, predictions run again. A model returning no suggestion does not show an error.
+
 When a suggestion appears, click “Accept suggestion · Tab” or press Tab, Right Arrow, or Enter to insert it as a draft, then edit and send.
 
 In Wework, `/model` and the model button open the same selector. Suggestions stay hidden while this menu is open and return when it closes, preventing acceptance keys from conflicting with menu navigation.

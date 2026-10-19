@@ -1,5 +1,5 @@
 import { ArrowDown } from 'lucide-react'
-import { memo, useCallback, useEffect, useLayoutEffect } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo } from 'react'
 
 import { useConversationTranslation } from './ConversationTranslation'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
@@ -24,6 +24,7 @@ import {
 } from './conversationScrollGeometry'
 import { useConversationScrollController } from './useConversationScrollController'
 import { useReaderViewportAnchor } from './useReaderViewportAnchor'
+import { useConversationSearchTarget } from './useConversationSearchTarget'
 import {
   recordConversationScrollDiagnostic as recordScrollDiagnostic,
   startConversationDiagnosticCapture,
@@ -85,6 +86,8 @@ function ScrollableMessagePaneContent({
   onAddSelectionToConversation,
   onAskSelectionInSidebar,
   autoScrollSuspended = false,
+  searchTarget,
+  searchNavigationPaused = false,
   onLoadMoreBefore,
   onLoadTurnNavigationItem,
   onLoadTranscriptGap,
@@ -166,6 +169,36 @@ function ScrollableMessagePaneContent({
     onLoadTranscriptGap,
     loadedTranscriptRanges,
     autoScrollSuspended,
+  })
+  const hasMessages = messages.length > 0
+  // Initial virtual positioning belongs to the list mount, not subsequent search scrolling.
+  const initialDistanceFromBottomPx = useMemo(
+    () => (hasMessages ? getInitialDistanceFromBottomPx(currentScrollKey) : 0),
+    [currentScrollKey, hasMessages]
+  )
+  const renderMessageGap = useCallback<
+    NonNullable<ScrollableMessageAreaProps['renderGapAfterMessage']>
+  >(
+    (message, nextMessage) => {
+      const transcriptGap = renderTranscriptGapAfterMessage?.(message, nextMessage)
+      const customGap = renderGapAfterMessage?.(message, nextMessage)
+      if (!transcriptGap) return customGap
+      if (!customGap) return transcriptGap
+      return (
+        <>
+          {transcriptGap}
+          {customGap}
+        </>
+      )
+    },
+    [renderTranscriptGapAfterMessage, renderGapAfterMessage]
+  )
+  useConversationSearchTarget({
+    target: searchTarget,
+    navigationPaused: searchNavigationPaused,
+    contentRef,
+    scrollRef,
+    onNavigationTargetChange: handleTurnNavigationScrollTargetChange,
   })
   useLayoutEffect(() => {
     const isInitialRender = !hasRenderedRef.current
@@ -806,10 +839,11 @@ function ScrollableMessagePaneContent({
                 onBeforeUserMessageToggle={preserveUserMessagePosition}
                 onVirtualLayoutChange={handleContentLayoutChange}
                 scrollElementRef={scrollRef}
-                initialDistanceFromBottomPx={getInitialDistanceFromBottomPx(currentScrollKey)}
+                initialDistanceFromBottomPx={initialDistanceFromBottomPx}
                 className={messageListClassName}
                 conversationKey={conversationKey}
-                forceVirtualMessageId={turnNavigationTargetMessageId}
+                forceVirtualMessageId={searchTarget?.messageId ?? turnNavigationTargetMessageId}
+                searchMessageId={searchTarget?.messageId}
                 isWaitingForAssistant={isWaitingForAssistant}
                 disableContentVisibility={turnNavigationLoading}
                 devices={devices}
@@ -834,18 +868,7 @@ function ScrollableMessagePaneContent({
                 onAskSelectionInSidebar={onAskSelectionInSidebar}
                 virtualAnchorToEnd={!showScrollButton}
                 bottomOrigin={bottomOrigin}
-                renderGapAfterMessage={(message, nextMessage) => {
-                  const transcriptGap = renderTranscriptGapAfterMessage?.(message, nextMessage)
-                  const customGap = renderGapAfterMessage?.(message, nextMessage)
-                  if (!transcriptGap) return customGap
-                  if (!customGap) return transcriptGap
-                  return (
-                    <>
-                      {transcriptGap}
-                      {customGap}
-                    </>
-                  )
-                }}
+                renderGapAfterMessage={renderMessageGap}
               />
               {contentFooter ? (
                 <div
