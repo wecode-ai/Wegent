@@ -31,6 +31,7 @@ import {
   createAutomationApiFromIpc,
   createLocalAppServices,
   createRuntimeWorkApiFromIpc,
+  materializeCodexTaskModelConfig,
 } from '@/api/local/localServices'
 import { createRuntimeChatStream } from '@/api/runtime/runtimeChatStream'
 import { REMOTE_TEAM_BACKEND_UNSUPPORTED } from '@/api/runtimeWork'
@@ -1602,8 +1603,9 @@ export function createHybridWorkbenchServices(
         if (api === localServices.runtimeWorkApi) {
           return localServices.replyPredictionApi!.predict(data)
         }
-        return createReplyPredictionApi((method, params) =>
-          cloudRuntimeIpc.request(method, params, data.address.deviceId)
+        return createReplyPredictionApi(
+          (method, params) => cloudRuntimeIpc.request(method, params, data.address.deviceId),
+          selection => materializeCodexTaskModelConfig(selection, { cloudModelGateway }, false)
         ).predict(data)
       },
     },
@@ -1700,7 +1702,7 @@ export function createHybridWorkbenchServices(
 function filterRuntimeChatStreamHandlers(
   handlers: ChatStreamHandlers,
   acceptsDevice: (deviceId?: string | null) => boolean,
-  includeTransportReplacement: boolean
+  localRuntime: boolean
 ): ChatStreamHandlers {
   const route = <Payload extends { deviceId?: string }>(handler?: (payload: Payload) => void) =>
     handler
@@ -1726,11 +1728,14 @@ function filterRuntimeChatStreamHandlers(
     onRuntimePlanUpdated: route(handlers.onRuntimePlanUpdated),
     onGuidanceApplied: route(handlers.onGuidanceApplied),
     onRuntimeEventLagged: handlers.onRuntimeEventLagged,
-    onRuntimeTransportReplaced: includeTransportReplacement
-      ? handlers.onRuntimeTransportReplaced
-      : undefined,
+    onRuntimeTransportReplaced: localRuntime ? handlers.onRuntimeTransportReplaced : undefined,
     onWeworkNotification: acceptsDevice(undefined) ? handlers.onWeworkNotification : undefined,
-    onProjectTaskAssigned: acceptsDevice(undefined) ? handlers.onProjectTaskAssigned : undefined,
+    onProjectTaskAssigned: handlers.onProjectTaskAssigned
+      ? payload => {
+          if ((payload.projectStore === 'local') === localRuntime)
+            handlers.onProjectTaskAssigned?.(payload)
+        }
+      : undefined,
   }
 }
 

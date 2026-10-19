@@ -21,6 +21,7 @@ from app.services.llm_proxy_service import (
     proxy_llm_responses,
     resolve_llm_proxy_model_config,
 )
+from shared.utils.crypto import CryptoConfigurationError
 
 
 def _model_kind(
@@ -197,6 +198,33 @@ def test_resolve_llm_proxy_model_config_processes_custom_header_placeholders(
         "user": test_user.user_name,
         "x-custom-static": "static-value",
     }
+
+
+def test_cloud_model_reports_unavailable_credentials(
+    test_db: Session,
+    test_user: User,
+    test_model_kind: Kind,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unavailable_credentials(value: str) -> str:
+        raise CryptoConfigurationError("Invalid test encryption configuration")
+
+    monkeypatch.setattr(
+        "app.services.chat.config.model_resolver.decrypt_api_key",
+        unavailable_credentials,
+    )
+    with pytest.raises(HTTPException) as error:
+        resolve_llm_proxy_model_config(
+            test_db,
+            test_user,
+            model_name=test_model_kind.name,
+            model_type="user",
+            namespace="default",
+            resource_user_id=test_user.id,
+        )
+
+    assert error.value.status_code == 503
+    assert "credentials are unavailable" in error.value.detail
 
 
 async def test_proxy_llm_responses_forwards_to_provider(

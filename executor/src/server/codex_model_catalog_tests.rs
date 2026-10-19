@@ -33,7 +33,6 @@ fn catalog() -> Value {
     let mut catalog = json!({
         "models": base_models()
     });
-    apply_catalog_overrides(&mut catalog, &read_catalog_overrides());
     append_catalog_vision_sidecars(&mut catalog);
     catalog
 }

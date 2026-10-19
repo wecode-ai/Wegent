@@ -36,6 +36,7 @@ export * from "./Tooltip";
 export * from "./executionStatus";
 export * from "./activityMessageUtils";
 export * from "./managerActivity";
+export * from "./humanDispatchAssignment";
 
 export * from "./IssueMainCommentComposer";
 export * from "./useIssueMentionCandidates";
@@ -50,3 +51,5 @@ export * from "./runtimeExecutionTarget";
 export * from "./IssueTaskConversationPanel";
 
 export { issueTaskSummaryForMessage } from "./issueTaskSummary";
+
+export { issueCommentBody } from "./useIssueCommentAttachments";

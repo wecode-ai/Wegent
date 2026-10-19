@@ -1,4 +1,5 @@
 import { NotificationEventsBridge } from '@/features/notifications/NotificationEventsBridge'
+import { LOCAL_USER } from '@/api/local/localSession'
 import {
   NotificationTaskSourceBridge,
   NotificationTaskSourceProvider,
@@ -43,6 +44,7 @@ import { AppIframe } from '@/components/topnav/AppIframe'
 import { listenHarnessAppLaunchProgress } from '@/api/local/harnessApps'
 import { HarnessAppLaunchSurface } from '@/features/harness-apps/HarnessAppLaunchSurface'
 import { ElectronWorkbenchTabBridge } from '@/features/harness-apps/ElectronWorkbenchTabBridge'
+import { ApplicationMenuWorkspaceBridge } from '@/desktop/ApplicationMenuWorkspaceBridge'
 import {
   clearHarnessAppLaunch,
   harnessAppInstallationIdFromPath,
@@ -697,7 +699,11 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
       <>
         <RuntimeTaskLifecycleStreamCoordinator services={services} store={lifecycleStore} />
         <RuntimeTaskSystemSleepBridge store={lifecycleStore} />
-        <NotificationEventsBridge chatStream={services.chatStream} />
+        <NotificationEventsBridge
+          chatStream={services.chatStream}
+          currentUserId={workbenchIdentity?.id}
+          localUserId={LOCAL_USER.id}
+        />
         <WorkbenchProvider
           lifecycleStore={lifecycleStore}
           services={services}
@@ -722,7 +728,11 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     <>
       <RuntimeTaskLifecycleStreamCoordinator services={services} store={lifecycleStore} />
       <RuntimeTaskSystemSleepBridge store={lifecycleStore} />
-      <NotificationEventsBridge chatStream={services.chatStream} />
+      <NotificationEventsBridge
+        chatStream={services.chatStream}
+        currentUserId={workbenchIdentity?.id}
+        localUserId={LOCAL_USER.id}
+      />
       {mountedWorkspaceTabs.map(tab => (
         <WorkspaceTabSurface
           key={tab.id}
@@ -1172,6 +1182,7 @@ function AppShell() {
       >
         <ElectronWorkbenchTabBridge />
         <WeworkSchemeBridge />
+        {isElectron && !isPopoutWindow ? <ApplicationMenuWorkspaceBridge pathname={path} /> : null}
         <div
           data-testid="app-shell"
           className={cn(

@@ -1,6 +1,6 @@
 //! Device consent remains scoped to a project and its unique active parent.
 
-use crate::loop_item_executions::device::resolve_owned_device_alias;
+use crate::device_identity::resolve_owned_device_alias;
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 use serde_json::Value;
 use std::collections::HashSet;
@@ -70,7 +70,8 @@ pub(super) async fn authorized_device_ids<M: Mysql>(
         let Some(owner_id) = agent.created_by_user_id.filter(|id| *id != 0) else {
             continue;
         };
-        let Some(device) = resolve_owned_device_alias(mysql, owner_id, alias).await? else {
+        let Some(device) = resolve_owned_device_alias(mysql, i64::from(owner_id), alias).await?
+        else {
             continue;
         };
         if legacy_consent(&grants, &revoked, device.id) {

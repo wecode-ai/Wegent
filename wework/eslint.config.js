@@ -9,6 +9,7 @@ export default defineConfig([
   globalIgnores([
     'coverage',
     'dist',
+    '**/target',
     'dsh/app-wework/web',
     'dummy-non-existing-folder',
     'electron/dummy-non-existing-folder',

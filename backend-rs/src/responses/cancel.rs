@@ -16,6 +16,8 @@
 //! `task_kinds_service.get_task_by_id` + `_task_to_response_object`.
 
 use brz_http_server::StatusCode;
+use brz_mysql::MysqlRow;
+use chrono::NaiveDateTime;
 use serde_json::{Value, json};
 
 use super::auth::ResponsesUser;
@@ -172,10 +174,14 @@ async fn cancel_chat_shell_response(
     cancel_stream(state.redis.as_ref(), subtask_id).await;
 
     // `subtask_store.update_fields(status=COMPLETED, progress=100,
-    // completed_at=now, result={"value": partial_content or ""})`.
+    // completed_at=now, result={"value": partial_content or ""})`. The session
+    // listener also keeps the flush-time clock read (`_before_flush`'s
+    // `state_changed_at`) that the after-commit metrics publish consumes.
     let subtask_completed_at = task_update_timestamp();
     let subtask_updated_at = task_update_timestamp();
-    let result_json = python_json_value(&json!({ "value": partial_content }));
+    let state_changed_at = chrono::Local::now().naive_local();
+    let result = json!({ "value": &partial_content });
+    let result_json = python_json_value(&result);
     state
         .task_store
         .update_subtask_completed(
@@ -211,11 +217,13 @@ async fn cancel_chat_shell_response(
         .await
         .map_err(internal)?;
 
-    // `db.commit()`.
+    // `db.commit()`. The `after_commit` session listener publishes the
+    // committed subtask state before the endpoint refreshes the ORM objects.
     if let Err(error) = state.mysql.execute("COMMIT", ()).await {
         tracing::error!(%error, "[cancel] task commit failed");
         return Err(internal(error));
     }
+    publish_subtask_metric(state, &running, subtask_id, &result, state_changed_at).await;
 
     // `db.refresh(task_kind)` / `db.refresh(running_subtask)`, then the
     // expired auth-user reload (`current_user.id` read below).
@@ -233,6 +241,64 @@ async fn cancel_chat_shell_response(
         .await
         .map_err(internal)?;
     Ok(())
+}
+
+/// `TaskRunMetricHooks._after_commit` for the assistant-subtask status change
+/// this branch commits: publish the task-run metrics and swallow a store
+/// failure, so a Redis error never changes the committed cancel result.
+async fn publish_subtask_metric(
+    state: &AppState,
+    running: &MysqlRow,
+    subtask_id: i64,
+    result: &Value,
+    state_changed_at: NaiveDateTime,
+) {
+    let Some(redis) = state.redis.as_ref() else {
+        return;
+    };
+    let Ok(created_at) = running.get::<NaiveDateTime>("created_at") else {
+        return;
+    };
+    let error_message = running.get::<String>("error_message").ok().flatten();
+    let Some(event) = subtask_metric_event(
+        created_at,
+        subtask_id,
+        error_message.as_deref(),
+        result,
+        state_changed_at,
+    ) else {
+        return;
+    };
+    if let Err(error) =
+        crate::task_run_metrics::record_events(redis, std::slice::from_ref(&event)).await
+    {
+        tracing::warn!(%error, "task run metrics publish failed");
+    }
+}
+
+/// The `TaskRunMetricEvent` a committed subtask update produces
+/// (`TaskRunMetricHooks._after_flush_postexec`): the row keeps its creation
+/// time and error message, while the committed status and result are the ones
+/// `update_fields` just wrote.
+fn subtask_metric_event(
+    created_at: Option<NaiveDateTime>,
+    subtask_id: i64,
+    error_message: Option<&str>,
+    result: &Value,
+    state_changed_at: NaiveDateTime,
+) -> Option<crate::task_run_metrics::SubtaskMetricEvent> {
+    Some(crate::task_run_metrics::SubtaskMetricEvent {
+        subtask_id,
+        created_at: created_at?,
+        // The committed status is `COMPLETED`; only `FAILED` sets the flag.
+        failed: false,
+        state_changed_at,
+        message: crate::task_run_metrics::failure_message(error_message, Some(result)),
+        // `update_fields` mutates an existing row, so it never records the id
+        // in the run totals; a status change always syncs the failure bucket.
+        record_total: false,
+        sync_failure: true,
+    })
 }
 
 /// Non-`chat_shell` branch: `task_kinds_service.cancel_task`.
@@ -771,5 +837,63 @@ mod tests {
             "2026-10-10T14:21:49.917577",
         );
         assert!(payload.ends_with("\"status\": null}"), "{payload}");
+    }
+
+    fn metric_time(value: &str) -> NaiveDateTime {
+        NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S%.f").expect("valid metric time")
+    }
+
+    /// The recorded cancel case's committed subtask event: the row keeps its
+    /// creation time and empty error message, and the completed status syncs
+    /// the failure bucket without recording a run total.
+    #[test]
+    fn cancel_metric_event_publishes_the_committed_completion() {
+        let created_at = metric_time("2026-10-16 11:04:21");
+        let state_changed_at = metric_time("2026-10-16 11:04:22.453259");
+        let event = subtask_metric_event(
+            Some(created_at),
+            893_078_319_868_054,
+            Some(""),
+            &json!({ "value": "" }),
+            state_changed_at,
+        )
+        .expect("committed row produces an event");
+        assert_eq!(event.subtask_id, 893_078_319_868_054);
+        assert_eq!(event.created_at, created_at);
+        assert!(!event.failed);
+        assert_eq!(event.state_changed_at, state_changed_at);
+        assert_eq!(event.message, None);
+        assert!(!event.record_total);
+        assert!(event.sync_failure);
+    }
+
+    /// `task_run_failure_message` falls back to `result["value"]`, so a
+    /// non-empty partial stream becomes the published reason.
+    #[test]
+    fn cancel_metric_event_uses_partial_content_for_the_failure_message() {
+        let event = subtask_metric_event(
+            Some(metric_time("2026-10-16 11:04:21")),
+            1,
+            None,
+            &json!({ "value": "half done" }),
+            metric_time("2026-10-16 11:04:22.453259"),
+        )
+        .expect("committed row produces an event");
+        assert_eq!(event.message.as_deref(), Some("half done"));
+    }
+
+    /// `_after_flush_postexec` skips rows without a creation time.
+    #[test]
+    fn cancel_metric_event_requires_the_row_creation_time() {
+        assert!(
+            subtask_metric_event(
+                None,
+                1,
+                None,
+                &json!({ "value": "" }),
+                metric_time("2026-10-16 11:04:22.453259"),
+            )
+            .is_none()
+        );
     }
 }

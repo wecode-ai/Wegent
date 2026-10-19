@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from openai import APIConnectionError
 
 from app.services.execution.dispatcher import ExecutionDispatcher
 from app.services.execution.emitters import status_updating
@@ -78,8 +79,14 @@ def _build_fake_openai_module(
     class _FakeAsyncOpenAI:
         def __init__(self, **kwargs):
             self.responses = _FakeResponses()
+            self.base_url = kwargs["base_url"].rstrip("/") + "/"
 
-    return SimpleNamespace(AsyncOpenAI=_FakeAsyncOpenAI)
+        async def close(self):
+            pass
+
+    return SimpleNamespace(
+        AsyncOpenAI=_FakeAsyncOpenAI, APIConnectionError=APIConnectionError
+    )
 
 
 def _make_sse_request(subtask_id: int):
@@ -186,7 +193,7 @@ async def test_dispatch_sse_cancels_while_opening_stream() -> None:
             },
         ),
         patch(
-            "app.services.execution.dispatcher.OpenAIRequestConverter.from_execution_request",
+            "app.services.execution.chat_shell_sse.OpenAIRequestConverter.from_execution_request",
             return_value={
                 "model": "test-model",
                 "input": "hello",
@@ -247,7 +254,7 @@ async def test_cancelled_sse_owner_persists_terminal_state(
             {"openai": _build_fake_openai_module(stream, create_blocker)},
         ),
         patch(
-            "app.services.execution.dispatcher.OpenAIRequestConverter.from_execution_request",
+            "app.services.execution.chat_shell_sse.OpenAIRequestConverter.from_execution_request",
             return_value={"model": "test-model", "input": "hello", "metadata": {}},
         ),
         patch("app.services.chat.storage.session.session_manager", session_manager),
@@ -302,7 +309,7 @@ async def test_dispatch_sse_closes_stream_opened_during_cancellation() -> None:
             },
         ),
         patch(
-            "app.services.execution.dispatcher.OpenAIRequestConverter.from_execution_request",
+            "app.services.execution.chat_shell_sse.OpenAIRequestConverter.from_execution_request",
             return_value={
                 "model": "test-model",
                 "input": "hello",
@@ -342,7 +349,7 @@ async def test_dispatch_sse_cancels_while_waiting_for_event() -> None:
     with (
         patch.dict("sys.modules", {"openai": _build_fake_openai_module(stream)}),
         patch(
-            "app.services.execution.dispatcher.OpenAIRequestConverter.from_execution_request",
+            "app.services.execution.chat_shell_sse.OpenAIRequestConverter.from_execution_request",
             return_value={
                 "model": "test-model",
                 "input": "hello",
@@ -351,7 +358,7 @@ async def test_dispatch_sse_cancels_while_waiting_for_event() -> None:
             },
         ),
         patch(
-            "app.services.execution.dispatcher._SSE_CANCEL_POLL_INTERVAL_SECONDS",
+            "app.services.execution.chat_shell_sse._SSE_CANCEL_POLL_INTERVAL_SECONDS",
             0.01,
         ),
         patch("app.services.chat.storage.session.session_manager", session_manager),

@@ -132,3 +132,30 @@ where
         )
         .await
 }
+
+/// Load one user's stored connector authorization, mirroring
+/// `ConnectorConnectionService.get`'s
+/// `Kind.kind/namespace/name/user_id/is_active` lookup.
+pub async fn find_connector_connection<M>(
+    mysql: &M,
+    slug: &str,
+    user_id: i64,
+) -> MysqlResult<Option<KindRow>>
+where
+    M: Mysql,
+{
+    mysql
+        .fetch_optional(
+            "SELECT kinds.id AS kinds_id, kinds.user_id AS kinds_user_id, \
+             kinds.kind AS kinds_kind, kinds.name AS kinds_name, \
+             kinds.namespace AS kinds_namespace, kinds.json AS kinds_json, \
+             kinds.is_active AS kinds_is_active, kinds.created_at AS kinds_created_at, \
+             kinds.updated_at AS kinds_updated_at \
+             FROM kinds \
+             WHERE kinds.kind = 'ConnectorConnection' AND kinds.namespace = 'system' \
+             AND kinds.name = ? AND kinds.user_id = ? AND kinds.is_active = 1 \
+             LIMIT 1",
+            (slug, user_id),
+        )
+        .await
+}

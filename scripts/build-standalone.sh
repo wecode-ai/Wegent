@@ -18,6 +18,12 @@ IMAGE_NAME="${IMAGE_NAME:-ghcr.io/wecode-ai/wegent-standalone}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 PLATFORM="${PLATFORM:-}"
 NO_CACHE="${NO_CACHE:-false}"
+WEWORK_SOURCE_SHA="${WEWORK_SOURCE_SHA:-$(git rev-parse HEAD)}"
+
+if [[ ! "$WEWORK_SOURCE_SHA" =~ ^[0-9a-fA-F]{40,64}$ ]]; then
+    echo "Error: WEWORK_SOURCE_SHA must be a 40-64 character hexadecimal commit SHA"
+    exit 1
+fi
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -77,6 +83,7 @@ echo ""
 BUILD_CMD="docker build"
 BUILD_CMD="$BUILD_CMD -f docker/standalone/Dockerfile"
 BUILD_CMD="$BUILD_CMD -t ${IMAGE_NAME}:${IMAGE_TAG}"
+BUILD_CMD="$BUILD_CMD --build-arg WEWORK_SOURCE_SHA=${WEWORK_SOURCE_SHA}"
 
 if [ -n "$PLATFORM" ]; then
     BUILD_CMD="$BUILD_CMD --platform ${PLATFORM}"

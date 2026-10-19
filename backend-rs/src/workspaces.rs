@@ -13,9 +13,8 @@
 //!    `users_<column>` projection);
 //! 2. `workspace_service.list_accessible(db, current_user.id)` —
 //!    `cloud_project_visibility.readable_workspace_ids` returns the active
-//!    `CollaborationWorkspace` rows allowed to the caller (owned, maintainer,
-//!    developer, or reporter membership with `Owner`/`Maintainer`/
-//!    `Developer`/`Reporter` roles, excluding `RestrictedAnalyst`), ordered by
+//!    `CollaborationWorkspace` rows where the caller holds an approved
+//!    `Owner`/`Maintainer`/`Developer`/`Reporter` membership, ordered by
 //!    `updated_at DESC`, then the sequence is re-sorted default-first by
 //!    `(not is_default, -updated_at)`;
 //! 3. `user_memberships` roles read — one `resource_members` projection of the
@@ -32,6 +31,7 @@
 use crate::auth::SessionUser;
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
+use crate::workspace_rendering::{ExecutionEnvironment, datetime_value, execution_environment};
 use brz_http_server::StatusCode;
 use brz_json::OpaqueJson;
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
@@ -45,10 +45,6 @@ const KIND_COLUMNS: &str = "kinds.id AS kinds_id, kinds.user_id AS kinds_user_id
      kinds.namespace AS kinds_namespace, kinds.json AS kinds_json, \
      kinds.is_active AS kinds_is_active, kinds.created_at AS kinds_created_at, \
      kinds.updated_at AS kinds_updated_at";
-
-/// The `Workspace` member roles the source keeps readable
-/// (`ResourceMember.role != RestrictedAnalyst`).
-const RESTRICTED_ANALYST_EXCLUDED: &str = " AND resource_members.`role` != 'RestrictedAnalyst'";
 
 /// A `CollaborationWorkspace` `kinds` row, selected with the full labeled
 /// source column list so the prepared statement matches the recorded exchange.
@@ -84,7 +80,7 @@ async fn accessible_workspaces<M: Mysql>(
     mysql
         .fetch_all(
             format!(
-                "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.kind = 'CollaborationWorkspace' AND kinds.is_active IS true AND kinds.id IN (SELECT resource_members.resource_id \nFROM resource_members INNER JOIN kinds ON kinds.id = resource_members.resource_id \nWHERE resource_members.resource_type = 'Workspace' AND resource_members.entity_type = 'user' AND resource_members.entity_id = '{user_id}' AND resource_members.status = 'approved' AND resource_members.`role` IN ('Owner', 'Maintainer', 'Developer', 'Reporter', 'RestrictedAnalyst') AND kinds.kind = 'CollaborationWorkspace' AND kinds.is_active IS true{RESTRICTED_ANALYST_EXCLUDED}) ORDER BY kinds.updated_at DESC"
+                "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.kind = 'CollaborationWorkspace' AND kinds.is_active IS true AND kinds.id IN (SELECT resource_members.resource_id \nFROM resource_members INNER JOIN kinds ON kinds.id = resource_members.resource_id \nWHERE resource_members.resource_type = 'Workspace' AND resource_members.entity_type = 'user' AND resource_members.entity_id = '{user_id}' AND resource_members.status = 'approved' AND kinds.kind = 'CollaborationWorkspace' AND kinds.is_active IS true AND resource_members.`role` IN ('Owner', 'Maintainer', 'Developer', 'Reporter')) ORDER BY kinds.updated_at DESC"
             ),
             (),
         )
@@ -183,43 +179,6 @@ async fn summary_counts<M: Mysql>(
     Ok(output)
 }
 
-/// pydantic naive-datetime serialization: `YYYY-MM-DDTHH:MM:SS` plus
-/// fractional seconds when nonzero.
-fn datetime_value(value: NaiveDateTime) -> String {
-    let base = value.format("%Y-%m-%dT%H:%M:%S").to_string();
-    if value.and_utc().timestamp_subsec_nanos() == 0 {
-        base
-    } else {
-        format!("{base}.{:06}", value.and_utc().timestamp_subsec_micros())
-    }
-}
-
-/// `ExecutionEnvironmentConfig` (`app.schemas.workspace`): the shared
-/// execution-environment definition plus the per-device preparation state,
-/// rendered with the source's field order.
-#[derive(Debug, serde::Serialize)]
-struct ExecutionEnvironment {
-    repositories: Vec<ExecutionRepository>,
-    setup_steps: Vec<ExecutionSetupStep>,
-    fingerprint: String,
-    devices: serde_json::Map<String, serde_json::Value>,
-}
-
-#[derive(Debug, serde::Serialize)]
-struct ExecutionRepository {
-    name: String,
-    url: String,
-    r#ref: String,
-    path: String,
-    primary: bool,
-}
-
-#[derive(Debug, serde::Serialize)]
-struct ExecutionSetupStep {
-    command: String,
-    working_directory: String,
-}
-
 /// The `WorkspaceResponse` body, mirroring the schema field order.
 #[derive(Debug, serde::Serialize)]
 struct WorkspaceBody {
@@ -247,70 +206,6 @@ struct WorkspaceBody {
 #[derive(Debug, serde::Serialize)]
 struct WorkspaceListResponse {
     items: Vec<WorkspaceBody>,
-}
-
-/// One trimmed string field of a persisted execution-environment sub-object.
-fn text_field(object: &serde_json::Map<String, serde_json::Value>, key: &str) -> String {
-    object
-        .get(key)
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("")
-        .to_string()
-}
-
-/// `ExecutionEnvironmentConfig.model_validate(spec.get("executionEnvironment")
-/// or {}).model_dump()`.
-fn execution_environment(json: &serde_json::Value) -> ExecutionEnvironment {
-    let source = json
-        .get("spec")
-        .and_then(|spec| spec.get("executionEnvironment"));
-    let source_object = source.and_then(serde_json::Value::as_object);
-    let repositories = source_object
-        .and_then(|object| object.get("repositories"))
-        .and_then(serde_json::Value::as_array)
-        .map(|list| {
-            list.iter()
-                .filter_map(serde_json::Value::as_object)
-                .map(|item| ExecutionRepository {
-                    name: text_field(item, "name"),
-                    url: text_field(item, "url"),
-                    r#ref: text_field(item, "ref"),
-                    path: text_field(item, "path"),
-                    primary: item
-                        .get("primary")
-                        .and_then(serde_json::Value::as_bool)
-                        .unwrap_or(false),
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let setup_steps = source_object
-        .and_then(|object| object.get("setup_steps"))
-        .and_then(serde_json::Value::as_array)
-        .map(|list| {
-            list.iter()
-                .filter_map(serde_json::Value::as_object)
-                .map(|item| ExecutionSetupStep {
-                    command: text_field(item, "command"),
-                    working_directory: text_field(item, "working_directory"),
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let devices = source_object
-        .and_then(|object| object.get("devices"))
-        .and_then(serde_json::Value::as_object)
-        .cloned()
-        .unwrap_or_default();
-    let fingerprint = source_object
-        .map(|object| text_field(object, "fingerprint"))
-        .unwrap_or_default();
-    ExecutionEnvironment {
-        repositories,
-        setup_steps,
-        fingerprint,
-        devices,
-    }
 }
 
 /// `workspace_from_kind` over one `kinds` row.
@@ -358,17 +253,17 @@ async fn list_workspaces(
     #[inject(state)] state: &AppState,
     #[auth] current_user: SessionUser,
 ) -> Result<WorkspaceListResponse, FastApiError> {
-    workspaces_list(&state.mysql, current_user.0.id)
-        .await
-        .map_err(|error| {
-            tracing::error!(%error, "workspaces dependency failure");
-            FastApiError::detail(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
-        })
+    workspaces_list(&state.mysql, current_user.0.id).await
 }
 
 /// Handler body for `GET /api/v1/workspaces`.
-async fn workspaces_list<M: Mysql>(mysql: &M, user_id: i32) -> MysqlResult<WorkspaceListResponse> {
-    let mut workspaces = accessible_workspaces(mysql, user_id).await?;
+async fn workspaces_list<M: Mysql>(
+    mysql: &M,
+    user_id: i32,
+) -> Result<WorkspaceListResponse, FastApiError> {
+    let mut workspaces = accessible_workspaces(mysql, user_id)
+        .await
+        .map_err(list_internal_error)?;
     // `sorted(workspaces, key=lambda item: (not item.is_default, -item.updated_at.timestamp()))`
     workspaces.sort_by(|left, right| {
         let key = |workspace: &WorkspaceRow| {
@@ -389,18 +284,22 @@ async fn workspaces_list<M: Mysql>(mysql: &M, user_id: i32) -> MysqlResult<Works
     });
 
     let ids: Vec<i64> = workspaces.iter().map(|workspace| workspace.id).collect();
-    let roles = roles_by_workspace(mysql, user_id, &ids).await?;
+    let roles = roles_by_workspace(mysql, user_id, &ids)
+        .await
+        .map_err(list_internal_error)?;
     let roles: HashMap<i64, String> = roles.into_iter().collect();
-    let counts = summary_counts(mysql, &ids).await?;
+    let counts = summary_counts(mysql, &ids)
+        .await
+        .map_err(list_internal_error)?;
 
     let items = workspaces
         .into_iter()
-        .map(|workspace| {
+        .map(|workspace| -> Result<WorkspaceBody, FastApiError> {
             let json = workspace.json.0.to_value();
             let crd = workspace_crd(&json);
             let counts = counts.get(&workspace.id).cloned().unwrap_or_default();
             let access_role = roles.get(&workspace.id).map(String::as_str).unwrap_or("");
-            WorkspaceBody {
+            Ok(WorkspaceBody {
                 id: workspace.id.to_string(),
                 public_id: crd.public_id.unwrap_or_else(|| workspace.id.to_string()),
                 name: workspace.name,
@@ -415,7 +314,7 @@ async fn workspaces_list<M: Mysql>(mysql: &M, user_id: i32) -> MysqlResult<Works
                     .get("execution_environment_count")
                     .copied()
                     .unwrap_or(0),
-                execution_environment: execution_environment(&json),
+                execution_environment: execution_environment(&json)?,
                 is_default: crd.is_default,
                 status: if workspace.is_active != 0 {
                     "active"
@@ -425,11 +324,17 @@ async fn workspaces_list<M: Mysql>(mysql: &M, user_id: i32) -> MysqlResult<Works
                 version: crd.version,
                 created_at: datetime_value(workspace.created_at),
                 updated_at: datetime_value(workspace.updated_at),
-            }
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(WorkspaceListResponse { items })
+}
+
+/// The list read's MySQL failure: `500 {"detail": "Internal server error"}`.
+fn list_internal_error(error: brz_mysql::MysqlError) -> FastApiError {
+    tracing::error!(%error, "workspaces dependency failure");
+    FastApiError::detail(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
 }
 
 #[cfg(test)]
@@ -446,12 +351,10 @@ mod tests {
         assert_eq!(queries.len(), 1);
         assert!(queries[0].sql.contains("FROM kinds"));
         assert!(queries[0].sql.contains("CollaborationWorkspace"));
-        assert!(
-            queries[0]
-                .sql
-                .contains("'Owner', 'Maintainer', 'Developer', 'Reporter'")
-        );
-        assert!(queries[0].sql.contains("RestrictedAnalyst"));
+        assert!(queries[0].sql.contains(
+            "resource_members.`role` IN ('Owner', 'Maintainer', 'Developer', 'Reporter')"
+        ));
+        assert!(!queries[0].sql.contains("RestrictedAnalyst"));
     }
 
     #[test]
@@ -461,7 +364,7 @@ mod tests {
                 "setup_steps": [], "repositories": []}}
         });
         let rendered =
-            crate::json_contract_tests::serialized(execution_environment(&json)).unwrap();
+            crate::json_contract_tests::serialized(execution_environment(&json).unwrap()).unwrap();
         let keys: Vec<&str> = rendered
             .as_object()
             .unwrap()
@@ -470,8 +373,15 @@ mod tests {
             .collect();
         assert_eq!(
             keys,
-            ["repositories", "setup_steps", "fingerprint", "devices"]
+            [
+                "workspace_policy",
+                "repositories",
+                "setup_steps",
+                "fingerprint",
+                "devices"
+            ]
         );
+        assert_eq!(rendered["workspace_policy"], "git_worktree");
         assert_eq!(rendered["fingerprint"], "abc");
     }
 

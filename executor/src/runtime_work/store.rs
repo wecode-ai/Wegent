@@ -742,7 +742,7 @@ fn temporary_index_path(index_path: &Path) -> PathBuf {
     ))
 }
 
-fn atomic_write_file(index_path: &Path, payload: &[u8]) -> io::Result<()> {
+pub(super) fn atomic_write_file(index_path: &Path, payload: &[u8]) -> io::Result<()> {
     let parent = index_parent(index_path);
     fs::create_dir_all(parent)
         .map_err(|error| io_error_with_context("create index parent directory", parent, error))?;

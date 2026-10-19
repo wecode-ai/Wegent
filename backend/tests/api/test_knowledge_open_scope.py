@@ -695,3 +695,19 @@ def test_open_batch_move_documents_maps_zero_success_errors(
 
     assert response.status_code == expected_status
     assert response.json()["detail"] == message
+
+
+@pytest.fixture(autouse=True)
+def _retained_python_handler_contracts(test_client):
+    import app.api.endpoints.knowledge_open as endpoint_0
+    from tests.legacy_python_routes import legacy_python_handlers
+
+    with legacy_python_handlers(test_client.app) as register:
+        register(
+            "/api/knowledge/documents",
+            endpoint_0.list_documents_open,
+            endpoint_0.router,
+            methods=["GET"],
+            response_model=endpoint_0.KnowledgeDocumentListResponse,
+        )
+        yield

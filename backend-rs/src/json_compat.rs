@@ -96,7 +96,20 @@ fn render_json_string(value: &str, ensure_ascii: bool) -> String {
 /// (`json.dumps` is its default serializer), and the rendering the cached
 /// kind reader applies to `model_to_dict` output.
 pub fn python_json_value(value: &Value) -> String {
-    render_json_value(value, true)
+    render_json_value(value, true, false)
+}
+
+/// Apply SQLAlchemy's Python JSON serializer to a typed metadata document.
+pub fn python_json<T: serde::Serialize>(value: &T) -> Result<String, serde_json::Error> {
+    serde_json::to_value(value).map(|value| python_json_value(&value))
+}
+
+/// Render a JSON value like `json.dumps(value, separators=(",", ":"))`
+/// (`ensure_ascii=True`): PyJWT's JWS payload encoder
+/// (`jwt/api_jws.py:encode`), which keeps the mapping insertion order and
+/// escapes non-ASCII the same way.
+pub fn python_json_compact(value: &Value) -> String {
+    render_json_value(value, true, true)
 }
 
 /// Render a JSON value like Python's `json.dumps(..., ensure_ascii=False)`
@@ -104,10 +117,11 @@ pub fn python_json_value(value: &Value) -> String {
 /// `_build_subtask_content_fields` applies it to non-string message content
 /// before the value is stored.
 pub fn python_json_value_no_ascii(value: &Value) -> String {
-    render_json_value(value, false)
+    render_json_value(value, false, false)
 }
 
-fn render_json_value(value: &Value, ensure_ascii: bool) -> String {
+fn render_json_value(value: &Value, ensure_ascii: bool, compact: bool) -> String {
+    let (item_separator, key_separator) = if compact { (",", ":") } else { (", ", ": ") };
     match value {
         Value::Null => "null".to_owned(),
         Value::Bool(flag) => flag.to_string(),
@@ -117,9 +131,9 @@ fn render_json_value(value: &Value, ensure_ascii: bool) -> String {
             let mut out = String::from("[");
             for (index, item) in items.iter().enumerate() {
                 if index > 0 {
-                    out.push_str(", ");
+                    out.push_str(item_separator);
                 }
-                out.push_str(&render_json_value(item, ensure_ascii));
+                out.push_str(&render_json_value(item, ensure_ascii, compact));
             }
             out.push(']');
             out
@@ -128,11 +142,11 @@ fn render_json_value(value: &Value, ensure_ascii: bool) -> String {
             let mut out = String::from("{");
             for (index, (key, item)) in map.iter().enumerate() {
                 if index > 0 {
-                    out.push_str(", ");
+                    out.push_str(item_separator);
                 }
                 out.push_str(&render_json_string(key, ensure_ascii));
-                out.push_str(": ");
-                out.push_str(&render_json_value(item, ensure_ascii));
+                out.push_str(key_separator);
+                out.push_str(&render_json_value(item, ensure_ascii, compact));
             }
             out.push('}');
             out
@@ -140,13 +154,118 @@ fn render_json_value(value: &Value, ensure_ascii: bool) -> String {
     }
 }
 
+/// Python truthiness (`bool(value)`) for a decoded JSON value: `None`,
+/// `False`, numeric zero, the empty string, and empty arrays/objects are
+/// falsy; every other value is truthy.
+pub fn python_truthy(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(flag) => *flag,
+        Value::Number(number) => number.as_f64().is_none_or(|number| number != 0.0),
+        Value::String(text) => !text.is_empty(),
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(map) => !map.is_empty(),
+    }
+}
+
+/// Python `str(value)` for a decoded JSON value. Containers render through
+/// `repr()`, which is also what `str()` applies to their elements.
+pub fn python_str(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        Value::Array(_) | Value::Object(_) => python_repr(value),
+        other => python_scalar_repr(other),
+    }
+}
+
+/// Python `repr(value)` for a decoded JSON value.
+pub fn python_repr(value: &Value) -> String {
+    match value {
+        Value::String(text) => python_string_repr(text),
+        Value::Array(items) => {
+            let parts: Vec<String> = items.iter().map(python_repr).collect();
+            format!("[{}]", parts.join(", "))
+        }
+        Value::Object(map) => {
+            let parts: Vec<String> = map
+                .iter()
+                .map(|(key, value)| format!("{}: {}", python_string_repr(key), python_repr(value)))
+                .collect();
+            format!("{{{}}}", parts.join(", "))
+        }
+        other => python_scalar_repr(other),
+    }
+}
+
+/// Python `repr()` of a JSON scalar: `None`, `True`, `False`, and decimals.
+/// Floats use Rust's shortest round-trip rendering, which matches Python's
+/// `repr()` for the common integral and fractional values (only the exponent
+/// spelling of extreme magnitudes can differ).
+fn python_scalar_repr(value: &Value) -> String {
+    match value {
+        Value::Null => "None".to_owned(),
+        Value::Bool(true) => "True".to_owned(),
+        Value::Bool(false) => "False".to_owned(),
+        Value::Number(number) => {
+            if let Some(signed) = number.as_i64() {
+                signed.to_string()
+            } else if let Some(unsigned) = number.as_u64() {
+                unsigned.to_string()
+            } else {
+                let float = number.as_f64().unwrap_or_default();
+                format!("{float:?}")
+            }
+        }
+        Value::String(text) => text.clone(),
+        Value::Array(_) | Value::Object(_) => python_repr(value),
+    }
+}
+
+/// Python's single-quoted string `repr()`: single quotes unless the text
+/// contains a single quote and no double quote.
+fn python_string_repr(text: &str) -> String {
+    if text.contains('\'') && !text.contains('"') {
+        format!("\"{text}\"")
+    } else {
+        format!("'{}'", text.replace('\\', "\\\\").replace('\'', "\\'"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn python_truthiness_matches_the_source_coercions() {
+        assert!(!python_truthy(&Value::Null));
+        assert!(!python_truthy(&json!(false)));
+        assert!(python_truthy(&json!(true)));
+        assert!(!python_truthy(&json!(0)));
+        assert!(!python_truthy(&json!(0.0)));
+        assert!(python_truthy(&json!(-1)));
+        assert!(!python_truthy(&json!("")));
+        assert!(python_truthy(&json!("0")));
+        assert!(!python_truthy(&json!([])));
+        assert!(!python_truthy(&json!({})));
+        assert!(python_truthy(&json!([null])));
+    }
+
+    #[test]
+    fn python_str_matches_the_source_coercions() {
+        assert_eq!(python_str(&Value::Null), "None");
+        assert_eq!(python_str(&json!(true)), "True");
+        assert_eq!(python_str(&json!(false)), "False");
+        assert_eq!(python_str(&json!(7)), "7");
+        assert_eq!(python_str(&json!(-3)), "-3");
+        assert_eq!(python_str(&json!("ok")), "ok");
+        assert_eq!(python_str(&json!(["a", 1])), "['a', 1]");
+        assert_eq!(python_str(&json!({"k": "v"})), "{'k': 'v'}");
+    }
 
     #[test]
     fn python_json_string_escapes_non_ascii() {
-        assert_eq!(python_json_string("严笑"), "\"\\u4e25\\u7b11\"");
+        assert_eq!(python_json_string("示例"), "\"\\u793a\\u4f8b\"");
         assert_eq!(python_json_string("a\"b\\c\n"), "\"a\\\"b\\\\c\\n\"");
         assert_eq!(python_json_string("\u{1f600}"), "\"\\ud83d\\ude00\"");
         assert_eq!(python_json_string("Chat"), "\"Chat\"");
@@ -166,6 +285,23 @@ mod tests {
             "{\"modelRef\": {\"name\": \"example-model(\\u516c\\u7f51)\", \
              \"namespace\": \"default\"}, \"count\": 2, \"ratio\": 1.5, \"flag\": true, \
              \"missing\": null}"
+        );
+    }
+
+    #[test]
+    fn python_json_compact_matches_the_jws_payload_separators() {
+        let value = serde_json::json!({
+            "iss": "wegent",
+            "aud": "example-audience",
+            "user_name": "示例",
+            "issuer_id": 402,
+            "enabled": true,
+            "missing": null
+        });
+        assert_eq!(
+            python_json_compact(&value),
+            "{\"iss\":\"wegent\",\"aud\":\"example-audience\",\"user_name\":\"\\u793a\\u4f8b\",\
+             \"issuer_id\":402,\"enabled\":true,\"missing\":null}"
         );
     }
 }

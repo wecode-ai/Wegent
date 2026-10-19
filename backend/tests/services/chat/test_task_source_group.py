@@ -7,12 +7,13 @@
 from collections.abc import Generator
 from contextlib import contextmanager
 from types import SimpleNamespace
+from typing import Literal
 from unittest.mock import Mock, call, patch
 
 import pytest
 from fastapi import HTTPException
 from redis.exceptions import ConnectionError as RedisConnectionError
-from sqlalchemy import create_engine, event
+from sqlalchemy import MetaData, create_engine, event
 from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import ORMExecuteState, Session
 
@@ -82,6 +83,40 @@ def _create_task(db: Session, user: User, **kwargs: object) -> TaskResource:
         return create_new_task(
             db, user, team, TaskCreationParams(message="Hello", **kwargs)
         )
+
+
+@pytest.mark.parametrize("task_source", ["api", "dingtalk"])
+def test_source_group_creation_with_non_nullable_description_and_color(
+    task_source: Literal["api", "dingtalk"],
+) -> None:
+    """Older installations require non-null project description and color."""
+    engine = create_engine("sqlite:///:memory:")
+    metadata = MetaData()
+    User.__table__.to_metadata(metadata)
+    projects = Project.__table__.to_metadata(metadata)
+    projects.c.description.nullable = False
+    projects.c.color.nullable = False
+    metadata.create_all(engine)
+    try:
+        with Session(engine) as db:
+            user = User(user_name="source-group-user", password_hash="unused")
+            db.add(user)
+            db.flush()
+
+            group = get_or_create_task_source_group(
+                db,
+                user_id=user.id,
+                client_origin="frontend",
+                task_source=task_source,
+            )
+            db.commit()
+            db.refresh(group)
+
+            assert group.description == ""
+            assert group.color == ""
+            assert group.config["taskSource"] == task_source
+    finally:
+        engine.dispose()
 
 
 def test_api_tasks_share_collapsed_group_and_web_chat_stays_ungrouped(

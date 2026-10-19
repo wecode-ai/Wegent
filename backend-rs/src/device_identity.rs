@@ -20,7 +20,7 @@ use std::collections::HashMap;
 const RECORD_ROUTE_PREFIX: &str = "app-record-";
 
 /// Source `kinds` Device filter (`resolve_owned_device_alias` base query).
-const KINDS_DEVICE_QUERY: &str = "SELECT kinds.id AS kinds_id, kinds.user_id AS kinds_user_id, \
+pub(crate) const KINDS_DEVICE_QUERY: &str = "SELECT kinds.id AS kinds_id, kinds.user_id AS kinds_user_id, \
      kinds.kind AS kinds_kind, kinds.name AS kinds_name, \
      kinds.namespace AS kinds_namespace, kinds.json AS kinds_json, \
      kinds.is_active AS kinds_is_active, kinds.created_at AS kinds_created_at, \
@@ -74,7 +74,7 @@ impl DeviceKindRow {
 
 /// Source `app/services/device/identity.py::record_id_from_route`: extract a
 /// persisted Device record id from an App transport route.
-fn record_id_from_route(device_id: &str) -> Option<i64> {
+pub(crate) fn record_id_from_route(device_id: &str) -> Option<i64> {
     let suffix = device_id.strip_prefix(RECORD_ROUTE_PREFIX)?;
     if suffix.is_ascii() && suffix.bytes().all(|b| b.is_ascii_digit()) {
         let id: i64 = suffix.parse().ok()?;
@@ -86,7 +86,7 @@ fn record_id_from_route(device_id: &str) -> Option<i64> {
 
 /// Source `app/schemas/device.py::DeviceType`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DeviceType {
+pub enum DeviceType {
     Local,
     App,
     Cloud,
@@ -102,6 +102,17 @@ impl DeviceType {
             Some("cloud") => Self::Cloud,
             Some("remote") => Self::Remote,
             _ => Self::Local,
+        }
+    }
+
+    /// `DeviceType.value`: the lowercase member value persisted on the CRD.
+    #[must_use]
+    pub fn value(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::App => "app",
+            Self::Cloud => "cloud",
+            Self::Remote => "remote",
         }
     }
 }
@@ -165,7 +176,7 @@ fn unambiguous_device(matches: Vec<DeviceKindRow>) -> Option<DeviceKindRow> {
 /// Returns the resolved device row, or `None` when no unambiguous match
 /// exists. Mirrors the SQLAlchemy filter exactly: `user_id`, `kind='Device'`,
 /// `namespace='default'`, `is_active=true`.
-async fn resolve_owned_device_alias<M>(
+pub(crate) async fn resolve_owned_device_alias<M>(
     mysql: &M,
     user_id: i64,
     device_id: &str,
@@ -192,6 +203,55 @@ where
         .filter(|d| device_identity_ids(d).iter().any(|id| id == submitted))
         .collect();
     Ok(unambiguous_device(matches))
+}
+
+/// Source `app/services/device/runtime_route.py::RuntimeRouteIdentity`,
+/// reduced to the members the migrated device session endpoints consume.
+///
+/// The source identity also carries `runtime_device_id`,
+/// `runtime_instance_id`, and `app_device_id`; a consumer that needs those must
+/// extend this projection rather than re-derive the row lookup.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeRouteIdentity {
+    /// `logical_device_id`: the Kind `name`, or `app-record-<id>` for App
+    /// devices (`_identity_from_device` -> `record_route_id`).
+    pub logical_device_id: String,
+    /// `device_type`: the normalized `spec.deviceType`.
+    pub device_type: DeviceType,
+}
+
+/// Source `app/services/device/runtime_route.py::resolve_runtime_route_identity`:
+/// resolve one submitted device id within the owner's active devices.
+///
+/// `None` covers both the no-unambiguous-match result of
+/// `resolve_owned_device_alias` and a row whose `runtime_device_route_id` is
+/// empty (`_identity_from_device`), which the session endpoints render as
+/// `DeviceSessionNotFoundError`.
+pub async fn resolve_runtime_route_identity<M>(
+    mysql: &M,
+    user_id: i64,
+    submitted_device_id: &str,
+) -> MysqlResult<Option<RuntimeRouteIdentity>>
+where
+    M: Mysql,
+{
+    let Some(device) = resolve_owned_device_alias(mysql, user_id, submitted_device_id).await?
+    else {
+        return Ok(None);
+    };
+    Ok(identity_from_device(&device))
+}
+
+/// Source `app/services/device/runtime_route.py::_identity_from_device`.
+fn identity_from_device(device: &DeviceKindRow) -> Option<RuntimeRouteIdentity> {
+    // `if not runtime_device_id: return None`.
+    if runtime_device_id(device).is_empty() {
+        return None;
+    }
+    Some(RuntimeRouteIdentity {
+        logical_device_id: record_route_id(device),
+        device_type: DeviceType::from_spec(&device.spec()),
+    })
 }
 
 /// Source `app/services/device/runtime_route.py::_runtime_device_id`.
@@ -496,5 +556,42 @@ mod tests {
             }),
         };
         assert_eq!(canonical_device_id(&row), "8afb8635");
+    }
+
+    #[test]
+    fn runtime_route_identity_reduces_the_source_members() {
+        let row = DeviceKindRow {
+            id: 241960,
+            name: "8afb8635".to_string(),
+            json: serde_json::json!({
+                "spec": {
+                    "deviceType": "cloud",
+                    "deviceId": "8afb8635",
+                    "cloudConfig": {"deviceId": "sb-1"}
+                }
+            }),
+        };
+        let identity = identity_from_device(&row).expect("cloud identity");
+        assert_eq!(identity.logical_device_id, "8afb8635");
+        assert_eq!(identity.device_type, DeviceType::Cloud);
+        assert_eq!(identity.device_type.value(), "cloud");
+
+        // App devices keep the record route as their logical identity.
+        let app = DeviceKindRow {
+            id: 268663,
+            name: "local-device".to_string(),
+            json: serde_json::json!({"spec": {"deviceType": "app"}}),
+        };
+        let identity = identity_from_device(&app).expect("app identity");
+        assert_eq!(identity.logical_device_id, "app-record-268663");
+        assert_eq!(identity.device_type, DeviceType::App);
+
+        // No runtime route id means no identity, like `_identity_from_device`.
+        let unroutable = DeviceKindRow {
+            id: 9,
+            name: String::new(),
+            json: serde_json::json!({"spec": {"deviceType": "local"}}),
+        };
+        assert!(identity_from_device(&unroutable).is_none());
     }
 }

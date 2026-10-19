@@ -132,6 +132,7 @@ class IssueAssignmentService:
         trigger: str,
         comment_id: str | None = None,
         comment_body: str | None = None,
+        replace_root_assignments: bool = False,
     ) -> tuple[AssignmentEvent, bool]:
         del workspace_id
         normalized_type = self._member_type(member_type)
@@ -143,11 +144,17 @@ class IssueAssignmentService:
             member_id=normalized_id,
             workflow_step=workflow_step,
         )
-        if existing is not None and not (
-            existing.metadata.get("trigger") == "default" and trigger != "default"
+        if (
+            existing is not None
+            and not replace_root_assignments
+            and not (
+                existing.metadata.get("trigger") == "default" and trigger != "default"
+            )
         ):
             return existing, False
-        if normalized_type == "human" and not self._workflow_step(workflow_step):
+        if (
+            normalized_type == "human" or replace_root_assignments
+        ) and not self._workflow_step(workflow_step):
             for previous in self._active_events(db, issue_id).values():
                 if previous.workflow_step:
                     continue

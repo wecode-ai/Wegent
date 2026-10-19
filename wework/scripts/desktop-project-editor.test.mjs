@@ -9,7 +9,7 @@ test.each(['edit', 'rename'])(
     let opened = false
     const calls = []
     const control = {
-      async command(command, selector) {
+      async command(command, selector, options) {
         calls.push(command)
         if (command === 'click' && selector.includes('project-menu-7')) {
           setTimeout(() => {
@@ -25,8 +25,12 @@ test.each(['edit', 'rename'])(
           assert.ok(menuAction && selector.includes(`data-testid="${menuAction}"`))
           opened = true
         } else if (command === 'waitFor') {
-          assert.equal(selector, '[data-testid="local-project-edit-dialog"]')
-          assert.ok(opened)
+          if (selector === '[data-testid="local-project-edit-dialog"]') {
+            assert.ok(opened)
+          } else {
+            assert.equal(selector, '[data-testid="project-menu-7"][aria-expanded="true"]')
+            assert.ok(options.stableMs > 0)
+          }
         }
         return ''
       },
@@ -35,6 +39,6 @@ test.each(['edit', 'rename'])(
     await openRuntimeProjectEditor(control, 7)
 
     assert.ok(opened)
-    assert.deepEqual(calls, ['hover', 'click', 'clickWhenEnabled', 'waitFor'])
+    assert.deepEqual(calls, ['hover', 'click', 'waitFor', 'clickWhenEnabled', 'waitFor'])
   }
 )

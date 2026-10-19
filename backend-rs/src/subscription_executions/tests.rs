@@ -273,6 +273,37 @@ fn team_predicate_wraps_multiple_conditions_in_one_group() {
 }
 
 #[test]
+fn insert_team_ref_dedupes_and_preserves_first_seen_order() {
+    // The source builds `team_refs` as a dict keyed by (name, namespace):
+    // repeated references collapse to one first-seen entry per team.
+    let mut team_refs: Vec<(String, String)> = Vec::new();
+    for (name, namespace) in [
+        ("wegent-wework", "default"),
+        ("wegent-chat", "default"),
+        ("wegent-wework", "default"),
+    ] {
+        insert_team_ref(
+            &mut team_refs,
+            &TeamRef {
+                name: name.to_string(),
+                namespace: namespace.to_string(),
+            },
+        );
+    }
+    assert_eq!(
+        team_refs,
+        vec![
+            ("wegent-wework".to_string(), "default".to_string()),
+            ("wegent-chat".to_string(), "default".to_string()),
+        ]
+    );
+    assert_eq!(
+        team_predicate(&team_refs),
+        "(kinds.name = 'wegent-wework' AND kinds.namespace = 'default' OR kinds.name = 'wegent-chat' AND kinds.namespace = 'default')"
+    );
+}
+
+#[test]
 fn escape_sql_string_quotes_apostrophes() {
     assert_eq!(escape_sql_string("a'b"), "a\\'b");
     assert_eq!(escape_sql_string("normal"), "normal");

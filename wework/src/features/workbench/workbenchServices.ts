@@ -39,6 +39,7 @@ import { createChatStream } from '@/stream/chatStream'
 import type {
   Attachment,
   ModelOptions,
+  ModelSelectionConfig,
   ModelType,
   RuntimeTaskAddress,
   ProjectDeviceSessionResponse,
@@ -253,6 +254,7 @@ export interface WorkbenchServices {
   replyPredictionApi?: {
     predict: (data: {
       address: RuntimeTaskAddress
+      modelSelection?: ModelSelectionConfig | null
       latestTurnId?: string | null
       signal?: AbortSignal
     }) => Promise<{ suggestion: string | null }>

@@ -233,10 +233,7 @@ mod tests {
             pub(super) discovery_url: String,
         }
 
-        brz_http_server::registry!(
-            group = oidc_login_probe,
-            dependencies(cfg: LoginProbeState)
-        );
+        brz_http_server::registry!(group = oidc_login_probe, dependencies(cfg: LoginProbeState));
 
         #[brz_http_server::get("/api/auth/oidc/login", group = super::probe::oidc_login_probe, access = public)]
         async fn login(

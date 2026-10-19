@@ -10,6 +10,7 @@ import {
 import type { DshRuntimeOptions } from './dsh-runtime.js'
 import { assertExecutorWorkbenchCompatibility } from './workbench-executor-schema.js'
 import { resolveDesktopDeviceId } from './desktop-device-id.js'
+import { CoreDshPluginManager } from './core-dsh-plugin-manager.js'
 
 vi.mock('./workbench-executor-schema.js', () => ({
   assertExecutorWorkbenchCompatibility: vi.fn(),
@@ -167,6 +168,48 @@ describe('DesktopRuntime lifecycle generation', () => {
 
   afterEach(async () => {
     prepareState.resolveLaunch = null
+  })
+
+  test('reapplies development configuration after each profile preparation', async () => {
+    const sourceRoot = '/tmp/wework-development-plugin'
+    const ensure = vi
+      .spyOn(CoreDshPluginManager.prototype, 'ensureDevelopmentPlugin')
+      .mockResolvedValue({
+        name: 'development-plugin',
+        displayName: 'Development',
+        description: '',
+        version: '1.0.0',
+        sourceRoot,
+      })
+    const runtime = createRuntime({
+      WEWORK_HARNESS_RUNTIME_ROOT: '/tmp/wework-harness-root',
+      WEWORK_PLUGIN_DEVELOPMENT_ROOT: sourceRoot,
+      WEGENT_APP_IPC_DEVICE_ID: 'test-device-id',
+    })
+    try {
+      for (const generation of [1, 2]) {
+        const started = generation === 1 ? runtime.start() : runtime.restartCoreDsh()
+        await vi.waitFor(() => expect(prepareState.prepareCalls).toBe(generation))
+        prepareState.resolveLaunch?.({
+          command: 'node',
+          entry: 'entry.js',
+          args: [],
+          cwd: '/tmp/wework-harness-root',
+          dshHome: '/tmp/wework-harness-root/home',
+          environment: {},
+          profile: 'test',
+          version: '0.0.0',
+          sourceFingerprint: 'test',
+        })
+        await started
+        expect(ensure).toHaveBeenCalledTimes(generation)
+        expect(ensure).toHaveBeenLastCalledWith(sourceRoot)
+        expect(runtime.state().ready).toBe(true)
+      }
+    } finally {
+      await runtime.stop()
+      ensure.mockRestore()
+    }
   })
 
   test('rejects an incompatible executor before constructing its managed Home writer', async () => {

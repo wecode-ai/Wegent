@@ -4,7 +4,6 @@
 
 #[cfg(test)]
 use super::context_compaction::context_compaction_outcome;
-use super::context_compaction::context_compaction_request;
 use super::context_compaction::wait_for_context_compaction;
 use super::*;
 
@@ -1618,7 +1617,7 @@ impl RuntimeWorkRpcHandler {
             ));
         };
 
-        let request = context_compaction_request(&link, &payload)?;
+        let request = runtime_model_request(&link, &payload)?;
         let client = match self.codex_app_server.for_request(&request) {
             Ok(client) => client,
             Err(error) => return Ok(task_action_failure(&link, error)),

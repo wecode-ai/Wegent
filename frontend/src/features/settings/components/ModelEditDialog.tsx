@@ -197,6 +197,7 @@ const MODEL_CATEGORY_OPTIONS: { value: ModelCategoryType; labelKey: string }[] =
   { value: 'rerank', labelKey: 'models.model_category_type_rerank' },
   { value: 'video', labelKey: 'models.model_category_type_video' },
   { value: 'image', labelKey: 'models.model_category_type_image' },
+  { value: 'decision', labelKey: 'models.model_category_type_decision' },
 ]
 
 // Protocol options by model category type
@@ -246,6 +247,10 @@ const PROTOCOL_BY_CATEGORY: Record<
     { value: 'stability', label: 'Stability AI', hint: 'Stable Diffusion' },
     { value: 'midjourney', label: 'Midjourney', hint: 'Midjourney API' },
     { value: 'custom', label: 'Custom API' },
+  ],
+  decision: [
+    { value: 'systemone', label: 'SystemOne' },
+    { value: 'openai', label: 'OpenAI Decisions' },
   ],
 }
 
@@ -482,7 +487,10 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         const protocol = effectiveInitialData.protocol
         // Map model type to provider type
         // For video models, use protocol directly as provider type (seedance, runway, pika, etc.)
-        if ((categoryType === 'video' || categoryType === 'image') && protocol) {
+        if (
+          (categoryType === 'video' || categoryType === 'image' || categoryType === 'decision') &&
+          protocol
+        ) {
           setProviderType(protocol)
         } else if (protocol === 'openai-responses') {
           // Check protocol first for openai-responses and gemini-deep-research
@@ -709,7 +717,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   // For video models, use provider-specific options
   const baseModelOptions = React.useMemo(
     () =>
-      modelCategoryType === 'embedding' || modelCategoryType === 'rerank'
+      modelCategoryType === 'embedding' ||
+      modelCategoryType === 'rerank' ||
+      modelCategoryType === 'decision'
         ? [{ value: 'custom', label: 'Custom...' }]
         : modelCategoryType === 'image'
           ? providerType === 'gpt-image'
@@ -775,7 +785,12 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     }
     // For embedding/rerank/image, automatically set to custom mode
     // For video, reset model selection
-    if (value === 'embedding' || value === 'rerank') {
+    if (value === 'decision') {
+      setModelId('custom')
+      setCustomModelId('')
+      setBaseUrl('https://api.typesafe.ai/v1')
+      setIsWeworkAvailable(true)
+    } else if (value === 'embedding' || value === 'rerank') {
       setModelId('custom')
       setCustomModelId('')
     } else if (value === 'image') {
@@ -828,7 +843,10 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     setModelId('')
     setCustomModelId('')
     // Only set default base URL for LLM models
-    if (modelCategoryType === 'llm') {
+    if (modelCategoryType === 'decision') {
+      setModelId('custom')
+      setBaseUrl(value === 'systemone' ? 'https://api.typesafe.ai/v1' : OPENAI_BASE_URL)
+    } else if (modelCategoryType === 'llm') {
       if (value === 'openai' || value === 'openai-responses') {
         setBaseUrl(OPENAI_BASE_URL)
       } else if (value === 'gemini') {
@@ -940,7 +958,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           | 'gemini'
           | 'gemini-deep-research'
           | 'openai-responses'
-          | 'gpt-image',
+          | 'gpt-image'
+          | 'systemone',
         model_id: runtimeConfig.modelId,
         api_key: runtimeConfig.apiKey,
         base_url: runtimeConfig.baseUrl || undefined,
@@ -978,6 +997,10 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     const runtimeConfig = getActiveRuntimeConfig()
     if (!runtimeConfig) {
       setFetchError(t('common:models.errors.model_spec_invalid'))
+      return
+    }
+    if (runtimeConfig.modelCategoryType === 'decision') {
+      setFetchError(t('common:models.decision_manual_model_id'))
       return
     }
     if (!runtimeConfig.apiKey.trim()) {
@@ -1310,10 +1333,11 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         ...(selectedVisionSidecar && { visionSidecarModel: selectedVisionSidecar }),
       },
       modelType: modelCategoryType,
-      ...(providerType === 'openai' && {
-        protocol: 'openai',
-        apiFormat: 'chat/completions',
-      }),
+      ...(providerType === 'openai' &&
+        modelCategoryType !== 'decision' && {
+          protocol: 'openai',
+          apiFormat: 'chat/completions',
+        }),
       ...(providerType === 'openai-responses' && {
         protocol: 'openai-responses',
         apiFormat: 'responses',
@@ -1321,6 +1345,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       ...(providerType === 'gemini-deep-research' && { protocol: 'gemini-deep-research' }),
       ...(modelCategoryType === 'video' && { protocol: providerType }),
       ...(modelCategoryType === 'image' && { protocol: providerType }),
+      ...(modelCategoryType === 'decision' && { protocol: providerType }),
       ...(modelCategoryType === 'llm' && costIndex && { costIndex }),
       ...(capability.trim() && { capability: capability.trim() }),
       ...(modelGroup.trim() && { modelGroup: modelGroup.trim() }),
@@ -1704,19 +1729,26 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   }
 
   const apiKeyPlaceholder =
-    providerType === 'openai' || providerType === 'openai-responses' || providerType === 'gpt-image'
+    providerType === 'openai' ||
+    providerType === 'openai-responses' ||
+    providerType === 'gpt-image' ||
+    providerType === 'systemone'
       ? 'sk-...'
       : providerType === 'gemini' || providerType === 'gemini-deep-research'
         ? 'AIza...'
         : 'sk-ant-...'
   const baseUrlPlaceholder =
-    providerType === 'openai' || providerType === 'openai-responses' || providerType === 'gpt-image'
-      ? OPENAI_BASE_URL
-      : providerType === 'gemini'
-        ? 'https://generativelanguage.googleapis.com'
-        : providerType === 'gemini-deep-research'
-          ? 'Internal proxy (auto-configured)'
-          : 'https://api.anthropic.com'
+    providerType === 'systemone'
+      ? 'https://api.typesafe.ai/v1'
+      : providerType === 'openai' ||
+          providerType === 'openai-responses' ||
+          providerType === 'gpt-image'
+        ? OPENAI_BASE_URL
+        : providerType === 'gemini'
+          ? 'https://generativelanguage.googleapis.com'
+          : providerType === 'gemini-deep-research'
+            ? 'Internal proxy (auto-configured)'
+            : 'https://api.anthropic.com'
 
   return (
     <Dialog open={open} onOpenChange={open => !open && onClose()}>
@@ -1844,7 +1876,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                       size="sm"
                       data-testid="model-spec-load-models-button"
                       onClick={handleFetchModels}
-                      disabled={fetchingModels}
+                      disabled={fetchingModels || modelCategoryType === 'decision'}
                     >
                       {fetchingModels ? (
                         <Loader2 className="mr-1 h-3 w-3 animate-spin" />
@@ -1930,7 +1962,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                   onValueChange={(value: ModelCategoryType) => handleModelCategoryTypeChange(value)}
                   disabled={isEditing}
                 >
-                  <SelectTrigger className="bg-base">
+                  <SelectTrigger className="bg-base" data-testid="model-category-select">
                     <SelectValue placeholder={t('common:models.select_model_category_type')} />
                   </SelectTrigger>
                   <SelectContent>
@@ -2002,7 +2034,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                     {t('common:models.provider_type')} <span className="text-red-400">*</span>
                   </Label>
                   <Select value={providerType} onValueChange={handleProviderChange}>
-                    <SelectTrigger className="bg-base">
+                    <SelectTrigger className="bg-base" data-testid="model-protocol-select">
                       <SelectValue placeholder={t('common:models.select_provider')} />
                     </SelectTrigger>
                     <SelectContent>
@@ -2030,7 +2062,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                       variant="ghost"
                       size="sm"
                       onClick={handleFetchModels}
-                      disabled={fetchingModels || !apiKey.trim()}
+                      disabled={
+                        fetchingModels || !apiKey.trim() || modelCategoryType === 'decision'
+                      }
                       className="h-7 px-2 text-xs"
                       title={
                         !apiKey.trim()

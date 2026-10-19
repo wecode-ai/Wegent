@@ -2,14 +2,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! `GET /api/skill-market/search` — search the configured skill market.
+//! `GET /api/skill-market/search` and `GET /api/skill-market/providers` —
+//! the configured skill market endpoints.
 //!
-//! Mirrors `app.api.endpoints.skill_market.search_skills` together with
+//! Mirrors `app.api.endpoints.skill_market.search_skills` and
+//! `app.api.endpoints.skill_market.list_providers` together with
 //! `app.services.skill_market.provider` (`SearchParams`, `MarketSkill`,
 //! `SearchResult`, `ISkillMarketProvider`, `SkillMarketProviderRegistry`). The
-//! endpoint and the registry are public; a deployment registers its concrete
+//! endpoints and the registry are public; a deployment registers its concrete
 //! market provider before route construction. With no provider registered the
-//! endpoint renders the source's
+//! search endpoint renders the source's
 //! `503` "Skill market not available"; an unknown `provider` renders the `404`
 //! "Skill market provider not found".
 use std::sync::{Arc, RwLock};
@@ -137,6 +139,14 @@ impl SkillMarketRegistry {
             .read()
             .expect("skill market registry lock poisoned")
             .len()
+    }
+
+    /// `list_providers`: registered providers in registration order.
+    fn list_providers(&self) -> Vec<Arc<dyn SkillMarketProvider>> {
+        self.providers
+            .read()
+            .expect("skill market registry lock poisoned")
+            .clone()
     }
 
     /// Registered provider keys in registration order (tests only).
@@ -338,6 +348,56 @@ async fn search_skills(
     provider.search(&search).await.map_err(search_failed)
 }
 
+/// `ProviderResponse`: one listed skill market provider. `market_url` is
+/// `None` when the provider's URL is empty, mirroring the source's
+/// `provider.market_url or None`.
+#[derive(Debug, Clone, Serialize)]
+pub struct ProviderResponse {
+    /// Stable provider identifier used by API clients.
+    pub key: String,
+    /// Provider name for display.
+    pub name: String,
+    /// Market URL for navigation.
+    pub market_url: Option<String>,
+}
+
+/// `ProvidersResponse`: the `GET /api/skill-market/providers` body.
+#[derive(Debug, Serialize)]
+pub struct ProvidersResponse {
+    /// Registered providers in registration order.
+    pub providers: Vec<ProviderResponse>,
+}
+
+/// Render one registered provider as the endpoint's response item.
+fn provider_response(provider: &dyn SkillMarketProvider) -> ProviderResponse {
+    ProviderResponse {
+        key: provider.key().to_string(),
+        name: provider.name().to_string(),
+        market_url: match provider.market_url() {
+            "" => None,
+            url => Some(url.to_string()),
+        },
+    }
+}
+
+/// GET /api/skill-market/providers: the endpoint free function. The source
+/// requires `get_current_user` but never reads the resolved user, so only the
+/// session marker is bound.
+#[brz_http_server::get("/api/skill-market/providers")]
+async fn list_providers(
+    #[inject(state)] state: &AppState,
+    #[auth] _current_user: SessionUser,
+) -> Result<ProvidersResponse, FastApiError> {
+    Ok(ProvidersResponse {
+        providers: state
+            .skill_market
+            .list_providers()
+            .iter()
+            .map(|provider| provider_response(provider.as_ref()))
+            .collect(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -500,6 +560,85 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_url_is_omitted_from_the_provider_list() {
+        struct EmptyUrlProvider;
+        #[async_trait]
+        impl SkillMarketProvider for EmptyUrlProvider {
+            fn key(&self) -> &str {
+                "local"
+            }
+            fn name(&self) -> &str {
+                "Local"
+            }
+            fn market_url(&self) -> &str {
+                ""
+            }
+            async fn search(&self, _params: &SearchParams) -> Result<SearchResult, String> {
+                Ok(SearchResult::default())
+            }
+        }
+
+        let registry = SkillMarketRegistry::default();
+        registry.register(Arc::new(EmptyUrlProvider));
+
+        let response = ProvidersResponse {
+            providers: registry
+                .list_providers()
+                .iter()
+                .map(|provider| provider_response(provider.as_ref()))
+                .collect(),
+        };
+        assert_eq!(
+            serde_json::to_value(&response).unwrap(),
+            json!({
+                "providers": [
+                    {"key": "local", "name": "Local", "market_url": null}
+                ]
+            })
+        );
+    }
+
+    #[test]
+    fn a_listed_provider_renders_the_recorded_body_shape() {
+        let registry = SkillMarketRegistry::default();
+        registry.register(stub("primary"));
+
+        let response = ProvidersResponse {
+            providers: registry
+                .list_providers()
+                .iter()
+                .map(|provider| provider_response(provider.as_ref()))
+                .collect(),
+        };
+        assert_eq!(
+            serde_json::to_value(&response).unwrap(),
+            json!({
+                "providers": [
+                    {
+                        "key": "primary",
+                        "name": "Stub",
+                        "market_url": "https://market.invalid"
+                    }
+                ]
+            })
+        );
+    }
+
+    #[test]
+    fn providers_are_listed_in_registration_order() {
+        let registry = SkillMarketRegistry::default();
+        registry.register(stub("primary"));
+        registry.register(stub("github"));
+
+        let keys: Vec<_> = registry
+            .list_providers()
+            .iter()
+            .map(|provider| provider.key().to_string())
+            .collect();
+        assert_eq!(keys, ["primary", "github"]);
+    }
+
+    #[test]
     fn the_response_uses_the_api_field_names() {
         let result = SearchResult {
             total: 1,
@@ -528,5 +667,34 @@ mod tests {
              \"createdAt\":\"1\",\"hasDownloadPermission\":true,\
              \"permissionUrl\":\"https://m/pages/skills/a_b\"}]}"
         );
+    }
+
+    /// The cutover and handler registration must agree. The hybrid gateway
+    /// selects `GET /api/skill-market/providers` for Rust; a missing
+    /// registration reproduces the recorded fallback `404 {"detail":"Not
+    /// Found"}` instead of the provider list.
+    #[test]
+    fn registered_route_keeps_python_ownership() {
+        const PATH: &str = "/api/skill-market/providers";
+        let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
+        let config = crate::hybrid::load_routes_config(&file).unwrap();
+        assert!(
+            !config
+                .routes
+                .iter()
+                .any(|rule| rule.path == PATH && rule.methods.iter().any(|method| method == "GET")),
+            "GET {PATH} must remain on Python until cutover"
+        );
+        let table = crate::RouteTable::compile(config).unwrap();
+        assert!(!table.matches(&http::Method::GET, PATH));
+
+        // `method_bit`: DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT.
+        const GET: u16 = 1 << 1;
+        let registered = brz_http_server::__private::inventory::iter::<
+            crate::__http_registry_http_apis::Entry,
+        >()
+        .flat_map(|entry| (entry.0.routes)())
+        .any(|route| route.path == PATH && route.methods & GET != 0);
+        assert!(registered, "GET {PATH} must be registered by the router");
     }
 }

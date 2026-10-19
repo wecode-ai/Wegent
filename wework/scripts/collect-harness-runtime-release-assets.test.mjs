@@ -34,7 +34,7 @@ test('collects immutable Harness Runtime archives and descriptors from component
   }
   await writeFile(
     join(component, 'runtimes.json'),
-    `${JSON.stringify({ runtimes: [descriptor] })}\n`
+    `${JSON.stringify({ runtimes: [descriptor, { ...descriptor, role: 'workbench' }] })}\n`
   )
   await create(
     {
@@ -46,11 +46,13 @@ test('collects immutable Harness Runtime archives and descriptors from component
   )
 
   await collectHarnessRuntimeReleaseAssets(input, output)
+  await collectHarnessRuntimeReleaseAssets(input, output)
 
   await expect(readFile(join(output, assetName))).resolves.toEqual(asset)
+  const { role: _role, ...archiveDescriptor } = descriptor
   await expect(
     readFile(join(output, assetName.replace(/\.tar\.gz$/, '.json')), 'utf8')
-  ).resolves.toBe(`${JSON.stringify(descriptor, null, 2)}\n`)
+  ).resolves.toBe(`${JSON.stringify(archiveDescriptor, null, 2)}\n`)
 })
 
 test('rejects conflicting assets with the same immutable name', async () => {

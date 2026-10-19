@@ -335,9 +335,13 @@ export function parseCollaborationGroupDraft(
 ): ProjectCreateCollaborationGroupDraft {
   const events = parseGenerationResponse(content, input)
   const selectedParticipants = [
-    { kind: 'human' as const, id: String(input.currentUser.id) },
-    ...input.members.map(member => ({ kind: 'human' as const, id: String(member.user_id) })),
-    ...input.agents.map(agent => ({ kind: 'agent' as const, id: agent.id })),
+    { kind: 'human' as const, id: String(input.currentUser.id), name: input.currentUser.name },
+    ...input.members.map(member => ({
+      kind: 'human' as const,
+      id: String(member.user_id),
+      name: member.user_name,
+    })),
+    ...input.agents.map(agent => ({ kind: 'agent' as const, id: agent.id, name: agent.name })),
   ]
   const responsibilities = new Map<string, string>()
   events.forEach(event => {
@@ -358,7 +362,15 @@ export function parseCollaborationGroupDraft(
   }
   const leaderIdentity =
     requestedLeader?.type === 'participant_started'
-      ? { kind: requestedLeader.kind, id: requestedLeader.id }
+      ? {
+          kind: requestedLeader.kind,
+          id: requestedLeader.id,
+          name:
+            selectedParticipants.find(
+              participant =>
+                participant.kind === requestedLeader.kind && participant.id === requestedLeader.id
+            )?.name ?? '',
+        }
       : fallbackLeader
   const leader = {
     ...leaderIdentity,

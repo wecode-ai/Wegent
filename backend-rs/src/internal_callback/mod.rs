@@ -9,25 +9,17 @@
 //! dependency), receives OpenAI Responses API events from executors, persists
 //! stream state, publishes to Socket.IO, and forwards to IM channel callbacks.
 //!
-//! Scope note: a `response.completed`/`error`/`response.incomplete` event maps
-//! to a terminal `done`/`error`/`cancelled` event whose `StatusUpdatingEmitter`
-//! handling runs the task-completion subsystem (`collect_completed_result`,
-//! `persist_completed_result`, `TaskCompletedEvent`, Pet experience, sandbox
-//! cleanup, MySQL task/subtask writes). That subsystem is not part of this
-//! migration, so terminal events are parsed and acknowledged but their
-//! completion side effects are not reproduced yet.
-//!
-//! Re-opened for re-verification on 2026-10-11 after the traffic-e2e engine
-//! upgrade; this note exists to force a fresh focused replay of the route. No
-//! handler behaviour changes: the prior attempt-5 verdict aborted at the
-//! 10-case failure cap with 83/200 cases passing and every dirty case showing
-//! `difference_count: 0` (responses match), so the residual dirt is
-//! engine-owned Redis dynamic-value/script evidence, not a target defect.
+//! Terminal events run the task-completion subsystem inside the request: the
+//! `StatusUpdatingEmitter` collects and persists the final result, cleans the
+//! streaming state up and publishes `TaskCompletedEvent`. [`completion`] owns
+//! that subsystem; the wrapped emitter's `chat:done` and `task:status` frames
+//! are emitted from here, in the source's order.
 mod channel;
+mod completion;
 mod emitter;
 mod event;
 mod parser;
-mod py_json;
+pub(crate) mod py_json;
 mod session;
 mod socketio;
 
@@ -48,6 +40,8 @@ struct CallbackRequest {
     task_id: i64,
     subtask_id: i64,
     message_id: Option<i64>,
+    executor_name: Option<String>,
+    executor_namespace: Option<String>,
     data: Value,
 }
 
@@ -104,11 +98,44 @@ async fn handle_callback(
         return Ok(CallbackResponse::ok());
     };
 
+    let terminal_status = completion::terminal_status(&event.event_type);
+
     let mut emitter = StatusUpdatingEmitter::new(redis, request.task_id, request.subtask_id);
-    if let Err(error) = emitter.emit(&mut event).await {
+    if terminal_status.is_none()
+        && let Err(error) = emitter.emit(&mut event).await
+    {
         tracing::warn!(%error, "callback stream emit failed");
     }
     emitter.close().await;
+
+    if let Some(status) = terminal_status {
+        let ctx = completion::Completion {
+            mysql: &state.mysql,
+            redis,
+            tables: tables(state),
+        };
+        let (final_result, user_id) = completion::complete_terminal(
+            &ctx,
+            request.task_id,
+            request.subtask_id,
+            status,
+            event.result.as_ref(),
+            event.error.as_deref(),
+            event.error_code.as_deref(),
+            request.executor_name.as_deref(),
+            request.executor_namespace.as_deref(),
+        )
+        .await;
+        let result = final_result
+            .or_else(|| event.result.clone())
+            .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
+        event.result = Some(result.clone());
+        // `WebSocketResultEmitter.emit`'s DONE branch: `chat:done` then
+        // `task:status`.
+        if let Err(error) = emitter::emit_done_frames(redis, &event, user_id, &result).await {
+            tracing::warn!(%error, "callback done frames failed");
+        }
+    }
 
     if let Err(error) = session::publish_callback_event(redis, request.subtask_id, &event).await {
         tracing::warn!(%error, "callback channel publish failed");
@@ -116,6 +143,15 @@ async fn handle_callback(
     channel::forward_event_to_channel_callbacks(redis, request.task_id, &event).await;
 
     Ok(CallbackResponse::ok())
+}
+
+/// The deployment's task/subtask table templates.
+fn tables(state: &AppState) -> completion::Tables {
+    let templates = state.task_store.table_templates();
+    completion::Tables {
+        tasks: templates.tasks,
+        subtasks: templates.subtasks,
+    }
 }
 
 /// Validate the request like the source's `CallbackRequest` pydantic model.
@@ -134,6 +170,8 @@ fn parse_request(body: &Value) -> Result<CallbackRequest, FastApiError> {
     let task_id = required_int(object, "task_id", &mut errors);
     let subtask_id = required_int(object, "subtask_id", &mut errors);
     let message_id = optional_int(object, "message_id", &mut errors);
+    let executor_name = optional_string(object, "executor_name", &mut errors);
+    let executor_namespace = optional_string(object, "executor_namespace", &mut errors);
     if !errors.is_empty() {
         return Err(validation_error(errors));
     }
@@ -154,8 +192,30 @@ fn parse_request(body: &Value) -> Result<CallbackRequest, FastApiError> {
         task_id: task_id.expect("validated"),
         subtask_id: subtask_id.expect("validated"),
         message_id,
+        executor_name,
+        executor_namespace,
         data,
     })
+}
+
+fn optional_string(
+    object: &Map<String, Value>,
+    field: &str,
+    errors: &mut Vec<Value>,
+) -> Option<String> {
+    match object.get(field) {
+        None | Some(Value::Null) => None,
+        Some(Value::String(text)) => Some(text.clone()),
+        Some(other) => {
+            errors.push(json!({
+                "type": "string_type",
+                "loc": ["body", field],
+                "msg": "Input should be a valid string",
+                "input": other,
+            }));
+            None
+        }
+    }
 }
 
 fn required_string(

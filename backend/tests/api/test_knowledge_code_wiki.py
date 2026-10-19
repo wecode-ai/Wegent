@@ -1972,8 +1972,12 @@ def test_document_creation_loses_to_code_wiki_deletion_after_permission_check(
     """A document writer must re-check the KB after waiting for its row lock."""
     wiki = _stored_code_wiki(test_db, test_user, "locked-wiki")
     test_db.commit()
-    deleting_db = test_session_factory()
-    creating_db = test_session_factory()
+    deleting_db = test_session_factory(
+        bind=test_db.get_bind(), join_transaction_mode="create_savepoint"
+    )
+    creating_db = test_session_factory(
+        bind=test_db.get_bind(), join_transaction_mode="create_savepoint"
+    )
 
     def delete_after_permission_check(*args: object, **kwargs: object) -> bool:
         assert KnowledgeService.delete_knowledge_base(
@@ -2006,8 +2010,8 @@ def test_document_creation_loses_to_code_wiki_deletion_after_permission_check(
         deleting_db.expire_all()
         assert deleting_db.get(Kind, wiki.id) is None
     finally:
-        creating_db.close()
         deleting_db.close()
+        creating_db.close()
 
 
 def test_a_failed_registration_leaves_no_knowledge_base_behind(

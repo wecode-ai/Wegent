@@ -8,6 +8,7 @@ import {
   ANTHROPIC_EMPTY_PROMPT,
   CLOUD_MODEL_CASES,
   DEFAULT_STEP_TIMEOUT_MS,
+  MODEL_REQUEST_TIMEOUT_MS,
   MODEL_SERVICE_CONNECTION_ENDPOINT,
   MODEL_SERVICE_CONNECTION_PROMPT,
   MODEL_PROXY_RESTART_FOLLOW_UP_COMPLETION_TEXT,
@@ -148,7 +149,7 @@ async function verifyModelProxyRestartRecovery({
   const executorBeforeRestart = await waitForExecutorRuntimeEvidence(control, executorLogPath)
   const executorProcessIdBeforeRestart = executorBeforeRestart.processIds.at(-1)
   assert.ok(executorProcessIdBeforeRestart, 'The original executor process ID was not recorded')
-  const executorIdentityBeforeRestart = collectWindowsProcessIdentity(
+  const executorIdentityBeforeRestart = await collectWindowsProcessIdentity(
     executorProcessIdBeforeRestart
   )
   if (process.platform === 'win32') {
@@ -167,7 +168,9 @@ async function verifyModelProxyRestartRecovery({
   )
   const executorProcessIdAfterRestart = executorAfterRestart.processIds.at(-1)
   assert.ok(executorProcessIdAfterRestart, 'The restarted executor process ID was not recorded')
-  const executorIdentityAfterRestart = collectWindowsProcessIdentity(executorProcessIdAfterRestart)
+  const executorIdentityAfterRestart = await collectWindowsProcessIdentity(
+    executorProcessIdAfterRestart
+  )
   if (process.platform === 'win32') {
     assert.ok(
       executorIdentityAfterRestart,
@@ -181,7 +184,9 @@ async function verifyModelProxyRestartRecovery({
     false,
     'Restarting Wework reused the executor process with the old model proxy registry'
   )
-  const originalIdentityAfterRestart = collectWindowsProcessIdentity(executorProcessIdBeforeRestart)
+  const originalIdentityAfterRestart = await collectWindowsProcessIdentity(
+    executorProcessIdBeforeRestart
+  )
   const originalExecutorIsAlive =
     process.platform === 'win32'
       ? processInstanceMatches(executorIdentityBeforeRestart, originalIdentityAfterRestart)
@@ -392,9 +397,10 @@ async function verifyModelServiceConnectionError({ composerSelector, control }) 
   )
   const titleSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-title"]`
   const descriptionSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-description"]`
+  // Codex exhausts native stream reconnects before publishing the terminal model error.
   await control.command('waitFor', titleSelector, {
     text: '无法连接模型服务',
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    timeoutMs: MODEL_REQUEST_TIMEOUT_MS,
   })
   await control.command('waitFor', descriptionSelector, {
     text: MODEL_SERVICE_CONNECTION_ENDPOINT,

@@ -34,7 +34,7 @@ export async function verifyWindowsDesktopDataStartup({ resources, executor, env
     const desktop = path.join(input.root, 'workbench');
     const additionalData = { startupProbe: input.secondary ? 'secondary' : 'primary' };
     const result = await initializeWorkbenchDesktopData({
-      app, source, desktop, updaterCache: path.join(input.root, 'updater-cache'), additionalData,
+      app, source, desktop, additionalData,
       acquireLock: executorMigrationLock(input.executor, { wait: true }),
     });
     if (input.secondary) {

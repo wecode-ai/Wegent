@@ -156,6 +156,7 @@ function getTestConnectionProviderType(
     modelProvider === 'openai' ||
     modelProvider === 'anthropic' ||
     modelProvider === 'gemini' ||
+    modelProvider === 'systemone' ||
     modelProvider === 'custom'
   ) {
     return modelProvider

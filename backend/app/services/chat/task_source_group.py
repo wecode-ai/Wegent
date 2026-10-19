@@ -119,6 +119,8 @@ def _create_or_reuse_group(
         user_id=user_id,
         client_origin=client_origin,
         name=settings.TASK_SOURCE_GROUP_NAMES[task_source],
+        description="",
+        color="",
         config={"taskSource": task_source},
         sort_order=(max_sort_order or 0) + 1,
         is_expanded=False,

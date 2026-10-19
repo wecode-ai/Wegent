@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 import { migrateWorkbenchDesktopData } from './workbench-desktop-data.js'
 import { initializeWorkbenchDesktopData } from './workbench-desktop-startup.js'
+import { migrateWorkbenchDataEntry } from './workbench-data-migration.js'
 
 vi.mock('node:fs', async importOriginal => {
   const actual = await importOriginal<typeof import('node:fs')>()
@@ -25,7 +26,6 @@ function fixture(platform: NodeJS.Platform = 'win32') {
   const source = join(root, 'appData/app')
   const desktop = join(root, 'workbench/wework/app')
   const logs = join(source, 'logs')
-  const updaterCache = join(root, 'cache/updater')
   let singletonHeld = false
   let migrationHeld = false
   let singletonPath = ''
@@ -66,7 +66,7 @@ function fixture(platform: NodeJS.Platform = 'win32') {
     if (from === source && platform === 'win32') expect(migrationHeld).toBe(true)
     return actual.renameSync(from, to)
   })
-  const options = { app, source, desktop, updaterCache, additionalData, acquireLock, platform }
+  const options = { app, source, desktop, additionalData, acquireLock, platform }
   return { ...options, logs, lock, options, singletonHeld: () => singletonHeld }
 }
 
@@ -193,3 +193,58 @@ test.each(['darwin', 'linux'] as const)(
     expect(input.singletonHeld()).toBe(true)
   }
 )
+
+test.each(['recreated-source', 'replaced-target', 'dangling-bridge', 'invalid-journal'])(
+  'startup and restarts preserve user data with a %s updater cache',
+  async state => {
+    const input = fixture('darwin')
+    const cache = {
+      source: join(root, 'Library/Caches/com.weibo.wework-updater'),
+      target: join(input.desktop, 'updater-cache'),
+      journal: join(input.desktop, 'migrations/desktop-updater-cache-v1.json'),
+    }
+    fs.mkdirSync(cache.source, { recursive: true })
+    fs.writeFileSync(join(cache.source, 'update.zip'), 'cached-update')
+    migrateWorkbenchDataEntry(cache)
+    if (state === 'recreated-source') {
+      fs.unlinkSync(cache.source)
+      fs.mkdirSync(cache.source)
+    } else if (state === 'replaced-target' || state === 'dangling-bridge') {
+      fs.renameSync(cache.target, `${cache.target}.backup`)
+      if (state === 'replaced-target') fs.mkdirSync(cache.target)
+    } else fs.writeFileSync(cache.journal, 'invalid JSON')
+    const journal = fs.readFileSync(cache.journal, 'utf8')
+    fs.mkdirSync(input.source, { recursive: true })
+    fs.writeFileSync(join(input.source, 'preferences.json'), 'original-preferences')
+
+    for (let launch = 0; launch < 2; launch++) {
+      const result = await initializeWorkbenchDesktopData(input.options)
+
+      expect(fs.readFileSync(join(result!.userData, 'preferences.json'), 'utf8')).toBe(
+        'original-preferences'
+      )
+      expect(fs.readFileSync(cache.journal, 'utf8')).toBe(journal)
+      expect(input.singletonHeld()).toBe(true)
+      input.app.releaseSingleInstanceLock()
+    }
+  }
+)
+
+test('persistent user-data conflicts still stop startup', async () => {
+  const input = fixture('darwin')
+  const result = await initializeWorkbenchDesktopData(input.options)
+  input.app.releaseSingleInstanceLock()
+  fs.unlinkSync(input.source)
+  fs.mkdirSync(input.source)
+  fs.writeFileSync(join(input.source, 'preferences.json'), 'independent-preferences')
+
+  await expect(initializeWorkbenchDesktopData(input.options)).rejects.toThrow(
+    'Application data migration conflict'
+  )
+
+  expect(fs.readFileSync(join(input.source, 'preferences.json'), 'utf8')).toBe(
+    'independent-preferences'
+  )
+  expect(fs.statSync(result!.userData).isDirectory()).toBe(true)
+  expect(input.singletonHeld()).toBe(false)
+})

@@ -78,6 +78,19 @@ fn apply_update_records_completed_at_for_terminal_status() {
     );
 }
 
+/// `status.updatedAt` is a CRD `datetime`, so the target must render it with
+/// the source's `model_dump(mode="json")` format (`T` separator and six-digit
+/// microseconds), not the row audit clock's SQL form.
+#[test]
+fn crd_timestamp_uses_the_source_json_datetime_format() {
+    let value = super::update_task::crd_timestamp();
+    assert!(
+        chrono::NaiveDateTime::parse_from_str(&value, "%Y-%m-%dT%H:%M:%S%.6f").is_ok(),
+        "{value}"
+    );
+    assert!(!value.contains(' '), "{value}");
+}
+
 #[test]
 fn dump_reorders_fields_and_drops_nulls() {
     let task = json!({

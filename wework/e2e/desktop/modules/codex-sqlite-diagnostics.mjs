@@ -14,6 +14,16 @@ export async function collectCodexSqliteDiagnostics(directory) {
         try {
           database = new DatabaseSync(join(directory, name), { readOnly: true })
           entry.integrity = database.prepare('PRAGMA quick_check').all()
+          if (name === 'thread_history_1.sqlite') {
+            entry.recentItems = database
+              .prepare(
+                `SELECT thread_id, turn_id, item_id, item_type,
+                json_extract(item_json, '$.phase') AS phase,
+                length(item_json) AS jsonLength
+                FROM thread_items ORDER BY rollout_ordinal DESC LIMIT 40`
+              )
+              .all()
+          }
         } catch (error) {
           entry.errorCode = error.code ?? null
           entry.sqliteCode = error.errcode ?? null

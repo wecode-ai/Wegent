@@ -672,6 +672,142 @@ fn page_query(limit: i64, page: i64, sort_key: &str) -> [(String, String); 3] {
     ]
 }
 
+/// The first-page request every provider's `search_repositories` performs when
+/// its domain cache is still empty after the full fetch (`step 5`).
+///
+/// It repeats the provider's live `get_repositories` first-page request without
+/// the cache write or the background full-fetch schedule, which the source's
+/// fallback does not perform. `None` mirrors the source's
+/// `except requests.exceptions.RequestException: continue`; gerrit's search has
+/// no fallback step, so it never issues this request.
+pub(crate) async fn search_fallback_page(
+    client: &Client,
+    provider: Provider,
+    entry: &ProviderEntry,
+) -> Result<Option<Vec<ProviderRepo>>, MapError> {
+    match provider {
+        Provider::Github => {
+            let url = format!(
+                "{}/user/repos",
+                Provider::Github.api_base_url(&entry.git_domain)
+            );
+            let Ok(builder) = client.get(&url).map(|request| {
+                request
+                    .header("authorization", format!("token {}", entry.git_token))
+                    .header("accept", "application/vnd.github.v3+json")
+                    .query(&page_query(100, 1, "sort"))
+            }) else {
+                return Ok(None);
+            };
+            let Some(body) = send_json(builder).await else {
+                return Ok(None);
+            };
+            let Value::Array(items) = body else {
+                return Ok(None);
+            };
+            Ok(Some(map_strict(&items, &entry.git_domain, "github")?))
+        }
+        Provider::Gitee => {
+            let url = format!(
+                "{}/user/repos",
+                Provider::Gitee.api_base_url(&entry.git_domain)
+            );
+            let Ok(builder) = client.get(&url).map(|request| {
+                request.query(&[
+                    ("access_token", entry.git_token.clone()),
+                    ("per_page", "100".to_string()),
+                    ("page", "1".to_string()),
+                    ("sort", "updated".to_string()),
+                    ("affiliation", "owner,collaborator".to_string()),
+                ])
+            }) else {
+                return Ok(None);
+            };
+            let Some(body) = send_json(builder).await else {
+                return Ok(None);
+            };
+            let Value::Array(items) = body else {
+                return Ok(None);
+            };
+            Ok(Some(map_gitee(&items, &entry.git_domain)?))
+        }
+        Provider::Gitlab => {
+            let url = format!(
+                "{}/projects",
+                Provider::Gitlab.api_base_url(&entry.git_domain)
+            );
+            let query = [
+                ("per_page", "100".to_string()),
+                ("page", "1".to_string()),
+                ("order_by", "last_activity_at".to_string()),
+                ("membership", "true".to_string()),
+            ];
+            let Ok(bearer) = client.get(&url).map(|request| {
+                request
+                    .header("authorization", format!("Bearer {}", entry.git_token))
+                    .header("accept", "application/json")
+                    .query(&query)
+            }) else {
+                return Ok(None);
+            };
+            let body = match send_status_json(bearer).await {
+                None => return Ok(None),
+                Some((401, None)) => {
+                    let Ok(private) = client.get(&url).map(|request| {
+                        request
+                            .header("private-token", entry.git_token.clone())
+                            .header("accept", "application/json")
+                            .query(&query)
+                    }) else {
+                        return Ok(None);
+                    };
+                    match send_json(private).await {
+                        Some(body) => body,
+                        None => return Ok(None),
+                    }
+                }
+                Some((_, Some(body))) => body,
+                Some(_) => return Ok(None),
+            };
+            let Value::Array(items) = body else {
+                return Ok(None);
+            };
+            Ok(Some(
+                items
+                    .iter()
+                    .map(|item| map_gitlab(item, &entry.git_domain))
+                    .collect::<Result<_, _>>()?,
+            ))
+        }
+        Provider::Gitea => {
+            let url = format!(
+                "{}/user/repos",
+                Provider::Gitea.api_base_url(&entry.git_domain)
+            );
+            let Ok(builder) = client.get(&url).map(|request| {
+                request
+                    .header("authorization", format!("token {}", entry.git_token))
+                    .header("accept", "application/json")
+                    .query(&[
+                        ("limit", "100".to_string()),
+                        ("page", "1".to_string()),
+                        ("sort", "updated".to_string()),
+                    ])
+            }) else {
+                return Ok(None);
+            };
+            let Some(body) = send_json(builder).await else {
+                return Ok(None);
+            };
+            let Value::Array(items) = body else {
+                return Ok(None);
+            };
+            Ok(Some(map_gitea(&items, &entry.git_domain)?))
+        }
+        Provider::Gerrit => Ok(None),
+    }
+}
+
 fn refresh_request(provider: Provider, entry: &ProviderEntry, user: UserRef<'_>) -> RefreshRequest {
     RefreshRequest {
         provider,

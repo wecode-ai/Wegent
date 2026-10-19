@@ -33,17 +33,17 @@
 //! metadata has no `member_capabilities` key, so every member renders an
 //! empty string.
 //!
-//! The `project_access_query` point statement is rendered here with the
-//! source's inline literals so the recorded COM_QUERY is reproduced verbatim;
-//! the shared `cloud_projects::response` projection is not reused because the
-//! members route binds the caller and project ids differently and the shared
-//! builder renders a different statement shape.
+//! The `project_access_query` point statement comes from the shared
+//! [`crate::cloud_projects::project_access_point_statement`] renderer, which
+//! reproduces the recorded COM_QUERY with the caller and project ids inline.
+//! The shared `cloud_projects::response` projection is not reused because the
+//! members route decodes its own response shape.
 use brz_http_server::StatusCode;
 use brz_mysql::{FromMysqlRow, Mysql, MysqlResult, MysqlRow};
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::cloud_projects::{LOOP_ITEMS_COLUMNS, ProjectListRow};
+use crate::cloud_projects::{ProjectListRow, project_access_point_statement};
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 
@@ -95,41 +95,10 @@ struct CreatorRow {
     email: Option<String>,
 }
 
-/// `cloud_project_visibility.project_access_query(db, user_id, project_id)`:
-/// the point form used by `require_cloud_project_role`. The source inlines
-/// every value as a literal, so the statement carries the caller and project
-/// ids inline exactly as the recorded COM_QUERY shows.
-///
-/// The union keeps the source's branch order — direct `resource_members`
-/// grant (`Owner`/`Maintainer`/`Developer`/`Viewer`), grant inherited through
-/// an active `CollaborationWorkspace` at `Viewer` priority 4, the
-/// all-signed-in-users (`authenticated_users`) grant at its stored priority,
-/// and projects the caller created at `Owner` priority 0 — aggregated to the
-/// highest role per project through `min(priority)`. The outer statement joins
-/// the active `loop_items` project row and selects `anon_1.priority`.
-fn project_access_point_statement(user_id: i32, project_id: i64) -> String {
-    format!(
-        "SELECT {LOOP_ITEMS_COLUMNS}, anon_1.priority AS anon_1_priority \n\
-         FROM loop_items INNER JOIN (SELECT anon_2.project_id AS project_id, min(anon_2.priority) AS priority \n\
-         FROM (SELECT CAST(resource_members.resource_id AS CHAR(64)) AS project_id, CASE resource_members.`role` WHEN 'Owner' THEN 0 WHEN 'Maintainer' THEN 1 WHEN 'Developer' THEN 2 WHEN 'Reporter' THEN 3 WHEN 'Viewer' THEN 4 WHEN 'RestrictedAnalyst' THEN 5 END AS priority \n\
-         FROM resource_members \n\
-         WHERE resource_members.resource_type = 'CloudProject' AND resource_members.entity_type = 'user' AND resource_members.entity_id = '{user_id}' AND resource_members.status = 'approved' AND resource_members.`role` IN ('Owner', 'Maintainer', 'Developer', 'Viewer') AND resource_members.resource_id = {project_id} UNION ALL SELECT CAST(resource_members.resource_id AS CHAR(64)) AS project_id, 4 AS priority \n\
-         FROM resource_members INNER JOIN (SELECT resource_members.resource_id AS resource_id \n\
-         FROM resource_members INNER JOIN kinds ON kinds.id = resource_members.resource_id \n\
-         WHERE resource_members.resource_type = 'Workspace' AND resource_members.entity_type = 'user' AND resource_members.entity_id = '{user_id}' AND resource_members.status = 'approved' AND kinds.kind = 'CollaborationWorkspace' AND kinds.is_active IS true AND resource_members.`role` IN ('Owner', 'Maintainer', 'Developer', 'Reporter')) AS anon_3 ON CAST(resource_members.entity_id AS SIGNED INTEGER) = anon_3.resource_id \n\
-         WHERE resource_members.resource_type = 'CloudProject' AND resource_members.entity_type = 'workspace' AND resource_members.status = 'approved' AND resource_members.resource_id = {project_id} UNION ALL SELECT CAST(resource_members.resource_id AS CHAR(64)) AS project_id, CASE resource_members.`role` WHEN 'Owner' THEN 0 WHEN 'Maintainer' THEN 1 WHEN 'Developer' THEN 2 WHEN 'Reporter' THEN 3 WHEN 'Viewer' THEN 4 WHEN 'RestrictedAnalyst' THEN 5 END AS priority \n\
-         FROM resource_members \n\
-         WHERE resource_members.resource_type = 'CloudProject' AND resource_members.entity_type = 'authenticated_users' AND resource_members.entity_id = '*' AND resource_members.status = 'approved' AND resource_members.`role` IN ('Developer', 'Viewer') AND resource_members.resource_id = {project_id} UNION ALL SELECT loop_items.id AS project_id, 0 AS priority \n\
-         FROM loop_items \n\
-         WHERE loop_items.created_by_user_id = {user_id} AND loop_items.status = 'active' AND loop_items.id = '{project_id}' AND loop_items.resource_type IN ('project')) AS anon_2 GROUP BY anon_2.project_id) AS anon_1 ON loop_items.id = anon_1.project_id \n\
-         WHERE loop_items.status = 'active' AND loop_items.resource_type IN ('project') \n LIMIT 1"
-    )
-}
-
 /// `require_cloud_project_role` project+role read: the accessible active
 /// project row and the aggregated role priority, or `None` when no permission
 /// source grants the caller access (the source raises `404`).
-async fn access_project<M: Mysql>(
+pub(crate) async fn access_project<M: Mysql>(
     mysql: &M,
     project_id: i64,
     user_id: i32,

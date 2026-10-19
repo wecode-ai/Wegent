@@ -84,11 +84,23 @@ struct RefreshedRow {
     updated_at: NaiveDateTime,
 }
 
-/// `POST /api/subscriptions`.
+/// `POST /api/subscriptions` — renders the created row with status 201.
 pub(super) async fn create_subscription(
     state: &AppState,
     user_id: i64,
     create: &Create,
+) -> Result<Response, FastApiError> {
+    create_subscription_with_status(state, user_id, create, StatusCode::CREATED).await
+}
+
+/// The shared create pipeline. `POST /api/subscriptions` renders 201;
+/// `POST /api/subscriptions/preview/{preview_id}/confirm` declares no
+/// `status_code`, so it renders the same `SubscriptionInDB` with status 200.
+pub(super) async fn create_subscription_with_status(
+    state: &AppState,
+    user_id: i64,
+    create: &Create,
+    status: StatusCode,
 ) -> Result<Response, FastApiError> {
     // `_validate_trigger_config` runs before any dependency traffic.
     if let Err(message) = validate_trigger_config(&create.trigger_type, &create.trigger_config) {
@@ -109,7 +121,7 @@ pub(super) async fn create_subscription(
             let cache = workspace_cache(state, workspace_id).await?;
             let item = convert_to_subscription_in_db(&row, &cache);
             let body = serde_json::to_string(&item).map_err(|_| FastApiError::internal())?;
-            Ok(Response::owned_bytes(StatusCode::CREATED, body).content_type("application/json"))
+            Ok(Response::owned_bytes(status, body).content_type("application/json"))
         }
         CreateOutcome::BadRequest(message) => {
             Err(FastApiError::detail(StatusCode::BAD_REQUEST, message))

@@ -127,7 +127,7 @@ where
 /// `MySQLStorageBackend._extract_attachment_id`: the trailing
 /// `_context_id` segment of the key's last path element, needing at least
 /// `uuid_timestamp_userid_contextid`.
-fn extract_attachment_id(storage_key: &str) -> Option<i64> {
+pub(super) fn extract_attachment_id(storage_key: &str) -> Option<i64> {
     let (prefix, file) = storage_key.split_once('/')?;
     if prefix != "attachments" {
         return None;

@@ -162,8 +162,17 @@ async fn decode_share_token(
 
 /// `SharedTaskService._aes_decrypt` + the `"{user_id}#{task_id}"` parse: the
 /// pure decode half of `decode_share_token`.
-fn decode_payload(share_token: &str) -> Option<ShareInfo> {
-    decode_with_key_material(
+pub(crate) fn decode_payload(share_token: &str) -> Option<ShareInfo> {
+    let (user_id, task_id) = decode_id_pair(share_token)?;
+    Some(ShareInfo { user_id, task_id })
+}
+
+/// The `"{user_id}#{target_id}"` payload shared by the task and team share
+/// tokens (`SharedTaskService.decode_share_token` and
+/// `SharedTeamService.decode_share_token`, which use the same
+/// `SHARE_TOKEN_AES_*` key material and id format).
+pub(crate) fn decode_id_pair(share_token: &str) -> Option<(i64, i64)> {
+    decode_ids_with_key_material(
         share_aes_key().as_ref(),
         share_aes_iv().as_ref(),
         share_token,
@@ -172,17 +181,22 @@ fn decode_payload(share_token: &str) -> Option<ShareInfo> {
 
 /// The `SHARE_TOKEN_AES_*`-parameterized decode: `unquote` + base64 + AES-CBC
 /// + PKCS#7 unpadding, then the id parse.
-fn decode_with_key_material(key: &str, iv: &str, share_token: &str) -> Option<ShareInfo> {
+fn decode_ids_with_key_material(key: &str, iv: &str, share_token: &str) -> Option<(i64, i64)> {
     let decoded = percent_decode(share_token);
     let encrypted = STANDARD.decode(decoded.as_bytes()).ok()?;
     let plaintext =
         super::crypto::decrypt_with_key(key.as_bytes(), iv.as_bytes(), &encrypted).ok()?;
     let text = String::from_utf8(plaintext).ok()?;
-    let (user_id, task_id) = text.split_once('#')?;
-    Some(ShareInfo {
-        user_id: user_id.parse().ok()?,
-        task_id: task_id.parse().ok()?,
-    })
+    let (user_id, target_id) = text.split_once('#')?;
+    Some((user_id.parse().ok()?, target_id.parse().ok()?))
+}
+
+/// Source-shaped decode used by the tests below: the id pair rebuilt into the
+/// task-share [`ShareInfo`].
+#[cfg(test)]
+fn decode_with_key_material(key: &str, iv: &str, share_token: &str) -> Option<ShareInfo> {
+    let (user_id, task_id) = decode_ids_with_key_material(key, iv, share_token)?;
+    Some(ShareInfo { user_id, task_id })
 }
 
 /// `subqueryload(Subtask.contexts)`: the contexts of one subtask, the source
@@ -270,6 +284,16 @@ mod tests {
                 user_id: 7,
                 task_id: 42,
             })
+        );
+    }
+
+    #[test]
+    fn exposes_the_generic_id_pair_for_team_share_tokens() {
+        // `SharedTeamService.decode_share_token` reads the same
+        // `"{user_id}#{team_id}"` payload as the task share token.
+        assert_eq!(
+            decode_ids_with_key_material(DEFAULT_SHARE_AES_KEY, DEFAULT_SHARE_AES_IV, TOKEN_7_42),
+            Some((7, 42))
         );
     }
 

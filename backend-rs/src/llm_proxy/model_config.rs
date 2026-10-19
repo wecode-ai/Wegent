@@ -27,7 +27,7 @@ const DEFAULT_MODEL_ID: &str = "gpt-4";
 
 /// The resolved Model CRD configuration consumed by the proxy.
 #[derive(Debug, Default)]
-pub(super) struct ModelConfig {
+pub(crate) struct ModelConfig {
     /// The processed `api_key`.
     pub api_key: String,
     /// The raw Model CRD `api_key` when it carried a placeholder, mirroring the
@@ -50,7 +50,7 @@ pub(super) enum Protocol {
 }
 
 /// `extract_and_process_model_config`.
-pub(super) fn extract_and_process_model_config(
+pub(crate) fn extract_and_process_model_config(
     spec: &Value,
     user_id: i64,
     user_name: &str,
@@ -71,12 +71,26 @@ fn extract_model_config(spec: &Value) -> Result<ModelConfig, FastApiError> {
         .ok_or_else(FastApiError::unhandled)?;
 
     let raw_api_key = string_field(env.get("api_key"));
-    let api_key = resolve_env_placeholder(&raw_api_key);
+    let api_key =
+        crate::git_repositories::crypto::decrypt_git_token(&resolve_env_placeholder(&raw_api_key))
+            .map_err(|_| FastApiError::unhandled())?;
     let base_url = string_or(env.get("base_url"), DEFAULT_BASE_URL);
     let model_id = string_or(env.get("model_id"), DEFAULT_MODEL_ID);
     let env_model = string_field(env.get("model")).trim().to_lowercase();
 
-    let default_headers = default_headers(model_config, env);
+    let mut default_headers = default_headers(model_config, env);
+    if let Some(custom) = env.get("custom_headers").and_then(Value::as_object) {
+        for (name, value) in custom {
+            let Some(value) = value.as_str() else {
+                continue;
+            };
+            if let Some((_, previous)) = default_headers.iter_mut().find(|(key, _)| key == name) {
+                *previous = value.to_owned();
+            } else {
+                default_headers.push((name.clone(), value.to_owned()));
+            }
+        }
+    }
 
     let api_format = spec
         .get("apiFormat")

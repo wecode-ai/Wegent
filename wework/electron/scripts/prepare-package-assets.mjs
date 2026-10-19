@@ -70,11 +70,8 @@ const packagedRuntimes = runtimeCatalog.runtimes.filter(runtime =>
 )
 const harnessResources = join(resourcesRoot, 'harness-runtime')
 await mkdir(harnessResources, { recursive: true, mode: 0o700 })
-for (const runtime of packagedRuntimes) {
-  await cp(
-    join(harnessRuntimeAssetDirectory, runtime.assetName),
-    join(harnessResources, runtime.assetName)
-  )
+for (const assetName of new Set(packagedRuntimes.map(runtime => runtime.assetName))) {
+  await cp(join(harnessRuntimeAssetDirectory, assetName), join(harnessResources, assetName))
 }
 await writeFile(
   join(harnessResources, 'runtimes.json'),

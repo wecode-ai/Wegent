@@ -99,7 +99,8 @@ async def list_sites(
         _raise_sites_error(error)
 
 
-@router.get("/app-types", response_model=ApplicationTypeListResponse)
+# MIGRATION-CANDIDATE(api="GET /api/sites/app-types"): remove after final confirmation.
+# @router.get("/app-types", response_model=ApplicationTypeListResponse)
 async def list_site_app_types(
     _current_user: User = Depends(security.get_current_user),
 ) -> ApplicationTypeListResponse:

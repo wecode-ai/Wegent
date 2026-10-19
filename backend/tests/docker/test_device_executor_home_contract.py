@@ -52,6 +52,7 @@ def _run_entrypoint(
     volume_mounted: bool = True,
     projects_root: Path | None = None,
     legacy_executor_home: bool = False,
+    legacy_volume_mounted: bool = False,
     codex_homes: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     fake_bin = tmp_path / "fake-bin"
@@ -66,7 +67,9 @@ def _run_entrypoint(
     )
     data_root = tmp_path / "data-root"
     legacy_home = tmp_path / "legacy-home"
-    mounted_roots = [data_root, legacy_home] if legacy_executor_home else [data_root]
+    mounted_roots = [data_root]
+    if legacy_executor_home or legacy_volume_mounted:
+        mounted_roots.append(legacy_home)
     (fake_bin / "mountpoint").write_text(
         "#!/usr/bin/env bash\n"
         + " || ".join(
@@ -162,6 +165,25 @@ def test_device_entrypoint_defaults_codex_homes_to_persisted_executor_home(
     assert (tmp_path / "codex-homes").read_text().splitlines() == [
         str(expected_home / "codex"),
         str(expected_home / "codex"),
+    ]
+
+
+def test_device_entrypoint_uses_canonical_legacy_home_for_existing_volume(tmp_path):
+    executor_home = tmp_path / "executor-home"
+    legacy_home = tmp_path / "legacy-home"
+
+    result = _run_entrypoint(
+        tmp_path=tmp_path,
+        executor_home=executor_home,
+        home_id="device-stable-1",
+        legacy_volume_mounted=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not executor_home.is_symlink()
+    assert (tmp_path / "codex-homes").read_text().splitlines() == [
+        str(legacy_home / "codex"),
+        str(legacy_home / "codex"),
     ]
 
 

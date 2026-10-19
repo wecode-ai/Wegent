@@ -44,7 +44,6 @@ from app.api.endpoints import (
     project_incoming_hooks,
     projects,
     prompt_optimization,
-    quota,
     remote_devices,
     repository,
     resource_library,
@@ -182,6 +181,9 @@ api_router.include_router(
     cloud_projects.router, prefix="/v1/projects", tags=["projects"]
 )
 api_router.include_router(
+    cloud_projects.legacy_router, prefix="/v1/projects", tags=["projects"]
+)
+api_router.include_router(
     workspaces.router, prefix="/v1/workspaces", tags=["workspaces"]
 )
 api_router.include_router(
@@ -267,7 +269,6 @@ api_router.include_router(
     attachments.router, prefix="/attachments", tags=["attachments"]
 )
 api_router.include_router(repository.router, prefix="/git", tags=["repository"])
-api_router.include_router(quota.router, prefix="/quota", tags=["quota"])
 api_router.include_router(dify.router, prefix="/dify", tags=["dify"])
 api_router.include_router(
     model_runtime.router, prefix="/model-runtime", tags=["model-runtime"]

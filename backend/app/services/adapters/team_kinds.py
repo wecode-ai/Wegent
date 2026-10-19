@@ -9,7 +9,6 @@ Uses the unified ResourceMember model for team sharing.
 """
 
 import copy
-import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -38,17 +37,15 @@ from app.models.user import User
 from app.schemas.base_role import has_permission
 from app.schemas.kind import (
     Bot,
-    Ghost,
     Model,
     ModeSpec,
     Shell,
-    Task,
     Team,
     TeamInputPlaceholder,
 )
 from app.schemas.namespace import GroupRole
 from app.schemas.quick_launch import normalize_quick_phrases
-from app.schemas.team import BotInfo, TeamCreate, TeamDetail, TeamInDB, TeamUpdate
+from app.schemas.team import BotInfo, TeamCreate, TeamUpdate
 from app.schemas.user import UserInDB
 from app.services.adapters.pipeline_context import normalize_context_passing
 from app.services.adapters.public_model import is_public_model_allowed_for_user_id
@@ -2421,82 +2418,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             )
             # has_parameters is true as long as external API bot exists, even if API call fails
             return {"has_parameters": True, "parameters": []}
-
-    def get_team_skills(
-        self, db: Session, *, team_id: int, user_id: int
-    ) -> Dict[str, Any]:
-        """Get all skills associated with a team.
-
-        Follows the chain: team → bots → ghosts → skills
-
-        Args:
-            db: Database session
-            team_id: Team ID
-            user_id: User ID (for authorization)
-
-        Returns:
-            Dictionary with:
-            - team_id: The team ID
-            - team_namespace: The team namespace
-            - skills: List of skill names (deduplicated)
-            - preload_skills: List of skills to preload
-
-        Raises:
-            HTTPException: If team not found or access denied
-        """
-        from app.services.share.team_share_service import team_share_service
-
-        team = team_share_service.get_resource_for_use(db, team_id, user_id)
-        if not team:
-            raise HTTPException(status_code=404, detail="Team not found")
-
-        team_crd = Team.model_validate(team.json)
-        all_skills = set()
-        all_preload_skills = set()
-
-        # Use team owner's user_id for querying related resources
-        team_owner_id = team.user_id
-
-        # Iterate through team members to get bot → ghost → skills
-        for member in team_crd.spec.members or []:
-            bot = kindReader.get_by_name_and_namespace(
-                db,
-                team_owner_id,
-                KindType.BOT,
-                member.botRef.namespace,
-                member.botRef.name,
-            )
-            if not bot:
-                continue
-
-            bot_crd = Bot.model_validate(bot.json)
-
-            # Get ghost (stores skills)
-            ghost = kindReader.get_by_name_and_namespace(
-                db,
-                team_owner_id,
-                KindType.GHOST,
-                bot_crd.spec.ghostRef.namespace,
-                bot_crd.spec.ghostRef.name,
-            )
-            if ghost and ghost.json:
-                ghost_crd = Ghost.model_validate(ghost.json)
-                if ghost_crd.spec.skills:
-                    all_skills.update(ghost_crd.spec.skills)
-                if ghost_crd.spec.preload_skills:
-                    all_preload_skills.update(ghost_crd.spec.preload_skills)
-
-        logger.info(
-            f"[get_team_skills] team_id={team_id}, "
-            f"skills={list(all_skills)}, preload_skills={list(all_preload_skills)}"
-        )
-
-        return {
-            "team_id": team_id,
-            "team_namespace": team.namespace or "default",
-            "skills": sorted(all_skills),
-            "preload_skills": sorted(all_preload_skills),
-        }
 
     def copy_team(
         self,

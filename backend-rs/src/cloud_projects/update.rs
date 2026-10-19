@@ -47,9 +47,8 @@ use crate::state::AppState;
 
 use super::response::{self, CloudProjectBody};
 use super::{
-    ProjectAccessMode, ProjectListRow, all_user_grant_roles, cloud_project_not_found,
-    internal_error, parent_contexts, parse_project_id, project_access, project_access_statement,
-    role_for_priority,
+    ProjectListRow, all_user_grant_roles, cloud_project_not_found, internal_error, parent_contexts,
+    parse_project_id, project_access, project_access_point_statement, role_for_priority,
 };
 use request::CloudProjectUpdate;
 
@@ -213,7 +212,7 @@ async fn update_target<M: Mysql>(
         #[mysql(rename = "anon_1_priority")]
         priority: i64,
     }
-    let statement = project_access_statement(ProjectAccessMode::Point, user_id, Some(project_id));
+    let statement = project_access_point_statement(user_id, project_id);
     let row: Option<Row> = mysql.fetch_optional(statement, ()).await?;
     Ok(row.map(|row| UpdateTarget {
         id: row.id,

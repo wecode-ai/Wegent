@@ -1656,6 +1656,7 @@ function ProjectSendProbe({
               schemaVersion: 2,
               runtime: 'codex',
               message: '',
+              title: '核对人工交付证据',
               deviceId: 'shared-environment-device',
               workspacePath: '/workspace/prepared-environment',
               execution: {
@@ -10805,6 +10806,7 @@ describe('WorkbenchProvider runtime tasks', () => {
           workspace: { source: 'git_worktree' },
         },
         message: '处理项目 Issue',
+        title: '核对人工交付证据',
         modelId: 'deepseek-v4-pro',
         modelType: 'public',
         modelOptions: {
@@ -10883,21 +10885,26 @@ describe('WorkbenchProvider runtime tasks', () => {
                   key: 'multi-project',
                   stateDeviceId: 'device-1',
                   name: 'web',
+                  source: 'local_project',
+                  roots: [
+                    { kind: 'local', path: '/workspace/web' },
+                    { kind: 'local', path: '/workspace/api' },
+                  ],
                 },
-                deviceWorkspaces: ['/workspace/web', '/workspace/api'].map(
-                  (workspacePath, index) => ({
-                    id: 101 + index,
+                deviceWorkspaces: [
+                  {
+                    id: 101,
                     deviceId: 'device-1',
                     deviceName: 'Local Device',
                     deviceStatus: 'online',
-                    workspacePath,
+                    workspacePath: '/workspace/web',
                     workspaceKind: 'workspace',
                     workspaceSource: 'local',
                     mapped: true,
                     available: true,
                     tasks: [],
-                  })
-                ),
+                  },
+                ],
                 totalTasks: 0,
               },
             ],
@@ -10930,6 +10937,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect.objectContaining({
         deviceId: 'device-1',
         runtimeProjectKey: 'multi-project',
+        runtimeWorkspaceRoots: ['/workspace/web', '/workspace/api'],
       })
     )
     expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty('projectId')
@@ -10938,7 +10946,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('registers a named single-folder project through the local project flow', async () => {
+  test('selects the newly registered project when another project shares its folder', async () => {
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi
         .fn()
@@ -10946,6 +10954,26 @@ describe('WorkbenchProvider runtime tasks', () => {
         .mockResolvedValue(
           createRuntimeWork({
             projects: [
+              {
+                project: {
+                  key: 'existing-project',
+                  stateDeviceId: 'device-1',
+                  name: 'Existing Product',
+                },
+                deviceWorkspaces: [
+                  {
+                    id: 200,
+                    deviceId: 'device-1',
+                    workspacePath: '/workspace/product',
+                    workspaceKind: 'workspace',
+                    workspaceSource: 'local',
+                    mapped: true,
+                    available: true,
+                    tasks: [],
+                  },
+                ],
+                totalTasks: 0,
+              },
               {
                 project: {
                   key: 'multi-project',
@@ -10997,7 +11025,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
     expect(runtimeWorkApi.openRuntimeWorkspace).not.toHaveBeenCalled()
     await waitFor(() =>
-      expect(screen.getByTestId('current-project-name')).toHaveTextContent('Product')
+      expect(screen.getByTestId('current-project-name')).toHaveTextContent(/^Product$/)
     )
     expect(readLastProjectId(1)).toBe(
       runtimeProjectUiId({
@@ -11006,6 +11034,10 @@ describe('WorkbenchProvider runtime tasks', () => {
         name: 'Product',
       })
     )
+    await userEvent.click(screen.getByText('refresh work lists'))
+    await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(3))
+    expect(screen.getByTestId('current-project-name')).toHaveTextContent(/^Product$/)
+    expect(screen.getByTestId('runtime-project-count')).toHaveTextContent('2')
   })
 
   test('delegates standalone conversation workspace creation to the runtime', async () => {

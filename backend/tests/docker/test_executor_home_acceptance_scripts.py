@@ -434,6 +434,7 @@ def test_acceptance_scripts_are_valid_shell_and_cover_required_lifecycle():
         "Docker volume identity changed",
         "Docker data volume identity changed",
         '--mount "type=volume,src=$DATA_VOLUME_NAME,dst=$DATA_ROOT"',
+        '-e WEGENT_EXECUTOR_HOME="$EXECUTOR_HOME"',
         "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED=true",
         "executor-rpc-probe.py",
         "executor-persistence-json.py",

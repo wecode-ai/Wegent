@@ -29,7 +29,8 @@ class McpIdentityUserInfo(BaseModel):
     email: Optional[str] = None
 
 
-@router.get("/userinfo", response_model=McpIdentityUserInfo)
+# MIGRATION-CANDIDATE(api="GET /api/external/mcp-identity/userinfo"): remove after final confirmation.
+# @router.get("/userinfo", response_model=McpIdentityUserInfo)
 @limiter.limit(settings.RATE_LIMIT_MCP_IDENTITY)
 async def read_mcp_identity_userinfo(
     request: Request,

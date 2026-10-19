@@ -111,3 +111,19 @@ def test_sync_endpoint_targets_one_device_and_returns_sanitized_result(
         device_id="remote-1",
         allow_empty=False,
     )
+
+
+@pytest.fixture(autouse=True)
+def _retained_python_handler_contracts(git_credentials_client):
+    import app.api.endpoints.users as endpoint_0
+    from tests.legacy_python_routes import legacy_python_handlers
+
+    with legacy_python_handlers(git_credentials_client.app) as register:
+        register(
+            "/api/users/me/git-accounts/sync-summary",
+            endpoint_0.get_git_account_sync_summary,
+            endpoint_0.router,
+            methods=["GET"],
+            response_model=endpoint_0.GitAccountSyncSummary,
+        )
+        yield

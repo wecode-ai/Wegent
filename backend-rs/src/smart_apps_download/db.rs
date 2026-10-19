@@ -70,6 +70,25 @@ where
         .await
 }
 
+/// `db.query(SmartAppRelease).filter(id == release_id, smart_app_id ==
+/// app.id, scan_status == 'passed').first()` (`download_artifact`).
+pub const FIND_PASSED_RELEASE: &str = "SELECT smart_app_releases.id AS smart_app_releases_id, smart_app_releases.smart_app_id AS smart_app_releases_smart_app_id, smart_app_releases.version AS smart_app_releases_version, smart_app_releases.manifest_json AS smart_app_releases_manifest_json, smart_app_releases.release_notes AS smart_app_releases_release_notes, smart_app_releases.storage_key AS smart_app_releases_storage_key, smart_app_releases.sha256 AS smart_app_releases_sha256, smart_app_releases.size_bytes AS smart_app_releases_size_bytes, smart_app_releases.scan_status AS smart_app_releases_scan_status, smart_app_releases.scan_report_json AS smart_app_releases_scan_report_json, smart_app_releases.extensions_json AS smart_app_releases_extensions_json, smart_app_releases.created_by_user_id AS smart_app_releases_created_by_user_id, smart_app_releases.created_at AS smart_app_releases_created_at, smart_app_releases.published_at AS smart_app_releases_published_at \nFROM smart_app_releases \nWHERE smart_app_releases.id = ? AND smart_app_releases.smart_app_id = ? AND smart_app_releases.scan_status = 'passed' \n LIMIT 1";
+
+/// `download_artifact`'s release lookup: the token's release for `app.id`
+/// with a passed scan, or `None`.
+pub async fn find_passed_release<M>(
+    mysql: &M,
+    release_id: i64,
+    smart_app_id: i64,
+) -> MysqlResult<Option<SmartAppReleaseRow>>
+where
+    M: Mysql,
+{
+    mysql
+        .fetch_optional(FIND_PASSED_RELEASE, (release_id, smart_app_id))
+        .await
+}
+
 /// `_user_namespace_ids`: owned plus approved-member namespace ids as strings.
 pub async fn find_namespace_ids<M>(mysql: &M, user_id: i64) -> MysqlResult<Vec<String>>
 where

@@ -2,15 +2,18 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! `POST /api/smart-apps/marketplace/{smart_app_id}/download`.
+//! `POST /api/smart-apps/marketplace/{smart_app_id}/download` and
+//! `GET /api/smart-apps/marketplace/{smart_app_id}/artifact`.
 //!
-//! Port of `download_marketplace_item`
-//! (`app/api/endpoints/smart_apps.py`) and
-//! `SmartAppMarketplaceService.download_descriptor`
+//! Port of `download_marketplace_item` and `download_marketplace_artifact`
+//! (`app/api/endpoints/smart_apps.py`) and the matching
+//! `SmartAppMarketplaceService` operations
 //! (`app/services/smart_app_marketplace_service.py`): resolve the published
-//! Smart app, recheck the caller's access role, load the app's latest release,
-//! then mint a short-lived signed artifact URL and return the download
-//! descriptor as JSON.
+//! Smart app, recheck the caller's access role, load the app's release, then
+//! mint a short-lived signed artifact URL and return the download descriptor
+//! as JSON, or — for a verified download token — stream the release's
+//! immutable package from the plugin package store with the source's download
+//! headers.
 //!
 //! Re-opened on 2026-10-11 to obtain a fresh focused replay under the current
 //! `.traffic-e2e/verification.yaml`, whose replay-policy fingerprint changed and
@@ -27,6 +30,8 @@
 //! with no behavior change; this note only changes the target fingerprint for
 //! a fresh handoff.
 
+pub(crate) mod artifact;
+mod artifact_handler;
 mod db;
 mod handler;
 mod link;

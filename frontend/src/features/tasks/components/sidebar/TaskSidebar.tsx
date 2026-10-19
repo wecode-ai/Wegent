@@ -683,7 +683,6 @@ export default function TaskSidebar({
                         ›
                       </span>
                     </Button>
-                    {renderSearchButton('task-sidebar-search-button')}
                   </div>
                 )}
                 {renderNavigationButtons(fixedNavigationButtons)}
