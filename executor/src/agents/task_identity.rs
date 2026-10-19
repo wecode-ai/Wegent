@@ -15,6 +15,7 @@ pub(super) const TASK_SCOPED_ENV_KEYS: &[&str] = &[
     "WEGENT_PLUGIN_AUTH_BROKER_TOKEN",
     "WEGENT_PLUGIN_AUTH_MODE",
     "WEGENT_RUNTIME_AUTH_TOKEN",
+    "WEGENT_RUNTIME_BACKEND_URL",
     "WEGENT_SKILL_IDENTITY_TOKEN",
     "WEGENT_SKILL_USER_NAME",
     "WEGENT_TASK_ID",
@@ -76,6 +77,9 @@ pub(super) fn task_identity_env(request: &ExecutionRequest) -> BTreeMap<String, 
             runtime_auth_token.to_owned(),
         );
     }
+    if let Some(backend_url) = super::request_backend_url(request) {
+        env.insert("WEGENT_RUNTIME_BACKEND_URL".to_owned(), backend_url);
+    }
     if let Some(token) = non_empty(request.skill_identity_token.as_deref()) {
         env.insert("WEGENT_SKILL_IDENTITY_TOKEN".to_owned(), token.to_owned());
     }
@@ -99,6 +103,7 @@ mod tests {
         let mut request = ExecutionRequest {
             task_id: "task-1".to_owned(),
             project_workspace_path: Some("/runtime/workspaces/task-1".to_owned()),
+            backend_url: Some("https://backend.example.com".to_owned()),
             ..ExecutionRequest::default()
         };
         request.extra.insert(
@@ -117,6 +122,7 @@ mod tests {
             env.get("WEWORK_PARENT_TITLE"),
             Some(&"Identify local development instances".to_owned())
         );
+        assert!(env.contains_key("WEGENT_RUNTIME_BACKEND_URL"));
         assert!(env
             .keys()
             .all(|key| TASK_SCOPED_ENV_KEYS.contains(&key.as_str())));

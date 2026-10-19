@@ -10,7 +10,15 @@ from datetime import datetime
 from typing import Annotated, Literal, Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    Header,
+    HTTPException,
+    Query,
+    status,
+)
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
@@ -25,6 +33,10 @@ from app.core.constants import (
 )
 from app.db.session import get_async_db
 from app.models.user import User
+from app.schemas.remote_workspace import (
+    RemoteWorkspaceArtifactDeclareRequest,
+    RemoteWorkspaceArtifactResponse,
+)
 from app.schemas.service import (
     ServiceDeleteRequest,
     ServiceResponse,
@@ -56,6 +68,10 @@ from app.schemas.task_fork import TaskForkRequest, TaskForkResponse
 from app.services import prompt_draft_service
 from app.services.adapters.executor_job import job_service
 from app.services.adapters.task_kinds import task_kinds_service
+from app.services.auth.task_token import extract_token_from_header, verify_task_token
+from app.services.remote_workspace_artifact_service import (
+    remote_workspace_artifact_service,
+)
 from app.services.remote_workspace_service import remote_workspace_service
 from app.services.shared_task import shared_task_service
 from app.services.task_fork import task_fork_service
@@ -379,6 +395,58 @@ def get_remote_workspace_file(
         task_id=task_id,
         user_id=current_user.id,
         path=path,
+        disposition=disposition,
+    )
+
+
+@router.post(
+    "/{task_id}/remote-workspace/artifacts",
+    response_model=RemoteWorkspaceArtifactResponse,
+)
+@trace_sync("declare_remote_workspace_artifact", "tasks.api")
+def declare_remote_workspace_artifact(
+    request: RemoteWorkspaceArtifactDeclareRequest,
+    task_id: int = Depends(with_task_telemetry),
+    authorization: str = Header(default="", include_in_schema=False),
+    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
+    db: Session = Depends(get_db),
+) -> RemoteWorkspaceArtifactResponse:
+    """Declare artifact metadata without uploading the workspace file."""
+    token = extract_token_from_header(authorization)
+    token_info = verify_task_token(token or "")
+    if (
+        token_info is None
+        or token_info.task_id != task_id
+        or token_info.user_id != current_user.id
+        or token_info.subtask_id <= 0
+    ):
+        raise HTTPException(status_code=403, detail="A matching Task Token is required")
+    return remote_workspace_artifact_service.declare(
+        db=db,
+        task_id=task_id,
+        subtask_id=token_info.subtask_id,
+        user_id=current_user.id,
+        request=request,
+    )
+
+
+@router.get("/{task_id}/remote-workspace/artifacts/{context_id}/file")
+@trace_sync("download_remote_workspace_artifact", "tasks.api")
+def download_remote_workspace_artifact(
+    context_id: int,
+    disposition: str = Query(
+        "attachment", pattern="^(inline|attachment)$", description="File disposition"
+    ),
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Stream a declared artifact from the currently connected Task device."""
+    return remote_workspace_artifact_service.stream_file(
+        db=db,
+        task_id=task_id,
+        context_id=context_id,
+        user_id=current_user.id,
         disposition=disposition,
     )
 

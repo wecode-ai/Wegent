@@ -5,6 +5,7 @@
 mod agent_session;
 pub mod agents;
 pub mod app;
+pub mod artifact_cli;
 pub mod attachments;
 pub mod browser_mcp;
 pub mod callback;

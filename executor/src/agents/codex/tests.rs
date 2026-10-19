@@ -4494,6 +4494,8 @@ fn github_cli_input_does_not_activate_official_connector_or_plugin_skill() {
     let instructions = codex_thread_developer_instructions("user settings", "task settings");
     assert!(instructions.contains(github_cli::INSTRUCTIONS));
     assert!(instructions.contains("connectorSlug=wework-github-cli"));
+    assert!(instructions.contains("artifact declare --path"));
+    assert!(instructions.contains("sends metadata only"));
 }
 
 #[test]

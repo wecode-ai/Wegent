@@ -8,6 +8,12 @@
   "remote_workspace": {
     "button": "查看任务文件",
     "unavailable": "远程会话不可用",
+    "artifact": {
+      "device_file": "设备任务文件",
+      "download": "下载产物",
+      "download_failed": "产物下载失败",
+      "unavailable": "执行设备可能已离线，或文件已被移动或删除"
+    },
     "reason_loading": "正在检查远程工作区状态...",
     "reason_status_check_failed": "远程工作区状态检查失败",
     "reason_not_connected": "远程会话尚未连接",

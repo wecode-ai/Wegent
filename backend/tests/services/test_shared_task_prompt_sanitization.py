@@ -177,6 +177,17 @@ class TestPublicSharedTaskContexts:
                     status=ContextStatus.READY.value,
                     type_data={"knowledge_id": 42, "document_count": 3},
                 ),
+                SubtaskContext(
+                    subtask_id=subtask.id,
+                    user_id=1,
+                    context_type=ContextType.REMOTE_WORKSPACE_ARTIFACT.value,
+                    name="device-report.pdf",
+                    status=ContextStatus.READY.value,
+                    type_data={
+                        "task_id": task.id,
+                        "relative_path": "outputs/device-report.pdf",
+                    },
+                ),
             ]
         )
         test_db.flush()
@@ -202,3 +213,4 @@ class TestPublicSharedTaskContexts:
         assert context.context_type == ContextType.ATTACHMENT.value
         assert context.name == "brief.txt"
         assert "Private knowledge base" not in response.model_dump_json()
+        assert "device-report.pdf" not in response.model_dump_json()

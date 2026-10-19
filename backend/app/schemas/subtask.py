@@ -107,6 +107,11 @@ class SubtaskContextBrief(BaseModel):
     file_extension: Optional[str] = None
     file_size: Optional[int] = None
     mime_type: Optional[str] = None
+    # Remote workspace artifact fields (metadata only; bytes stay on the device)
+    remote_task_id: Optional[int] = None
+    remote_path: Optional[str] = None
+    modified_at: Optional[int] = None
+    sha256: Optional[str] = None
     # Knowledge base fields (from type_data)
     knowledge_id: Optional[int] = None
     document_count: Optional[int] = None

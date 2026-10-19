@@ -59,6 +59,16 @@ function isVirtualKnowledgeBasePath(path: string): boolean {
   return path.startsWith('/knowledge/') && !path.startsWith('/knowledge/document/')
 }
 
+function isRegeneratableContext(context: SubtaskContextBrief): context is SubtaskContextBrief & {
+  context_type: 'attachment' | 'knowledge_base' | 'external_knowledge'
+} {
+  return (
+    context.context_type === 'attachment' ||
+    context.context_type === 'knowledge_base' ||
+    context.context_type === 'external_knowledge'
+  )
+}
+
 export interface UseChatStreamHandlersOptions {
   // Team and model
   selectedTeam: Team | null
@@ -1397,7 +1407,7 @@ export function useChatStreamHandlers({
           source_url?: string | null
           cover_url?: string | null
         }> =
-          existingContexts?.map(ctx => ({
+          existingContexts?.filter(isRegeneratableContext).map(ctx => ({
             id: ctx.id,
             context_type: ctx.context_type,
             name: ctx.name,
