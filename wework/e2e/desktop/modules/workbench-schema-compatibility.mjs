@@ -7,6 +7,7 @@ import { promisify } from 'node:util'
 import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
 import { verifyWindowsDesktopDataStartup } from './workbench-desktop-startup.mjs'
 import { verifyWindowsComponentPublication } from './workbench-component-publication.mjs'
+import { verifyMacosLogStartup } from './workbench-log-startup.mjs'
 
 export function packagedResourcesRoot(appBinary) {
   return process.platform === 'darwin'
@@ -28,6 +29,15 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
   }
   assert.equal(typeof input.executor, 'string')
   assert.equal(typeof input.incompatibleExecutor, 'string')
+  const macosLogStartup =
+    process.platform === 'darwin'
+      ? await verifyMacosLogStartup({
+          resources: input.resources,
+          executor: input.executor,
+          environment: appEnvironment,
+          root: join(root, 'macos-log-startup'),
+        })
+      : undefined
   const windowsDesktopDataStartup =
     process.platform === 'win32'
       ? await verifyWindowsDesktopDataStartup({
@@ -333,6 +343,7 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
     }
   )
   const evidence = JSON.parse(stdout)
+  if (macosLogStartup) evidence.macosLogStartup = macosLogStartup
   if (windowsDesktopDataStartup) evidence.windowsDesktopDataStartup = windowsDesktopDataStartup
   if (windowsComponentPublication)
     evidence.windowsComponentPublication = windowsComponentPublication

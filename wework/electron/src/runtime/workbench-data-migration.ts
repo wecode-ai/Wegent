@@ -131,16 +131,29 @@ function refreshMutableFileBridge(options: EntryMigration, journal: Journal): bo
   return true
 }
 
-// Recover only the missing alias before Electron creates its single-instance files.
+// Recover aliases before Electron creates its single-instance files or log directory.
 // symlink is exclusive: concurrent startup cannot overwrite an existing entry.
-export function recoverWorkbenchDataBridge(options: EntryMigration): void {
+export function recoverWorkbenchDataBridge(
+  options: EntryMigration,
+  recovery: { replaceEmptyDirectory?: boolean } = {}
+): void {
   const journal = readJournal(options)
-  if (
-    !journal ||
-    stat(options.source) ||
-    (!owns(options.target, journal) && !(journal.completed && !journal.directory))
-  )
+  if (!journal || (!owns(options.target, journal) && !(journal.completed && !journal.directory)))
     return
+  const original = stat(options.source)
+  if (original) {
+    if (
+      !recovery.replaceEmptyDirectory ||
+      !journal.directory ||
+      !original.isDirectory() ||
+      fs.readdirSync(options.source).length
+    )
+      return
+    validateMigrationPaths(options)
+    // Only an explicitly opted-in log directory may be recreated after cleanup.
+    // rmdir also refuses a concurrent write; never recursively remove user data.
+    fs.rmdirSync(options.source)
+  }
   if (process.platform === 'win32' && !journal.directory) {
     if (!stat(options.target)) return
     if (refreshMutableFileBridge(options, journal)) return
@@ -188,10 +201,7 @@ function canonicalParent(path: string): string {
   return join(canonicalParent(parent), relative(parent, path))
 }
 
-// Synchronous by design: userData/sessionData must move before Electron's ready event.
-// Caller owns the app single-instance lock (or the executor migration lock).
-// Rename preserves the complete SQLite/WAL/SHM set and credentials without copying.
-export function migrateWorkbenchDataEntry(options: EntryMigration): void {
+function validateMigrationPaths(options: EntryMigration): void {
   const { source, target, journal: journalPath } = options
   const paths = [source, target, journalPath]
   if (paths.some(path => !isAbsolute(path)))
@@ -207,6 +217,14 @@ export function migrateWorkbenchDataEntry(options: EntryMigration): void {
   ) {
     throw new Error('Application data migration paths must be absolute and disjoint')
   }
+}
+
+// Synchronous by design: userData/sessionData must move before Electron's ready event.
+// Caller owns the app single-instance lock (or the executor migration lock).
+// Rename preserves the complete SQLite/WAL/SHM set and credentials without copying.
+export function migrateWorkbenchDataEntry(options: EntryMigration): void {
+  const { source, target, journal: journalPath } = options
+  validateMigrationPaths(options)
   let journal = readJournal(options)
   const original = stat(source)
   if (!journal) {
