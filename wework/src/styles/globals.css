@@ -678,8 +678,8 @@ button:disabled {
 
   /* Outrank DSH's late-injected universal rules while leaving component classes stronger. */
   :is(html, html *)::-webkit-scrollbar {
-    width: 7px;
-    height: 7px;
+    width: 8px;
+    height: 8px;
     background-color: transparent;
   }
 
@@ -691,8 +691,7 @@ button:disabled {
 
   :is(html, html *)::-webkit-scrollbar-thumb {
     border-radius: 999px;
-    border: 1px solid transparent;
-    background-clip: content-box;
+    border: 0;
     background-color: rgb(var(--color-scrollbar-thumb));
   }
 
