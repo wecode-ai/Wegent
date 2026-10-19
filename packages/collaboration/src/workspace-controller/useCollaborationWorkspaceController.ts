@@ -85,7 +85,7 @@ export interface CollaborationWorkspaceControllerCommands {
   loadProject(
     projectId: string,
     showLoading?: boolean,
-    options?: { isCurrent?(): boolean },
+    options?: { isCurrent?(): boolean; invalidate?: boolean },
   ): Promise<void>;
   loadProjectSnapshot(
     projectId: string,
@@ -938,8 +938,9 @@ export function createCollaborationWorkspaceControllerCommands({
   const loadProject = async (
     projectId: string,
     showLoading = true,
-    options?: { isCurrent?(): boolean },
+    options?: { isCurrent?(): boolean; invalidate?: boolean },
   ) => {
+    if (options?.invalidate) markProjectMutated(projectId);
     const revision = ++projectLoadRevision;
     const isCurrent = () =>
       revision === projectLoadRevision && (options?.isCurrent?.() ?? true);

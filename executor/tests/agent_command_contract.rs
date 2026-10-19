@@ -10,6 +10,7 @@ use std::{
 use serde_json::json;
 use wegent_executor::{
     agents::{build_claude_command, build_codex_app_server_command, AgentCommandPlanner},
+    artifact_cli::AGENT_INSTRUCTIONS,
     protocol::ExecutionRequest,
 };
 
@@ -74,6 +75,8 @@ fn claude_command_sends_text_prompt_through_stream_json_stdin() {
             "EnterWorktree",
             "--permission-mode",
             "bypassPermissions",
+            "--append-system-prompt",
+            AGENT_INSTRUCTIONS,
             "--model",
             "claude-sonnet-4-6"
         ]
@@ -459,7 +462,10 @@ fn claude_command_uses_bot_system_prompt_when_request_prompt_absent() {
         .position(|arg| arg == "--append-system-prompt")
         .expect("Claude system prompt append flag should be present");
 
-    assert_eq!(spec.args()[append_flag_index + 1], "You are helpful.");
+    assert_eq!(
+        spec.args()[append_flag_index + 1],
+        format!("You are helpful.\n\n{AGENT_INSTRUCTIONS}")
+    );
 }
 
 #[test]

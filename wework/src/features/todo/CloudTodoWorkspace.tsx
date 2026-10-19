@@ -1517,7 +1517,9 @@ export function CloudTodoWorkspace({
     if (!usesSharedCloudBoard || boardRefreshNonce === 0 || !selectedProjectId) {
       return
     }
-    void cloudWorkspace.commands.loadProject(String(selectedProjectId), false)
+    void cloudWorkspace.commands.loadProject(String(selectedProjectId), false, {
+      invalidate: true,
+    })
   }, [boardRefreshNonce, cloudWorkspace.commands, selectedProjectId, usesSharedCloudBoard])
   useEffect(() => {
     if (

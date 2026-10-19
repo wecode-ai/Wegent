@@ -265,6 +265,36 @@ describe("collaboration workspace controller", () => {
     expect(state.projectItems[project.id]).toEqual([reassigned]);
   });
 
+  it("refreshes again when an Issue change arrives during a project load", async () => {
+    state = { ...state, projects: [project], project, selectedIssue: issue };
+    const { api, commands } = createController();
+    const previous = {
+      items: [issue],
+      members: [],
+      agents: [],
+      taskBindings: [],
+    };
+    const reassigned = { ...issue, version: 3, assignee_user_id: 1 };
+    const pending = deferred<typeof previous>();
+    vi.mocked(api.issues.getBoardSnapshot)
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValueOnce({ ...previous, items: [reassigned] });
+
+    const oldRefresh = commands.loadProject(project.id, false);
+    const changedRefresh = commands.loadProject(project.id, false, {
+      invalidate: true,
+    });
+    expect(api.issues.getBoardSnapshot).toHaveBeenCalledTimes(2);
+    await changedRefresh;
+    expect(state.issues).toEqual([reassigned]);
+    expect(state.selectedIssue).toEqual(reassigned);
+
+    pending.resolve(previous);
+    await oldRefresh;
+    expect(state.issues).toEqual([reassigned]);
+    expect(state.selectedIssue).toEqual(reassigned);
+  });
+
   it("keeps a successful project catalog when My Work fails", async () => {
     const api = createApi();
     api.myWork!.list = vi
