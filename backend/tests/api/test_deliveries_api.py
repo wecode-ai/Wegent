@@ -11,6 +11,7 @@ import uuid
 from types import SimpleNamespace
 from typing import Any, BinaryIO
 from unittest.mock import AsyncMock, MagicMock
+from urllib.parse import quote
 
 import pytest
 from fastapi.testclient import TestClient
@@ -140,6 +141,40 @@ def test_todo_attachment_flow(
     )
     assert deleted.status_code == 204
     assert not delivery_storage.objects
+
+
+def test_todo_attachment_content_supports_non_ascii_filename(
+    test_client: TestClient,
+    test_token: str,
+    delivery_project: CloudProject,
+    delivery_storage: FakeDeliveryStorage,
+) -> None:
+    item_id = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Chinese attachment name"},
+    ).json()["id"]
+    filename = "截屏 2026-10-19 17.53.45.png"
+    uploaded = test_client.post(
+        f"/api/v1/loop-items/{item_id}/attachments",
+        headers=_auth(test_token),
+        files={"file": (filename, b"image-bytes", "image/png")},
+    )
+    assert uploaded.status_code == 201
+
+    content = test_client.get(
+        f"/api/v1/loop-item-attachments/{uploaded.json()['id']}/content",
+        headers=_auth(test_token),
+    )
+
+    assert content.status_code == 200
+    assert content.content == b"image-bytes"
+    assert content.headers["content-type"].startswith("image/png")
+    assert (
+        content.headers["content-disposition"]
+        == f"inline; filename*=UTF-8''{quote(filename)}"
+    )
+    assert len(delivery_storage.objects) == 1
 
 
 @pytest.fixture

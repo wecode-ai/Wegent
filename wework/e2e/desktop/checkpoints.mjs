@@ -23,6 +23,7 @@ export const DESKTOP_CHECKPOINTS = [
   'collaboration-issue-comment-mention',
   'collaboration-issue-comment-notification',
   'collaboration-issue-mcp-comments',
+  'collaboration-issue-attachment-preview',
   'collaboration-issue-archive',
   'priority-filter',
   'telemetry-consent',
