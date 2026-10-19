@@ -67,6 +67,12 @@ async function addLocalAgent(control, timeoutMs) {
     existingAgents.includes('当前设备智能体'),
     'The current-device Agent must remain selectable'
   )
+  await control.command('fill', '[data-testid="project-agent-search"]', {
+    value: 'no-such-agent-e2e',
+  })
+  await control.command('waitFor', '[data-testid="project-agent-search-clear"]')
+  await control.command('click', '[data-testid="project-agent-search-clear"]')
+  await control.command('waitFor', '[data-testid="project-agent-wegent-team"]')
   await control.command('click', '[data-testid="project-agent-mode-create"]')
   await control.command('waitFor', '[data-testid="cloud-project-chat-agent-editor"]', { timeoutMs })
   await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {

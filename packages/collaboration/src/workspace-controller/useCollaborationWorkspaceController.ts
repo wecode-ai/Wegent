@@ -85,7 +85,7 @@ export interface CollaborationWorkspaceControllerCommands {
   loadProject(
     projectId: string,
     showLoading?: boolean,
-    options?: { isCurrent?(): boolean },
+    options?: { isCurrent?(): boolean; loadSnapshot?: boolean },
   ): Promise<void>;
   loadProjectSnapshot(
     projectId: string,
@@ -210,6 +210,7 @@ export type CollaborationWorkspaceControllerAction =
       myWork: WorkspaceMyWorkItem[];
     }
   | { type: "project-catalog-loaded"; projects: CollaborationProject[] }
+  | { type: "project-metadata-loaded"; project: CollaborationProject }
   | {
       type: "project-snapshot-loaded";
       projectId: string;
@@ -402,6 +403,24 @@ export function collaborationWorkspaceControllerReducer(
       return {
         ...state,
         myWork: action.items,
+        error: null,
+        errorSource: null,
+      };
+    case "project-metadata-loaded":
+      return {
+        ...state,
+        project: action.project,
+        projects: state.projects.some((item) => item.id === action.project.id)
+          ? state.projects.map((item) =>
+              item.id === action.project.id ? action.project : item,
+            )
+          : [action.project, ...state.projects],
+        issues: state.projectItems[action.project.id] ?? [],
+        members: state.projectMembers[action.project.id] ?? [],
+        agents: state.projectAgents[action.project.id] ?? [],
+        taskBindings: state.projectTaskBindings[action.project.id] ?? [],
+        selectedIssue:
+          state.project?.id === action.project.id ? state.selectedIssue : null,
         error: null,
         errorSource: null,
       };
@@ -938,7 +957,7 @@ export function createCollaborationWorkspaceControllerCommands({
   const loadProject = async (
     projectId: string,
     showLoading = true,
-    options?: { isCurrent?(): boolean },
+    options?: { isCurrent?(): boolean; loadSnapshot?: boolean },
   ) => {
     const revision = ++projectLoadRevision;
     const isCurrent = () =>
@@ -956,6 +975,10 @@ export function createCollaborationWorkspaceControllerCommands({
         return;
       if (!catalogProjects.some((item) => item.id === project.id)) {
         catalogProjects = [...catalogProjects, project];
+      }
+      if (options?.loadSnapshot === false) {
+        dispatch({ type: "project-metadata-loaded", project });
+        return;
       }
       const externalBoardOptions = getExternalBoardOptions();
       const externalBoard = isExternalGitProject(project)
@@ -1587,6 +1610,7 @@ export function useCollaborationWorkspaceController({
     });
   }, [api, messages, myWorkEnabled, preloadHomeSnapshots]);
 
+  const loadBoardOnLocation = location.view !== "manage";
   useEffect(() => {
     if (!commands) return;
     const revision = ++locationLoadRevisionRef.current;
@@ -1594,7 +1618,10 @@ export function useCollaborationWorkspaceController({
     if (location.projectId) {
       const projectId = location.projectId;
       if (loadProjectOnLocation) {
-        void commands.loadProject(projectId, true, { isCurrent });
+        void commands.loadProject(projectId, true, {
+          isCurrent,
+          loadSnapshot: loadBoardOnLocation,
+        });
       } else {
         void commands.loadProjectCatalog({ isCurrent });
       }
@@ -1613,6 +1640,7 @@ export function useCollaborationWorkspaceController({
   }, [
     commands,
     loadProjectOnLocation,
+    loadBoardOnLocation,
     location.projectId,
     location.rootView,
     myWorkEnabled,
@@ -1621,13 +1649,13 @@ export function useCollaborationWorkspaceController({
   useEffect(() => {
     if (!commands) return;
     const projectId = location.projectId;
-    if (!projectId || pollIntervalMs <= 0) return;
+    if (!projectId || !loadBoardOnLocation || pollIntervalMs <= 0) return;
     const timer = window.setInterval(
       () => void commands.loadProject(projectId, false),
       pollIntervalMs,
     );
     return () => window.clearInterval(timer);
-  }, [commands, location.projectId, pollIntervalMs]);
+  }, [commands, loadBoardOnLocation, location.projectId, pollIntervalMs]);
 
   useEffect(() => {
     if (!commands) return;

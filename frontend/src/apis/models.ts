@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { apiClient } from './client'
+import { getClientRequestCache } from '@wegent/chat-core/request-cache'
 
 // Model Category Type (different from resource type public/user/group)
 export type ModelCategoryType =
@@ -431,7 +432,8 @@ export const modelApis = {
       params.append('model_category_type', modelCategoryType)
     }
     const queryString = params.toString()
-    return apiClient.get(`/models/unified${queryString ? `?${queryString}` : ''}`)
+    const endpoint = `/models/unified${queryString ? `?${queryString}` : ''}`
+    return getClientRequestCache(apiClient).get(endpoint, () => apiClient.get(endpoint))
   },
 
   /**
@@ -498,7 +500,12 @@ export const modelApis = {
    */
   async createModel(model: ModelCRD): Promise<ModelCRD> {
     const namespace = model.metadata.namespace || 'default'
-    return apiClient.post(`/v1/namespaces/${encodeURIComponent(namespace)}/models`, model)
+    const saved = await apiClient.post<ModelCRD>(
+      `/v1/namespaces/${encodeURIComponent(namespace)}/models`,
+      model
+    )
+    getClientRequestCache(apiClient).invalidate('/models/unified')
+    return saved
   },
 
   /**
@@ -508,10 +515,12 @@ export const modelApis = {
    */
   async updateModel(name: string, model: ModelCRD): Promise<ModelCRD> {
     const namespace = model.metadata.namespace || 'default'
-    return apiClient.put(
+    const saved = await apiClient.put<ModelCRD>(
       `/v1/namespaces/${encodeURIComponent(namespace)}/models/${encodeURIComponent(name)}`,
       model
     )
+    getClientRequestCache(apiClient).invalidate('/models/unified')
+    return saved
   },
 
   /**
@@ -520,9 +529,10 @@ export const modelApis = {
    * @param namespace - Namespace (default: 'default')
    */
   async deleteModel(name: string, namespace: string = 'default'): Promise<void> {
-    return apiClient.delete(
+    await apiClient.delete(
       `/v1/namespaces/${encodeURIComponent(namespace)}/models/${encodeURIComponent(name)}`
     )
+    getClientRequestCache(apiClient).invalidate('/models/unified')
   },
 
   /**

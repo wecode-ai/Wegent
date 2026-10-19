@@ -174,7 +174,7 @@ export function CollaborationPage() {
         readWorkspaceFile: readRuntimeWorkspaceFile,
       },
     }
-  }, [])
+  }, [user?.id])
   useEffect(
     () => () => {
       api.activity.dispose()

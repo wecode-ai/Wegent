@@ -393,7 +393,7 @@ export function createLocalWorkspaceApi(
   }
   const validateRunnerSelections = async (projectId: string, rules: WorkspaceAutomationRule[]) => {
     if (!projectAgentApi) return
-    const agents = await projectAgentApi.list(projectId)
+    const agents = await projectAgentApi.list(projectId, { forceRefresh: true })
     const groups = await projectCollaborationGroups(projectId)
     const environments = await projectAgentApi.listRunnerEnvironments(projectId)
     const cloudModels = await projectAgentApi.listModels()
@@ -732,7 +732,7 @@ export function createLocalWorkspaceApi(
           }),
           update: async (projectId, agentId, input) => {
             if (input.status === 'archived') {
-              const existing = (await projectAgentApi.list(projectId)).find(
+              const existing = (await projectAgentApi.list(projectId, { forceRefresh: true })).find(
                 agent => agent.id === agentId
               )
               if (existing && isDefaultLocalAgent(existing)) {

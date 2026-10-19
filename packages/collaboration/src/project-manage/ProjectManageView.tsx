@@ -244,12 +244,14 @@ export function ProjectManageView<
     projectId: project.id,
     projectScopeRef,
     canManage: canManageMembers,
+    enabled: section === 'all' || section === 'members',
     reportError,
     openMembersRequestId,
     onOpenMembersRequestConsumed,
   })
 
   useEffect(() => {
+    if (section !== 'all' && section !== 'overview') return
     let active = true
     void api.listItems(project.id).then(
       response => {
@@ -261,7 +263,7 @@ export function ProjectManageView<
     return () => {
       active = false
     }
-  }, [api, host, project.id, reportError, setItems])
+  }, [api, host, project.id, reportError, section, setItems])
 
   const allTags = useMemo(
     () => Array.from(new Set([...tags, ...items.flatMap(item => item.tags ?? [])])),
@@ -726,12 +728,14 @@ export function ProjectManageView<
           deleteTag={deleteTag}
         />
 
-        <ProjectProviderSection
-          className={section === 'all' || section === 'agents' ? '' : 'hidden'}
-          render={renderProviderSettings}
-          updateProject={values => updateProject(values, projectScope)}
-          reportError={reportError}
-        />
+        {(section === 'all' || section === 'agents') && (
+          <ProjectProviderSection
+            className=""
+            render={renderProviderSettings}
+            updateProject={values => updateProject(values, projectScope)}
+            reportError={reportError}
+          />
+        )}
 
         {(section === 'all' || section === 'overview') && externalProvider && (
           <section className="border-t border-border py-6">

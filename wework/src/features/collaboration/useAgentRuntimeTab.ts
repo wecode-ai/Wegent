@@ -22,20 +22,24 @@ export function useAgentRuntimeTab(routing: ReturnType<typeof useAgentRouting>) 
         t('workbench.agent_creator_model_placeholder'))
   const error =
     routing.error ||
-    (!routing.environmentLoading &&
-    policy?.mode === 'fixed' &&
-    policy.environment_id &&
-    !environment
-      ? t('workbench.runner_environment_unavailable_hint')
-      : !routing.loading &&
-          policy &&
-          (policy.mode !== 'fixed' || policy.environment_id) &&
-          routing.modelMode === 'fixed' &&
-          routing.model &&
-          !routing.modelAvailable
-        ? t('workbench.runner_model_conflict')
-        : null)
+    (!routing.activated
+      ? null
+      : !routing.environmentLoading &&
+          policy?.mode === 'fixed' &&
+          policy.environment_id &&
+          !environment
+        ? t('workbench.runner_environment_unavailable_hint')
+        : !routing.loading &&
+            policy &&
+            (policy.mode !== 'fixed' || policy.environment_id) &&
+            routing.modelMode === 'fixed' &&
+            routing.model &&
+            !routing.modelAvailable &&
+            !(routing.nativeLoading && routing.model.source !== 'cloud')
+          ? t('workbench.runner_model_conflict')
+          : null)
   return {
+    onOpen: routing.activate,
     basicLabel: t('workbench.agent_creator_identity'),
     label: t('workbench.agent_creator_runtime_settings'),
     summary: `${environmentLabel} · ${modelLabel}`,

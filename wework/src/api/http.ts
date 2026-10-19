@@ -95,6 +95,7 @@ export interface HttpRequestOptions {
 }
 
 export interface HttpClient {
+  getCacheScope?(): unknown
   get<T>(endpoint: string, options?: HttpRequestOptions): Promise<T>
   getBlob(endpoint: string): Promise<Blob>
   post<T>(endpoint: string, data?: unknown, options?: HttpRequestOptions): Promise<T>
@@ -152,6 +153,8 @@ async function parseError(response: Response): Promise<ApiError> {
 
 export function createHttpClient(options: HttpClientOptions): HttpClient {
   const getToken = options.getToken ?? defaultGetToken
+  let cacheToken: string | null | undefined
+  let cacheScope = 0
   const inFlightGetRequests = new Map<string, Promise<unknown>>()
 
   async function fetchWithDiagnostics(
@@ -349,6 +352,14 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
   }
 
   return {
+    getCacheScope() {
+      const token = getToken()
+      if (cacheToken !== token) {
+        cacheToken = token
+        cacheScope++
+      }
+      return cacheScope
+    },
     get,
     getBlob,
     post: (endpoint, data, requestOptions = {}) =>

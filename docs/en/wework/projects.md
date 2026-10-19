@@ -76,6 +76,20 @@ Wework automatically maintains a **Current device agent** in the local space, so
 
 When two or more agents are selected, the creation flow recommends organizing them into a collaboration group. After confirming, choose a generation model and optionally add collaboration instructions in the task composer. Wework progressively generates the leader, member responsibilities, assignment principles, and suggested workflow. You can edit the result before saving and update it later in project settings.
 
+### Add and create Agents
+
+When adding an Agent, search existing Agents by name or owning space, or open
+the creation form. New Agents default to **Automatic selection** for execution
+and the first available cloud model. The basic tab shows the current environment
+and model in its footer, so you can create the Agent without opening runtime settings.
+
+Open **Runtime settings** to change these defaults. The environment menu lists
+automatic selection, selection at run time, and specific devices, with project
+shared devices before personal devices. Search by name or device ID. Only online
+devices appear initially; use **Show offline devices** in the bottom-right corner
+to include other devices. Native models are added only after selecting a specific
+device. Editing an existing Agent preserves its saved choices.
+
 ### Set cloud board access
 
 Cloud projects have two access modes: **Private** and **Public**. A public project grants every signed-in user the Viewer (read-only) or Developer (create and edit issues) role. A private project is available only through existing grants. Project roles are Owner, Maintainer, Developer, and Viewer. Owners manage the project and members; Maintainers can also manage issue security. Developers and above can assign the issue owner, and the issue creator can always assign their own issue.

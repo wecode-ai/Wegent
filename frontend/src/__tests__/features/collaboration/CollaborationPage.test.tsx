@@ -129,9 +129,6 @@ describe('CollaborationPage platform routing', () => {
     expect(capturedHost?.projectAgentConfiguration).toEqual(
       expect.objectContaining({
         renderDialog: expect.any(Function),
-        renderModePicker: expect.any(Function),
-        renderPrimaryAction: expect.any(Function),
-        renderSelect: expect.any(Function),
       })
     )
     expect(screen.getByTestId('collaboration-page-main')).toHaveClass('flex-1', 'overflow-hidden')

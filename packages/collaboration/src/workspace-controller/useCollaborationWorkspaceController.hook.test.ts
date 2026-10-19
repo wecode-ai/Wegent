@@ -227,6 +227,26 @@ describe("useCollaborationWorkspaceController location effects", () => {
     hookRuntime.reset();
   });
 
+  it("opens settings from project metadata and loads the board only on returning to it", async () => {
+    const api = createApi();
+    const location = {
+      projectId: projectA.id,
+      issueId: null,
+      view: "manage" as const,
+    };
+    renderController(api, location);
+    await vi.waitFor(() =>
+      expect(renderController(api, location).state.project?.id).toBe(
+        projectA.id,
+      ),
+    );
+    expect(api.issues.getBoardSnapshot).not.toHaveBeenCalled();
+    renderController(api, { ...location, view: "board" });
+    await vi.waitFor(() =>
+      expect(api.issues.getBoardSnapshot).toHaveBeenCalledWith(projectA.id),
+    );
+  });
+
   it("defaults My Work closed and falls an old root location back to home", async () => {
     const api = createApi();
 

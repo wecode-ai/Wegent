@@ -188,11 +188,13 @@ function renderView(
   quickAdd?: {
     requestId: number
     onConsumed(requestId: number): void
-  }
+  },
+  section?: 'all' | 'overview' | 'members' | 'agents' | 'board'
 ) {
   hookRuntime.beginRender()
   const tree = ProjectManageView({
     api,
+    section,
     host,
     project: currentProject,
     onProjectUpdated,
@@ -561,4 +563,22 @@ it('retains the existing role and releases saving controls after a rejected chan
   expect(findByTestId(tree, 'cloud-project-member-role-2').props.value).toBe('Developer')
   expect(findByTestId(tree, 'cloud-project-member-role-2').props.disabled).toBe(false)
   expect(host.trackFailed).toHaveBeenCalledOnce()
+})
+
+it('loads only resources needed by the selected settings section', async () => {
+  const api = createApi()
+  const host = createHost()
+  const current = project('project-a', 'private')
+  renderView(api, host, current, vi.fn(), undefined, 'agents')
+  await flushPromises()
+  expect(api.listItems).not.toHaveBeenCalled()
+  expect(api.listMembers).not.toHaveBeenCalled()
+  renderView(api, host, current, vi.fn(), undefined, 'members')
+  await flushPromises()
+  expect(api.listMembers).toHaveBeenCalledOnce()
+  expect(api.listItems).not.toHaveBeenCalled()
+  renderView(api, host, current, vi.fn(), undefined, 'overview')
+  await flushPromises()
+  expect(api.listItems).toHaveBeenCalledOnce()
+  expect(api.listMembers).toHaveBeenCalledOnce()
 })

@@ -373,3 +373,19 @@ describe("createSharedWorkspaceHttpApi", () => {
     });
   });
 });
+
+it("deduplicates reads across adapters and invalidates the project list after a mutation", async () => {
+  const { transport, get, post } = createTransport();
+  get.mockResolvedValue([]);
+  post.mockResolvedValue({ id: "created", name: "Created", runtime: "codex" });
+  const first = createSharedWorkspaceHttpApi(transport);
+  const second = createSharedWorkspaceHttpApi(transport);
+  await Promise.all([first.agents.list("1"), second.agents.list("1")]);
+  expect(get).toHaveBeenCalledOnce();
+  await first.agents.create("1", {
+    name: "Created",
+    runtime: "codex",
+  } as never);
+  await second.agents.list("1");
+  expect(get).toHaveBeenCalledTimes(2);
+});
