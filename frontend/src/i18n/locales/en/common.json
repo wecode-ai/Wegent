@@ -690,6 +690,7 @@
     "oauth_disconnect_success": "DingTalk MCP authorization removed",
     "oauth_disconnect_failed": "Failed to disconnect DingTalk MCP",
     "oauth_failed": "DingTalk MCP authorization failed",
+    "oauth_restore_failed": "Authorization failed, and restoring the previous configuration also failed",
     "open_link": "Get DingTalk URL",
     "save": "Save",
     "saving": "Saving",

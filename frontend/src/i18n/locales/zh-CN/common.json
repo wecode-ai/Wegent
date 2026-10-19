@@ -690,6 +690,7 @@
     "oauth_disconnect_success": "已断开钉钉 MCP 授权",
     "oauth_disconnect_failed": "断开钉钉 MCP 授权失败",
     "oauth_failed": "钉钉 MCP 授权失败",
+    "oauth_restore_failed": "授权失败，恢复原配置也失败，请检查钉钉 MCP 配置",
     "open_link": "获取钉钉 URL",
     "save": "保存",
     "saving": "保存中",

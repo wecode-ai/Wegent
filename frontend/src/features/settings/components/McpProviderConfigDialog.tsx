@@ -154,7 +154,12 @@ export function McpProviderConfigDialog({
           if (!isCurrentRun()) return
           setService(restored)
         })
-        .catch(() => undefined)
+        .catch(() => {
+          toast({
+            variant: 'destructive',
+            title: t(`${providerId}.oauth_restore_failed`),
+          })
+        })
     }
 
     // Keep the authorization window tied to this click. The OAuth URL must be
@@ -250,7 +255,9 @@ export function McpProviderConfigDialog({
 
   const oauthMode = authMode === 'oauth'
   const currentDraftUrl = oauthMode ? draftOAuthUrl : draftUrl
-  const oauthConnected = Boolean(service?.oauth_connected)
+  const oauthDraftChanged =
+    service?.auth_mode === 'oauth' && draftOAuthUrl.trim() !== (service.url ?? '').trim()
+  const oauthConnected = Boolean(service?.oauth_connected) && !oauthDraftChanged
   const saveRequiresOAuth = oauthMode && Boolean(service?.oauth_supported) && !oauthConnected
 
   return (

@@ -16,6 +16,7 @@ const TRANSLATIONS: Record<string, string> = {
   'dingtalk.oauth_connecting': 'Waiting for authorization',
   'dingtalk.oauth_connect_success': 'DingTalk MCP authorized',
   'dingtalk.oauth_failed': 'DingTalk MCP authorization failed',
+  'dingtalk.oauth_restore_failed': 'Failed to restore the previous configuration',
   'dingtalk.oauth_url_label': 'MCP OAuth URL',
   'dingtalk.oauth_url_placeholder': 'Paste the OAuth 2.0 authorization URL',
   'dingtalk.url_label': 'MCP URL',
@@ -230,6 +231,43 @@ describe('McpProviderConfigDialog', () => {
     expect(input).toHaveValue(OAUTH_URL)
   })
 
+  it('requires reauthorization after changing an authorized OAuth URL', async () => {
+    ;(userApis.getMcpProviderService as jest.Mock).mockResolvedValue(
+      serviceConfig({
+        enabled: true,
+        url: OAUTH_URL,
+        auth_mode: 'oauth',
+        oauth_connected: true,
+      })
+    )
+
+    render(
+      <McpProviderConfigDialog
+        open
+        onOpenChange={jest.fn()}
+        providerId="dingtalk"
+        serviceId="ai_table"
+      />
+    )
+
+    const input = await screen.findByTestId('dingtalk-mcp-dialog-url-input')
+    await waitFor(() => expect(input).toHaveValue(OAUTH_URL))
+    expect(screen.getByTestId('dingtalk-ai_table-oauth-connect')).toBeDisabled()
+    expect(screen.getByTestId('save-dingtalk-mcp-dialog-button')).toBeEnabled()
+
+    fireEvent.change(input, { target: { value: `${OAUTH_URL}-new` } })
+
+    expect(screen.getByTestId('dingtalk-ai_table-oauth-connect')).toBeEnabled()
+    expect(screen.queryByTestId('dingtalk-ai_table-oauth-connected')).not.toBeInTheDocument()
+    expect(screen.getByTestId('save-dingtalk-mcp-dialog-button')).toBeDisabled()
+
+    fireEvent.change(input, { target: { value: OAUTH_URL } })
+
+    expect(screen.getByTestId('dingtalk-ai_table-oauth-connect')).toBeDisabled()
+    expect(screen.getByTestId('dingtalk-ai_table-oauth-connected')).toBeInTheDocument()
+    expect(screen.getByTestId('save-dingtalk-mcp-dialog-button')).toBeEnabled()
+  })
+
   it('restores the previous configuration when OAuth authorization fails', async () => {
     const previousUrl = 'https://mcp-gw.dingtalk.com/server/personal-key'
     const popup = { close: jest.fn(), location: { replace: jest.fn() } }
@@ -278,6 +316,53 @@ describe('McpProviderConfigDialog', () => {
     expect(popup.close).toHaveBeenCalled()
     expect(input).toHaveValue(OAUTH_URL)
     expect(screen.getByTestId('dingtalk-ai_table-oauth-connect')).toBeEnabled()
+  })
+
+  it('surfaces an error when restoring the previous configuration fails', async () => {
+    const previousUrl = 'https://mcp-gw.dingtalk.com/server/personal-key'
+    const popup = { close: jest.fn(), location: { replace: jest.fn() } }
+    window.open = jest.fn().mockReturnValue(popup)
+    ;(userApis.getMcpProviderService as jest.Mock).mockResolvedValue(
+      serviceConfig({ enabled: true, url: previousUrl, auth_mode: 'url' })
+    )
+    ;(userApis.updateMcpProviderService as jest.Mock)
+      .mockResolvedValueOnce(serviceConfig({ url: OAUTH_URL, auth_mode: 'oauth' }))
+      .mockRejectedValueOnce(new Error('Restore failed'))
+    ;(userApis.createMcpProviderOAuthSession as jest.Mock).mockResolvedValue({
+      session_id: 'session-1',
+      poll_token: 'poll-token',
+      authorize_url: 'https://example.com/authorize',
+      expires_at: 2000000000,
+      poll_interval_seconds: 1,
+    })
+    ;(userApis.pollMcpProviderOAuthSession as jest.Mock).mockResolvedValue({
+      status: 'error',
+      error: 'Authorization denied',
+    })
+
+    render(
+      <McpProviderConfigDialog
+        open
+        onOpenChange={jest.fn()}
+        providerId="dingtalk"
+        serviceId="ai_table"
+      />
+    )
+
+    fireEvent.click(await screen.findByTestId('dingtalk-ai_table-auth-mode-oauth'))
+    const input = await screen.findByTestId('dingtalk-mcp-dialog-url-input')
+    await waitFor(() => expect(input).toHaveValue(''))
+    fireEvent.change(input, { target: { value: OAUTH_URL } })
+    fireEvent.click(screen.getByTestId('dingtalk-ai_table-oauth-connect'))
+
+    await waitFor(() =>
+      expect(mockToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          variant: 'destructive',
+          title: 'Failed to restore the previous configuration',
+        })
+      )
+    )
   })
 
   it('polls once more when the authorization window is closed', async () => {
