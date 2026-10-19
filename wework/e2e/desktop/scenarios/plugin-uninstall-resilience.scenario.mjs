@@ -4,6 +4,7 @@ import { dirname, join, resolve } from 'node:path'
 import { CLOUD_DEVICE_ID } from '../modules/shared.mjs'
 import { PluginFaultProxy } from '../modules/plugin-fault-proxy.mjs'
 import { verifyPluginCatalogBoundaries } from '../modules/plugin-catalog-boundaries.mjs'
+import { verifyPluginSourceContinuation } from '../modules/plugin-source-continuation.mjs'
 import {
   accountPlugin,
   assertInstallButton,
@@ -169,7 +170,7 @@ export async function createDesktopScenario({
     evidence.push({ case: 'unknown-outcome-and-explicit-retry', elapsedMs })
   }
 
-  async function heldCleanup(control, suffix) {
+  async function heldCleanup(control, suffix, beforePause) {
     const item = await fixture(suffix)
     const remoteHome = dirname(cloud.remoteCodexHome)
     const installed = await until(
@@ -181,6 +182,7 @@ export async function createDesktopScenario({
     assert.ok(installed.runtime?.codex_link)
     const runtimePath = resolve(remoteHome, 'capabilities', installed.runtime.codex_link)
     assert.ok(await pathExists(runtimePath), 'Fixture has no real runtime files')
+    if (beforePause) await beforePause(item)
     assert.ok(deviceProxy.websockets.size > 0, 'Device fault proxy has no real connection')
     deviceProxy.pauseDeviceDelivery(true)
     const started = await uninstallInUi(control, item)
@@ -234,11 +236,15 @@ export async function createDesktopScenario({
   }
 
   async function reinstallRace(control) {
-    const { item, remoteHome } = await heldCleanup(control, 'reinstall-pending')
-    const release = await cloud.publishPluginRelease({
-      slug: item.slug,
-      version: '2.0.0',
-      skills: { [item.slug]: 'Reinstalled version two' },
+    let release
+    const { item, remoteHome } = await heldCleanup(control, 'reinstall-pending', async fixture => {
+      // Publishing starts a real Python process. Keep it outside the held socket
+      // window so the fault targets cleanup ACKs without expiring its heartbeat.
+      release = await cloud.publishPluginRelease({
+        slug: fixture.slug,
+        version: '2.0.0',
+        skills: { [fixture.slug]: 'Reinstalled version two' },
+      })
     })
     // Start a real install while the old removal is still awaiting its device ACK.
     const install = pluginApi(
@@ -317,6 +323,17 @@ export async function createDesktopScenario({
         'Remote device bypassed fault proxy'
       )
       try {
+        evidence.push(
+          await verifyPluginSourceContinuation({
+            control,
+            resultDir,
+            executorHome,
+            captureScreenshot,
+            workbenchReadyTimeoutMs,
+          })
+        )
+        // CI runs this by default; local comparisons can stop after the same assertions.
+        if (process.env.WEWORK_E2E_PLUGIN_SOURCE_CONTINUATION_ONLY === 'true') return
         evidence.push(
           await verifyPluginCatalogBoundaries({
             cloud,

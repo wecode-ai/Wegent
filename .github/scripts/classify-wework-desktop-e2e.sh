@@ -1129,6 +1129,7 @@ classify_path() {
       ;;
     wework/e2e/desktop/scenarios/plugin-uninstall-resilience.scenario.mjs | \
       wework/e2e/desktop/modules/plugin-catalog-boundaries.mjs | \
+      wework/e2e/desktop/modules/plugin-source-continuation.mjs | \
       wework/scripts/plugin-fault-proxy.test.mjs | \
       wework/e2e/desktop/modules/plugin-fault-proxy*)
       select_target "cloud:plugin-uninstall-resilience"
