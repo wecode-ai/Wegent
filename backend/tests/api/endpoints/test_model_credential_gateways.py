@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -12,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.user import User
-from app.services import decision_model_service, model_credential_service
+from app.services import model_credential_service
 
 TEMPLATE = "${USER_SCOPED_MODEL_KEY}"
 
@@ -55,20 +54,6 @@ def add_model(db: Session, category: str, protocol: str) -> Kind:
 
 def call_gateway(client: TestClient, token: str, model: Kind) -> httpx.Response:
     headers = {"Authorization": f"Bearer {token}"}
-    if model.json["spec"]["modelType"] == "decision":
-        catalog = client.get("/api/models/decisions", headers=headers)
-        assert catalog.status_code == 200, catalog.text
-        return client.post(
-            "/api/models/decisions",
-            headers=headers,
-            json={
-                "model": catalog.json()["defaultModel"],
-                "state": "A comment",
-                "questions": {
-                    "urgent": {"type": "noul", "instructions": "Is it urgent?"}
-                },
-            },
-        )
     headers.update(
         {
             "X-Wegent-Model-Type": "public",
@@ -84,25 +69,17 @@ def call_gateway(client: TestClient, token: str, model: Kind) -> httpx.Response:
 
 
 def mock_provider(
-    monkeypatch: pytest.MonkeyPatch, category: str, protocol: str
+    monkeypatch: pytest.MonkeyPatch, protocol: str
 ) -> list[httpx.Request]:
     requests = []
 
     def respond(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        if category == "llm":
-            return httpx.Response(
-                200,
-                stream=httpx.ByteStream(b"data: ok\n\n"),
-                headers={"content-type": "text/event-stream"},
-            )
-        name = "urgent"
-        answers = (
-            {name: {"type": "noul", "noul": 0.9}}
-            if protocol == "systemone"
-            else [{"name": name, "type": "predicate", "probability": 0.9}]
+        return httpx.Response(
+            200,
+            stream=httpx.ByteStream(b"data: ok\n\n"),
+            headers={"content-type": "text/event-stream"},
         )
-        return httpx.Response(200, json={"answers": answers})
 
     async_client, sync_client = httpx.AsyncClient, httpx.Client
     monkeypatch.setattr(
@@ -124,8 +101,6 @@ def mock_provider(
         ("llm", "openai-responses"),
         ("llm", "openai"),
         ("llm", "claude"),
-        ("decision", "systemone"),
-        ("decision", "openai"),
     ],
 )
 def test_gateways_use_request_user_keys_without_persisting_them(
@@ -140,7 +115,7 @@ def test_gateways_use_request_user_keys_without_persisting_them(
     protocol: str,
 ) -> None:
     model = add_model(test_db, category, protocol)
-    requests = mock_provider(monkeypatch, category, protocol)
+    requests = mock_provider(monkeypatch, protocol)
 
     async def lookup(template: str, user: User) -> str:
         assert template == TEMPLATE
@@ -165,17 +140,15 @@ def test_gateways_use_request_user_keys_without_persisting_them(
     assert model.json["spec"]["modelConfig"]["env"]["api_key"] == TEMPLATE
 
 
-@pytest.mark.parametrize("category", ["llm", "decision"])
 @pytest.mark.parametrize("failure", ["exception", "empty"])
 def test_credential_failure_blocks_transport_and_environment_fallback(
     test_client: TestClient,
     test_db: Session,
     test_token: str,
     monkeypatch: pytest.MonkeyPatch,
-    category: str,
     failure: str,
 ) -> None:
-    model = add_model(test_db, category, "openai" if category == "llm" else "systemone")
+    model = add_model(test_db, "llm", "openai")
     resolver = (
         AsyncMock(side_effect=RuntimeError("private-lookup-details"))
         if failure == "exception"
@@ -191,26 +164,6 @@ def test_credential_failure_blocks_transport_and_environment_fallback(
     assert "synthetic-global-key" not in response.text
     async_factory.assert_not_called()
     sync_factory.assert_not_called()
-
-
-def test_decision_total_deadline_includes_credential_lookup(
-    test_client: TestClient,
-    test_db: Session,
-    test_token: str,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    model = add_model(test_db, "decision", "systemone")
-
-    async def lookup(template: str, user: User) -> str:
-        await asyncio.Event().wait()
-
-    model_credential_service.register_model_api_key_resolver(lookup)
-    monkeypatch.setattr(decision_model_service, "DECISION_REQUEST_TIMEOUT", 0.01)
-    factory = MagicMock()
-    monkeypatch.setattr(httpx, "AsyncClient", factory)
-    response = call_gateway(test_client, test_token, model)
-    assert response.status_code == 504, response.text
-    factory.assert_not_called()
 
 
 @pytest.mark.parametrize("api_key", [TEMPLATE, "${SECRET_KEY}", "key\r\ninjected"])

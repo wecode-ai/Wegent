@@ -44,6 +44,7 @@ import { AppIframe } from '@/components/topnav/AppIframe'
 import { listenHarnessAppLaunchProgress } from '@/api/local/harnessApps'
 import { HarnessAppLaunchSurface } from '@/features/harness-apps/HarnessAppLaunchSurface'
 import { ElectronWorkbenchTabBridge } from '@/features/harness-apps/ElectronWorkbenchTabBridge'
+import { ApplicationMenuWorkspaceBridge } from '@/desktop/ApplicationMenuWorkspaceBridge'
 import {
   clearHarnessAppLaunch,
   harnessAppInstallationIdFromPath,
@@ -1181,6 +1182,7 @@ function AppShell() {
       >
         <ElectronWorkbenchTabBridge />
         <WeworkSchemeBridge />
+        {isElectron && !isPopoutWindow ? <ApplicationMenuWorkspaceBridge pathname={path} /> : null}
         <div
           data-testid="app-shell"
           className={cn(

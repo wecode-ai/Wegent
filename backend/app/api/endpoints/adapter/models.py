@@ -10,9 +10,7 @@ from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
-from app.api.endpoints.adapter.decisions import router as decisions_router
 from app.core import security
-from app.core.constants import SUPPORTED_CLIENT_ORIGINS
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.model import (
@@ -25,11 +23,10 @@ from app.schemas.model import (
 )
 from app.services import model_credential_service
 from app.services.adapters import public_model_service
-from app.services.model_aggregation_service import ModelType, model_aggregation_service
+from app.services.model_aggregation_service import model_aggregation_service
 from app.services.model_connection_service import _test_llm_connection
 
 router = APIRouter()
-router.include_router(decisions_router)
 logger = logging.getLogger(__name__)
 
 
@@ -70,85 +67,6 @@ def list_model_names(
     """
     data = public_model_service.list_model_names(
         db=db, current_user=current_user, shell_type=shell_type
-    )
-    return {"data": data}
-
-
-# MIGRATION-CANDIDATE(api="GET /api/models/unified"): remove after final confirmation.
-# @router.get("/unified")
-def list_unified_models(
-    shell_type: Optional[str] = Query(
-        None, description="Shell type to filter compatible models (Agno, ClaudeCode)"
-    ),
-    include_config: bool = Query(
-        False, description="Whether to include full config in response"
-    ),
-    scope: str = Query(
-        "personal",
-        description="Query scope: 'personal' (default), 'group', or 'all'",
-    ),
-    group_name: Optional[str] = Query(
-        None, description="Group name (required when scope='group')"
-    ),
-    model_category_type: Optional[str] = Query(
-        None,
-        description="Filter by model category type (llm, tts, stt, embedding, rerank)",
-    ),
-    client_origin: Optional[str] = Query(
-        None,
-        pattern=f"^({'|'.join(SUPPORTED_CLIENT_ORIGINS)})$",
-        description="Optional client surface requesting the model list",
-    ),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-):
-    """
-    Get unified list of all available models with scope support.
-
-    This endpoint aggregates models from:
-    - Public models (type='public'): Shared across all users
-    - User-defined models (type='user'): Private to the current user or group
-    - Runtime models (type='runtime'): Derived from enabled user runtime config
-
-    Scope behavior:
-    - scope='personal' (default): personal models + public models
-    - scope='group': group models + public models (requires group_name)
-    - scope='all': personal + public + all user's groups
-
-    Each model includes a 'type' field to identify its source, which is
-    important for avoiding naming conflicts when binding models.
-
-    Parameters:
-    - shell_type: Optional shell type to filter compatible models
-    - include_config: Whether to include full model config in response
-    - scope: Query scope ('personal', 'group', or 'all')
-    - group_name: Group name (required when scope='group')
-    - model_category_type: Optional filter by model category type (llm, tts, stt, embedding, rerank)
-    - client_origin: Optional client surface requesting the model list
-
-    Response:
-    {
-      "data": [
-        {
-          "name": "model-name",
-          "type": "public" | "user" | "group" | "runtime",
-          "displayName": "Human Readable Name",
-          "provider": "openai" | "claude",
-          "modelId": "gpt-4",
-          "modelCategoryType": "llm" | "tts" | "stt" | "embedding" | "rerank"
-        }
-      ]
-    }
-    """
-    data = model_aggregation_service.list_available_models(
-        db=db,
-        current_user=current_user,
-        shell_type=shell_type,
-        include_config=include_config,
-        scope=scope,
-        group_name=group_name,
-        model_category_type=model_category_type,
-        client_origin=client_origin,
     )
     return {"data": data}
 

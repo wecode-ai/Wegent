@@ -6,6 +6,7 @@ import type { CollaborationPlatformLocation, SharedWorkspaceApi } from '@wegent/
 import { DEFAULT_WORK_ITEM_PROJECT_ID, type DeliveryApi } from '@/api/deliveries'
 import { ApiError } from '@/api/http'
 import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
+import { requestIssueDispatch } from '@/features/notifications/issueDispatch'
 import type {
   LocalProjectSpaceApi,
   ProjectSpaceDetailServices,
@@ -1452,6 +1453,108 @@ describe('Wework collaboration workspace API', () => {
       projectSession: issueExecution,
       issueExecution,
     })
+  })
+
+  it('opens the personal task an assignment notification asks for wherever the reader was', async () => {
+    const project = {
+      id: 'cloud-dispatch-project',
+      name: 'Dispatch project',
+      project_store: 'backend',
+    }
+    const issue = {
+      id: 'ISSUE-DISPATCH',
+      title: '采集 CPU 证据',
+      sequence_number: 1,
+    }
+    const getIssue = vi.fn().mockResolvedValue(issue)
+    const projectProps = (focusedItemId: string | null) => ({
+      api: {
+        projects: { list: vi.fn().mockResolvedValue([project]) },
+        issues: { get: getIssue },
+        taskBindings: { list: vi.fn().mockResolvedValue([]) },
+      } as unknown as SharedWorkspaceApi,
+      localProjects: [],
+      locale: 'zh-CN' as const,
+      location: {
+        platformView: 'project' as const,
+        workspaceId: 'cloud-workspace',
+        workspaceView: 'projects' as const,
+        projectId: project.id,
+        projectView: 'board' as const,
+        issueId: focusedItemId,
+      },
+      focusedItemId,
+      project: project as never,
+      runtimePort: {
+        bindTask: vi.fn(),
+        unbindTask: vi.fn(),
+      },
+      services: {} as never,
+      setLocation: vi.fn(),
+      userId: 1,
+      workspace: {
+        id: 'cloud-workspace',
+        name: 'Cloud workspace',
+      } as never,
+    })
+    const assignment = {
+      projectId: project.id,
+      itemId: issue.id,
+      issueId: issue.id,
+      dispatchTaskId: 'human-assignment-1',
+      humanAssignmentId: 'human-assignment-1',
+      dispatchId: 'direct-human:assignment-1',
+      roundId: 'direct',
+      assignmentId: 'collect-cpu',
+      taskTitle: issue.title,
+      instructions: '只读采集 CPU 证据并提交交付。',
+      idempotencyKey: 'human-assignment:human-assignment-1',
+    }
+    const { rerender } = render(createElement(WeworkSharedProject, projectProps('ISSUE-OTHER')))
+
+    // The reader clicked the notification while another Issue was on screen, so
+    // this board leaves the request for the board that shows the named Issue.
+    await act(async () => {
+      requestIssueDispatch(assignment)
+      await Promise.resolve()
+    })
+    expect(getIssue).not.toHaveBeenCalled()
+
+    rerender(createElement(WeworkSharedProject, projectProps(issue.id)))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(getIssue).toHaveBeenCalledWith(issue.id)
+
+    const detail = renderedProjectControls.get(project.id)?.renderIssueDetail?.({
+      api: { issues: {} },
+      issue,
+      allIssues: [issue],
+      assignments: [],
+      taskBindings: [],
+      onChange: vi.fn(),
+      onClose: vi.fn(),
+      onCreateTask: vi.fn(),
+      onDelete: vi.fn(),
+    }) as {
+      props: {
+        conversation: {
+          props: { initialTaskRequest?: unknown; initialTaskInput?: string }
+        } | null
+      }
+    }
+
+    expect(detail.props.conversation?.props.initialTaskRequest).toMatchObject({
+      title: issue.title,
+      message: '采集 CPU 证据\n\n只读采集 CPU 证据并提交交付。',
+      origin: {
+        type: 'issue_dispatch',
+        humanAssignmentId: 'human-assignment-1',
+        dispatchId: 'direct-human:assignment-1',
+        assignmentId: 'collect-cpu',
+      },
+    })
+    expect(detail.props.conversation?.props.initialTaskInput).toContain('采集 CPU 证据')
   })
 
   it('does not use an agent environment for a personal task', async () => {

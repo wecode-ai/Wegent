@@ -1806,6 +1806,17 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return JSON.stringify(await invokeDesktopHost('e2e.getStartupSplashSnapshot'))
     case 'getTraySnapshot':
       return JSON.stringify(await invokeDesktopHost('e2e.getTraySnapshot'))
+    case 'getApplicationMenuSnapshot':
+      return JSON.stringify(await invokeDesktopHost('e2e.getApplicationMenuSnapshot'))
+    case 'activateApplicationMenu': {
+      const request = JSON.parse(command.value ?? '{}') as { id?: string; windowLabel?: string }
+      return JSON.stringify(
+        await invokeDesktopHost('e2e.activateApplicationMenu', {
+          id: request.id,
+          windowLabel: request.windowLabel,
+        })
+      )
+    }
     case 'activateTray':
       return JSON.stringify(
         await invokeDesktopHost('e2e.activateTray', {

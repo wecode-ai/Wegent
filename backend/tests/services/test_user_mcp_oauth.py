@@ -6,6 +6,7 @@
 
 import json
 import logging
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlsplit
@@ -531,6 +532,37 @@ def test_transient_refresh_failure_keeps_the_grant(
         test_user.preferences, "dingtalk", "ai_table"
     )
     assert credentials["refresh_token"] == "stale-refresh"
+
+
+def test_usable_token_refreshes_thirty_minutes_before_expiry(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A token with less than thirty minutes left is treated as stale."""
+    _configure_refreshable_service(test_db, test_user)
+    expires_at = int(time.time()) + 1799
+    with_tokens = user_mcp_service.save_service_oauth_credentials(
+        test_user.preferences,
+        "dingtalk",
+        "ai_table",
+        access_token="expiring-access",
+        refresh_token="stale-refresh",
+        expires_at=expires_at,
+    )
+    test_user.preferences = user_mcp_service.dump_preferences(with_tokens)
+    test_db.add(test_user)
+    test_db.commit()
+    test_db.refresh(test_user)
+
+    monkeypatch.setattr(httpx, "Client", _StubClient)
+
+    token = UserMcpOAuthService.ensure_access_token_sync(
+        test_db, user=test_user, provider_id="dingtalk", service_id="ai_table"
+    )
+
+    assert token == "refreshed-access"
+    assert _StubClient.last["data"]["grant_type"] == "refresh_token"
 
 
 @pytest.mark.asyncio

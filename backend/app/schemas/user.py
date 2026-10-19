@@ -300,18 +300,3 @@ class WeworkAuthSessionActionResponse(BaseModel):
     """Response model for Web authorization approve/decline actions."""
 
     status: str
-
-
-class WeworkTokenRefreshRequest(BaseModel):
-    """Refresh token plus a proof signed by its bound desktop device."""
-
-    refresh_token: str
-    proof: str
-
-
-class WeworkTokenRefreshResponse(BaseModel):
-    """A newly issued short-lived desktop access token."""
-
-    access_token: str
-    token_type: str = "bearer"
-    expires_in: int

@@ -10,7 +10,7 @@ Projects group conversations that use the same codebase. A project can map to fo
 
 When the project list is empty, the sidebar's **Projects** section shows **+ New project** directly. Select it to choose a **Local project** or **Cloud project**; cloud projects still require a cloud connection. Wework hides this empty-state action while project data is synchronizing so an unfinished load is not mistaken for an empty list.
 
-Choose **Use existing folder** for code already on the device. Adding the same folder again restores or reuses its project and conversations.
+Choose **Use existing folder** for code already on the device. Confirming creation saves a distinct project; multiple projects can share the same source folder. Select an existing project from the project list instead of creating it again. Registered projects remain in the project list after refresh or restart, including when their source folders are inside a `Codex` directory.
 
 In local mode, choose **Local project** and select one or more folders in the system directory picker. This entry always uses the local execution device, even when cloud or remote devices are connected. To use another device, choose **Cloud project**, then open an existing directory, create a blank project, or enter a Git repository URL to clone on the target device. Git projects use the repository name as the directory name by default and allow an optional branch and target parent directory. After submission, the dialog closes immediately and the project list shows clone progress; failed clones can be retried or dismissed there.
 

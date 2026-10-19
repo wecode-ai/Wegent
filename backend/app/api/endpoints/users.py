@@ -37,10 +37,6 @@ from app.schemas.subscription import NotificationChannelInfo
 from app.schemas.subtask_context import AttachmentDetailResponse
 from app.schemas.user import GitTokenOrderUpdate, UserCreate, UserInDB, UserUpdate
 from app.services.adapters.team_kinds import team_kinds_service
-from app.services.admin_password_bootstrap import (
-    get_cached_admin_password_setup_required,
-    raise_admin_password_setup_required,
-)
 from app.services.auth import (
     create_task_token,
     extract_token_from_header,
@@ -185,55 +181,6 @@ async def get_feature_flags(
 
     return FeatureFlags(
         memory_enabled=memory_manager.is_enabled,
-    )
-
-
-# MIGRATION-CANDIDATE(api="GET /api/users/me"): remove after final confirmation.
-# @router.get("/me", response_model=UserInDB)
-async def read_current_user(
-    db: Session = Depends(get_db),
-    current_user: Optional[User] = Depends(security.get_current_user_optional),
-):
-    """Get current user information.
-
-    For the initial 'admin' user, also returns admin_setup_completed status.
-    """
-    if current_user is None:
-        if get_cached_admin_password_setup_required():
-            raise_admin_password_setup_required()
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing authentication credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    # Check admin setup status only for the initial 'admin' user
-    # This is used by GlobalAdminSetupWizard to show setup wizard on first login
-    admin_setup_completed = None
-    if current_user.user_name == "admin":
-        setup_config = (
-            db.query(SystemConfig)
-            .filter(SystemConfig.config_key == ADMIN_SETUP_CONFIG_KEY)
-            .first()
-        )
-        if setup_config and setup_config.config_value:
-            admin_setup_completed = setup_config.config_value.get("completed", False)
-        else:
-            admin_setup_completed = False
-
-    # Create response with admin_setup_completed field
-    return UserInDB(
-        id=current_user.id,
-        user_name=current_user.user_name,
-        email=current_user.email,
-        is_active=current_user.is_active,
-        git_info=current_user.git_info,
-        preferences=current_user.preferences,
-        role=current_user.role,
-        auth_source=current_user.auth_source,
-        created_at=current_user.created_at,
-        updated_at=current_user.updated_at,
-        admin_setup_completed=admin_setup_completed,
     )
 
 

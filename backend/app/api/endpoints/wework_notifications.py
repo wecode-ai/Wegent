@@ -24,39 +24,6 @@ from app.services.wework_notifications import send_wework_notification
 router = APIRouter()
 
 
-# Migrated to Rust; cutover is configured in backend-rs/config/routes.toml.
-# @router.get("", response_model=InboxView)
-# def list_notifications(
-#     offset: int = Query(default=0, ge=0),
-#     limit: int = Query(default=50, ge=1, le=100),
-#     category: Literal["collaboration", "general"] | None = None,
-#     db: Session = Depends(get_db),
-#     user: User = Depends(get_current_user),
-# ) -> InboxView:
-#     query = db.query(WeworkNotification).filter(WeworkNotification.user_id == user.id)
-#     if category == "collaboration":
-#         query = query.filter(
-#             WeworkNotification.kind.in_(COLLABORATION_NOTIFICATION_KINDS)
-#         )
-#     elif category == "general":
-#         query = query.filter(
-#             WeworkNotification.kind.notin_(COLLABORATION_NOTIFICATION_KINDS)
-#         )
-#     rows = (
-#         query.order_by(
-#             WeworkNotification.created_at.desc(), WeworkNotification.id.desc()
-#         )
-#         .offset(offset)
-#         .limit(limit + 1)
-#         .all()
-#     )
-#     return InboxView(
-#         items=[NotificationView.model_validate(row) for row in rows[:limit]],
-#         unread_count=query.filter(WeworkNotification.is_read.is_(False)).count(),
-#         next_offset=offset + limit if len(rows) > limit else None,
-#     )
-
-
 @router.post("", response_model=NotificationView, status_code=201)
 def send_notification(
     values: NotificationCreate,
