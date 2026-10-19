@@ -218,8 +218,8 @@ describe('createWebSharedWorkspaceApi', () => {
 
   it('builds the shared automation execution and plugin catalogs from Web APIs', async () => {
     const client = createClient()
-    client.get
-      .mockResolvedValueOnce({
+    const responses: Record<string, unknown> = {
+      '/v1/cloud-projects/project-1/execution-environments': {
         items: [
           {
             device_id: 21,
@@ -236,22 +236,23 @@ describe('createWebSharedWorkspaceApi', () => {
             kind: 'cloud_host',
           },
         ],
-      })
-      .mockResolvedValueOnce({
-        data: [
-          {
-            name: 'gpt-web',
-            displayName: 'GPT Web',
-            type: 'public',
-            namespace: 'default',
-            resourceUserId: 0,
-            config: { reasoning_effort: 'high', ignored: true },
-            isActive: true,
-            modelCategoryType: 'llm',
-          },
-        ],
-      })
-      .mockResolvedValueOnce([
+      },
+      '/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework':
+        {
+          data: [
+            {
+              name: 'gpt-web',
+              displayName: 'GPT Web',
+              type: 'public',
+              namespace: 'default',
+              resourceUserId: 0,
+              config: { reasoning_effort: 'high', ignored: true },
+              isActive: true,
+              modelCategoryType: 'llm',
+            },
+          ],
+        },
+      '/v1/runtime-profiles': [
         {
           id: 'profile-cloud',
           name: 'Cloud GPT',
@@ -263,8 +264,8 @@ describe('createWebSharedWorkspaceApi', () => {
           status: 'active',
           version: 2,
         },
-      ])
-      .mockResolvedValueOnce({
+      ],
+      '/plugins/installed?device_id=device-cloud': {
         items: [
           {
             metadata: { name: 'plugin-github' },
@@ -279,7 +280,12 @@ describe('createWebSharedWorkspaceApi', () => {
             },
           },
         ],
-      })
+      },
+    }
+    client.get.mockImplementation(async endpoint => {
+      if (!(endpoint in responses)) throw new Error(`Unexpected endpoint: ${endpoint}`)
+      return responses[endpoint] as never
+    })
     const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
 
     await expect(api.automationExecutionCatalog!.load('project-1')).resolves.toEqual({
@@ -327,6 +333,9 @@ describe('createWebSharedWorkspaceApi', () => {
       },
     ])
     expect(client.get).toHaveBeenCalledWith('/v1/cloud-projects/project-1/execution-environments')
+    expect(client.get).toHaveBeenCalledWith(
+      '/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework'
+    )
     expect(client.get).toHaveBeenCalledWith('/plugins/installed?device_id=device-cloud')
   })
 

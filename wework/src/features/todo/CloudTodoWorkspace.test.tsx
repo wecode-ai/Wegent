@@ -4580,6 +4580,7 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await userEvent.click(await screen.findByTestId('cloud-project-manage-view'))
     expect(screen.queryByText('看板字段映射')).not.toBeInTheDocument()
+    expect(screen.getByTestId('aitable-manage-save')).toBeVisible()
     await userEvent.click(screen.getByTestId('aitable-manage-save'))
 
     expect(screen.queryByTestId('aitable-status-mode-custom')).not.toBeInTheDocument()

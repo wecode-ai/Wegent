@@ -1611,6 +1611,8 @@ export function useCollaborationWorkspaceController({
   }, [api, messages, myWorkEnabled, preloadHomeSnapshots]);
 
   const loadBoardOnLocation = location.view !== "manage";
+  const loadProjectSnapshotOnLocation =
+    loadProjectOnLocation && loadBoardOnLocation;
   useEffect(() => {
     if (!commands) return;
     const revision = ++locationLoadRevisionRef.current;
@@ -1620,7 +1622,7 @@ export function useCollaborationWorkspaceController({
       if (loadProjectOnLocation) {
         void commands.loadProject(projectId, true, {
           isCurrent,
-          loadSnapshot: loadBoardOnLocation,
+          loadSnapshot: loadProjectSnapshotOnLocation,
         });
       } else {
         void commands.loadProjectCatalog({ isCurrent });
@@ -1640,7 +1642,7 @@ export function useCollaborationWorkspaceController({
   }, [
     commands,
     loadProjectOnLocation,
-    loadBoardOnLocation,
+    loadProjectSnapshotOnLocation,
     location.projectId,
     location.rootView,
     myWorkEnabled,

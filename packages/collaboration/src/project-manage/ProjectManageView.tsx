@@ -65,6 +65,7 @@ export function ProjectManageView<
   embedded = false,
   section = 'all',
   renderProviderSettings,
+  providerSettingsSection = 'agents',
   onProjectUpdated,
   openMembersRequestId,
   onOpenMembersRequestConsumed,
@@ -76,6 +77,7 @@ export function ProjectManageView<
   embedded?: boolean
   section?: 'all' | 'overview' | 'members' | 'agents' | 'board'
   renderProviderSettings?(context: ProjectManageExtensionContext<Project>): React.ReactNode
+  providerSettingsSection?: 'overview' | 'agents'
   onProjectUpdated?(project: Project): void
   openMembersRequestId?: number
   onOpenMembersRequestConsumed?(requestId: number): void
@@ -728,7 +730,7 @@ export function ProjectManageView<
           deleteTag={deleteTag}
         />
 
-        {(section === 'all' || section === 'agents') && (
+        {(section === 'all' || section === providerSettingsSection) && (
           <ProjectProviderSection
             className=""
             render={renderProviderSettings}

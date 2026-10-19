@@ -182,7 +182,8 @@ describe('CollaborationApp project collaboration groups', () => {
     await waitFor(() =>
       expect(addCollaborationGroup).toHaveBeenCalledWith(project.id, workspaceGroup.id)
     )
-    expect(api.workspaces?.list).toHaveBeenCalled()
+    expect(api.workspaces?.listCollaborationGroups).toHaveBeenCalledWith(project.workspace_id)
+    expect(api.workspaces?.list).not.toHaveBeenCalled()
   })
 
   it('creates a project-owned collaboration group', async () => {
