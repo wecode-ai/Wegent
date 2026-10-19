@@ -16,21 +16,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import quote
 
-from fastapi import (
-    APIRouter,
-    Depends,
-    File,
-    Header,
-    HTTPException,
-    Query,
-    Request,
-    UploadFile,
-)
-from fastapi.responses import RedirectResponse, StreamingResponse
-from jose import JWTError, jwt
-from pydantic import BaseModel
-from sqlalchemy.orm import Session
-
 from app.api.dependencies import get_db
 from app.core import security
 from app.core.config import settings
@@ -70,6 +55,20 @@ from app.services.web_scraper.security import (
     WebScraperUrlGuard,
 )
 from app.stores.tasks import subtask_store, task_store
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
+from fastapi.responses import RedirectResponse, StreamingResponse
+from jose import JWTError, jwt
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
@@ -1024,50 +1023,6 @@ async def create_attachment_download_token(
         "download_token": _create_download_token(attachment_id, current_user),
         "expires_in": DOWNLOAD_TOKEN_EXPIRE_SECONDS,
     }
-
-
-# MIGRATION-CANDIDATE(api="GET /api/attachments/:attachment_id/executor-download"): remove after final confirmation.
-# @router.get("/{attachment_id}/executor-download")
-async def executor_download_attachment(
-    attachment_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
-):
-    """
-    Download attachment for executor.
-
-    This endpoint is called by the Executor to download attachments
-    to the workspace. It supports multiple authentication methods.
-
-    Authentication:
-    - JWT Token: Standard Bearer token in Authorization header
-    - API Key: Personal API key (wg-xxx) via X-API-Key header or Bearer token
-    - Task Token: JWT token issued for task execution
-
-    Returns:
-        File binary data with appropriate content type
-    """
-    # Get context and verify ownership
-    context = context_service.get_context_optional(
-        db=db,
-        context_id=attachment_id,
-        user_id=current_user.id,
-    )
-
-    if context is None:
-        raise HTTPException(status_code=404, detail="Attachment not found")
-
-    # Verify it's an attachment type
-    if context.context_type != ContextType.ATTACHMENT.value:
-        raise HTTPException(status_code=404, detail="Attachment not found")
-
-    _require_attachment_download_allowed(db, context, "executor")
-
-    external_response = await _stream_external_attachment(context)
-    if external_response is not None:
-        return external_response
-
-    return await _stream_stored_attachment(context)
 
 
 @router.delete("/{attachment_id}")

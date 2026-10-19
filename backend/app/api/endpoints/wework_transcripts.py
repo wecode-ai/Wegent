@@ -6,11 +6,6 @@
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import StreamingResponse
-from pydantic import ValidationError
-from sqlalchemy.orm import Session
-
 from app.api.dependencies import get_db
 from app.core.security import get_current_user
 from app.models.user import User
@@ -39,6 +34,10 @@ from app.services.wework_transcript_storage import (
     WeworkTranscriptStorageNotFoundError,
     wework_transcript_storage,
 )
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
+from pydantic import ValidationError
+from sqlalchemy.orm import Session
 
 router = APIRouter()
 
@@ -63,29 +62,6 @@ def get_transcript_endpoint(
             ),
         )
     )
-
-
-# MIGRATION-CANDIDATE(api="POST /api/wework-transcripts/:transcript_id/lease"): remove after final confirmation.
-# @router.post(
-#     "/{transcript_id}/lease",
-#     response_model=TranscriptLeaseResponse,
-#     response_model_by_alias=True,
-# )
-def acquire_lease_endpoint(
-    transcript_id: str,
-    request: TranscriptLeaseRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    transcript = _translate(
-        lambda: wework_transcript_service.acquire_lease(
-            db,
-            user_id=current_user.id,
-            transcript_id=transcript_id,
-            request=request,
-        )
-    )
-    return _lease_response(transcript)
 
 
 @router.put(

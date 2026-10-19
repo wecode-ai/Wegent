@@ -32,7 +32,6 @@ from app.api.endpoints import (
     knowledge_video_upload,
     local_executor,
     loop_item_executions,
-    mcp_identity,
     mcp_providers,
     oauth_clients,
     oauth_provider,
@@ -99,9 +98,6 @@ from app.api.endpoints.adapter import (
     teams,
     templates,
 )
-from app.api.endpoints.internal import (
-    api_keys_internal_router,
-)
 from app.api.endpoints.internal import attachments_router as internal_attachments_router
 from app.api.endpoints.internal import bots_router as internal_bots_router
 from app.api.endpoints.internal import (
@@ -109,21 +105,16 @@ from app.api.endpoints.internal import (
     chat_storage_router,
     conversion_callback_router,
     knowledge_router,
+    object_storage_router,
+    plugin_publications_router,
+    rag_content_router,
+    services_router,
+    workspace_archives_router,
 )
 from app.api.endpoints.internal import (
     model_config_router as internal_model_config_router,
 )
-from app.api.endpoints.internal import (
-    object_storage_router,
-    plugin_publications_router,
-    rag_content_router,
-)
 from app.api.endpoints.internal import robot_queue as internal_robot_queue
-from app.api.endpoints.internal import (
-    services_router,
-    skills_router,
-    workspace_archives_router,
-)
 
 # RAG internal router is conditionally imported based on STANDALONE_MODE
 if not settings.STANDALONE_MODE:
@@ -402,7 +393,6 @@ api_router.include_router(
     system_skills.router, prefix="/system-skills", tags=["system-skills"]
 )
 api_router.include_router(skill_identity.router, tags=["skill-identity"])
-api_router.include_router(mcp_identity.router, tags=["mcp-identity"])
 api_router.include_router(
     prompt_optimization.router,
     prefix="/prompt-optimization",
@@ -428,7 +418,6 @@ api_router.include_router(external_wiki_router, tags=["external-wiki"])
 api_router.include_router(
     knowledge_router, prefix="/internal", tags=["internal-knowledge"]
 )
-api_router.include_router(skills_router, prefix="/internal", tags=["internal-skills"])
 api_router.include_router(
     internal_bots_router, prefix="/internal", tags=["internal-bots"]
 )
@@ -471,12 +460,6 @@ api_router.include_router(
     prefix="/internal",
     tags=["internal-model-config"],
 )
-api_router.include_router(
-    api_keys_internal_router,
-    prefix="/internal",
-    tags=["internal-api-keys"],
-)
-
 api_router.include_router(
     wework_notifications.router,
     prefix="/v1/wework-notifications",

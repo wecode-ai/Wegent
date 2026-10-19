@@ -5,9 +5,6 @@
 import logging
 from typing import Generator, List
 
-from fastapi import APIRouter, Depends, Query
-from sqlalchemy.orm import Session
-
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
@@ -17,6 +14,8 @@ from app.services.repository import (
     repository_service,
     snapshot_repository_user,
 )
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy.orm import Session
 
 # Logger instance
 logger = logging.getLogger(__name__)
@@ -116,31 +115,3 @@ async def get_branch_diff(
     return await repository_service.get_branch_diff(
         user_context, git_repo, source_branch, target_branch, type, git_domain
     )
-
-
-# MIGRATION-CANDIDATE(api="GET /api/git/repositories/search"): remove after final confirmation.
-# @router.get("/repositories/search", response_model=List[RepositoryResult])
-async def search_repositories(
-    q: str = Query(..., description="Search query for repository name"),
-    timeout: int = Query(30, ge=5, le=60, description="Search timeout in seconds"),
-    fullmatch: bool = Query(
-        False, description="Enable exact match (true) or partial match (false)"
-    ),
-    user_context: RepositoryUserContext = Depends(get_repository_user_context),
-):
-    """Search repositories by name from all user's repositories"""
-    repositories = await repository_service.search_repositories(
-        user_context, q, timeout, fullmatch
-    )
-    return [
-        RepositoryResult(
-            git_repo_id=repo["id"],
-            name=repo["name"],
-            git_repo=repo["full_name"],
-            git_url=repo["clone_url"],
-            git_domain=repo.get("git_domain", "unknown"),
-            type=repo["type"],
-            private=repo["private"],
-        )
-        for repo in repositories
-    ]

@@ -1,14 +1,15 @@
 """The permission model must work on populated v1 databases without DDL."""
 
-from sqlalchemy import event, inspect, select
-
 from app.models.delivery import CloudProject, LoopNode
 from app.models.resource_member import ResourceMember
 from app.schemas.base_role import BaseRole
 from app.services.cloud_projects.responses import list_project_responses
 from app.services.collaboration_permissions import collaboration_permission_service
 from app.services.workspaces.responses import list_workspace_responses
-from tests.api.test_collaboration_permission_contract import invite, scope
+from sqlalchemy import event, inspect, select
+
+from tests.api.test_collaboration_permission_contract import invite
+from tests.api.test_collaboration_permission_contract import scope as scope
 
 
 def test_cp01_no_new_database_columns_or_pending_migration(test_db):
@@ -192,7 +193,7 @@ def test_cp05_legacy_public_edit_grant_is_read_only_without_rewrite(
     test_db.add(grant)
     test_db.commit()
     response = test_client.get(
-        f"/api/v1/cloud-projects/{scope['project']['id']}", headers=scope["member"]
+        f"/api/v1/projects/{scope['project']['id']}", headers=scope["member"]
     )
     assert response.status_code == 200
     assert response.json()["access_role"] == "Viewer"
@@ -231,11 +232,11 @@ def test_cp11_legacy_team_binding_preserves_authorization_and_explicit_revocatio
     test_client, test_db, test_user, scope
 ):
     import pytest
-    from fastapi import HTTPException
-
     from app.models.delivery import ProjectChatAgent
     from app.schemas.workspace import WorkspaceAgentCreate
     from app.services.workspaces import workspace_service
+    from fastapi import HTTPException
+
     from tests.api.test_workspace_shared_agents import _native_team
 
     team = _native_team(test_db, test_user)

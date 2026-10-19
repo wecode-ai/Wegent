@@ -15,9 +15,6 @@ import logging
 from collections import Counter
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.orm import Session
-
 from app.api.dependencies import get_db
 from app.core import security
 from app.core.cache import cache_manager
@@ -30,7 +27,6 @@ from app.schemas.external_wiki import (
     WikiBoundDocument,
     WikiBranchesResponse,
     WikiBranchSummary,
-    WikiConnectionsResponse,
     WikiConnectionSummary,
     WikiConnectionTestRequest,
     WikiConnectionTestResponse,
@@ -73,6 +69,9 @@ from app.services.wiki.service import (
     unbind_kb_wiki_document,
     wiki_document_uses_connection,
 )
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.orm import Session
+
 from shared.models.db import User
 
 logger = logging.getLogger(__name__)
@@ -220,22 +219,6 @@ def _connection_references(
     ]
 
 
-# MIGRATION-CANDIDATE(api="GET /api/wiki/connections"): remove after final confirmation.
-# @router.get("/wiki/connections", response_model=WikiConnectionsResponse)
-async def list_wiki_connections(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-):
-    options = _available_connectors()
-    return WikiConnectionsResponse(
-        connections=[
-            _connection_summary(item)
-            for item in WikiConnectionService.list_connections(db, current_user)
-        ],
-        available_connectors=options,
-    )
-
-
 @router.post("/wiki/connections", response_model=WikiConnectionSummary)
 async def create_named_wiki_connection(
     body: WikiNamedConnectionUpdateRequest,
@@ -353,8 +336,7 @@ async def delete_wiki_connection(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                f"该连接仍被以下知识库引用：{reference_summary}。"
-                "请先删除相关 Wiki 文档"
+                f"该连接仍被以下知识库引用：{reference_summary}。请先删除相关 Wiki 文档"
             ),
         )
 

@@ -4,9 +4,6 @@
 
 """Runtime-native local work endpoints for Wework."""
 
-from fastapi import APIRouter, Body, Depends, Query, Request
-from sqlalchemy.orm import Session
-
 from app.api.dependencies import get_db
 from app.core.security import get_current_user
 from app.models.user import User
@@ -62,6 +59,9 @@ from app.schemas.runtime_work import (
     RuntimeWorktreeSettingsPatch,
 )
 from app.services import runtime_work_service
+from fastapi import APIRouter, Body, Depends, Query, Request
+from sqlalchemy.orm import Session
+
 from shared.telemetry.decorators import (
     add_span_event,
     set_span_attribute,
@@ -454,26 +454,6 @@ async def bind_runtime_task_im_sessions_endpoint(
         db=db,
         user_id=current_user.id,
         request=request,
-    )
-
-
-# MIGRATION-CANDIDATE(api="GET /api/runtime-work/im-notifications"): remove after final confirmation.
-# @router.get(
-#     "/im-notifications",
-#     response_model=RuntimeIMNotificationSettingsResponse,
-#     response_model_by_alias=True,
-# )
-@trace_async("runtime_work.im_notifications.get", "runtime_work.api")
-async def get_im_notification_settings_endpoint(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Read global and task-level IM notification settings."""
-
-    set_span_attribute("user.id", current_user.id)
-    return await runtime_work_service.get_im_notification_settings(
-        db=db,
-        user_id=current_user.id,
     )
 
 

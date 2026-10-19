@@ -15,9 +15,6 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
-from sqlalchemy.orm import Session
-
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
@@ -28,16 +25,13 @@ from app.schemas.subscription import (
     DiscoverSubscriptionsListResponse,
     SubscriptionCreate,
     SubscriptionInDB,
-    SubscriptionListResponse,
-    SubscriptionTriggerType,
     SubscriptionUpdate,
 )
 from app.services.subscription import subscription_service
 from app.services.subscription.follow_service import subscription_follow_service
 from app.services.subscription.helpers import validate_subscription_for_read
-from app.services.subscription.notification_service import (
-    subscription_notification_service,
-)
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
@@ -45,40 +39,6 @@ router = APIRouter()
 
 
 # ========== Subscription Configuration Endpoints ==========
-
-
-# MIGRATION-CANDIDATE(api="GET /api/subscriptions"): remove after final confirmation.
-# @router.get("", response_model=SubscriptionListResponse)
-def list_subscriptions(
-    page: int = Query(1, ge=1, description="Page number"),
-    limit: int = Query(20, ge=1, le=100, description="Items per page"),
-    enabled: Optional[bool] = Query(None, description="Filter by enabled status"),
-    trigger_type: Optional[SubscriptionTriggerType] = Query(
-        None, description="Filter by trigger type"
-    ),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-):
-    """
-    List current user's Subscription configurations.
-
-    Returns paginated list of Subscriptions with support for filtering by enabled status
-    and trigger type.
-    """
-    skip = (page - 1) * limit
-
-    items, total, invalid_count = subscription_service.list_subscriptions(
-        db=db,
-        user_id=current_user.id,
-        skip=skip,
-        limit=limit,
-        enabled=enabled,
-        trigger_type=trigger_type,
-    )
-
-    return SubscriptionListResponse(
-        total=total, items=items, invalid_schedule_count=invalid_count
-    )
 
 
 @router.post("", response_model=SubscriptionInDB, status_code=status.HTTP_201_CREATED)
@@ -203,7 +163,6 @@ def get_stale_executions(
 
     from app.models.kind import Kind
     from app.models.subscription import BackgroundExecution
-    from app.schemas.subscription import Subscription
 
     # Calculate threshold
     threshold = datetime.utcnow() - timedelta(hours=hours)
@@ -540,7 +499,6 @@ def confirm_subscription_preview(
     import json
 
     import redis
-
     from app.core.config import settings
     from app.schemas.subscription import (
         SubscriptionCreate,

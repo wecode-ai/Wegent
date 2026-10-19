@@ -4,20 +4,6 @@
 
 """Shared cloud project endpoints."""
 
-from fastapi import (
-    APIRouter,
-    BackgroundTasks,
-    Depends,
-    File,
-    Form,
-    HTTPException,
-    Query,
-    UploadFile,
-    status,
-)
-from fastapi.responses import Response
-from sqlalchemy.orm import Session
-
 from app.api.dependencies import get_db
 from app.core.security import (
     get_current_user,
@@ -76,6 +62,19 @@ from app.services.message_forwarding_service import message_forwarding_service
 from app.services.project_board_snapshot import project_board_snapshot_service
 from app.services.project_chat.service import project_chat_service
 from app.stores.tasks import subtask_store, task_access_store, task_store
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
+from fastapi.responses import Response
+from sqlalchemy.orm import Session
 
 router = APIRouter()
 legacy_router = APIRouter()
@@ -205,10 +204,8 @@ def create_cloud_project(
     return _project_response(db, project, current_user)
 
 
-# MIGRATION-CANDIDATE(api="GET /api/v1/cloud-projects/:project_id"): remove after final confirmation.
-# @router.get("/{project_id}", response_model=CloudProjectResponse)
 @legacy_router.get("/{project_id}", response_model=CloudProjectResponse)
-def get_cloud_project(
+def get_legacy_project(
     project_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),

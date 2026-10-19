@@ -10,11 +10,6 @@ from datetime import datetime
 from typing import Annotated, Literal, Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
-from fastapi.responses import StreamingResponse
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session
-
 from app.api.dependencies import get_db, with_task_telemetry
 from app.api.endpoints.adapter.attachments import _build_content_disposition
 from app.core import security
@@ -33,13 +28,11 @@ from app.schemas.service import (
 from app.schemas.shared_task import (
     JoinSharedTaskRequest,
     JoinSharedTaskResponse,
-    PublicSharedTaskResponse,
     TaskShareInfo,
     TaskShareResponse,
 )
 from app.schemas.task import (
     ArchivedTaskListResponse,
-    PipelineStageInfo,
     PromptDraftGenerateRequest,
     PromptDraftGenerateResponse,
     TaskArchiveBatchResponse,
@@ -60,6 +53,11 @@ from app.services.remote_workspace_service import remote_workspace_service
 from app.services.shared_task import shared_task_service
 from app.services.task_fork import task_fork_service
 from app.stores.tasks import task_store
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
+
 from shared.telemetry.decorators import trace_sync
 
 router = APIRouter()
@@ -525,34 +523,6 @@ async def cancel_task(
     )
 
 
-# MIGRATION-CANDIDATE(api="GET /api/tasks/:task_id/pipeline-stage-info"): remove after final confirmation.
-# @router.get("/{task_id}/pipeline-stage-info", response_model=PipelineStageInfo)
-def get_pipeline_stage_info(
-    task_id: int = Depends(with_task_telemetry),
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-):
-    """
-    Get pipeline stage information for a task.
-
-    Returns current stage, total stages, and stage details for pipeline mode teams.
-    For non-pipeline teams, returns default values.
-
-    Args:
-        task_id: Task ID
-        current_user: Current authenticated user
-        db: Database session
-
-    Returns:
-        PipelineStageInfo with stage details
-    """
-    return task_kinds_service.get_pipeline_stage_info(
-        db=db,
-        task_id=task_id,
-        user_id=current_user.id,
-    )
-
-
 @router.post("/{task_id}/share", response_model=TaskShareResponse)
 def share_task(
     task_id: int,
@@ -586,20 +556,6 @@ def get_task_share_info(
     This endpoint doesn't require authentication, so anyone with the link can view.
     """
     return shared_task_service.get_share_info(db=db, share_token=share_token)
-
-
-# MIGRATION-CANDIDATE(api="GET /api/tasks/share/public"): remove after final confirmation.
-# @router.get("/share/public", response_model=PublicSharedTaskResponse)
-def get_public_shared_task(
-    token: str = Query(..., description="Share token from URL"),
-    db: Session = Depends(get_db),
-):
-    """
-    Get public shared task data for read-only viewing.
-    This endpoint doesn't require authentication - anyone with the link can view.
-    Only returns public data (no sensitive information like team config, bot details, etc.)
-    """
-    return shared_task_service.get_public_shared_task(db=db, share_token=token)
 
 
 @router.post("/share/join", response_model=JoinSharedTaskResponse)

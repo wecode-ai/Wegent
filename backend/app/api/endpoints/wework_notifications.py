@@ -2,9 +2,6 @@
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-
 from app.api.dependencies import get_db
 from app.core.security import get_current_user, get_current_user_jwt_apikey_tasktoken
 from app.models.user import User
@@ -16,10 +13,11 @@ from app.schemas.wework_notification import (
     NotificationView,
 )
 from app.services.wework_notification_preferences import (
-    get_notification_preferences,
     update_notification_preferences,
 )
 from app.services.wework_notifications import send_wework_notification
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 
 router = APIRouter()
 
@@ -31,14 +29,6 @@ def send_notification(
     user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> WeworkNotification:
     return send_wework_notification(db, user_id=user.id, values=values)
-
-
-# MIGRATION-CANDIDATE(api="GET /api/v1/wework-notifications/preferences"): remove after final confirmation.
-# @router.get("/preferences", response_model=NotificationPreferences)
-def read_notification_preferences(
-    user: User = Depends(get_current_user),
-) -> NotificationPreferences:
-    return get_notification_preferences(user)
 
 
 @router.put("/preferences", response_model=NotificationPreferences)
