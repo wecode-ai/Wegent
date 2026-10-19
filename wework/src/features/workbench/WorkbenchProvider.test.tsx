@@ -11,6 +11,7 @@ import {
 } from 'react'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { resetRuntimeConversationQueueControllersForTests } from './runtimeConversationQueueController'
 import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
 import {
   clearPluginMarketplaceCache,
@@ -10329,6 +10330,7 @@ describe('WorkbenchProvider runtime tasks', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    resetRuntimeConversationQueueControllersForTests()
     clearRuntimeConversationCacheForTests()
     resetRuntimeTerminalContextForTests()
   })
@@ -18431,7 +18433,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('queued-messages')).toHaveTextContent('sending:继续修')
   })
 
-  test('waits for the sent queued runtime message to start before sending the next queued item', async () => {
+  test('waits for the queued turn to start and drains the next item while another task is open', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
       if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
@@ -18628,6 +18630,16 @@ describe('WorkbenchProvider runtime tasks', () => {
       })
     })
 
+    await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('follow-up-current-runtime-task')).toHaveTextContent(
+      'device-1:runtime-b'
+    )
+    expect(sendRuntimeMessage.mock.calls[1][0]).toEqual(
+      expect.objectContaining({
+        address: expect.objectContaining({ taskId: 'runtime-a' }),
+        message: '执行ls',
+      })
+    )
     await userEvent.click(screen.getByText('open follow-up runtime a'))
     await waitFor(() =>
       expect(screen.getByTestId('follow-up-current-runtime-task')).toHaveTextContent(

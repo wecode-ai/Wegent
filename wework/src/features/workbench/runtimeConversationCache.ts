@@ -23,6 +23,7 @@ import type {
   RuntimeTaskAddress,
 } from '@/types/api'
 import { getWorkbenchDeviceIds } from '@/lib/workbench-device'
+import { summarizeRuntimeQueue } from '@/lib/runtime-create-diagnostics'
 import type {
   ProcessingBlock,
   RuntimeConversationTurn,
@@ -521,6 +522,21 @@ export function getRuntimeConversationQueuedMessagesByKey(key: string): RuntimeP
   return touchEntry(queuedMessagesByConversation, key) ?? []
 }
 
+export function getRuntimeConversationQueueDiagnosticSnapshotByKey(
+  key: string,
+  messageId?: string
+) {
+  // Observing a queue must not change its cache eviction priority.
+  const messages = queuedMessagesByConversation.get(key) ?? []
+  return {
+    paused: queuedMessagesPausedByConversation.get(key) ?? false,
+    ...summarizeRuntimeQueue(messages),
+    ...(messageId === undefined
+      ? {}
+      : { queueMessagePresent: messages.some(message => message.id === messageId) }),
+  }
+}
+
 export function cacheRuntimeConversationQueuedMessages(
   address: RuntimeTaskAddress,
   messages: RuntimePaneQueuedMessage[]
@@ -535,10 +551,12 @@ export function cacheRuntimeConversationQueuedMessagesByKey(
   if (messages.length === 0) {
     queuedMessagesByConversation.delete(key)
     scheduleTerminalConversationEviction(key)
+    notifyRuntimeConversation(key)
     return
   }
   cancelTerminalConversationEviction(key)
   cacheBoundedEntry(queuedMessagesByConversation, key, messages)
+  notifyRuntimeConversation(key)
 }
 
 export function settleRuntimeConversationAcceptedMessage(
@@ -557,7 +575,6 @@ export function settleRuntimeConversationAcceptedMessage(
   if (nextQueuedMessages.length === queuedMessages.length) return
 
   cacheRuntimeConversationQueuedMessagesByKey(key, nextQueuedMessages)
-  notifyRuntimeConversation(key)
 }
 
 export function reconcileRuntimeConversationQueueAfterTransportReplacement(
@@ -598,7 +615,6 @@ export function reconcileRuntimeConversationQueueAfterTransportReplacement(
   }
 
   cacheRuntimeConversationQueuedMessagesByKey(key, nextQueuedMessages)
-  notifyRuntimeConversation(key)
 }
 
 export function takeAppliedRuntimeConversationGuidance(
