@@ -109,6 +109,44 @@ test('accepts a completed directory bridge after the device number changes', () 
   expect(fs.readFileSync(join(options.target, 'tasks.sqlite'), 'utf8')).toBe('original')
 })
 
+test('empty-directory recovery rejects an ancestor alias into the migration target', () => {
+  const options = entry()
+  fs.mkdirSync(options.source, { recursive: true })
+  migrateWorkbenchDataEntry(options)
+  const identity = fs.statSync(options.target, { bigint: true }).ino
+  const journal = fs.readFileSync(options.journal, 'utf8')
+  fs.unlinkSync(options.source)
+  fs.rmdirSync(join(root, 'old'))
+  fs.symlinkSync(join(root, 'new'), join(root, 'old'), 'junction')
+
+  expect(() => recoverWorkbenchDataBridge(options, { replaceEmptyDirectory: true })).toThrow(
+    'disjoint'
+  )
+
+  expect(fs.statSync(options.target, { bigint: true }).ino).toBe(identity)
+  expect(fs.readdirSync(options.target)).toEqual([])
+  expect(fs.readFileSync(options.journal, 'utf8')).toBe(journal)
+})
+
+test('empty-directory recovery preserves a concurrent log write', () => {
+  const options = entry()
+  write(join(options.source, 'retained.log'), 'original')
+  migrateWorkbenchDataEntry(options)
+  fs.unlinkSync(options.source)
+  fs.mkdirSync(options.source)
+  const remove = vi.spyOn(fs, 'rmdirSync').mockImplementationOnce(path => {
+    write(join(String(path), 'new.log'), 'concurrent')
+    actual.rmdirSync(path)
+  })
+  try {
+    expect(() => recoverWorkbenchDataBridge(options, { replaceEmptyDirectory: true })).toThrow()
+    expect(fs.readFileSync(join(options.source, 'new.log'), 'utf8')).toBe('concurrent')
+    expect(fs.readFileSync(join(options.target, 'retained.log'), 'utf8')).toBe('original')
+  } finally {
+    remove.mockRestore()
+  }
+})
+
 test.each(['replacement', 'redirect'])('rejects a completed bridge with a %s directory', change => {
   const options = entry()
   write(join(options.source, 'tasks.sqlite'), 'original')
