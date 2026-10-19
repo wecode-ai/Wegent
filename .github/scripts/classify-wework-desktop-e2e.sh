@@ -82,6 +82,7 @@ core_segments=(
   rendering-extensions
   background-terminals
   change-request-status
+  git-commit-generation
   claude-runtime
   local-file-preview
   local-harness
@@ -172,7 +173,7 @@ core_shards=(
   goal-lifecycle,goal-state-sync,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,application-menu,dsh-owner-capture
   send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
   claude-runtime,workspace-tabs,task-attachments
-  task-status-sync,task-board-association,task-board-bulk-actions,change-request-status,context-compaction
+  task-status-sync,task-board-association,task-board-bulk-actions,change-request-status,git-commit-generation,context-compaction
   window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
   project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,collaboration-local-group-coordinate,collaboration-human-round-resume
   resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-task-discovery,collaboration-app-queue-identity,collaboration-issue-archive,collaboration-local-group-cancellation
@@ -1029,6 +1030,12 @@ classify_wework_path() {
       wework/electron/src/host/wework-sync-request* | \
       wework/e2e/desktop/scenarios/transcript-sync.scenario.mjs)
       select_target "core:transcript-sync"
+      return
+      ;;
+
+    wework/src/api/commitMessage* | \
+      wework/e2e/desktop/scenarios/git-commit-generation.scenario.mjs)
+      select_target "core:git-commit-generation"
       return
       ;;
 

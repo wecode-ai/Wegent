@@ -1,4 +1,5 @@
 import { useTranslation } from '@/hooks/useTranslation'
+import { createCommitMessageGenerator } from '@/api/commitMessage'
 import { type RuntimeProjectUpdate } from '@/lib/runtime-project-update'
 import {
   assertLocalRuntimeSidebarIdentity,
@@ -760,7 +761,8 @@ export function useWorkbenchProjectActions({
           executorClient.commands,
           project,
           message,
-          workspaceTarget
+          workspaceTarget,
+          createCommitMessageGenerator(services)
         )
         track('feature_action_completed', { domain: 'git', action: 'commit' })
         return result
@@ -769,7 +771,7 @@ export function useWorkbenchProjectActions({
         throw error
       }
     },
-    [executorClient]
+    [executorClient, services]
   )
 
   const commitAndPushEnvironmentChanges = useCallback(
@@ -783,7 +785,8 @@ export function useWorkbenchProjectActions({
           executorClient.commands,
           project,
           message,
-          workspaceTarget
+          workspaceTarget,
+          createCommitMessageGenerator(services)
         )
         track('feature_action_completed', { domain: 'git', action: 'commit_push' })
         return result
@@ -792,7 +795,7 @@ export function useWorkbenchProjectActions({
         throw error
       }
     },
-    [executorClient]
+    [executorClient, services]
   )
 
   const pushEnvironmentChanges = useCallback(

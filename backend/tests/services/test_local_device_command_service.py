@@ -684,9 +684,6 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     git_push_definition = resolve_local_device_command(
         "git_push", settings.LOCAL_DEVICE_COMMANDS
     )
-    git_generate_commit_message_definition = resolve_local_device_command(
-        "git_generate_commit_message", settings.LOCAL_DEVICE_COMMANDS
-    )
     ls_skills_definition = resolve_local_device_command(
         "ls_skills", settings.LOCAL_DEVICE_COMMANDS
     )
@@ -824,13 +821,6 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert "@{u}" not in git_push_definition.command
     assert 'exec git push -u origin "$branch"' in git_push_definition.command
     assert git_push_definition.post_processor is None
-    assert git_generate_commit_message_definition is not None
-    assert "Generate a Git commit subject line" in (
-        git_generate_commit_message_definition.command
-    )
-    assert "--ask-for-approval" not in git_generate_commit_message_definition.command
-    assert "codex" in git_generate_commit_message_definition.command
-    assert git_generate_commit_message_definition.post_processor == "json"
     assert ls_skills_definition is not None
     assert "python3 -c" in ls_skills_definition.command
     assert ".claude" in ls_skills_definition.command
