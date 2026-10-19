@@ -623,25 +623,27 @@ async def persist_completed_result(
         "executor_namespace": executor_namespace,
     }
 
-    await chat_db.db_handler.update_subtask_status(
-        subtask_id,
-        normalized_status,
-        **update_kwargs,
-    )
-    if normalized_status == "COMPLETED":
-        await _persist_standalone_workspace_path(task_id, result)
     try:
-        await chat_storage.session_manager.cleanup_streaming_state(
+        await chat_db.db_handler.update_subtask_status(
             subtask_id,
-            task_id=task_id,
+            normalized_status,
+            **update_kwargs,
         )
-    except Exception as exc:
-        logger.warning(
-            "[CompletedResult] Failed to cleanup streaming state for subtask %s: %s",
-            subtask_id,
-            exc,
-            exc_info=True,
-        )
+        if normalized_status == "COMPLETED":
+            await _persist_standalone_workspace_path(task_id, result)
+    finally:
+        try:
+            await chat_storage.session_manager.cleanup_streaming_state(
+                subtask_id,
+                task_id=task_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "[CompletedResult] Failed to cleanup streaming state for subtask %s: %s",
+                subtask_id,
+                exc,
+                exc_info=True,
+            )
 
 
 async def _persist_standalone_workspace_path(

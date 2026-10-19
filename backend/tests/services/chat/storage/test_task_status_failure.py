@@ -1,12 +1,14 @@
 """Tests for terminal status persistence failure propagation."""
 
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from app.models.subtask import SubtaskStatus
 from app.models.task import TaskResource
 from app.services.chat.storage.db import DatabaseHandler
+from app.services.chat.trigger.lifecycle import persist_completed_result
 
 
 def test_task_status_failure_propagates_from_subtask_update():
@@ -96,3 +98,26 @@ def test_task_status_failure_propagates_from_subtask_update():
                 status="COMPLETED",
                 result={"value": "done"},
             )
+
+
+@pytest.mark.asyncio
+async def test_streaming_cleanup_runs_when_task_persistence_fails():
+    """Terminal persistence failures still clear the streaming checkpoint."""
+    db_handler = SimpleNamespace(
+        update_subtask_status=AsyncMock(side_effect=RuntimeError("task status failed"))
+    )
+    session_manager = SimpleNamespace(cleanup_streaming_state=AsyncMock())
+
+    with (
+        patch("app.services.chat.storage.db.db_handler", db_handler),
+        patch("app.services.chat.storage.session_manager", session_manager),
+    ):
+        with pytest.raises(RuntimeError, match="task status failed"):
+            await persist_completed_result(
+                subtask_id=10,
+                task_id=20,
+                status="COMPLETED",
+                result={"value": "done"},
+            )
+
+    session_manager.cleanup_streaming_state.assert_awaited_once_with(10, task_id=20)
