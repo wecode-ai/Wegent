@@ -784,6 +784,24 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
 
+      // The assignment is answered from another tab, so the click itself has to
+      // bring the project that owns the Issue back on screen.
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+      await control.command(
+        'waitFor',
+        '[data-testid="workspace-tab-select-fixed-task"][aria-selected="true"]',
+        { timeoutMs: uiTimeoutMs }
+      )
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            scoped('[data-testid="collaboration-platform-root"]')
+          )
+        ),
+        0,
+        '人工任务通知必须在项目之外打开，才能验证点击会切回项目'
+      )
       await control.command('click', '[data-testid="wework-notifications-button"]')
       await control.command('click', '[data-testid="wework-notifications-refresh"]')
       await control.command('click', '[data-testid="wework-notifications-category-collaboration"]')
@@ -792,6 +810,11 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', '[data-testid="issue-dispatch-notification-create-task"]')
+      await control.command(
+        'waitFor',
+        '[data-testid="workspace-tab-select-fixed-board"][aria-selected="true"]',
+        { timeoutMs: uiTimeoutMs }
+      )
       await control.command('waitFor', scoped('[data-testid="ai-chat-modal"]'), {
         timeoutMs: uiTimeoutMs,
       })

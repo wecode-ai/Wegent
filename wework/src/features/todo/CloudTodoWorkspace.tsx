@@ -1,13 +1,11 @@
 import { issueDraftFromText, RuntimeConfigurationProvider } from '@wegent/collaboration'
 import { useAssignmentNotificationChoice } from '@/features/notifications/useAssignmentNotificationChoice'
 import { runtimeTaskBindingAddress } from './runtimeTaskBindingAddress'
-import { useIssueDispatchNotificationActionRegistration } from '@/features/notifications/useIssueDispatchNotificationActionRegistration'
 import { createWeworkProjectAgentConfigurationHost } from '@/features/collaboration/WeworkProjectAgentConfigurationHost'
 import {
   useCallback,
   useContext,
   useEffect,
-  useId,
   useMemo,
   useRef,
   useState,
@@ -607,8 +605,6 @@ export function CloudTodoWorkspace({
   onLogout,
 }: CloudTodoWorkspaceProps) {
   const notificationChoice = useAssignmentNotificationChoice()
-  const notificationActionRegistrationId = useId()
-  const acceptedDispatchTaskActions = useRef(new Set<string>())
   const { t, i18n } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
   const workbenchDevices = useMemo(
@@ -2425,57 +2421,6 @@ export function CloudTodoWorkspace({
       },
     })
   }
-
-  useIssueDispatchNotificationActionRegistration(
-    notificationActionRegistrationId,
-    workspaceActive,
-    async action => {
-      if (!cloudWorkspaceApi || !onOpenRuntimeTask) {
-        throw new Error('当前工作台无法打开个人任务')
-      }
-      const project = projects.find(
-        candidate =>
-          candidate.project_store === 'backend' && String(candidate.id) === String(action.projectId)
-      )
-      if (!project) {
-        throw new Error('未找到任务所属项目')
-      }
-
-      const existingBindings = await cloudWorkspaceApi.taskBindings.list(
-        action.itemId,
-        action.projectId
-      )
-      const existing = existingBindings.find(
-        binding => binding.humanAssignmentId === action.humanAssignmentId
-      )
-      if (existing) {
-        acceptedDispatchTaskActions.current.add(action.idempotencyKey)
-        await onOpenRuntimeTask({
-          deviceId: existing.deviceId,
-          taskId: existing.taskId,
-          ...(existing.modelSelection
-            ? { runtimeHandle: { modelSelection: existing.modelSelection } }
-            : {}),
-        })
-        return
-      }
-      if (acceptedDispatchTaskActions.current.has(action.idempotencyKey)) return
-
-      acceptedDispatchTaskActions.current.add(action.idempotencyKey)
-      try {
-        const issue = await cloudWorkspace.commands.getIssue(action.itemId)
-        if (!issue) throw new Error(cloudWorkspaceMessages.loadFailed)
-        const item = {
-          ...toCloudLoopItem(issue),
-          project_store: project.project_store,
-        }
-        createIssueAssignmentTask(project, item, action, true)
-      } catch (cause) {
-        acceptedDispatchTaskActions.current.delete(action.idempotencyKey)
-        throw cause
-      }
-    }
-  )
 
   async function createTodoInBoardColumn(
     status: CloudLoopItem['status'],
@@ -5570,9 +5515,7 @@ export function CloudTodoWorkspace({
                   taskTitle={
                     selectedTaskBinding?.work_item_id === selectedItem.id
                       ? selectedTaskBinding.task_title
-                      : taskComposerRequest?.workItemId === selectedItem.id
-                        ? taskComposerRequest.dispatch?.taskTitle
-                        : null
+                      : null
                   }
                   open={
                     selectedTaskBinding?.work_item_id !== selectedItem.id ||

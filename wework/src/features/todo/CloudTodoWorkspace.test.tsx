@@ -47,35 +47,7 @@ import {
 const telemetryMocks = vi.hoisted(() => ({
   track: vi.fn(),
 }))
-const notificationActionMocks = vi.hoisted(() => ({
-  action: null as
-    | null
-    | ((input: {
-        projectId: string
-        itemId: string
-        issueId: string
-        dispatchTaskId: string
-        idempotencyKey: string
-        humanAssignmentId: string
-        dispatchId: string
-        roundId: string
-        assignmentId: string
-        taskTitle: string
-        instructions: string
-        workflowStageId?: string
-      }) => Promise<void>),
-}))
-
 vi.mock('@/telemetry/client', () => telemetryMocks)
-vi.mock('@/features/notifications/useIssueDispatchNotificationActionRegistration', () => ({
-  useIssueDispatchNotificationActionRegistration: (
-    _id: string,
-    _active: boolean,
-    action: NonNullable<typeof notificationActionMocks.action>
-  ) => {
-    notificationActionMocks.action = action
-  },
-}))
 
 vi.mock('@dnd-kit/core', async importOriginal => {
   const actual = await importOriginal<typeof import('@dnd-kit/core')>()
@@ -777,7 +749,6 @@ describe('CloudTodoWorkspace', () => {
     HTMLElement.prototype.scrollTo = vi.fn()
     clearRuntimeConversationCacheForTests()
     telemetryMocks.track.mockClear()
-    notificationActionMocks.action = null
     vi.stubGlobal(
       'ResizeObserver',
       class {
@@ -2830,101 +2801,6 @@ describe('CloudTodoWorkspace', () => {
       )
     }
   )
-
-  it('opens the existing personal task from an Issue dispatch notification', async () => {
-    const workbenchServices = services()
-    const onOpenRuntimeTask = vi.fn()
-
-    render(
-      <CloudTodoWorkspace
-        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
-        localProjects={[]}
-        services={workbenchServices}
-        embedded
-        activeProjectRef={{ projectStore: 'backend', projectId: String(project.id) }}
-        onOpenRuntimeTask={onOpenRuntimeTask}
-      />
-    )
-    await screen.findByTestId('cloud-project-header')
-
-    await act(async () => {
-      await notificationActionMocks.action?.({
-        projectId: String(project.id),
-        itemId: item.id,
-        issueId: 'parent-issue',
-        dispatchTaskId: 'human-assignment-1',
-        humanAssignmentId: 'human-assignment-1',
-        dispatchId: 'dispatch-1',
-        roundId: 'round-1',
-        assignmentId: 'collect-cpu',
-        taskTitle: 'Collect CPU evidence',
-        instructions: 'Collect read-only CPU evidence and deliver it.',
-        workflowStageId: 'investigate',
-        idempotencyKey: 'human-assignment:human-assignment-1',
-      })
-    })
-
-    expect(workbenchServices.deliveryApi!.listTaskBindings).toHaveBeenCalledWith(item.id)
-    expect(onOpenRuntimeTask).toHaveBeenCalledWith({
-      deviceId: 'local-device',
-      taskId: 'runtime-248868498',
-    })
-  })
-
-  it('creates an unbound personal task only once for the dispatch idempotency key', async () => {
-    const workbenchServices = services()
-    vi.mocked(workbenchServices.deliveryApi!.listTaskBindings).mockResolvedValue([])
-    const onOpenRuntimeTask = vi.fn()
-    const action = {
-      projectId: String(project.id),
-      itemId: item.id,
-      issueId: 'parent-issue',
-      dispatchTaskId: 'human-assignment-2',
-      humanAssignmentId: 'human-assignment-2',
-      dispatchId: 'dispatch-1',
-      roundId: 'round-1',
-      assignmentId: 'review-cpu',
-      taskTitle: 'Review CPU evidence',
-      instructions: 'Review the CPU evidence and deliver a verdict.',
-      workflowStageId: 'review',
-      idempotencyKey: 'human-assignment:human-assignment-2',
-    }
-
-    render(
-      <CloudTodoWorkspace
-        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
-        localProjects={[{ id: 91, name: '运营工作区', tasks: [] }]}
-        services={workbenchServices}
-        embedded
-        activeProjectRef={{ projectStore: 'backend', projectId: String(project.id) }}
-        onOpenRuntimeTask={onOpenRuntimeTask}
-      />
-    )
-    await screen.findByTestId('cloud-project-header')
-
-    await act(async () => {
-      await notificationActionMocks.action?.(action)
-      await notificationActionMocks.action?.(action)
-    })
-
-    expect(screen.getAllByTestId('mock-start-background-task')).toHaveLength(1)
-    await userEvent.click(screen.getByTestId('mock-start-background-task'))
-    await waitFor(() =>
-      expect(workbenchServices.deliveryApi!.bindTask).toHaveBeenCalledWith(
-        item.id,
-        { deviceId: 'local-device', taskId: 'runtime-created' },
-        'Review CPU evidence',
-        null,
-        {
-          humanAssignmentId: 'human-assignment-2',
-          dispatchId: 'dispatch-1',
-          dispatchRoundId: 'round-1',
-          assignmentId: 'review-cpu',
-        }
-      )
-    )
-    expect(onOpenRuntimeTask).not.toHaveBeenCalled()
-  })
 
   it('shows a failed assignment lookup and opens the composer only after retry succeeds', async () => {
     const workbenchServices = services()
