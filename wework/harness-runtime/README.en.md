@@ -15,19 +15,21 @@ profile.
 The bundled Core Runtime is `0.2.0-rc.2`. The default Workbench Runtime is
 `0.2.0-rc.2`, with `0.1.0-rc.8` retained for existing app requirements.
 Each version declares `wework.runtimeRoles` in its manifest and shares one
-dependency lockfile across role-specific assets. Roles participate in asset
-fingerprints to keep archives and materialized directories distinct.
+archive and immutable materialized directory across roles. The catalog retains
+one entry per role, pointing to the same asset name, fingerprint, and checksum.
 Each dynamic smart-app tab launches an isolated DSH
 process. Every `runtimes/<version>` directory owns an exact manifest and
 lockfile.
 
-The Core asset is marked `role: core` and bundles
-`@wegent/dsh-app-wework`, `@wegent/dsh-electron-host`, and
-`@wegent/dsh-executor-runtime`. It must pass the complete real Executor,
+The archive's `runtime.json` declares supported `roles`; its published archive
+descriptor does not contain a single role. Core loads `@wegent/dsh-app-wework`,
+`@wegent/dsh-electron-host`, and `@wegent/dsh-executor-runtime` from the separate
+core plugin component. It must pass the complete real Executor,
 local/cloud transport, Host pipe, and Renderer-service verification gate.
 
-The Workbench asset is marked `role: workbench` and does not contain those
-three core plugins. It is verified only for installation, startup, page
+Workbench does not copy those three core plugins. Sharing archives shares only
+immutable dependencies, never user profiles, sessions, credentials, or processes.
+Workbench is verified only for installation, startup, page
 reachability, View embedding, tab-scoped shutdown, and credential isolation;
 it does not repeat the Core Executor integration gate.
 
