@@ -305,14 +305,10 @@ export async function refreshInstalledPluginInventory(options: {
       ]))
   if (!canPublish()) return
   const previous = initial?.deviceId === deviceId ? initial.installedPlugins : []
+  // The local API already retains only failed sources; preserve its fresh membership and details.
   const localItems =
     local.status === 'fulfilled'
-      ? local.value.partial
-        ? mergePartialInventory(
-            previous.filter(plugin => !isCloudManagedInstalledPlugin(plugin)),
-            local.value.items
-          )
-        : local.value.items
+      ? local.value.items
       : previous.filter(plugin => !isCloudManagedInstalledPlugin(plugin))
   const cloudItems =
     cloud.status === 'fulfilled'

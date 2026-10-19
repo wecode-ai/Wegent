@@ -3276,7 +3276,7 @@ describe('PluginsWorkspace', () => {
     expect(screen.getByTestId('plugin-detail-actions-101')).toBeInTheDocument()
   })
 
-  test('releases a failed manual update and permits retry after a null rejection', async () => {
+  test('recovers a failed manual update without leaving a stale catalog error', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     mockSystemSkillsFetch({
       marketplaceInstalled: true,
@@ -3294,7 +3294,18 @@ describe('PluginsWorkspace', () => {
       if (String(input).includes('/plugins/installed/101') && init?.method === 'PUT') {
         updateRequests += 1
         if (updateRequests === 1) return Promise.reject(null)
-        const updated = { ...before, spec: { ...before.spec, releaseId: 1002, version: '1.1.0' } }
+        const updated = {
+          ...before,
+          spec: { ...before.spec, releaseId: 1002, version: '1.1.0' },
+          status: {
+            ...before.status,
+            devices: before.status.devices.map(device => ({
+              ...device,
+              desiredReleaseId: 1002,
+              actualReleaseId: 1002,
+            })),
+          },
+        }
         return Promise.resolve(
           new Response(JSON.stringify(updated), { headers: { 'Content-Type': 'application/json' } })
         )
@@ -3315,6 +3326,18 @@ describe('PluginsWorkspace', () => {
     )
     expect(updateRequests).toBe(2)
     expect(screen.queryByTestId('plugin-operation-notice')).not.toBeInTheDocument()
+    expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('立即对话')
+    await userEvent.click(screen.getByTestId('plugin-detail-back-button'))
+    expect(await screen.findByTestId('plugin-marketplace-row-101')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-marketplace-error')).not.toBeInTheDocument()
+
+    // A later successful empty snapshot from another inventory reader must not
+    // expose an unrelated update failure after that operation has recovered.
+    const current = getPluginMarketplaceCache('/api|cloud-token')!
+    act(() => setPluginMarketplaceCache({ ...current, installedPlugins: [], marketplaceItems: [] }))
+    expect(await screen.findByText('没有匹配的插件')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-marketplace-error')).not.toBeInTheDocument()
+    expect(screen.queryByText('Unknown error')).not.toBeInTheDocument()
   })
 
   test('ignores repeated update actions while the connection check is pending', async () => {

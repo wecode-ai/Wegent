@@ -2044,7 +2044,6 @@ export function PluginsWorkspace({
           })
           .catch((error: unknown) => {
             const message = getErrorMessage(error, 'Unknown error')
-            setPluginMarketplaceState(previous => ({ ...previous, error: message }))
             setPluginOperationNotice({ id: `update-error-${item.id}`, kind: 'error', message })
           })
           .finally(() => {

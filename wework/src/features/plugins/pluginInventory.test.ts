@@ -197,6 +197,90 @@ describe('installed-only management refresh', () => {
     expect(getPluginMarketplaceCache('test')?.installedPluginsFetchedAt).toBeUndefined()
   })
 
+  test('does not restore a removed source row after a partial local refresh', async () => {
+    const removed: InstalledPlugin = {
+      ...dingtalk,
+      spec: { ...dingtalk.spec, pluginId: null, origin: 'created' },
+    }
+    const retained: InstalledPlugin = {
+      ...removed,
+      metadata: { ...removed.metadata, name: 'retained', labels: { id: 'retained' } },
+      spec: {
+        ...removed.spec,
+        source: { ...removed.spec.source, pluginKey: 'retained' },
+      },
+    }
+    writePluginInventory('test', 'device', {
+      installedPlugins: [removed, retained],
+      installedPluginsFetchedAt: 123,
+    })
+    await expect(
+      refreshInstalledPluginInventory({
+        cacheKey: 'test',
+        // The local API already retained the failed source and cleared the successful source.
+        readLocal: async () => ({ items: [retained], deviceId: 'device', partial: true }),
+        readCloud: async () => ({ items: [] }),
+        isCurrent: () => true,
+      })
+    ).rejects.toThrow('Local plugin inventory is incomplete')
+    expect(getPluginMarketplaceCache('test')?.installedPlugins).toEqual([retained])
+    expect(getPluginMarketplaceCache('test')?.installedPluginsFetchedAt).toBe(123)
+  })
+
+  test('accepts fresh components and logos from a partial local refresh', async () => {
+    const local: InstalledPlugin = {
+      ...dingtalk,
+      spec: { ...dingtalk.spec, pluginId: null, origin: 'created' },
+    }
+    writePluginInventory('test', 'device', { installedPlugins: [local] })
+    const updated: InstalledPlugin = {
+      ...local,
+      spec: {
+        ...local.spec,
+        interface: { logo: 'data:image/png;base64,aaa' },
+        components: { ...local.spec.components, skills: [] },
+      },
+    }
+    await expect(
+      refreshInstalledPluginInventory({
+        cacheKey: 'test',
+        readLocal: async () => ({ items: [updated], deviceId: 'device', partial: true }),
+        readCloud: async () => ({ items: [] }),
+        isCurrent: () => true,
+      })
+    ).rejects.toThrow('Local plugin inventory is incomplete')
+    expect(getPluginMarketplaceCache('test')?.installedPlugins).toEqual([updated])
+  })
+
+  test('retains local rows when the local read rejects while accepting fresh cloud rows', async () => {
+    const local: InstalledPlugin = {
+      ...dingtalk,
+      metadata: { ...dingtalk.metadata, name: 'personal', labels: { id: 'personal' } },
+      spec: {
+        ...dingtalk.spec,
+        pluginId: null,
+        origin: 'created',
+        source: { ...dingtalk.spec.source, pluginKey: 'personal' },
+      },
+    }
+    writePluginInventory('test', 'device', { installedPlugins: [dingtalk, local] })
+    const updated = {
+      ...dingtalk,
+      spec: { ...dingtalk.spec, description: 'Fresh cloud description' },
+    }
+    await expect(
+      refreshInstalledPluginInventory({
+        cacheKey: 'test',
+        readLocal: async () => {
+          throw new Error('Local unavailable')
+        },
+        readCloud: async () => ({ items: [updated] }),
+        isCurrent: () => true,
+      })
+    ).rejects.toThrow('Local unavailable')
+    expect(getPluginMarketplaceCache('test')?.installedPlugins).toEqual([updated, local])
+  })
+
   test('does not reuse cached rows from another device after a failed cloud read', async () => {
     writePluginInventory('test', 'old-device', { installedPlugins: [dingtalk] })
     await expect(
