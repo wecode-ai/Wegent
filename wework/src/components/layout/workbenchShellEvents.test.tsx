@@ -2,6 +2,7 @@ import { render } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
 import {
   requestOpenCloudDeviceSettings,
+  requestOpenTaskSearch,
   requestProjectCreateMode,
   requestProjectWorkspaceBinding,
   useWorkbenchShellEventHandlers,
@@ -12,11 +13,13 @@ test('only the active mounted workbench handles shell requests after switching t
     onCreateProjectMode: vi.fn(),
     onBindProjectWorkspace: vi.fn(),
     onOpenCloudDeviceSettings: vi.fn(),
+    onOpenTaskSearch: vi.fn(),
   }
   const board = {
     onCreateProjectMode: vi.fn(),
     onBindProjectWorkspace: vi.fn(),
     onOpenCloudDeviceSettings: vi.fn(),
+    onOpenTaskSearch: vi.fn(),
   }
   function Workbenches({ taskActive }: { taskActive: boolean }) {
     useWorkbenchShellEventHandlers({ ...task, enabled: taskActive })
@@ -28,10 +31,12 @@ test('only the active mounted workbench handles shell requests after switching t
     requestProjectCreateMode('existing')
     requestProjectWorkspaceBinding(42)
     requestOpenCloudDeviceSettings()
+    requestOpenTaskSearch()
   }
   requestActions()
   expect(task.onCreateProjectMode).toHaveBeenCalledWith('existing', undefined)
   expect(task.onBindProjectWorkspace).toHaveBeenCalledWith(42)
+  expect(task.onOpenTaskSearch).toHaveBeenCalledTimes(1)
   for (const callback of Object.values(task)) expect(callback).toHaveBeenCalledTimes(1)
   for (const callback of Object.values(board)) expect(callback).not.toHaveBeenCalled()
 

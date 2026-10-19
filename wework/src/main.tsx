@@ -10,6 +10,10 @@ import App from './App.tsx'
 import { installAppLogging } from './lib/app-logging'
 import { installDebugPanelLogCapture } from './lib/debugPanel'
 import { installDeveloperCommandMenu } from './lib/developerCommandMenu'
+import {
+  installApplicationMenuLanguageSync,
+  installApplicationMenuNavigation,
+} from './desktop/applicationMenu'
 import { installExternalDropGuard } from './lib/external-drop-guard'
 import { installExternalLinkHandler } from './lib/external-links'
 import { installPageZoomGuard } from './lib/pageZoomGuard'
@@ -62,6 +66,10 @@ if (!isSystemDragPanel) {
   installExternalLinkHandler()
   installPageZoomGuard()
   installDeveloperCommandMenu()
+  if (isElectronRuntime()) {
+    installApplicationMenuNavigation()
+    installApplicationMenuLanguageSync()
+  }
 }
 const performanceDiagnostics = isSystemDragPanel ? null : installPerformanceDiagnostics()
 

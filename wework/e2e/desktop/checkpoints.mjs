@@ -83,6 +83,7 @@ export const DESKTOP_CHECKPOINTS = [
   'native-window-startup',
   'native-window-chrome',
   'renderer-storage',
+  'application-menu',
   'tray-lifecycle',
   'window-lifecycle',
   'goal-lifecycle',
