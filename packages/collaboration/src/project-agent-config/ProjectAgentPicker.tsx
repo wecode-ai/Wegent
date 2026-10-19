@@ -326,7 +326,13 @@ export function ProjectAgentPicker({
             data-testid="project-agent-wegent-create"
             disabled={!canAdd}
             onClick={onAdd}
-            className="h-11 shrink-0 rounded-lg px-4 disabled:opacity-40 md:h-9"
+            className="h-11 shrink-0 rounded-lg px-4 hover:opacity-90 disabled:opacity-40 md:h-9"
+            style={{
+              color:
+                'var(--collaboration-primary-foreground, rgb(var(--color-bg-base)))',
+              backgroundColor:
+                'var(--collaboration-primary-background, rgb(var(--color-text-primary)))',
+            }}
           >
             {busy
               ? t('todo.agent_picker_adding', '添加中…')
