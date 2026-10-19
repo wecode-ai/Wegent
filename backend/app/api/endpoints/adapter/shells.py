@@ -193,7 +193,8 @@ def _user_shell_to_unified(
     )
 
 
-@router.get("/unified", response_model=dict)
+# MIGRATION-CANDIDATE(api="GET /api/shells/unified"): remove after final confirmation.
+# @router.get("/unified", response_model=dict)
 def list_unified_shells(
     scope: str = Query(
         "personal",

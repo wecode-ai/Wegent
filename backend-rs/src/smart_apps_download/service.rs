@@ -80,8 +80,9 @@ where
 }
 
 /// `_access_role`: the caller's role for a published app, or `None` when the
-/// caller has no access.
-async fn access_role<M, R>(
+/// caller has no access. Shared with the ticketed artifact download, which
+/// rechecks access for the token's `user_id`.
+pub(super) async fn access_role<M, R>(
     mysql: &M,
     redis: Option<&R>,
     resolvers: &EntityResolvers<R>,

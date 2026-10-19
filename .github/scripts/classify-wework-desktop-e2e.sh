@@ -66,6 +66,7 @@ core_segments=(
   native-window-startup
   native-window-chrome
   renderer-storage
+  application-menu
   tray-lifecycle
   conversation-state
   send-key-preference
@@ -81,6 +82,7 @@ core_segments=(
   rendering-extensions
   background-terminals
   change-request-status
+  git-commit-generation
   claude-runtime
   local-file-preview
   local-harness
@@ -168,10 +170,10 @@ core_shards=(
   harness-apps,browser-annotation-design
   supervisor-lifecycle,remote-device-onboarding,core-task-flow
   temporary-chat,local-file-preview,conversation-state,reply-predictions,reply-prediction-auth,model-settings,codex-native-catalog
-  goal-lifecycle,goal-state-sync,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
+  goal-lifecycle,goal-state-sync,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,application-menu,dsh-owner-capture
   send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
   claude-runtime,workspace-tabs,task-attachments
-  task-status-sync,task-board-association,task-board-bulk-actions,change-request-status,context-compaction
+  task-status-sync,task-board-association,task-board-bulk-actions,change-request-status,git-commit-generation,context-compaction
   window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
   project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,collaboration-local-group-coordinate,collaboration-human-round-resume
   resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-task-discovery,collaboration-app-queue-identity,collaboration-issue-archive,collaboration-local-group-cancellation
@@ -619,6 +621,17 @@ classify_wework_path() {
       return
       ;;
 
+    # The native application menu spans the Electron host declaration and the
+    # renderer bridge that reports capability state and runs its actions.
+    wework/electron/src/host/application-menu* | \
+      wework/src/desktop/applicationMenu* | \
+      wework/src/desktop/ApplicationMenuWorkspaceBridge* | \
+      wework/src/components/topnav/ApplicationMenuButton* | \
+      wework/e2e/desktop/scenarios/application-menu.scenario.mjs)
+      select_target "core:application-menu"
+      return
+      ;;
+
     wework/e2e/desktop/scenarios/goal-state-sync.scenario.mjs | \
       wework/src/features/workbench/runtimeTaskLifecycle/goalSynchronization*)
       select_target "core:goal-state-sync"
@@ -1017,6 +1030,12 @@ classify_wework_path() {
       wework/electron/src/host/wework-sync-request* | \
       wework/e2e/desktop/scenarios/transcript-sync.scenario.mjs)
       select_target "core:transcript-sync"
+      return
+      ;;
+
+    wework/src/api/commitMessage* | \
+      wework/e2e/desktop/scenarios/git-commit-generation.scenario.mjs)
+      select_target "core:git-commit-generation"
       return
       ;;
 

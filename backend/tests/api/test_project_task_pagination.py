@@ -733,3 +733,19 @@ def test_project_title_search_uses_display_name_when_title_is_empty(
     assert response.json()["total"] == 1
     assert response.json()["items"][0]["task_id"] == matching.id
     assert response.json()["items"][0]["task_title"] == "Fallback needle"
+
+
+@pytest.fixture(autouse=True)
+def _retained_python_handler_contracts(client):
+    import app.api.endpoints.projects as endpoint_0
+    from tests.legacy_python_routes import legacy_python_handlers
+
+    with legacy_python_handlers(client.app) as register:
+        register(
+            "/api/projects/{project_id}",
+            endpoint_0.update_project_endpoint,
+            endpoint_0.router,
+            methods=["PUT"],
+            response_model=endpoint_0.ProjectResponse,
+        )
+        yield

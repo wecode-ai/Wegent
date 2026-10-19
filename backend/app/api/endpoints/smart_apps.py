@@ -97,10 +97,11 @@ def get_marketplace_item(
         _raise_storage_unavailable(exc)
 
 
-@router.post(
-    "/marketplace/{smart_app_id}/download",
-    response_model=SmartAppDownloadDescriptor,
-)
+# MIGRATION-CANDIDATE(api="POST /api/smart-apps/marketplace/:smart_app_id/download"): remove after final confirmation.
+# @router.post(
+#     "/marketplace/{smart_app_id}/download",
+#     response_model=SmartAppDownloadDescriptor,
+# )
 def download_marketplace_item(
     smart_app_id: int,
     db: Session = Depends(get_db),

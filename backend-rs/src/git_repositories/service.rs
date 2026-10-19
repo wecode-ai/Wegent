@@ -9,6 +9,7 @@
 //! owns the process-lifetime provider HTTP client, the Redis cache adapter, and
 //! the background full-fetch worker.
 use std::sync::Arc;
+use std::time::Duration;
 
 use brz_http::Client;
 use brz_http_server::StatusCode;
@@ -22,6 +23,7 @@ use crate::git_repositories::RepositoryResult;
 use crate::git_repositories::branch_providers;
 use crate::git_repositories::cache::{RedisRepositoryCache, RepositoryCache};
 use crate::git_repositories::providers::{self, MapError, Provider, ProviderEntry};
+use crate::git_repositories::search;
 use crate::git_repositories::worker;
 use crate::http_compat::FastApiError;
 use crate::repository_tokens::RepositoryTokenResolver;
@@ -173,6 +175,100 @@ impl GitRepositoriesService {
         .await
         .map_err(|detail| FastApiError::detail(StatusCode::INTERNAL_SERVER_ERROR, detail))
     }
+
+    /// `repository_service.search_repositories(user_context, q, timeout,
+    /// fullmatch)`: each configured provider's matches, then the relevance
+    /// sort. Unlike `get_repositories`, an empty provider list is an empty
+    /// result rather than `400`.
+    pub async fn search_repositories(
+        &self,
+        resolver: &dyn RepositoryTokenResolver,
+        user: &UserRow,
+        query: &str,
+        timeout_seconds: u64,
+        fullmatch: bool,
+    ) -> Result<Vec<RepositoryResult>, FastApiError> {
+        let providers = user_providers(&user.git_info.0);
+        // `if not user_providers: return []`.
+        if providers.is_empty() {
+            return Ok(Vec::new());
+        }
+        // `query_lower = query.lower()`, computed once for the filter and the
+        // relevance sort.
+        let needle = query.to_lowercase();
+        let criteria = search::Criteria {
+            needle: &needle,
+            timeout: Duration::from_secs(timeout_seconds),
+            fullmatch,
+        };
+        let mut found: Vec<providers::ProviderRepo> = Vec::new();
+        for name in providers {
+            let Some(provider) = Provider::from_name(&name) else {
+                continue;
+            };
+            // The source wraps each provider call in `except Exception:
+            // continue`, so a provider-local failure (an undecryptable token,
+            // a malformed cached entry, or the `building:` wait's `408`) drops
+            // that provider's whole contribution instead of failing the
+            // request.
+            match self
+                .search_provider(resolver, provider, user, criteria)
+                .await
+            {
+                Ok(mut repos) => found.append(&mut repos),
+                Err(error) => {
+                    tracing::error!(
+                        error = ?error,
+                        provider = provider.name(),
+                        "could not search repositories"
+                    );
+                }
+            }
+        }
+        sort_by_relevance(&mut found, &needle);
+        Ok(found.into_iter().map(RepositoryResult::from_repo).collect())
+    }
+
+    /// One provider's `search_repositories`: the entry projection, the GitLab
+    /// placeholder resolution, and the per-domain search.
+    async fn search_provider(
+        &self,
+        resolver: &dyn RepositoryTokenResolver,
+        provider: Provider,
+        user: &UserRow,
+        criteria: search::Criteria<'_>,
+    ) -> Result<Vec<providers::ProviderRepo>, search::SearchError> {
+        let mut entries = providers::entries(provider, &user.git_info.0)?;
+        if provider == Provider::Gitlab {
+            resolve_gitlab_tokens(resolver, &mut entries).await;
+        }
+        search::search(
+            &self.client,
+            self.cache.as_ref(),
+            provider,
+            &entries,
+            criteria,
+            providers::UserRef {
+                id: user.id,
+                name: &user.user_name,
+            },
+        )
+        .await
+    }
+}
+
+/// `all_results.sort(key=lambda x: (not <query matches>, -len(x["name"])))`:
+/// matching rows first, then the longest `name`s; Python's stable sort keeps
+/// the provider order for equal keys. `needle` is already lowercased.
+fn sort_by_relevance(repos: &mut [providers::ProviderRepo], needle: &str) {
+    repos.sort_by(|left, right| {
+        let rank = |repo: &providers::ProviderRepo| {
+            let matches = repo.name.to_lowercase().contains(needle)
+                || repo.full_name.to_lowercase().contains(needle);
+            (!matches, std::cmp::Reverse(repo.name.chars().count()))
+        };
+        rank(left).cmp(&rank(right))
+    });
 }
 
 /// `_get_user_providers`: configured provider types in `git_info` order, with
@@ -261,5 +357,45 @@ mod tests {
         assert!(!truthy(&json!(0)));
         assert!(!truthy(&json!([])));
         assert!(truthy(&json!(["x"])));
+    }
+
+    fn repo(id: i64, name: &str) -> providers::ProviderRepo {
+        providers::ProviderRepo {
+            id,
+            name: name.to_string(),
+            full_name: format!("owner/{name}"),
+            clone_url: "u".to_string(),
+            git_domain: "git.example.invalid".to_string(),
+            kind: "gitlab",
+            private: true,
+        }
+    }
+
+    /// `(not <name or full_name contains the query>, -len(name))`: matching
+    /// rows first, then the longest names; the sort is stable.
+    #[test]
+    fn relevance_sorts_matching_rows_then_longest_names() {
+        let mut found = vec![
+            repo(1, "delta"),
+            repo(2, "alphabet"),
+            repo(3, "alpha"),
+            repo(4, "q"),
+        ];
+        sort_by_relevance(&mut found, "alpha");
+        assert_eq!(
+            found.iter().map(|row| row.id).collect::<Vec<_>>(),
+            vec![2, 3, 1, 4]
+        );
+    }
+
+    /// Equal keys keep the provider order the aggregation produced.
+    #[test]
+    fn relevance_sort_is_stable_for_equal_keys() {
+        let mut found = vec![repo(1, "alpha"), repo(2, "alpha"), repo(3, "alpha")];
+        sort_by_relevance(&mut found, "nomatch");
+        assert_eq!(
+            found.iter().map(|row| row.id).collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
     }
 }

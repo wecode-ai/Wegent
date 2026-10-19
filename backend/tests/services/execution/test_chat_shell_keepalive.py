@@ -29,6 +29,7 @@ _TEST_TIMEOUT_SECONDS = 30
 )
 async def test_sequential_dispatches_retire_idle_connections(
     monkeypatch,
+    caplog,
     idle_seconds: float,
     first_response_delay: float,
     expected_connections: int,
@@ -109,6 +110,7 @@ async def test_sequential_dispatches_retire_idle_connections(
                     idle_clock = idle_seconds
 
                 assert len(requests) == 2
+                assert "stream_cleanup_interrupted" not in caplog.text
                 assert len(connections) == expected_connections
     finally:
         await dispatcher.http_client.aclose()

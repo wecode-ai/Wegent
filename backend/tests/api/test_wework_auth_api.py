@@ -1,5 +1,6 @@
 import base64
 
+import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi.testclient import TestClient
 
@@ -193,3 +194,35 @@ def test_device_bound_session_does_not_downgrade_when_binding_is_missing(
     assert approve_response.json()["detail"] == (
         "Authorization session is missing its device binding"
     )
+
+
+@pytest.fixture(autouse=True)
+def _retained_python_handler_contracts(test_client):
+    import app.api.endpoints.wework_auth as endpoint_0
+    import app.api.endpoints.wework_auth as endpoint_1
+    import app.api.endpoints.wework_auth as endpoint_2
+    from tests.legacy_python_routes import legacy_python_handlers
+
+    with legacy_python_handlers(test_client.app) as register:
+        register(
+            "/api/auth/wework/config",
+            endpoint_0.get_wework_web_config,
+            endpoint_0.router,
+            methods=["GET"],
+            response_model=endpoint_0.WeworkWebConfigResponse,
+        )
+        register(
+            "/api/auth/wework/sessions",
+            endpoint_1.create_wework_auth_session,
+            endpoint_1.router,
+            methods=["POST"],
+            response_model=endpoint_1.WeworkAuthSessionCreateResponse,
+        )
+        register(
+            "/api/auth/wework/sessions/{session_id}/poll",
+            endpoint_2.poll_wework_auth_session,
+            endpoint_2.router,
+            methods=["GET"],
+            response_model=endpoint_2.WeworkAuthSessionPollResponse,
+        )
+        yield

@@ -11,25 +11,115 @@
 //! `users.password_hash` (passlib `CryptContext(schemes=["bcrypt"])`);
 //! the `auth_source == "unknown"` -> `"password"` UPDATE + COMMIT;
 //! `create_access_token` (HS256, `sub` + `user_id` + `exp`,
-//! `ACCESS_TOKEN_EXPIRE_MINUTES` default 7 days). A `GET /api/auth/login`
-//! case is also recorded for this route group: FastAPI answers it with
+//! `ACCESS_TOKEN_EXPIRE_MINUTES` default 7 days). FastAPI validates the
+//! `LoginRequest` body before the endpoint runs, so a missing or wrong-typed
+//! field renders the application's `validation_exception_handler` 422 body
+//! (`app/core/exceptions.py`) without dependency traffic. A
+//! `GET /api/auth/login` case is also recorded for this route group: FastAPI
+//! answers it with
 //! `405 {"detail":"Method Not Allowed"}` plus `Allow: POST`, which the
 //! composed router's `FastApiFallback` renders once the route is
 //! registered.
 use brz_mysql::Mysql;
 use jsonwebtoken::Algorithm;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
+use serde_json::{Value, json};
 
 use crate::auth::UserRow;
 use crate::config::AuthConfig;
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 
-/// `LoginRequest` (`app.schemas.user`): both fields required strings.
-#[derive(Debug, Deserialize)]
+/// `validation_exception_handler`'s fixed `detail` marker
+/// (`app/core/exceptions.py`).
+const VALIDATION_FAILED: &str = "Request parameter validation failed";
+
+/// `LoginRequest` (`app.schemas.user`): both fields required strings; extra
+/// keys are ignored (pydantic's default `model_config`).
+#[derive(Debug)]
 pub struct LoginRequest {
     pub user_name: String,
     pub password: String,
+}
+
+impl LoginRequest {
+    /// Decode and validate the request body, rendering the application's 422
+    /// body on any pydantic failure.
+    fn validated(body: &Value) -> Result<Self, FastApiError> {
+        Self::decode(body).map_err(validation_error)
+    }
+
+    /// The pydantic validation pass: `user_name` then `password`, in field
+    /// declaration order, with every failure reported in one error list.
+    fn decode(body: &Value) -> Result<Self, Vec<Value>> {
+        let Value::Object(object) = body else {
+            return Err(vec![json!({
+                "type": "model_attributes_type",
+                "loc": ["body"],
+                "msg": "Input should be a valid dictionary or object to extract fields from",
+                "input": body,
+            })]);
+        };
+        let mut errors = Vec::new();
+        let user_name = required_string(object, "user_name", &mut errors);
+        let password = required_string(object, "password", &mut errors);
+        match (user_name, password) {
+            (Some(user_name), Some(password)) if errors.is_empty() => Ok(Self {
+                user_name,
+                password,
+            }),
+            _ => Err(errors),
+        }
+    }
+}
+
+/// One required `str` field: a missing key records a `missing` error whose
+/// `input` is the whole body object (the pydantic model input); a non-string
+/// value records a `string_type` error whose `input` is that value.
+fn required_string(
+    object: &serde_json::Map<String, Value>,
+    field: &'static str,
+    errors: &mut Vec<Value>,
+) -> Option<String> {
+    match object.get(field) {
+        Some(Value::String(text)) => Some(text.clone()),
+        Some(other) => {
+            errors.push(json!({
+                "type": "string_type",
+                "loc": ["body", field],
+                "msg": "Input should be a valid string",
+                "input": other,
+            }));
+            None
+        }
+        None => {
+            errors.push(json!({
+                "type": "missing",
+                "loc": ["body", field],
+                "msg": "Field required",
+                "input": Value::Object(object.clone()),
+            }));
+            None
+        }
+    }
+}
+
+/// `{"error_code":422,"detail":"Request parameter validation failed",
+/// "errors":[...]}` — the `validation_exception_handler` body.
+fn validation_error(errors: Vec<Value>) -> FastApiError {
+    FastApiError::json_body(
+        brz_http_server::StatusCode::UNPROCESSABLE_ENTITY,
+        validation_body(&errors),
+    )
+}
+
+/// The handler body for a list of pydantic error entries.
+fn validation_body(errors: &[Value]) -> Value {
+    json!({
+        "error_code": 422,
+        "detail": VALIDATION_FAILED,
+        "errors": errors,
+    })
 }
 
 /// `LoginResponse` / `Token` (`app.schemas.user`): field order as declared.
@@ -42,10 +132,8 @@ pub struct Token {
 /// POST /api/auth/login: the auth-login free function, injecting the
 /// process-lifetime application state.
 #[brz_http_server::post("/api/auth/login", access = public)]
-async fn login(
-    #[inject(state)] state: &AppState,
-    login_data: LoginRequest,
-) -> Result<Token, FastApiError> {
+async fn login(#[inject(state)] state: &AppState, body: Value) -> Result<Token, FastApiError> {
+    let login_data = LoginRequest::validated(&body)?;
     login_value(state, &login_data).await
 }
 
@@ -171,17 +259,24 @@ fn encoding_key(config: &AuthConfig) -> jsonwebtoken::EncodingKey {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use brz_http_server::StatusCode;
 
     // A dedicated test group (separate from the crate's real `http_apis`
-    // group) that only registers the POST /api/auth/login route shape so the
-    // FastApiFallback renders the 405 + Allow for the unmatched GET.
+    // group) that registers the POST /api/auth/login route shape so the
+    // FastApiFallback renders the 405 + Allow for the unmatched GET, and so
+    // the JSON-body binding and validation rendering can be exercised over
+    // HTTP without the application state.
     mod probe {
         brz_http_server::registry!(group = login_probe, dependencies());
     }
 
     #[brz_http_server::post("/api/auth/login", group = probe::login_probe, access = public)]
-    async fn login(_login: LoginRequest) -> Result<Token, FastApiError> {
-        unreachable!("the probe only registers the route shape");
+    async fn login(body: Value) -> Result<Token, FastApiError> {
+        let _login = LoginRequest::validated(&body)?;
+        Ok(Token {
+            access_token: String::new(),
+            token_type: "bearer",
+        })
     }
 
     fn config() -> AuthConfig {
@@ -194,13 +289,13 @@ mod tests {
 
     #[test]
     fn token_body_carries_sub_user_id_and_exp() {
-        let token = create_access_token(&config(), "linxi5", 101).unwrap();
+        let token = create_access_token(&config(), "example-user", 101).unwrap();
         let key = jsonwebtoken::DecodingKey::from_secret(b"test-key");
         let mut validation = jsonwebtoken::Validation::new(Algorithm::HS256);
         validation.validate_aud = false;
         validation.required_spec_claims.clear();
         let data = jsonwebtoken::decode::<serde_json::Value>(&token, &key, &validation).unwrap();
-        assert_eq!(data.claims["sub"], "linxi5");
+        assert_eq!(data.claims["sub"], "example-user");
         assert_eq!(data.claims["user_id"], 101);
         assert!(data.claims["exp"].is_u64());
     }
@@ -234,6 +329,81 @@ mod tests {
         let hash = bcrypt::hash("pw123", bcrypt::DEFAULT_COST).unwrap();
         assert!(bcrypt::verify("pw123", &hash).unwrap());
         assert!(!bcrypt::verify("wrong", &hash).unwrap());
+    }
+
+    #[test]
+    fn missing_user_name_renders_the_recorded_422_body() {
+        // The recorded case: `{"username": ..., "password": ...}` with the
+        // required `user_name` key absent.
+        let body: Value =
+            serde_json::from_str(r#"{"username": "user@example.invalid", "password": "pass"}"#)
+                .unwrap();
+        let error = LoginRequest::validated(&body).unwrap_err();
+        assert_eq!(error.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let errors = LoginRequest::decode(&body).unwrap_err();
+        assert_eq!(
+            serde_json::to_string(&validation_body(&errors)).unwrap(),
+            concat!(
+                r#"{"error_code":422,"detail":"Request parameter validation failed","#,
+                r#""errors":[{"type":"missing","loc":["body","user_name"],"msg":"Field required","#,
+                r#""input":{"username":"user@example.invalid","password":"pass"}}]}"#
+            )
+        );
+    }
+
+    #[test]
+    fn missing_password_renders_the_same_422_shape() {
+        let body = json!({"user_name": "example-user"});
+        let error = LoginRequest::validated(&body).unwrap_err();
+        assert_eq!(error.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let errors = LoginRequest::decode(&body).unwrap_err();
+        let rendered = serde_json::to_string(&validation_body(&errors)).unwrap();
+        assert!(rendered.contains(r#""type":"missing""#), "{rendered}");
+        assert!(
+            rendered.contains(r#""loc":["body","password"]"#),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn a_valid_body_decodes() {
+        let login =
+            LoginRequest::validated(&json!({"user_name": "example-user", "password": "pw"}))
+                .unwrap();
+        assert_eq!(login.user_name, "example-user");
+        assert_eq!(login.password, "pw");
+        // Extra keys are ignored like pydantic's default model config.
+        assert!(
+            LoginRequest::validated(&json!({
+                "user_name": "example-user", "password": "pw", "extra": 1
+            }))
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_non_string_field_renders_a_string_type_error() {
+        let body = json!({"user_name": 1, "password": "pw"});
+        let error = LoginRequest::validated(&body).unwrap_err();
+        assert_eq!(error.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let errors = LoginRequest::decode(&body).unwrap_err();
+        let rendered = serde_json::to_string(&validation_body(&errors)).unwrap();
+        assert!(rendered.contains(r#""type":"string_type""#), "{rendered}");
+        assert!(rendered.contains(r#""input":1"#), "{rendered}");
+    }
+
+    #[test]
+    fn a_non_object_body_renders_model_attributes_type() {
+        let body = json!([1, 2]);
+        let error = LoginRequest::validated(&body).unwrap_err();
+        assert_eq!(error.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let errors = LoginRequest::decode(&body).unwrap_err();
+        let rendered = serde_json::to_string(&validation_body(&errors)).unwrap();
+        assert!(
+            rendered.contains(r#""type":"model_attributes_type""#),
+            "{rendered}"
+        );
+        assert!(rendered.contains(r#""loc":["body"]"#), "{rendered}");
     }
 
     /// A struct test server answering `GET /api/auth/login` with the
@@ -270,5 +440,55 @@ mod tests {
         assert!(raw.starts_with("HTTP/1.1 405"), "{raw}");
         assert!(raw.contains("allow: POST"), "{raw}");
         assert!(raw.contains(r#"{"detail":"Method Not Allowed"}"#), "{raw}");
+    }
+
+    /// The recorded case over the wire: a JSON object that lacks the required
+    /// `user_name` field must reach the application validation renderer and
+    /// produce the source 422 body with a JSON content type, instead of the
+    /// platform router's bare 400.
+    #[tokio::test]
+    async fn post_login_renders_the_recorded_422_over_http() {
+        let handler =
+            brz_http_server::handlers!(; group = probe::login_probe).expect("probe router");
+        let server = brz_http_server::Server::bind(
+            "127.0.0.1:0".parse().unwrap(),
+            crate::http_fallback::FastApiFallback::new(handler),
+        )
+        .await
+        .expect("bind test server");
+        let address = server.local_addr().expect("local address");
+        let serve = tokio::spawn(async move {
+            let _ = server.serve_until(std::future::pending::<()>()).await;
+        });
+        let body = r#"{"username": "user@example.invalid", "password": "pass"}"#;
+        let request = format!(
+            "POST /api/auth/login HTTP/1.1\r\nHost: localhost\r\n\
+             Content-Type: application/json\r\nContent-Length: {}\r\n\
+             Connection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let mut client = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("connect");
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        client.write_all(request.as_bytes()).await.expect("send");
+        let mut raw = Vec::new();
+        client.read_to_end(&mut raw).await.expect("read");
+        serve.abort();
+        let raw = String::from_utf8_lossy(&raw);
+        assert!(raw.starts_with("HTTP/1.1 422"), "{raw}");
+        assert!(
+            raw.to_ascii_lowercase()
+                .contains("content-type: application/json"),
+            "{raw}"
+        );
+        assert!(
+            raw.ends_with(concat!(
+                r#"{"error_code":422,"detail":"Request parameter validation failed","#,
+                r#""errors":[{"type":"missing","loc":["body","user_name"],"msg":"Field required","#,
+                r#""input":{"username":"user@example.invalid","password":"pass"}}]}"#
+            )),
+            "{raw}"
+        );
     }
 }

@@ -525,7 +525,8 @@ async def cancel_task(
     )
 
 
-@router.get("/{task_id}/pipeline-stage-info", response_model=PipelineStageInfo)
+# MIGRATION-CANDIDATE(api="GET /api/tasks/:task_id/pipeline-stage-info"): remove after final confirmation.
+# @router.get("/{task_id}/pipeline-stage-info", response_model=PipelineStageInfo)
 def get_pipeline_stage_info(
     task_id: int = Depends(with_task_telemetry),
     current_user: User = Depends(security.get_current_user),
@@ -587,7 +588,8 @@ def get_task_share_info(
     return shared_task_service.get_share_info(db=db, share_token=share_token)
 
 
-@router.get("/share/public", response_model=PublicSharedTaskResponse)
+# MIGRATION-CANDIDATE(api="GET /api/tasks/share/public"): remove after final confirmation.
+# @router.get("/share/public", response_model=PublicSharedTaskResponse)
 def get_public_shared_task(
     token: str = Query(..., description="Share token from URL"),
     db: Session = Depends(get_db),

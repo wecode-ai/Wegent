@@ -127,7 +127,7 @@ fn validation_error(field: &str, kind: &str, message: &str) -> FastApiError {
 /// The `background_executions` column projection rendered by
 /// `db.query(BackgroundExecution)` (SQLAlchemy labels every column
 /// `background_executions_<name>`), in the model's mapped order.
-const EXECUTION_COLUMNS: &str = "background_executions.id AS background_executions_id, \
+pub(crate) const EXECUTION_COLUMNS: &str = "background_executions.id AS background_executions_id, \
      background_executions.user_id AS background_executions_user_id, \
      background_executions.subscription_id AS background_executions_subscription_id, \
      background_executions.task_id AS background_executions_task_id, \

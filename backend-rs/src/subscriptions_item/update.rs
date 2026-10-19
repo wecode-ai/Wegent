@@ -447,10 +447,15 @@ fn display(value: &Value) -> String {
     }
 }
 
-/// `secrets.token_urlsafe(32)` — 32 random bytes, URL-safe Base64 without
-/// padding. A failure to gather entropy yields an empty token, matching the
-/// source's behavior of surfacing whatever `os.urandom` returned.
-pub(crate) fn random_token_urlsafe(byte_count: usize) -> String {
+/// `secrets.token_urlsafe(byte_count)` — `byte_count` random bytes,
+/// URL-safe Base64 without padding. A failure to gather entropy yields an empty
+/// token, matching the source's behavior of surfacing whatever `os.urandom`
+/// returned.
+///
+/// Public because it is the source's shared token primitive: the internal
+/// device VNC session endpoints mint their session id and connect ticket with
+/// the same call.
+pub fn random_token_urlsafe(byte_count: usize) -> String {
     use base64::Engine;
     let mut bytes = vec![0u8; byte_count];
     if getrandom::getrandom(&mut bytes).is_err() {

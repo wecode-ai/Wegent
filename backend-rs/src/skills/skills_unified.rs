@@ -107,9 +107,6 @@ struct SkillSource {
     kind: RawJson,
     repo_url: RawJson,
     skill_path: RawJson,
-    provider_key: RawJson,
-    skill_key: RawJson,
-    original_skill_key: RawJson,
     imported_at: RawJson,
 }
 
@@ -153,9 +150,6 @@ struct SkillSourceInput {
     kind: Option<OpaqueJson>,
     repo_url: Option<OpaqueJson>,
     skill_path: Option<OpaqueJson>,
-    provider_key: Option<OpaqueJson>,
-    skill_key: Option<OpaqueJson>,
-    original_skill_key: Option<OpaqueJson>,
     imported_at: Option<OpaqueJson>,
 }
 
@@ -208,17 +202,16 @@ fn user_skill_item(
 
 /// Source information for git/marketplace-imported skills: a truthy
 /// `spec.source` object with the type defaulting to `upload` and the remaining
-/// keys echoed as-is (`provider_key`/`skill_key`/`original_skill_key` are
-/// marketplace-import fields; missing keys serialize as `null`).
+/// keys echoed as-is. The response schema is `SkillSourceResponse` (type,
+/// repo_url, skill_path, imported_at), so marketplace-only keys such as
+/// `provider_key`/`skill_key`/`original_skill_key` are not rendered even when
+/// the stored spec carries them.
 fn source_info(spec: &SkillDisplaySpec) -> Option<SkillSource> {
     let source = spec.source.as_ref()?;
     Some(SkillSource {
         kind: source.kind.raw_or("upload"),
         repo_url: source.repo_url.raw_or(()),
         skill_path: source.skill_path.raw_or(()),
-        provider_key: source.provider_key.raw_or(()),
-        skill_key: source.skill_key.raw_or(()),
-        original_skill_key: source.original_skill_key.raw_or(()),
         imported_at: source.imported_at.raw_or(()),
     })
 }

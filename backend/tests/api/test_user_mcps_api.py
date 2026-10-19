@@ -129,6 +129,34 @@ class TestUserMcpsAPI:
             _dingtalk_service("wikispace", "dingtalk_wikispace", 9730),
         ]
 
+    @pytest.mark.parametrize(
+        ("service_id", "server_name"),
+        [
+            ("docs", "dingtalk_docs"),
+            ("ai_table", "dingtalk_ai_table"),
+            ("wikispace", "dingtalk_wikispace"),
+        ],
+    )
+    def test_user_configurable_dingtalk_services_accept_url_and_oauth_modes(
+        self,
+        user_mcps_client: TestClient,
+        service_id: str,
+        server_name: str,
+    ):
+        """Docs, AI Table, and Knowledge Base offer API-key and OAuth settings."""
+        response = user_mcps_client.put(
+            f"/api/users/me/mcps/providers/dingtalk/services/{service_id}",
+            json={
+                "enabled": True,
+                "url": f"https://example.com/{service_id}/oauth",
+                "auth_mode": "oauth",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["auth_mode"] == "oauth"
+        assert response.json()["server_name"] == server_name
+
     def test_enable_provider_service_without_url_fails(
         self, user_mcps_client: TestClient
     ):
@@ -260,3 +288,19 @@ class TestUserMcpsAPI:
 
         assert list_response.status_code == 404
         assert update_response.status_code == 404
+
+
+@pytest.fixture(autouse=True)
+def _retained_python_handler_contracts(user_mcps_client):
+    import app.api.endpoints.users as endpoint_0
+    from tests.legacy_python_routes import legacy_python_handlers
+
+    with legacy_python_handlers(user_mcps_client.app) as register:
+        register(
+            "/api/users/me/mcps/providers/{provider_id}/services",
+            endpoint_0.list_mcp_provider_services,
+            endpoint_0.router,
+            methods=["GET"],
+            response_model=list[endpoint_0.MCPProviderServiceConfigResponse],
+        )
+        yield

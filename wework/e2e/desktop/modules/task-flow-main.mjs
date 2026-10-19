@@ -1085,7 +1085,7 @@ async function main() {
   await markDesktopE2EResultActive(resultDir, { ownerProcessId: process.pid })
   console.log(`[desktop-e2e] result directory: ${resultDir}`)
   const workspacePath = join(resultDir, 'workspace')
-  const secondaryProjectPath = join(resultDir, 'secondary-project-root')
+  const secondaryProjectPath = join(resultDir, 'Codex', 'secondary-project-root')
   const composerProjectPath = join(resultDir, 'composer-project')
   const homePath = join(resultDir, 'home')
   const executorHome = join(resultDir, 'executor-home')
@@ -2440,6 +2440,23 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     const secondaryProjectId = secondaryProjectMenuTestId.slice('project-menu-'.length)
     const secondaryProjectRowSelector = `[data-testid="project-row-${secondaryProjectId}"]`
     await control.command('waitFor', secondaryProjectRowSelector, {
+      text: 'secondary-project',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+
+    phase = 'codex-directory-project-reload'
+    const readyCountBeforeProjectReload = control.readyCount
+    await control.command('reloadMainWindow', 'body')
+    await withTimeout(
+      control.awaitReadyAfter(readyCountBeforeProjectReload),
+      WORKBENCH_READY_TIMEOUT_MS,
+      'The workbench did not reconnect after reloading the Codex-directory project'
+    )
+    await control.command('waitFor', secondaryProjectRowSelector, {
+      text: 'secondary-project',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('waitFor', '[data-testid="project-work-button"]', {
       text: 'secondary-project',
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })

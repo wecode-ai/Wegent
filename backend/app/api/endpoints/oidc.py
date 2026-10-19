@@ -73,7 +73,8 @@ def _build_frontend_url(path: str, frontend_base_path: str | None = None) -> str
     return f"{base_url}{app_base_path}{normalized_path}"
 
 
-@router.get("/login")
+# MIGRATION-CANDIDATE(api="GET /api/auth/oidc/login"): remove after final confirmation.
+# @router.get("/login")
 async def oidc_login(
     redirect: str = Query(None, description="Optional redirect URL after login"),
     frontend_base_path: str = Query(
@@ -293,7 +294,8 @@ async def get_user_auth_type(
     return UserAuthTypeResponse(exists=True, auth_source=user.auth_source)
 
 
-@router.post("/cli-login", response_model=CLILoginInitResponse)
+# MIGRATION-CANDIDATE(api="POST /api/auth/oidc/cli-login"): remove after final confirmation.
+# @router.post("/cli-login", response_model=CLILoginInitResponse)
 async def cli_oidc_login_init(request: CLILoginInitRequest):
     """
     Initialize CLI OIDC login flow.
@@ -341,7 +343,8 @@ async def cli_oidc_login_init(request: CLILoginInitRequest):
         )
 
 
-@router.get("/cli-callback")
+# MIGRATION-CANDIDATE(api="GET /api/auth/oidc/cli-callback"): remove after final confirmation.
+# @router.get("/cli-callback")
 async def cli_oidc_callback(
     code: str = Query(..., description="Authorization code"),
     state: str = Query(..., description="State parameter"),
@@ -471,7 +474,8 @@ async def cli_oidc_callback(
         return _cli_callback_error_page(f"Authentication failed: {str(e)}")
 
 
-@router.get("/cli-poll", response_model=CLIPollResponse)
+# MIGRATION-CANDIDATE(api="GET /api/auth/oidc/cli-poll"): remove after final confirmation.
+# @router.get("/cli-poll", response_model=CLIPollResponse)
 async def cli_poll_token(
     session_id: str = Query(..., description="CLI login session ID"),
 ):

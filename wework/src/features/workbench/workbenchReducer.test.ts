@@ -139,6 +139,40 @@ describe('workbenchReducer', () => {
     expect(state.currentRuntimeTask).toBeNull()
   })
 
+  test('selects the default workspace of the specified project when opening a fresh chat', () => {
+    const runtimeWork = {
+      projects: ['existing', 'created'].map((key, index) => ({
+        project: { key, stateDeviceId: 'device-1', name: key },
+        deviceWorkspaces: [
+          {
+            id: index + 10,
+            deviceId: 'device-1',
+            workspacePath: '/shared/root',
+            available: true,
+            tasks: [],
+          },
+        ],
+      })),
+      chats: [],
+      totalTasks: 0,
+    }
+    const project = {
+      id: runtimeProjectUiId(runtimeWork.projects[1].project),
+      name: 'created',
+      tasks: [],
+    }
+
+    const state = workbenchReducer(
+      { ...initialWorkbenchState, runtimeWork, standaloneChatKey: 4 },
+      { type: 'project_workspace_selected', project, startFreshChat: true }
+    )
+
+    expect(state.currentProject?.id).toBe(project.id)
+    expect(state.selectedDeviceWorkspaceId).toBe(11)
+    expect(state.pendingProjectWorkspaceProjectId).toBeNull()
+    expect(state.standaloneChatKey).toBe(5)
+  })
+
   test('removes a deleted cloud project from the visible project state', () => {
     const state = workbenchReducer(
       {

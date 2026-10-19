@@ -657,7 +657,7 @@ async function resolveCoreUiPluginSources(runtimeRoot, pluginsRoot) {
     await Promise.all(
       roots.map(async root => {
         const identity = await readJson(join(root, 'runtime.json'))
-        return identity?.role === 'core' ? root : null
+        return identity?.role === 'core' || identity?.roles?.includes('core') ? root : null
       })
     )
   ).filter(Boolean)
@@ -686,10 +686,13 @@ async function runtimeCandidates(root) {
   if (await pathExists(join(root, 'runtime.json'))) return [root]
   const catalog = await readJson(join(root, 'runtimes.json'))
   if (Array.isArray(catalog?.runtimes)) {
-    return catalog.runtimes
-      .map(runtime => runtime?.sourceFingerprint)
-      .filter(fingerprint => typeof fingerprint === 'string')
-      .map(fingerprint => join(root, fingerprint))
+    return [
+      ...new Set(
+        catalog.runtimes
+          .map(runtime => runtime?.sourceFingerprint)
+          .filter(fingerprint => typeof fingerprint === 'string')
+      ),
+    ].map(fingerprint => join(root, fingerprint))
   }
   return (await readdir(root, { withFileTypes: true }))
     .filter(entry => entry.isDirectory())

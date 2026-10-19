@@ -5,6 +5,7 @@
 import hashlib
 import json
 
+import pytest
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.models.wework_transcript import (
@@ -605,3 +606,20 @@ def test_download_reports_a_missing_storage_object_as_not_found(
         "code": "archive_not_found",
         "message": "Wework transcript segment not found",
     }
+
+
+@pytest.fixture(autouse=True)
+def _retained_python_handler_contracts(test_client):
+    import app.api.endpoints.wework_transcripts as endpoint_0
+    from tests.legacy_python_routes import legacy_python_handlers
+
+    with legacy_python_handlers(test_client.app) as register:
+        register(
+            "/api/wework-transcripts/{transcript_id}/lease",
+            endpoint_0.acquire_lease_endpoint,
+            endpoint_0.router,
+            methods=["POST"],
+            response_model=endpoint_0.TranscriptLeaseResponse,
+            response_model_by_alias=True,
+        )
+        yield

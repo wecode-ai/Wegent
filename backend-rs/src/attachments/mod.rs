@@ -47,6 +47,7 @@ pub mod auth;
 pub(crate) mod content_type;
 pub mod context_store;
 pub(crate) mod crypto;
+mod delete;
 pub mod detail;
 pub mod detail_response;
 pub mod download_policy;
