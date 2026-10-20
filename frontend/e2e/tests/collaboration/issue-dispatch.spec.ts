@@ -75,7 +75,8 @@ test.describe('Issue Dispatch human assignment', () => {
 
     await page.getByTestId('cloud-todo-detail-assignee').click()
     await page.getByTestId(`cloud-todo-detail-assignee-option-user:${memberId}`).click()
-    await page.getByTestId('wework-assignment-notify-confirm').click()
+    await expect(page.getByTestId('wework-assignment-notify-confirm')).toHaveCount(0)
+    await expect(page.getByTestId('cloud-todo-save')).toHaveText(/^(保存并通知|Save and notify)$/)
     await page.getByTestId('cloud-todo-save').click()
     await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
     await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
