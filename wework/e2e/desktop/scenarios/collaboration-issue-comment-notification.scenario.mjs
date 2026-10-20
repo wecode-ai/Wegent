@@ -9,12 +9,7 @@ const MENTIONER_NAME = 'desktop-e2e-mentioner'
 const MENTIONER_PASSWORD = 'desktop-e2e-mentioner-password'
 const ISSUE_TITLE = '评论 @ 必须通知被提及的成员'
 const COMMENT_LINK = 'https://github.com/wecode-ai/Wegent/pull/3933'
-const COMMENT_DOCUMENT_LINK = 'https://example.com/wework-comment-link'
-const COMMENT_TEXT = [
-  '这条评论在验收里 @ 了你，应该收到通知',
-  `[wecode-ai/Wegent#3933](${COMMENT_LINK})`,
-  `[外链文档](${COMMENT_DOCUMENT_LINK})`,
-].join('\n')
+const COMMENT_DOCUMENT_PATH = '/comment-link-fixture'
 const CLIENT_MESSAGE_PREFIX = 'desktop-e2e-mention'
 const FLASH_ANIMATION = 'task-detail-comment-flash'
 
@@ -80,9 +75,9 @@ async function waitForApiValue(load, predicate, message, timeoutMs) {
  * The @ notification is produced by the backend when another member comments,
  * so the scenario posts that comment over the same Socket.IO contract the app
  * uses and then drives the recipient's own window through the inbox. The same
- * comment carries a recognized GitHub link chip and a plain external link so
- * landing from the notification also guards comment-link clicks from navigating
- * the workbench itself.
+ * comment carries a recognized GitHub link chip and a plain link so landing
+ * from the notification also verifies that both open in the Wework browser
+ * without navigating the workbench itself.
  */
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
   let backendUrl = ''
@@ -94,8 +89,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
   let project = null
   let issue = null
   let emptyUnreadIssue = null
+  let commentDocumentLink = ''
 
   const ownerRequest = (pathname, options) => requestJson(backendUrl, ownerToken, pathname, options)
+  const commentText = () =>
+    [
+      '这条评论在验收里 @ 了你，应该收到通知',
+      `[wecode-ai/Wegent#3933](${COMMENT_LINK})`,
+      `[外链文档](${commentDocumentLink})`,
+    ].join('\n')
 
   async function postMentionComment(messageId) {
     const { io } = createRequire(
@@ -122,7 +124,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
           clientMessageId: messageId,
           projectId: String(project.id),
           taskId: issue.id,
-          content: COMMENT_TEXT,
+          content: commentText(),
           mentions: [{ type: 'user', id: String(owner.id), label: owner.user_name }],
         })
       assert.equal(ack.ok, true, `Mentioning a member failed: ${JSON.stringify(ack)}`)
@@ -147,16 +149,57 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     assert.fail(`The mentioned comment never flashed: animation-name=${latest}`)
   }
 
+  async function waitForBrowserPage(control, label, expectedUrl) {
+    const deadline = Date.now() + Math.max(uiTimeoutMs, 30_000)
+    let latest = null
+    while (Date.now() < deadline) {
+      try {
+        latest = JSON.parse(
+          await control.command('getEmbeddedBrowserPageState', 'body', { value: label })
+        )
+      } catch {
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+        continue
+      }
+      if (latest.navigationError) {
+        assert.fail(
+          `The Wework browser failed to open ${expectedUrl}: ${JSON.stringify(
+            latest.navigationError
+          )}`
+        )
+      }
+      if (
+        latest.url &&
+        !latest.isLoading &&
+        new URL(latest.url).href === new URL(expectedUrl).href
+      ) {
+        return latest
+      }
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+    }
+    assert.fail(`The Wework browser did not open ${expectedUrl}: ${JSON.stringify(latest)}`)
+  }
+
   async function verifyCommentLinks(control, activeSurface) {
     const githubLink = `${activeSurface} [data-testid="composer-link-chip"][data-composer-link-url="${COMMENT_LINK}"]`
-    const documentLink = `${activeSurface} a[data-testid="assistant-markdown-link"][href="${COMMENT_DOCUMENT_LINK}"]`
+    const documentLink = `${activeSurface} a[data-testid="assistant-markdown-link"][href="${commentDocumentLink}"]`
     const issueTitle = `${activeSurface} [data-testid="cloud-todo-detail-title"]`
     await control.command('waitFor', githubLink, { visible: true, timeoutMs: uiTimeoutMs })
     await control.command('waitFor', documentLink, { visible: true, timeoutMs: uiTimeoutMs })
+    await control.command('setAppPreferences', 'body', {
+      value: JSON.stringify({
+        browserExternalLinkTarget: 'wework',
+        browserLocalLinkTarget: 'wework',
+      }),
+    })
 
     const routeBeforeClick = await control.command('getRoute')
-    for (const selector of [githubLink, documentLink]) {
+    for (const [selector, browserLabel, expectedUrl] of [
+      [githubLink, 'workspace-browser', COMMENT_LINK],
+      [documentLink, 'workspace-browser-2', commentDocumentLink],
+    ]) {
       await control.command('click', selector, { visible: true })
+      await waitForBrowserPage(control, browserLabel, expectedUrl)
       await control.command('waitFor', issueTitle, {
         visible: true,
         stableMs: 250,
@@ -203,9 +246,19 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
   return {
     requiresCloudEnvironment: true,
 
+    handleHttp(request, response, url) {
+      if (request.method !== 'GET' || url.pathname !== COMMENT_DOCUMENT_PATH) return false
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+      response.end('<!doctype html><title>Wework comment link fixture</title><p>ok</p>')
+      return true
+    },
+
     async prepareCloud(cloud) {
       backendUrl = cloud.backendUrl
       ownerToken = cloud.authToken
+      const modelServerPort = process.env.WEWORK_E2E_MODEL_SERVER_PORT?.trim()
+      assert.ok(modelServerPort, 'The desktop E2E model server port is unavailable')
+      commentDocumentLink = `http://127.0.0.1:${modelServerPort}${COMMENT_DOCUMENT_PATH}`
       owner = await ownerRequest('/api/users/me')
       mentioner = await ownerRequest('/api/admin/users', {
         method: 'POST',
