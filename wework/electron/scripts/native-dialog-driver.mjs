@@ -14,14 +14,14 @@ export async function createNativeDialogDriver({ pid, resultDir, timeoutMs }) {
     const result = await driver.callTool(name, JSON.stringify(args), {
       signal: AbortSignal.timeout(timeoutMs),
     })
-    assert.equal(result.isError, false, `${name} failed: ${result.text}`)
     const data = result.structuredJson ? JSON.parse(result.structuredJson) : null
     if (['click', 'press_key', 'type_text'].includes(name)) {
       await appendFile(
         join(resultDir, 'native-dialog-actions.jsonl'),
-        `${JSON.stringify({ name, args, result: data })}\n`
+        `${JSON.stringify({ at: Date.now(), name, args, result: data, text: result.text })}\n`
       )
     }
+    assert.equal(result.isError, false, `${name} failed: ${result.text}`)
     assert.notEqual(data?.effect, 'refused', `${name} was refused: ${result.text}`)
     return { data, images: result.images }
   }
@@ -32,6 +32,10 @@ export async function createNativeDialogDriver({ pid, resultDir, timeoutMs }) {
     assert.ok(
       data.windows.every(window => window.pid === pid),
       'The native driver returned another process window'
+    )
+    await appendFile(
+      join(resultDir, 'native-window-catalog.jsonl'),
+      `${JSON.stringify({ at: Date.now(), windows: data.windows })}\n`
     )
     return data.windows
   }
@@ -85,6 +89,17 @@ export async function createNativeDialogDriver({ pid, resultDir, timeoutMs }) {
     assert.fail(message)
   }
 
+  async function recordDialogState(windowId, stage) {
+    const currentWindows = await windows()
+    const open = currentWindows.some(window => window.window_id === windowId)
+    await appendFile(
+      join(resultDir, 'native-dialog-actions.jsonl'),
+      `${JSON.stringify({ at: Date.now(), stage, windowId, open })}\n`
+    )
+    if (open) await snapshot(windowId, `native-picker-${windowId}-${stage}`)
+    return open
+  }
+
   return {
     windows,
     snapshot,
@@ -104,18 +119,27 @@ export async function createNativeDialogDriver({ pid, resultDir, timeoutMs }) {
         modifiers: process.platform === 'darwin' ? ['cmd', 'shift'] : ['ctrl'],
         delivery_mode: 'foreground',
       })
+      assert.ok(
+        await recordDialogState(windowId, 'location-shortcut'),
+        'The location shortcut unexpectedly closed the native directory dialog'
+      )
       await call('type_text', {
         pid,
         window_id: windowId,
         text: `${path}${sep}`,
         delivery_mode: 'foreground',
       })
+      assert.ok(
+        await recordDialogState(windowId, 'location-typed'),
+        'Typing the fixture path unexpectedly closed the native directory dialog'
+      )
       await call('press_key', {
         pid,
         window_id: windowId,
         key: 'return',
         delivery_mode: 'foreground',
       })
+      if (!(await recordDialogState(windowId, 'location-submitted'))) return
       const selected = await waitFor(async () => {
         if (!(await windows()).some(window => window.window_id === windowId)) return 'closed'
         const state = await snapshot(windowId)
