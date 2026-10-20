@@ -203,7 +203,7 @@ export function createDesktopScenario({
         await control.command('select', '[data-testid="stand-in-agent"]', {
           value: String(agent.id),
         })
-        await control.command('click', '[data-testid="stand-in-auto"]')
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
         await control.command('fill', '[data-testid="stand-in-prompt"]', { value: MARKER })
         await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
         await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
@@ -229,6 +229,15 @@ export function createDesktopScenario({
         )
         await control.command('click', '[data-testid="stand-in-cancel"]')
 
+        const localEnabled = await requestExecutor(
+          control,
+          'runtime.stand_in.save',
+          {
+            ...settingsParams(),
+            settings: { ...localSettings, enabled: true, tags: ['local-only'], prompt: MARKER },
+          },
+          uiTimeoutMs
+        )
         const issue = await createIssue('云端设备自动接手')
         const bound = await until(
           () => bindings(issue),
@@ -241,7 +250,7 @@ export function createDesktopScenario({
           () => rpc('runtime.tasks.get', { taskId: bound.task_id }),
           result => {
             assert.notEqual(result.task?.status, 'failed', JSON.stringify(result))
-            return result.task?.status === 'completed'
+            return result.task?.status === 'done'
           },
           modelResponseTimeoutMs,
           'Remote task did not complete'
@@ -249,36 +258,19 @@ export function createDesktopScenario({
         assert.equal(requests, 1)
         assert.equal(agentRequests, 1, 'The remote agent prompt did not reach its model')
 
-        // Two real Executors may see one assignment; the existing work/start transition must arbitrate it.
+        // Another device must respect an existing ordinary task binding.
         await requestExecutor(
           control,
           'runtime.stand_in.save',
           {
             ...settingsParams(),
-            settings: { ...localSettings, enabled: true, prompt: MARKER },
+            settings: { ...localEnabled, tags: [] },
           },
           uiTimeoutMs
         )
-        const contested = await createIssue('两台设备看到同一分配')
-        await until(
-          () => bindings(contested),
-          rows => rows.length > 0,
-          modelResponseTimeoutMs,
-          'Contested task was not created'
-        )
-        await until(
-          async () => requests,
-          count => count === 2,
-          modelResponseTimeoutMs,
-          'Contested assignment did not reach the model'
-        )
         await new Promise(resolve => setTimeout(resolve, 11000))
-        assert.equal(
-          (await bindings(contested)).length,
-          1,
-          'Multiple devices created duplicate tasks'
-        )
-        assert.equal(requests, 2)
+        assert.equal((await bindings(issue)).length, 1, 'Another device duplicated existing work')
+        assert.equal(requests, 1)
         assert.equal(
           (await bindings(historical)).length,
           0,

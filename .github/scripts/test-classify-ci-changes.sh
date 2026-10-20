@@ -1053,7 +1053,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "remote manager planning details E2E changes select regression coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-18","name":"Core / shard 18","segments":"collaboration-remote-group-planning-details,stand-in-cloud"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-18","name":"Core / shard 18","segments":"collaboration-remote-group-planning-details"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/collaboration-remote-group-planning-details.scenario.mjs"

@@ -256,7 +256,7 @@ export function StandInPopover({
                     role="switch"
                     aria-labelledby={`${titleId}-auto`}
                     aria-checked={draft.enabled}
-                    disabled={!canConfigure || saving}
+                    disabled={!canConfigure || saving || !loaded}
                     data-testid="stand-in-auto"
                     onClick={() => setDraft(current => ({ ...current, enabled: !current.enabled }))}
                     className={`inline-flex h-6 w-11 shrink-0 rounded-full p-0.5 transition disabled:opacity-50 ${draft.enabled ? 'bg-text-primary' : 'bg-border'}`}
@@ -273,7 +273,7 @@ export function StandInPopover({
                   id={`${promptId}-agent`}
                   data-testid="stand-in-agent"
                   value={draft.agentId ?? ''}
-                  disabled={saving || !canConfigure}
+                  disabled={saving || !canConfigure || !loaded}
                   onChange={event =>
                     setDraft(current => ({ ...current, agentId: event.target.value || null }))
                   }
@@ -301,7 +301,7 @@ export function StandInPopover({
                   id={promptId}
                   data-testid="stand-in-prompt"
                   maxLength={8000}
-                  disabled={saving || !canConfigure}
+                  disabled={saving || !canConfigure || !loaded}
                   value={draft.prompt}
                   onChange={event =>
                     setDraft(current => ({ ...current, prompt: event.target.value }))

@@ -35,7 +35,7 @@ async function waitForExecution(control, issueId, timeoutMs) {
         { taskId: bindings[0].task_id },
         10000
       )
-      if (latest.task?.status === 'completed') return latest.task
+      if (latest.task?.status === 'done') return latest.task
       assert.notEqual(latest.task?.status, 'failed', JSON.stringify(latest))
     }
     await new Promise(resolve => setTimeout(resolve, 200))

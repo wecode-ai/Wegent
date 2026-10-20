@@ -145,6 +145,35 @@ describe('StandInPopover', () => {
     expect(screen.getByTestId('stand-in-prompt')).toHaveValue('Cloud prompt')
   })
 
+  it('blocks edits until the selected device settings finish loading', async () => {
+    const { props, get } = fixture()
+    let finishLoad!: (settings: WorkspaceStandInSettings) => void
+    const pending = new Promise<WorkspaceStandInSettings>(resolve => {
+      finishLoad = resolve
+    })
+    get.mockImplementation(async (_project?: string, device?: string) =>
+      device === 'cloud'
+        ? pending
+        : { enabled: false, prompt: '', executionDeviceId: 'current', version: 0 }
+    )
+    const user = userEvent.setup()
+    render(
+      <StandInPopover
+        {...props}
+        devices={[...props.devices, { id: 2, device_id: 'cloud', name: 'Cloud', status: 'online' }]}
+      />
+    )
+    await user.click(screen.getByTestId('stand-in-open'))
+    await screen.findByTestId('stand-in-device')
+    await user.selectOptions(screen.getByTestId('stand-in-device'), 'cloud')
+    expect(screen.getByTestId('stand-in-auto')).toBeDisabled()
+    expect(screen.getByTestId('stand-in-agent')).toBeDisabled()
+    expect(screen.getByTestId('stand-in-prompt')).toBeDisabled()
+    finishLoad({ enabled: false, prompt: 'Loaded', executionDeviceId: 'cloud', version: 1 })
+    await waitFor(() => expect(screen.getByTestId('stand-in-auto')).toBeEnabled())
+    expect(screen.getByTestId('stand-in-prompt')).toHaveValue('Loaded')
+  })
+
   it('discards edits on cancel and Escape without calling save', async () => {
     const { props, save } = fixture()
     const user = userEvent.setup()

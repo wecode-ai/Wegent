@@ -252,17 +252,22 @@ impl RuntimeWorkRpcHandler {
     }
 
     async fn start_cloud_stand_in(&self, config: &Value, issue: &Value) -> Result<(), AppIpcError> {
-        let work = &issue["human_work"];
-        if work["can_start"] != true || work["assignee_user_id"] != config["userId"] {
+        if issue["assignee_user_id"] != config["userId"]
+            || issue["completed_at"].is_string()
+            || matches!(
+                issue["status"].as_str(),
+                Some("completed" | "cancelled" | "in_review")
+            )
+        {
             return Ok(());
         }
         let Some(issue_id) = issue["id"].as_str() else {
             return Ok(());
         };
-        let Some(assignment_id) = work["assignment_id"].as_str() else {
+        let binding = &issue["human_task_binding"];
+        let Some(assignment_id) = binding["assignmentId"].as_str() else {
             return Ok(());
         };
-        let binding = &work["ai_task_binding"];
         let Some(human_id) = binding["humanAssignmentId"].as_str() else {
             return Ok(());
         };
@@ -301,14 +306,6 @@ impl RuntimeWorkRpcHandler {
             return Ok(());
         }
         let payload = self.prepare_stand_in_task(config, issue, binding).await?;
-        // The human start operation locks the Issue and checks its version.
-        // Only one device (or a manual action) may win this transition.
-        self.stand_in_http(
-            reqwest::Method::POST,
-            &format!("/v1/loop-items/{issue_id}/work/start"),
-            Some(&json!({"version":issue["version"]})),
-        )
-        .await?;
         self.create_stand_in_task(config, issue, binding, payload)
             .await
     }
@@ -602,10 +599,7 @@ fn assignment_after_enable(assignment: &Value, config: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{
-        routing::{get, post},
-        Json, Router,
-    };
+    use axum::{routing::get, Json, Router};
     use std::sync::atomic::AtomicUsize;
 
     #[test]
@@ -672,49 +666,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn concurrent_devices_reuse_human_work_claim_and_only_one_reaches_binding() {
-        let starts = Arc::new(AtomicUsize::new(0));
+    async fn existing_manual_binding_prevents_another_device_from_creating_a_task() {
         let bindings = Arc::new(AtomicUsize::new(0));
-        let starts_for_route = starts.clone();
-        let bindings_for_route = bindings.clone();
+        let calls = bindings.clone();
         let router = Router::new()
-            .route("/api/v1/cloud-projects/project", get(|| async { Json(json!({"execution_environment":{}})) }))
-            .route("/api/v1/loop-items/issue", get(|| async { Json(json!({"human_work":{"assignment_id":"assignment","assignee_user_id":7}})) }))
             .route("/api/v1/loop-items/issue/assignments", get(|| async { Json(json!({"items":[{"id":"assignment","status":"active","created_at":"2026-10-20T12:00:01Z"}]})) }))
-            .route("/api/v1/loop-items/issue/tasks", get(|| async { Json(json!([])) }).post(move || {
-                bindings_for_route.fetch_add(1, Ordering::SeqCst);
-                async { axum::http::StatusCode::SERVICE_UNAVAILABLE }
-            }))
-            .route("/api/v1/loop-items/issue/work/start", post(move || {
-                let first = starts_for_route.fetch_add(1, Ordering::SeqCst) == 0;
-                async move { if first { (axum::http::StatusCode::OK, Json(json!({}))) } else { (axum::http::StatusCode::CONFLICT, Json(json!({}))) } }
+            .route("/api/v1/loop-items/issue/tasks", get(move || {
+                calls.fetch_add(1, Ordering::SeqCst);
+                async { Json(json!([{"human_assignment_id":"human","device_id":"other"}])) }
             }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
         let root = tempfile::tempdir().unwrap();
-        let handler = |device: &str| {
-            let mut handler = RuntimeWorkRpcHandler::new(device, "unused");
-            handler.task_store_path = Arc::new(root.path().join(format!("{device}.sqlite")));
-            handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
-                backend_url: url.clone(),
-                auth_token: "test".into(),
-                ..Default::default()
-            })));
-            handler
-        };
-        let first = handler("mac");
-        let second = handler("cloud");
+        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+        handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+        handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
+            backend_url: url,
+            auth_token: "test".into(),
+            ..Default::default()
+        })));
         let config =
             json!({"projectId":"project","userId":7,"enabledAfter":"2026-10-20T12:00:00Z"});
-        let issue = json!({"id":"issue","version":1,"human_work":{"can_start":true,"assignee_user_id":7,"assignment_id":"assignment","ai_task_binding":{"humanAssignmentId":"human"}}});
-        let (a, b) = tokio::join!(
-            first.start_cloud_stand_in(&config, &issue),
-            second.start_cloud_stand_in(&config, &issue)
-        );
-        assert!(a.is_err() && b.is_err());
-        assert_eq!(starts.load(Ordering::SeqCst), 2);
+        let issue = json!({"id":"issue","assignee_user_id":7,"human_task_binding":{"humanAssignmentId":"human","assignmentId":"assignment"}});
+        handler.start_cloud_stand_in(&config, &issue).await.unwrap();
         assert_eq!(bindings.load(Ordering::SeqCst), 1);
+        assert!(handler.local_task_link("stand-in-human").is_none());
         server.abort();
     }
 

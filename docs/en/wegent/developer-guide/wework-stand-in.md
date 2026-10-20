@@ -14,9 +14,9 @@ The storage model supports multiple independent configurations per project, user
 
 The selected Executor checks assignments periodically and calls the ordinary `runtime.tasks.create` entry point used for manual creation. Task bindings, runtime scheduling, conversations, and results use existing flows. There is no Stand-in backend API, dedicated execution queue, global device binding, or automatic failover. Cloud projects use existing project APIs for assignment data; local projects work without a cloud connection. Checking stops with the Executor and resumes after restart for assignments made since enablement.
 
-Cloud assignments reuse the human `work/start` version check and row lock so only one concurrent attempt starts. Ordinary task creation itself has no universal cross-device deduplication. Users review and submit results through existing flows; Stand-in adds no delivery or review lifecycle. Creation failures use existing task recovery, and already-started cloud human work is not automatically reclaimed.
+Each poll checks the ordinary assignment identity and existing task bindings to avoid creating the same assignment again. Ordinary task creation has no atomic cross-device deduplication: two devices reading an unbound assignment simultaneously may each create a task. Stand-in adds no server lock or queue. Users review and submit results through existing flows; Stand-in adds no delivery or review lifecycle. Creation failures use existing task recovery.
 
-Focused tests cover durable versioned settings, independent tag rules, assignment age, concurrent human starts, device switching, and sidebar configuration merging and updates. Both `stand-in` and `stand-in-cloud` desktop checkpoints run in existing CI. Only model responses are replaced; storage, task execution, cloud APIs, and device connections use real implementations.
+Focused tests cover durable versioned settings, independent tag rules, assignment age, existing binding filtering, device switching, and sidebar configuration merging and updates. Both `stand-in` and `stand-in-cloud` desktop checkpoints run in existing CI. Only model responses are replaced; storage, task execution, cloud APIs, and device connections use real implementations.
 
 ## Verification plan
 
@@ -33,4 +33,4 @@ Use isolated Electron instances, projects, accounts, and Executor data. Cloud ca
 | Tag routing            | Configure review/docs rules and assign tagged work              | Each uses its own instructions; ambiguous work is skipped      |
 | Repeated polling       | Edit processed work and wait multiple polls                     | One linked task and model request per assignment               |
 | Cloud device           | Select remote Executor, save, reopen                            | Configuration belongs to remote device; local remains disabled |
-| Device contention      | Enable both devices, assign one Issue                           | Existing human start lock permits one execution                |
+| Existing binding       | Enable matching rules on another device and wait multiple polls | Already-linked assignments are not recreated                   |
