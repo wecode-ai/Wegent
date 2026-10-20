@@ -12,7 +12,6 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.api.endpoints.adapter.shells import list_unified_shells
 from app.core.security import get_password_hash
 from app.models.kind import Kind
 from app.models.marketplace_resource import MarketplaceResource
@@ -1605,15 +1604,6 @@ def test_foundation_resource_references_follow_source_updates(
         assert shell_info["shell_type"] == "ClaudeCode"
         assert shell_info["base_image"] == "shell:v2"
         assert shell_info["is_reference"] is True
-        unified = list_unified_shells(
-            scope="personal",
-            group_name=None,
-            db=test_db,
-            current_user=consumer,
-        )
-        referenced = next(item for item in unified["data"] if item["name"] == name)
-        assert referenced["isReference"] is True
-        assert referenced["listingId"] == source.id
         bot = Kind(
             user_id=consumer.id,
             kind="Bot",

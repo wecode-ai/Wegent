@@ -6,6 +6,7 @@ import {
   applyRuntimeConversationSubagentActivity,
   applyRuntimeConversationAction,
   beginRuntimeConversationHydration,
+  beginRuntimeConversationOperation,
   beginRuntimeGoalSnapshot,
   cacheConversationScrollSnapshot,
   cacheConversationVirtualMeasurements,
@@ -1031,6 +1032,62 @@ describe('runtimeConversationCache', () => {
     evictRuntimeConversation(address)
 
     expect(getRuntimeConversationCacheStats().messageEntries).toBe(0)
+  })
+
+  test('invalidates only archived operations and keeps a restored task independent', () => {
+    const old = beginRuntimeConversationOperation(address)
+    const other = beginRuntimeConversationOperation({ ...address, taskId: 'other-task' })
+
+    evictRuntimeConversation(address)
+    const restored = beginRuntimeConversationOperation(address)
+    old.dispose()
+
+    expect(old.isCurrent()).toBe(false)
+    expect(restored.isCurrent()).toBe(true)
+    expect(other.isCurrent()).toBe(true)
+    restored.dispose()
+    other.dispose()
+  })
+
+  test('matches pending operations through device aliases registered after send began', () => {
+    const operation = beginRuntimeConversationOperation({ ...address, deviceId: 'binding-device' })
+    syncRuntimeConversationDeviceAliases([
+      {
+        id: 0,
+        device_id: 'executor-device',
+        socket_device_id: 'binding-device',
+        name: 'Test executor',
+        status: 'online',
+        is_default: false,
+      },
+    ])
+
+    evictRuntimeConversation({ ...address, deviceId: 'executor-device' })
+
+    expect(operation.isCurrent()).toBe(false)
+  })
+
+  test('keeps pending writes valid when transcript entries are evicted by LRU', () => {
+    const operation = beginRuntimeConversationOperation(address)
+    for (let index = 0; index <= 50; index += 1) {
+      applyRuntimeConversationAction(
+        index === 0 ? address : { ...address, taskId: `lru-task-${index}` },
+        {
+          type: 'user_added',
+          message: {
+            id: `lru-user-${index}`,
+            role: 'user',
+            content: 'test message',
+            status: 'done',
+            createdAt: '2026-10-19T00:00:00Z',
+          },
+        }
+      )
+    }
+
+    expect(getRuntimeConversationMessages(address)).toEqual([])
+    expect(operation.isCurrent()).toBe(true)
+    operation.dispose()
   })
 
   test('continues reducing assistant stream events while the pane is unmounted', () => {

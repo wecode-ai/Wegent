@@ -41,6 +41,7 @@ from app.services.delivery.storage import (
 )
 from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_item_unread import advance_content_revision
+from app.services.loop_items.task_bindings import active_task_binding_query
 from app.services.project_change_request_bindings import (
     project_change_request_binding_service,
 )
@@ -583,17 +584,13 @@ class DeliveryService:
     ) -> tuple[LoopItemTaskBinding | None, dict[str, Any] | None]:
         if source_task is None:
             return None, None
-        binding = (
-            db.query(LoopItemTaskBinding)
-            .filter(
-                LoopItemTaskBinding.loop_item_id == item.id,
-                LoopItemTaskBinding.task_user_id == user_id,
-                LoopItemTaskBinding.device_id == source_task.device_id,
-                LoopItemTaskBinding.task_id == source_task.task_id,
-                loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
-            )
-            .first()
-        )
+        binding = active_task_binding_query(
+            db,
+            item_id=item.id,
+            user_id=user_id,
+            device_id=source_task.device_id,
+            task_id=source_task.task_id,
+        ).first()
         if binding is None:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
@@ -629,6 +626,7 @@ class DeliveryService:
                 LoopItemTaskBinding.loop_item_id == item_id,
                 LoopItemTaskBinding.id == binding_id,
                 loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
+                loop_datetime_is_unset(LoopItemTaskBinding.deleted_at),
             )
             .first()
         )

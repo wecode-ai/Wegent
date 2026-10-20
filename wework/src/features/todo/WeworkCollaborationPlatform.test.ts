@@ -1,11 +1,27 @@
-import { createElement, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import {
+  createElement,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from 'react'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
-import type { CollaborationPlatformLocation, SharedWorkspaceApi } from '@wegent/collaboration'
+import type {
+  CollaborationApp,
+  CollaborationPlatformLocation,
+  SharedWorkspaceApi,
+} from '@wegent/collaboration'
 import { DEFAULT_WORK_ITEM_PROJECT_ID, type DeliveryApi } from '@/api/deliveries'
 import { ApiError } from '@/api/http'
 import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
+import {
+  clearRuntimeConversationCacheForTests,
+  getRuntimeConversationTurns,
+} from '@/features/workbench/runtimeConversationCache'
 import { requestIssueDispatch } from '@/features/notifications/issueDispatch'
 import type {
   LocalProjectSpaceApi,
@@ -34,6 +50,10 @@ import {
   saveProjectSpaceCodeWorkspacePreference,
 } from './projectSpaceCodeWorkspacePreference'
 
+type BoardIssueCardRenderer = NonNullable<
+  ComponentProps<typeof CollaborationApp>['renderBoardIssueCard']
+>
+
 const renderedProjectApis = vi.hoisted(() => new Map<string, SharedWorkspaceApi>())
 const renderedProjectControls = vi.hoisted(
   () =>
@@ -43,6 +63,7 @@ const renderedProjectControls = vi.hoisted(
         onCreateTask?: (project: unknown, issue: unknown) => Promise<void> | void
         onProjectChange?: (project: unknown) => void
         renderIssueDetail?: (context: unknown) => unknown
+        renderBoardIssueCard?: BoardIssueCardRenderer
       }
     >()
 )
@@ -59,6 +80,7 @@ vi.mock('@wegent/collaboration', async importOriginal => {
       onProjectChange,
       refreshProjectRequestKey = 0,
       renderIssueDetail,
+      renderBoardIssueCard,
     }: {
       api: SharedWorkspaceApi
       host: {
@@ -70,6 +92,7 @@ vi.mock('@wegent/collaboration', async importOriginal => {
       onProjectChange?: (project: unknown) => void
       refreshProjectRequestKey?: number
       renderIssueDetail?: (context: unknown) => unknown
+      renderBoardIssueCard?: BoardIssueCardRenderer
     }) => {
       if (host.location.projectId) renderedProjectApis.set(host.location.projectId, api)
       if (initialProject) {
@@ -77,6 +100,7 @@ vi.mock('@wegent/collaboration', async importOriginal => {
           onCreateTask,
           onProjectChange,
           renderIssueDetail,
+          renderBoardIssueCard,
         })
       }
       const renderCount = useRef(0)
@@ -386,6 +410,7 @@ vi.mock('@wegent/collaboration', async importOriginal => {
 
 afterEach(() => {
   vi.useRealTimers()
+  clearRuntimeConversationCacheForTests()
   renderedProjectControls.clear()
   renderedProjectApis.clear()
   localStorage.clear()
@@ -2015,6 +2040,139 @@ describe('Wework collaboration workspace API', () => {
       )
     }
   )
+
+  it('restores one final reply on a reloaded shared project board with an empty conversation cache', async () => {
+    const projectId = 'reloaded-reply-project'
+    const issueId = 'REPLY-1'
+    const taskId = 'reloaded-reply-task'
+    const address = { deviceId: 'local-device', taskId }
+    const finalReply = '回复后的执行已经完成'
+    const getRuntimeTranscript = vi.fn().mockResolvedValue({
+      taskId,
+      workspacePath: '/tmp/project',
+      runtime: 'codex',
+      running: false,
+      fullContent: true,
+      messages: [],
+      turns: [
+        {
+          id: 'completed-reply-turn',
+          status: 'done',
+          items: [{ id: 'final-reply', type: 'assistant_text', content: finalReply }],
+        },
+      ],
+    })
+
+    expect(getRuntimeConversationTurns(address)).toEqual([])
+    render(
+      createElement(WeworkSharedProject, {
+        api: { projects: {}, issues: {} } as unknown as SharedWorkspaceApi,
+        localProjects: [],
+        locale: 'zh-CN',
+        location: {
+          platformView: 'project',
+          workspaceId: 'cloud-workspace',
+          workspaceView: 'projects',
+          projectId,
+          projectView: 'board',
+          issueId: null,
+        },
+        project: { id: projectId, name: 'Reply project', project_store: 'backend' } as never,
+        runtimeWork: runtimeWork([
+          runtimeTask({ taskId, threadId: 'reply-thread', running: false, status: 'done' }),
+        ]),
+        services: { runtimeWorkApi: { getRuntimeTranscript } } as never,
+        setLocation: vi.fn(),
+        userId: 1,
+        workspace: { id: 'cloud-workspace', name: 'Cloud workspace' } as never,
+      })
+    )
+    const renderBoardIssueCard = renderedProjectControls.get(projectId)?.renderBoardIssueCard
+    expect(renderBoardIssueCard).toBeTypeOf('function')
+    render(
+      createElement(
+        'div',
+        null,
+        renderBoardIssueCard?.({
+          column: {
+            dotClass: '',
+            groupValue: 'in_review',
+            key: 'in_review',
+            label: '待确认',
+            status: 'in_review',
+          },
+          defaultCard: null,
+          display: {
+            showAssignee: false,
+            showDate: false,
+            showPriority: false,
+            showTags: false,
+          },
+          focused: false,
+          issue: {
+            id: issueId,
+            cloud_project_id: projectId,
+            sequence_number: 1,
+            parent_id: null,
+            created_by_user_id: 1,
+            assignee_user_id: null,
+            title: 'Check the reply result',
+            description: '',
+            status: 'in_review',
+            priority: 'none',
+            due_at: null,
+            tags: [],
+            sort_order: 0,
+            version: 1,
+            created_at: '2026-10-20T00:00:00Z',
+            updated_at: '2026-10-20T00:01:00Z',
+            completed_at: null,
+            execution_state: 'succeeded',
+            can_edit: true,
+            can_view_detail: true,
+          },
+          onOpen: vi.fn(),
+          onMarkRead: vi.fn().mockResolvedValue(undefined),
+          previewDisabled: false,
+          taskBindings: [
+            {
+              id: 'reply-binding',
+              projectId,
+              issueId,
+              taskUserId: 1,
+              deviceId: address.deviceId,
+              taskId,
+              taskTitle: 'Reply execution',
+              backendTaskId: null,
+              linkedAt: '2026-10-20T00:00:00Z',
+            },
+          ],
+        })
+      )
+    )
+
+    expect(
+      await screen.findByTestId(`cloud-todo-card-final-response-${issueId}`)
+    ).toHaveTextContent(finalReply)
+    expect(getRuntimeTranscript).toHaveBeenCalledTimes(1)
+    expect(getRuntimeTranscript).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ...address,
+        runtime: 'codex',
+        threadId: 'reply-thread',
+        workspacePath: '/tmp/project',
+        projectSession: { projectId, issueId },
+        issueExecution: { projectId, issueId },
+        limit: 20,
+        includeFullContent: true,
+      })
+    )
+    expect(
+      screen.getAllByTestId(`cloud-todo-card-task-summary-${issueId}-reply-binding`)
+    ).toHaveLength(1)
+    expect(screen.getAllByTestId(`cloud-todo-card-final-response-${issueId}`)).toHaveLength(1)
+    expect(screen.queryByTestId(`cloud-todo-card-process-${issueId}`)).not.toBeInTheDocument()
+  })
 
   it('detects running and terminal Runtime transitions for project board refreshes', () => {
     const project = {

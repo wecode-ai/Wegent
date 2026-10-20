@@ -50,7 +50,7 @@ writeFileSync(join(root, 'lib', 'bin.js'), '')
   if (process.platform === 'win32') {
     await writeFile(join(commands, 'pnpm.cmd'), `@"${process.execPath}" "%~dp0install.cjs" %*\r\n`)
   } else {
-    await writeFile(join(commands, 'pnpm'), `#!${process.execPath}\nimport './install.cjs'\n`, {
+    await writeFile(join(commands, 'pnpm'), `#!/usr/bin/env node\nimport './install.cjs'\n`, {
       mode: 0o755,
     })
   }

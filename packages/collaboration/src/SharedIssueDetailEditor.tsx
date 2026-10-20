@@ -468,35 +468,6 @@ function ScheduleRangeControl({
   );
 }
 
-function sourceCellText(
-  cells: Record<string, unknown> | undefined,
-  keys: string[],
-): string | null {
-  if (!cells) return null;
-  for (const [key, value] of Object.entries(cells)) {
-    const normalized = key.toLowerCase();
-    if (!keys.some((candidate) => normalized.includes(candidate))) continue;
-    if (typeof value === "string" && value.trim()) return value.trim();
-    if (typeof value === "number") return String(value);
-    if (Array.isArray(value)) {
-      const text = value
-        .map((entry) =>
-          typeof entry === "string" || typeof entry === "number"
-            ? String(entry)
-            : "",
-        )
-        .filter(Boolean)
-        .join("、");
-      if (text) return text;
-    }
-  }
-  return null;
-}
-
-function tagByPattern(tags: string[], pattern: RegExp): string | null {
-  return tags.find((tag) => pattern.test(tag)) ?? null;
-}
-
 function AvatarMark({
   name,
   index = 0,
@@ -2368,19 +2339,6 @@ export function TodoEditor(props: TodoEditorProps) {
         : t(`todo.priority_${priority}`, priority)}
     </span>
   );
-  const iterationText =
-    item && editProps?.project
-      ? (sourceCellText(item.source_cells, ["iteration", "sprint", "迭代"]) ??
-        tagByPattern(tags, /^(sprint|迭代)[\s:_-]*/i) ??
-        null)
-      : null;
-  const requirementText =
-    item && editProps?.project
-      ? (sourceCellText(item.source_cells, ["requirement", "需求", "req"]) ??
-        tagByPattern(tags, /^(req|需求)[\s:_-]*/i) ??
-        item.source_record_id ??
-        null)
-      : null;
   const collaboratorPreview = collaborators.slice(0, 2);
   const statusChip = (
     <span className={propChipClass}>
@@ -2530,12 +2488,6 @@ export function TodoEditor(props: TodoEditorProps) {
   // Assignee, priority, and due date stay editable in the primary header.
   const railProps = (
     <>
-      <RailProp label={t("todo.iteration", "迭代")}>
-        <span className={cn(!iterationText && "text-text-muted")}>
-          {iterationText?.replace(/^(sprint|迭代)[\s:_-]*/i, "") ||
-            t("todo.not_set", "未设置")}
-        </span>
-      </RailProp>
       <RailProp
         label={t("todo.collaborators", "参与者")}
         clickable={false}
@@ -2627,14 +2579,6 @@ export function TodoEditor(props: TodoEditorProps) {
           {collaboratorError}
         </p>
       ) : null}
-      <RailProp label={t("todo.requirement", "关联需求")}>
-        <span
-          className={cn(requirementText ? "text-blue-600" : "text-text-muted")}
-        >
-          {requirementText || t("todo.not_set", "未设置")}
-          {requirementText ? " ↗" : ""}
-        </span>
-      </RailProp>
     </>
   );
   const completedChildCount = childItems.filter(
