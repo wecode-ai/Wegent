@@ -1816,6 +1816,25 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return JSON.stringify(await invokeDesktopHost('e2e.getTraySnapshot'))
     case 'getApplicationMenuSnapshot':
       return JSON.stringify(await invokeDesktopHost('e2e.getApplicationMenuSnapshot'))
+    case 'openProcessExplorer':
+      await invokeDesktopHost('developer.openProcessExplorer')
+      return ''
+    case 'getProcessExplorerWindowSnapshot':
+      return JSON.stringify(await invokeDesktopHost('e2e.getProcessExplorerWindowSnapshot'))
+    case 'setProcessExplorerWindowSize': {
+      const request = JSON.parse(command.value ?? '{}') as {
+        width?: number
+        height?: number
+      }
+      await invokeDesktopHost('e2e.setProcessExplorerWindowSize', {
+        width: request.width,
+        height: request.height,
+      })
+      return ''
+    }
+    case 'closeProcessExplorerWindow':
+      await invokeDesktopHost('e2e.closeProcessExplorerWindow')
+      return ''
     case 'activateApplicationMenu': {
       const request = JSON.parse(command.value ?? '{}') as { id?: string; windowLabel?: string }
       return JSON.stringify(
@@ -3274,6 +3293,7 @@ function installDesktopControlClient() {
     !url ||
     (windowLabel !== 'main' &&
       windowLabel !== 'popout-window' &&
+      windowLabel !== 'process-explorer' &&
       !windowLabel.startsWith('workspace-') &&
       !windowLabel.startsWith('plugin-development-')) ||
     window.location.pathname.startsWith('/system-drag')

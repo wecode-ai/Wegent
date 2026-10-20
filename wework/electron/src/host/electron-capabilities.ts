@@ -34,6 +34,7 @@ import { LocalAttachmentStore } from './local-attachment-store.js'
 import { readLocalFileChunk } from './local-file-reader.js'
 import { registerWorkspaceFileActions } from './workspace-file-actions.js'
 import { getElectronProcessSnapshot } from './process-diagnostics.js'
+import type { ProcessSnapshot } from '../vendor/process-explorer/contract.js'
 import { sendE2EKey, sendE2EText, type E2EKeyPhase } from './e2e-keyboard.js'
 import {
   extractFilePathsFromNativePayloads,
@@ -113,8 +114,20 @@ export function coreGrantedCapabilities(
   return capabilities.filter(capability => !workbenchOnly.has(capability))
 }
 
+function assertE2EEnabled(control: string): void {
+  if (process.env.VITE_WEWORK_E2E !== 'true') {
+    throw new HostCapabilityError('e2e_disabled', `${control} are disabled`)
+  }
+}
+
+/** Host-side process explorer the capability router exposes to the renderer. */
+export interface ProcessExplorerHostService {
+  snapshot: () => Promise<ProcessSnapshot>
+}
+
 export interface ElectronDesktopServices {
   executorHome: string
+  processExplorer: ProcessExplorerHostService
   appUpdates?: AppUpdateService
   browserAnnotations?: BrowserAnnotationController
   applicationMenu?: () => ApplicationMenu | null
@@ -207,6 +220,25 @@ export interface PluginDevelopmentService {
   validate(sourceRoot: string): Promise<unknown>
 }
 
+export interface ProcessExplorerWindowSnapshot {
+  exists: boolean
+  visible: boolean
+  applicationPid: number
+  url: string
+  windowLabel: string
+  windowWidth: number
+  windowHeight: number
+  alwaysOnTop: boolean
+  menuBarVisible: boolean
+  testIds: string[]
+  text: string
+  layout: {
+    viewportWidth: number
+    tableClientWidth: number
+    tableScrollWidth: number
+  }
+}
+
 export interface ElectronE2EHost {
   capturePopout: () => Promise<string>
   captureTarget: (windowLabel: string) => WebContents | null
@@ -223,6 +255,11 @@ export interface ElectronE2EHost {
   focusMainWindow: () => void | Promise<void>
   focusWindow: (windowLabel: string) => void
   hideMainWindow: () => Promise<void>
+  openProcessExplorer: () => void | Promise<void>
+  setProcessExplorerAlwaysOnTop: (alwaysOnTop: boolean) => { alwaysOnTop: boolean }
+  processExplorerWindowSnapshot: () => Promise<ProcessExplorerWindowSnapshot>
+  setProcessExplorerWindowSize: (width: number, height: number) => void
+  closeProcessExplorerWindow: () => void
   dockVisible: () => boolean
   getSystemDragContext: () => { conversationTitle: string | null }
   runtimeDiagnostics: () => {
@@ -289,6 +326,25 @@ export function createElectronCapabilityRouter(
     focusMainWindow: () => undefined,
     focusWindow: () => undefined,
     hideMainWindow: () => Promise.reject(new Error('Main window backgrounding is unavailable')),
+    openProcessExplorer: () =>
+      Promise.reject(new Error('The process explorer window is unavailable')),
+    setProcessExplorerAlwaysOnTop: () => ({ alwaysOnTop: false }),
+    processExplorerWindowSnapshot: async () => ({
+      exists: false,
+      visible: false,
+      applicationPid: process.pid,
+      url: '',
+      windowLabel: '',
+      windowWidth: 0,
+      windowHeight: 0,
+      alwaysOnTop: false,
+      menuBarVisible: false,
+      testIds: [],
+      text: '',
+      layout: { viewportWidth: 0, tableClientWidth: 0, tableScrollWidth: 0 },
+    }),
+    setProcessExplorerWindowSize: () => undefined,
+    closeProcessExplorerWindow: () => undefined,
     dockVisible: () => true,
     getSystemDragContext: () => ({ conversationTitle: null }),
     runtimeDiagnostics: () => ({
@@ -618,6 +674,8 @@ export function createElectronCapabilityRouter(
       }
       contents.openDevTools({ mode: 'detach', activate: true })
     },
+    openProcessExplorer: () => e2eHost.openProcessExplorer(),
+    setProcessExplorerAlwaysOnTop: value => e2eHost.setProcessExplorerAlwaysOnTop(value),
   })
   router.register('e2e.capturePopoutWindow', () => e2eHost.capturePopout())
   router.register('e2e.capturePrimaryView', async params => {
@@ -706,6 +764,21 @@ export function createElectronCapabilityRouter(
     )
   })
   router.register('e2e.getProcessSnapshot', () => getElectronProcessSnapshot())
+  router.register('e2e.getProcessExplorerWindowSnapshot', () => {
+    assertE2EEnabled('Process Explorer test controls')
+    return e2eHost.processExplorerWindowSnapshot()
+  })
+  router.register('e2e.setProcessExplorerWindowSize', params => {
+    assertE2EEnabled('Process Explorer test controls')
+    e2eHost.setProcessExplorerWindowSize(
+      numberParam(params, 'width'),
+      numberParam(params, 'height')
+    )
+  })
+  router.register('e2e.closeProcessExplorerWindow', () => {
+    assertE2EEnabled('Process Explorer test controls')
+    e2eHost.closeProcessExplorerWindow()
+  })
   router.register('e2e.setReducedMotion', async params => {
     const contents = e2eHost.captureTarget('main')
     if (!contents || contents.isDestroyed()) {
@@ -1163,6 +1236,8 @@ export function registerDesktopServiceCapabilities(
   developer: {
     openLogDirectory: () => void | Promise<void>
     openDevTools: () => void | Promise<void>
+    openProcessExplorer: () => void | Promise<void>
+    setProcessExplorerAlwaysOnTop: (alwaysOnTop: boolean) => { alwaysOnTop: boolean }
   }
 ): void {
   router.register('applicationMenu.popup', params => {
@@ -1178,9 +1253,7 @@ export function registerDesktopServiceCapabilities(
     services.updateApplicationMenuLanguage?.(stringParam(params, 'language'))
   })
   const testMenu = () => {
-    if (process.env.VITE_WEWORK_E2E !== 'true') {
-      throw new HostCapabilityError('e2e_disabled', 'Application menu test controls are disabled')
-    }
+    assertE2EEnabled('Application menu test controls')
     const menu = services.applicationMenu?.()
     if (!menu) throw new HostCapabilityError('menu_unavailable', 'Application menu is unavailable')
     return menu
@@ -1194,6 +1267,11 @@ export function registerDesktopServiceCapabilities(
   )
   router.register('developer.openLogDirectory', () => developer.openLogDirectory())
   router.register('developer.openDevTools', () => developer.openDevTools())
+  router.register('developer.openProcessExplorer', () => developer.openProcessExplorer())
+  router.register('processExplorer.setAlwaysOnTop', params =>
+    developer.setProcessExplorerAlwaysOnTop(booleanParam(params, 'alwaysOnTop') ?? false)
+  )
+  router.register('diagnostics.processSnapshot', () => services.processExplorer.snapshot())
   router.register('maintenance.cleanupTemporaryImages', () =>
     services.cleanupStaleTemporaryImages()
   )

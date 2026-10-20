@@ -313,12 +313,13 @@ function environmentPositiveInteger(environment, ...keys) {
   return undefined
 }
 
-function desktopWindowLabel(value) {
+export function desktopWindowLabel(value) {
   const label = Array.isArray(value) ? value[0] : value
   return typeof label === 'string' &&
     (label === 'main' ||
       label === 'popout-window' ||
       label === 'system-drag-panel' ||
+      label === 'process-explorer' ||
       /^workspace-[a-zA-Z0-9_-]+$/.test(label))
     ? label
     : 'main'

@@ -333,6 +333,26 @@ assert_case \
   "$collaboration_package" \
   "packages/collaboration/src/CollaborationApp.tsx"
 
+process_explorer_package=$(
+  cat <<'EOF'
+backend=false
+backend_rs=false
+executor=false
+executor_manager=false
+shared=false
+knowledge_engine=false
+frontend=false
+wework=true
+wegent_cli=false
+platform_e2e=false
+wework_e2e=true
+EOF
+)
+assert_case \
+  "process explorer package" \
+  "$process_explorer_package" \
+  "packages/process-explorer/src/host/service.ts"
+
 wework_expected="${all_false/wework=false/wework=true}"
 wework_expected="${wework_expected/wework_e2e=false/wework_e2e=true}"
 assert_case "wework only" "$wework_expected" "wework/src/App.tsx"
