@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { initializeProjectExecutionEnvironment } from '../../utils/issue-dispatch-test-support'
+import { selectCollaborationProjectView } from '../../utils/collaboration-test-support'
 import {
   authHeaders,
   clearToolScenario,
@@ -466,7 +467,7 @@ test.describe('Collaboration agent execution', () => {
   ): Promise<CollaborationAgent> {
     const displayName = 'Wegent capability agent'
     await page.goto(`/collaboration/workspaces/${workspace!.id}/projects/${projectId}`)
-    await page.getByTestId('collaboration-tab-manage').click()
+    await selectCollaborationProjectView(page, 'manage')
     await page.getByTestId('collaboration-project-settings-agents').click()
     await expect(page.getByTestId('project-agent-config')).toBeVisible()
     await page.getByTestId('project-agent-add').click()
