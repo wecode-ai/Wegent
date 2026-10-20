@@ -238,6 +238,14 @@ export function createDesktopScenario({
         )
         await control.command('click', '[data-testid="stand-in-cancel"]')
 
+        const onlineDevices = await request('/devices/online')
+        const desktop = onlineDevices.items.find(device =>
+          [device.device_id, device.app_device_id].includes(currentDevice)
+        )
+        assert.ok(desktop, 'The current desktop must be a registered device')
+        await request(`/v1/cloud-projects/${project.id}/execution-environments`, {
+          device_id: desktop.id,
+        })
         const localEnabled = await requestExecutor(
           control,
           'runtime.stand_in.save',
