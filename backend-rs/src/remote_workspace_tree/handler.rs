@@ -10,7 +10,8 @@
 //! Request flow (source-ordered):
 //! 1. `get_current_user`: verify the Authorization bearer JWT and load the
 //!    user through the public direct SQL reader.
-//! 2. `_get_task_detail`: load the task, verify access, resolve workspace,
+//! 2. Reject parent traversal before task or runtime lookup, then
+//!    `_get_task_detail`: load the task, verify access, resolve workspace,
 //!    team, fork lineage/subtasks/contexts, group-chat members.
 //! 3. `_get_sandbox_payload`: GET
 //!    `{EXECUTOR_MANAGER_URL}/executor-manager/sandboxes/{task_id}`.
@@ -240,6 +241,10 @@ async fn tree(
     user_id: i64,
     path: Option<&str>,
 ) -> Result<TreeResponse, ApiError> {
+    if path.is_some_and(|path| path.split('/').any(|segment| segment == "..")) {
+        return Err(ApiError::bad_request("Parent traversal is not allowed"));
+    }
+
     let kinds = KindStore {
         mysql: &deps.mysql,
         redis: deps.kinds_redis.as_ref(),
@@ -658,6 +663,55 @@ fn civil_from_days(days: i64) -> Option<(i64, u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn parent_traversal_is_rejected_before_task_or_runtime_lookup() {
+        let mysql = crate::sql_test_support::KindQueryCapture::default();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let http = HttpClient::builder().build().unwrap();
+        let deps = build_deps(
+            Config {
+                redis_url: String::new(),
+                redis_slave_url: None,
+                executor_manager_url: format!("http://{}", listener.local_addr().unwrap()),
+                jwt_decode_keys: Vec::new(),
+                jwt_algorithm: "HS256".to_owned(),
+            },
+            mysql.clone(),
+            Arc::new(crate::task_store::DefaultTaskStore::new(mysql.clone())),
+            http.clone(),
+            None::<brz_redis::RedisService>,
+            None,
+            Arc::new(crate::erp_provider::NoopErpProvider),
+            crate::permissions::EntityResolvers::public(
+                brz_mysql::MysqlService::connect_lazy("mysql://test:test@127.0.0.1:1/test")
+                    .unwrap(),
+            ),
+            crate::remote_workspace_status::app_state::VideoRefresh {
+                client: http,
+                extension: Arc::new(crate::video_result_urls::NoVideoResultUrlRefresh),
+            },
+        );
+
+        for path in [
+            "/workspace/../etc",
+            "/workspace/1/../etc",
+            "/workspace/1/..",
+            "../etc",
+            "/root/.wegent/workspace/repo/../etc",
+            "/home/user/a/../b",
+        ] {
+            let error = tree(&deps, 1, 1, Some(path)).await.err().unwrap();
+            assert_eq!(error.status(), brz_http_server::StatusCode::BAD_REQUEST);
+            assert_eq!(error.detail(), "Parent traversal is not allowed");
+        }
+        assert!(mysql.queries().is_empty());
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
 
     #[test]
     fn sandbox_path_normalizes_to_itself() {
