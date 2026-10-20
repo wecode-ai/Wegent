@@ -262,6 +262,67 @@ def test_unassignment_preserves_workflow_assignments(
     assert [assignment.id for assignment in active] == [workflow_assignment.id]
 
 
+@pytest.mark.parametrize("status", ["inbox", "pending", "in_review", "completed"])
+def test_task_binding_is_persisted_before_status_transition(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    project: CloudProject,
+    status: str,
+) -> None:
+    assignee, token = _member(test_db, project)
+    issue = _assigned_issue(test_client, project, test_token, assignee)
+    url = f"/api/v1/loop-items/{issue['id']}"
+    if status != issue["status"]:
+        updated = test_client.patch(
+            url,
+            headers=_auth(test_token),
+            json={"version": issue["version"], "status": status},
+        )
+        assert updated.status_code == 200, updated.text
+    response = test_client.get(url, headers=_auth(token))
+    assert response.status_code == 200, response.text
+    issue = response.json()
+    identity = issue["human_task_binding"]
+    assignment = issue_assignment_service.active_for_issue(test_db, issue["id"])[0]
+    assert identity["assignmentId"] == assignment.id
+    assert identity["humanAssignmentId"]
+    assert identity["dispatchId"] == f"direct-human:{assignment.id}"
+    assert identity["dispatchRoundId"] == "direct"
+    assert (
+        test_client.get(url, headers=_auth(test_token)).json()["human_task_binding"]
+        is None
+    )
+
+    saved = test_client.post(
+        f"{url}/tasks",
+        headers=_auth(token),
+        json={"deviceId": "assigned-device", "taskId": "assigned-task", **identity},
+    )
+    assert saved.status_code == 201, saved.text
+    for field, alias in (
+        ("human_assignment_id", "humanAssignmentId"),
+        ("dispatch_id", "dispatchId"),
+        ("dispatch_round_id", "dispatchRoundId"),
+        ("assignment_id", "assignmentId"),
+    ):
+        assert saved.json()[field] == identity[alias]
+    current = test_client.get(url, headers=_auth(token)).json()
+    assert current["status"] == status
+    assert current["version"] == issue["version"]
+    projection = test_client.post(
+        f"/api/v1/cloud-projects/{project.id}/executions/statuses",
+        headers=_auth(token),
+        json={
+            "loop_item_id": issue["id"],
+            "human_assignment_ids": [identity["humanAssignmentId"]],
+        },
+    )
+    assert projection.status_code == 200, projection.text
+    assert projection.json()["items"][0]["status"] == "running"
+    assert projection.json()["items"][0]["runtime_task_id"] == "assigned-task"
+
+
 def test_assigned_task_binding_survives_normal_status_changes(
     test_client: TestClient,
     test_db: Session,

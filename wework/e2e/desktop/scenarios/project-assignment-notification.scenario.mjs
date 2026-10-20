@@ -638,8 +638,18 @@ export function createDesktopScenario({
         '[data-testid="workspace-tab-select-fixed-board"][aria-selected="true"]',
         { timeoutMs: uiTimeoutMs }
       )
-      await changeIssueStatus(control, ownerRequest, issue.id, 'in_progress', uiTimeoutMs)
-      await captureScreenshot(control, 'assignment-02-human-work-started.png', CONTENT)
+      if (issue.status !== 'pending') {
+        await changeIssueStatus(control, ownerRequest, issue.id, 'pending', uiTimeoutMs)
+      }
+      const pendingIssue = await ownerRequest(`/api/v1/loop-items/${issue.id}`)
+      assert.equal(pendingIssue.status, 'pending')
+      assert.deepEqual(pendingIssue.human_task_binding, {
+        humanAssignmentId: notification.payload.humanAssignmentId,
+        dispatchId: notification.payload.dispatchId,
+        dispatchRoundId: notification.payload.roundId,
+        assignmentId: notification.payload.assignmentId,
+      })
+      await captureScreenshot(control, 'assignment-02-human-work-pending.png', CONTENT)
       await control.command('click', scoped('[data-testid="cloud-todo-personal-task-start"]'), {
         visible: true,
       })
@@ -680,7 +690,16 @@ export function createDesktopScenario({
         'Human AI assistance must run on the current computer even when the project environment is remote'
       )
       assert.equal(binding.assignment_id, notification.payload.assignmentId)
+      assert.equal(binding.dispatch_id, notification.payload.dispatchId)
+      assert.equal(binding.dispatch_round_id, notification.payload.roundId)
       assert.equal(binding.task_title, ISSUE)
+      const contextQuery = new URLSearchParams({
+        device_id: binding.device_id,
+        task_id: binding.task_id,
+      })
+      const taskContext = await ownerRequest(`/api/v1/runtime-tasks/cloud-context?${contextQuery}`)
+      assert.deepEqual(taskContext.loop_item.human_task_binding, pendingIssue.human_task_binding)
+      assert.equal('human_work' in taskContext.loop_item, false)
       await control.command(
         'waitFor',
         '[data-testid="ai-chat-modal"] [data-testid="message-assistant"]',
@@ -700,6 +719,19 @@ export function createDesktopScenario({
         notification.payload.humanAssignmentId
       )
       assert.equal(delivery.source_task_snapshot.assignmentId, notification.payload.assignmentId)
+      const assignmentStatus = await ownerRequest(
+        `/api/v1/cloud-projects/${project.id}/executions/statuses`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            loop_item_id: issue.id,
+            human_assignment_ids: [notification.payload.humanAssignmentId],
+          }),
+        }
+      )
+      assert.equal(assignmentStatus.items[0].status, 'completed')
+      assert.equal(assignmentStatus.items[0].runtime_task_id, binding.task_id)
+      assert.equal(assignmentStatus.items[0].delivery_id, delivery.id)
 
       const afterItems = await ownerRequest(`/api/v1/cloud-projects/${project.id}/loop-items`)
       assert.deepEqual(

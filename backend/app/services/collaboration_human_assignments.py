@@ -27,7 +27,7 @@ DIRECT_HUMAN_ROUND_ID = "direct"
 
 def human_task_binding(db: Session, item: LoopItem, user_id: int) -> dict | None:
     """Expose the current assignee's task identity independently of status actions."""
-    if item.assignee_user_id != user_id or item.status != "in_progress":
+    if item.assignee_user_id != user_id:
         return None
     project = db.get(CloudProject, item.cloud_project_id)
     metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}

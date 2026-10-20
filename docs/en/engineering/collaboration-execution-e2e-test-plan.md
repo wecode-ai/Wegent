@@ -404,13 +404,14 @@ Additional scenario:
 
 - A user who is not assigned may still proactively enter an Issue and create a Task.
 - Proactive participation must not fabricate an “assigned to me” notification or assignment event.
-- Starting a private Task for an Issue already in review or completed must not
-  move the Issue back to in progress.
+- Starting a private Task may move an Issue from in review to in progress;
+  completed Issues retain their completed status.
 - Users with edit permission start, complete, and reopen Issues directly through
   the status selector or board drag without a result form. Comments and attachments
   carry work communication.
-- `project-assignment-notification` covers reassignment after completion, direct
-  status changes, and preservation of comments.
+- `project-assignment-notification` covers creating a Task directly from pending,
+  binding the complete current assignment identity, projecting progress from real
+  Task delivery, reassignment after completion, direct status changes, and comments.
 
 #### Current-computer regression for human AI assistance
 

@@ -54,8 +54,6 @@ pub struct ItemMetadata {
     pub queued_at: Option<serde_json::Value>,
     pub ai_state: Option<serde_json::Value>,
     pub tags: Option<serde_json::Value>,
-    /// `metadata["human_work"]` read by `human_issue_work_service.view`.
-    pub human_work: Option<serde_json::Value>,
     /// External-source markers that disable the direct-human view.
     pub external_index: Option<serde_json::Value>,
     pub external_shadow: Option<serde_json::Value>,
@@ -752,6 +750,24 @@ impl<'a, M: Mysql> LoopItemRepository<'a, M> {
             .await
     }
 
+    /// Manager activities, newest first, for the current round's human identity.
+    pub async fn item_activity_metadata(
+        &self,
+        project_id: &str,
+        item_id: &str,
+    ) -> MysqlResult<Vec<ItemActivityMetadataRow>> {
+        self.mysql
+            .fetch_all(
+                "SELECT project_chat_messages.metadata AS activity_metadata \
+                 FROM project_chat_messages \
+                 WHERE project_chat_messages.project_id = ? \
+                 AND project_chat_messages.task_id = ? \
+                 ORDER BY project_chat_messages.created_at DESC, project_chat_messages.id DESC",
+                (project_id, item_id),
+            )
+            .await
+    }
+
     /// `access.is_related_item`: whether one item is related to the caller
     /// through ownership, assignment, an active runtime-task binding, a
     /// collaborator row, or an owned project agent.
@@ -844,6 +860,13 @@ impl<'a, M: Mysql> LoopItemRepository<'a, M> {
             )
             .await
     }
+}
+
+/// Raw activity metadata preserves the Python guards for malformed manager plans.
+#[derive(Debug, FromMysqlRow)]
+pub struct ItemActivityMetadataRow {
+    #[mysql(rename = "activity_metadata")]
+    pub metadata: Option<Json<serde_json::Value>>,
 }
 
 /// `ProjectChatMessage` projection consumed by `_present_cached_ai_state`.
