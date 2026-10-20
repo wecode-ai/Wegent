@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import '@/i18n'
@@ -24,7 +24,9 @@ const item = {
 } as CloudLoopItem
 const project = { id: '11', name: 'Wework', tags: ['发布', '体验'] } as CloudProject
 
-async function openEditor(options: { canEdit?: boolean; saveError?: Error } = {}) {
+async function openEditor(
+  options: { canEdit?: boolean; saveError?: Error; readFirst?: boolean } = {}
+) {
   const current = { ...item, can_edit: options.canEdit ?? true }
   const updateLoopItem = vi.fn(async (_id: string, values: Partial<CloudLoopItem>) => {
     if (options.saveError) throw options.saveError
@@ -44,6 +46,7 @@ async function openEditor(options: { canEdit?: boolean; saveError?: Error } = {}
     <TodoEditor
       mode="edit"
       presentation="workspace-panel"
+      readFirst={options.readFirst}
       item={current}
       project={project}
       allItems={[current]}
@@ -108,6 +111,36 @@ describe('workspace Issue tag editing', () => {
     expect(screen.queryByTestId('cloud-todo-detail-tag-tag-验证')).not.toBeInTheDocument()
     await userEvent.keyboard('{Enter}')
     expect(screen.getByTestId('cloud-todo-detail-tag-tag-验证')).toBeVisible()
+  })
+
+  it('does not dismiss reopened properties when a delayed edit frame runs', async () => {
+    await openEditor({ readFirst: true })
+    const frames: FrameRequestCallback[] = []
+    const requestFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => {
+      frames.push(callback)
+      return frames.length
+    })
+    try {
+      await userEvent.click(screen.getByTestId('cloud-todo-detail-tag-input'))
+      const title = screen.getByTestId('cloud-todo-detail-title')
+      act(() => {
+        title.dispatchEvent(
+          new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse' })
+        )
+        title.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerType: 'mouse' }))
+        title.click()
+      })
+      expect(title).toHaveFocus()
+      fireEvent.click(screen.getByTestId('cloud-todo-more-properties'))
+      expect(screen.getByTestId('cloud-todo-more-properties-popover')).toBeVisible()
+      await new Promise(resolve => setTimeout(resolve, 0))
+      await act(async () => {
+        for (const frame of frames.splice(0)) frame(performance.now())
+      })
+      expect(screen.getByTestId('cloud-todo-more-properties-popover')).toBeVisible()
+    } finally {
+      requestFrame.mockRestore()
+    }
   })
 
   it('keeps tags available for retry after a rejected save', async () => {
