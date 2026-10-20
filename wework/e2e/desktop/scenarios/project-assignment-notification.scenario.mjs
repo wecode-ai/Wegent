@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 
+import { verifySilentIssueSaves } from '../modules/issue-save-notification-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   assistantMessage,
@@ -250,7 +251,15 @@ async function createWorkspaceAndProject(control, request, uiTimeoutMs) {
   return project
 }
 
-async function createIssue(control, projectId, request, owner, uiTimeoutMs, title = ISSUE) {
+async function createIssue(
+  control,
+  projectId,
+  request,
+  owner,
+  uiTimeoutMs,
+  title = ISSUE,
+  { notifyAssignee = true, beforeSave } = {}
+) {
   await control.command('waitFor', scoped('[data-testid="collaboration-tab-board"]'), {
     timeoutMs: uiTimeoutMs,
   })
@@ -288,9 +297,15 @@ async function createIssue(control, projectId, request, owner, uiTimeoutMs, titl
     'Escape must dismiss the save notification menu',
     uiTimeoutMs
   )
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-create-confirm"]'), {
-    timeoutMs: uiTimeoutMs,
-  })
+  await beforeSave?.()
+  if (notifyAssignee) {
+    await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-create-confirm"]'), {
+      timeoutMs: uiTimeoutMs,
+    })
+  } else {
+    await control.command('click', scoped('[data-testid="cloud-todo-create-confirm-options"]'))
+    await control.command('click', silentSave, { visible: true })
+  }
   return waitForValue(
     async () => (await request(`/api/v1/cloud-projects/${projectId}/loop-items`)).items,
     items => items.find(item => item.title === title),
@@ -878,6 +893,17 @@ export function createDesktopScenario({
         filename => captureScreenshot(control, filename, CONTENT)
       )
       assert.equal(modelRequestCount, modelRequestsBeforeManualWork, '纯人工分支触发了 AI 模型请求')
+      await verifySilentIssueSaves({
+        control,
+        projectId: project.id,
+        owner,
+        request: ownerRequest,
+        requestJson: (token, path, options) => requestJson(backendUrl, token, path, options),
+        createIssue,
+        waitForValue,
+        uiTimeoutMs,
+        capture: filename => captureScreenshot(control, filename, CONTENT),
+      })
     },
 
     diagnostics() {

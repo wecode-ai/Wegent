@@ -3095,7 +3095,13 @@ export function TodoEditor(props: TodoEditorProps) {
                   })
                 : null}
               {saveError && (
-                <p className="mt-2 text-xs text-destructive">{saveError}</p>
+                <p
+                  role="alert"
+                  data-testid="cloud-todo-save-error"
+                  className="mt-2 text-xs text-destructive"
+                >
+                  {saveError}
+                </p>
               )}
               {workspacePanel && item ? (
                 <>
