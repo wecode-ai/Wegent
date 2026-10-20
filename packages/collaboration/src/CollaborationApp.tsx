@@ -672,6 +672,9 @@ export function CollaborationApp({
                         data-testid={collaborationTestIds.board}
                         className="relative flex min-h-0 flex-1"
                       >
+                        <div className="absolute left-6 top-4 z-10">
+                          {host.renderBoardToolbarAction?.(project)}
+                        </div>
                         <button
                           className="absolute right-4 top-4 z-10 flex h-8 items-center rounded-lg px-3 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
                           data-testid="collaboration-board-settings"
@@ -727,6 +730,7 @@ export function CollaborationApp({
                       </div>
                     ) : (
                       <ProjectBoardAdapter
+                        toolbarAction={host.renderBoardToolbarAction?.(project)}
                         onMarkRead={(issue) =>
                           void commands.markIssueRead(issue)
                         }

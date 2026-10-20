@@ -416,14 +416,17 @@ async function seedDesktopE2ECloudConnection(): Promise<void> {
     runtimeConfig.localModelsCatalogReady ??
     import.meta.env.VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY === 'true'
   const config = normalizeCloudBackendUrl(backendUrl)
+  const token = runtimeConfig.cloudToken ?? import.meta.env.VITE_WEWORK_E2E_CLOUD_TOKEN?.trim()
+  const response = await fetch(`${config.apiBaseUrl}/users/me`, {
+    headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(10000),
+  })
+  if (!response.ok) throw new Error(`E2E cloud identity returned ${response.status}`)
+  const user = await response.json()
   saveStoredCloudConnection({
     ...config,
     webUrl: config.backendUrl,
-    user: {
-      id: 9001,
-      user_name: 'wework-desktop-e2e-cloud-user',
-      email: 'desktop-e2e@wework.local',
-    },
+    user,
     connectedAt: new Date().toISOString(),
   })
   const localModels =
