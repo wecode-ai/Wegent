@@ -108,6 +108,22 @@ function fixture(
 }
 
 describe('reply prediction provider', () => {
+  it.each([
+    { workspaceKind: 'chat' },
+    { projectSession: { projectId: 'project-1', issueId: 'issue-1' } },
+  ])('predicts non-workspace sessions and preserves their address: %j', async session => {
+    const predict = vi.fn(async () => ({ suggestion: '请继续' }))
+    const address = { ...source.address, workspacePath: undefined, ...session }
+    const { rerender } = render(fixture(predict, { ...source, address }))
+
+    await waitFor(() => expect(screen.getByRole('button')).toHaveTextContent('请继续'))
+    expect(predict).toHaveBeenCalledWith(expect.objectContaining({ address }))
+
+    rerender(fixture(predict, { ...source, address: { ...address, workspacePath: '/session' } }))
+    expect(predict).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button')).toHaveTextContent('请继续')
+  })
+
   it('waits for the task workspace to be restored before generating or reading its cache', async () => {
     const predict = vi.fn(async () => ({ suggestion: '请继续' }))
     const { rerender } = render(
