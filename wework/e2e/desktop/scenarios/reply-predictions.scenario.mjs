@@ -190,6 +190,7 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       assert.equal(normalRequests, 2)
       await capture('reply-07-edited-sent.png')
       await control.command('navigate', 'body', { value: '/settings/general' })
+      await control.command('waitFor', '[data-testid="reply-prediction-settings"]')
       await control.command('scrollIntoView', '[data-testid="reply-prediction-settings"]')
       await control.command('click', '[data-testid="reply-prediction-enabled"]')
       await control.command(
@@ -214,7 +215,8 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       await control.command('hover', `[data-testid="runtime-local-task-row-${task.taskId}"]`)
       await control.command('click', `[data-testid="runtime-local-task-archive-${task.taskId}"]`)
       await control.command('navigate', 'body', { value: '/settings/archived-conversations' })
-      const deleteButton = `[data-testid="archived-delete-button-${task.deviceId}-${task.taskId}"]`
+      const taskSuffix = `${task.deviceId}-${task.taskId}`.replace(/[^a-zA-Z0-9_-]/g, '-')
+      const deleteButton = `[data-testid="archived-delete-button-${taskSuffix}"]`
       await control.command('waitFor', deleteButton)
       assert.equal(
         await control.command('getLocalStorageItem', 'body', { value: cacheKey }),
