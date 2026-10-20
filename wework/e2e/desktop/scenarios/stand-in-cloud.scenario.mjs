@@ -170,6 +170,14 @@ export function createDesktopScenario({
           modelResponseTimeoutMs,
           remote.id
         )
+        const authorized = await request(`/v1/cloud-projects/${project.id}/execution-environments`)
+        assert.ok(
+          authorized.items.some(
+            row =>
+              row.can_use && [row.device_key, row.app_device_id].includes(REMOTE_DOCKER_DEVICE_ID)
+          ),
+          `Remote device must have an active project authorization: ${JSON.stringify(authorized.items.map(row => ({ device_key: row.device_key, app_device_id: row.app_device_id, can_use: row.can_use, status: row.status })))}`
+        )
         const agent = await request(`/v1/cloud-projects/${project.id}/chat-agents`, {
           name: '云端替身助手',
           runtime: 'codex',
@@ -188,6 +196,7 @@ export function createDesktopScenario({
         const historical = await createIssue('启用云端替身前已分配')
         await control.command('click', `${CONTENT} [data-testid="collaboration-tab-board"]`)
         await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
         await control.command('waitFor', '[data-testid="stand-in-device"]')
         const currentDevice = await control.command('getValue', '[data-testid="stand-in-device"]')
         assert.ok(currentDevice)
@@ -196,6 +205,7 @@ export function createDesktopScenario({
           value: REMOTE_DOCKER_DEVICE_ID,
         })
         await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="false"]')
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
         await control.command(
           'waitFor',
           `[data-testid="stand-in-agent"] option[value="${agent.id}"]`
@@ -203,7 +213,6 @@ export function createDesktopScenario({
         await control.command('select', '[data-testid="stand-in-agent"]', {
           value: String(agent.id),
         })
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
         await control.command('fill', '[data-testid="stand-in-prompt"]', { value: MARKER })
         await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
         await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
@@ -229,6 +238,17 @@ export function createDesktopScenario({
         )
         await control.command('click', '[data-testid="stand-in-cancel"]')
 
+        const onlineDevices = await request('/devices/online')
+        const desktop = onlineDevices.items.find(device =>
+          [device.device_id, device.app_device_id].includes(currentDevice)
+        )
+        assert.ok(desktop, 'The current desktop must be a registered device')
+        await request(`/v1/workspaces/${workspace.id}/execution-environments`, {
+          device_id: desktop.id,
+        })
+        await request(`/v1/cloud-projects/${project.id}/execution-environments`, {
+          device_id: desktop.id,
+        })
         const localEnabled = await requestExecutor(
           control,
           'runtime.stand_in.save',

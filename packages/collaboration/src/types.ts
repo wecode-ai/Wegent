@@ -518,6 +518,7 @@ export interface CollaborationHostAdapter {
   };
   projectCreate?: ProjectCreateHostAdapter;
   renderBoardToolbarAction?(project: CollaborationProject): ReactNode;
+  renderProjectHeaderAction?(project: CollaborationProject): ReactNode;
   projectActions?: Array<{
     id: string;
     label: string;

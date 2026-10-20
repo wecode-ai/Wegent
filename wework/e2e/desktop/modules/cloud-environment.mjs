@@ -189,13 +189,11 @@ async function resolveBackendRsBinary() {
     'debug',
     process.platform === 'win32' ? 'wegent-backend-rs.exe' : 'wegent-backend-rs'
   )
-  if (!(await pathExists(binary))) {
-    await runChecked(
-      'cargo',
-      ['build', '--manifest-path', manifestPath, '--bin', 'wegent-backend-rs'],
-      { cwd: repoDir }
-    )
-  }
+  await runChecked(
+    'cargo',
+    ['build', '--manifest-path', manifestPath, '--bin', 'wegent-backend-rs'],
+    { cwd: repoDir }
+  )
   return binary
 }
 async function waitForRedisReady(redis, logPath, fromOffset) {

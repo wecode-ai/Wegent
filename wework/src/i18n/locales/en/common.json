@@ -18,6 +18,43 @@
   "navigation": {
     "home": "Home"
   },
+  "process_explorer": {
+    "title": "Process Explorer",
+    "refresh": "Refresh",
+    "filter_placeholder": "Filter by name, PID, or launch details",
+    "column_process": "Process",
+    "column_pid": "Process ID",
+    "column_cpu": "CPU %",
+    "column_memory": "Memory",
+    "column_uptime": "Uptime",
+    "empty": "No processes to show.",
+    "select_process_hint": "Select a process to see its launch details.",
+    "degraded": "Some process information is unavailable: {{reasons}}",
+    "owner": {
+      "application": "Application",
+      "windows": "Windows",
+      "core-runtime": "Core runtime",
+      "executor": "Executor",
+      "plugin-development": "Plugin development",
+      "helpers": "Chromium helpers",
+      "other": "Other processes"
+    },
+    "degraded_reason": {
+      "system_process_table_unavailable": "The system process table is not available on this platform",
+      "system_process_table_failed": "The system process table could not be read",
+      "renderer_labels_failed": "Renderer labels could not be read",
+      "host_process_provider_failed": "Host runtime processes could not be read"
+    },
+    "load_failed": "Could not read process information",
+    "always_on_top": "Keep on top",
+    "always_on_top_active": "Stop keeping on top",
+    "resize_column_hint": "Drag to resize; double-click to reset",
+    "copy_launch_details": "Copy launch details",
+    "copied": "Copied",
+    "summary_memory": "Memory {{memory}}",
+    "summary_processes": "{{processCount}} processes",
+    "summary_hint": "CPU is the sum of the listed WeWork process CPU usage, not system-wide usage."
+  },
   "project_ai": {
     "file_unavailable": "This project executor cannot read the selected file. Use a local project or upload it in the task details.",
     "model_unavailable": "Could not load models. Please try again later."
@@ -5149,6 +5186,11 @@
     "connect": "Connect to the cloud to view notifications"
   },
   "standIn": {
+    "model_label": "Model",
+    "agent_label": "Agent",
+    "device_label": "Device",
+    "local_project": "Local project",
+    "workspace_label": "Workspace",
     "title": "My Stand-in",
     "close": "Close",
     "auto": "Enable Stand-in",
@@ -5160,7 +5202,6 @@
     "device_unavailable": "Selected device unavailable; select again",
     "offline": "Offline",
     "no_permission": "A project Developer role is required to enable Stand-in.",
-    "future_only": "Existing tasks won’t start automatically",
     "cancel": "Cancel",
     "save": "Save",
     "saving": "Saving…",
@@ -5173,6 +5214,30 @@
     "agent": "Which agent to use",
     "default_agent": "General assistant (default)",
     "agent_unavailable": "Selected agent is unavailable",
-    "agent_load_failed": "Unable to load agents. Reopen settings to retry."
+    "agent_load_failed": "Unable to load agents. Reopen settings to retry.",
+    "inherit_environment": "Project environment",
+    "new_worktree": "New worktree",
+    "current_workspace": "Current directory",
+    "dynamic_placeholder": "Work in {{environment}}. Add instructions (optional)",
+    "use_for_task": "Use my stand-in",
+    "page_description": "Manage stand-ins by project, or copy an existing configuration to get started.",
+    "collaboration_project": "Collaboration project",
+    "no_projects": "Create or join a project to configure a stand-in.",
+    "existing_profile": "Existing stand-in",
+    "default_profile": "Default stand-in",
+    "copy_from": "Copy from another project",
+    "choose_existing": "Choose a configuration…",
+    "copy_agent_required": "Configuration copied. Choose an agent available in this project before saving.",
+    "copied": "Configuration copied. Saving only updates this project.",
+    "default_workspace": "the project workspace",
+    "goal_placeholder": "Pursue each task as a goal. Add acceptance criteria (optional)",
+    "auto_description": "Let AI automatically handle tasks assigned to me from now on",
+    "list_description": "Manage execution preferences and automatic handling by project.",
+    "configure": "Configure stand-in",
+    "actions": "Actions",
+    "auto_on": "On",
+    "auto_off": "Off",
+    "list_empty": "No stand-ins configured. Choose a project to get started.",
+    "action_label": "AI stand-in"
   }
 }

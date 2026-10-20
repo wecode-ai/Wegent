@@ -636,6 +636,7 @@ export function CollaborationApp({
               }
               renderRightActions={({ actionRefs, showLabels }) => (
                 <>
+                  {host.renderProjectHeaderAction?.(project)}
                   {host.location.view === "board" ||
                   host.location.view === "calendar" ||
                   host.location.view === "gantt" ? (
