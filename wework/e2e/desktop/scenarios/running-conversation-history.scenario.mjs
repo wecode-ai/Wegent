@@ -260,7 +260,7 @@ async function waitForHighlightedSearchTarget(control, text, afterSequence, time
   const marker = 'legacy-search-current-target'
   await control.command('markElementWithText', content, { text, value: marker })
   const target = `${ACTIVE_WORKBENCH_SELECTOR} [data-e2e-anchor-id="${marker}"]`
-  const scroller = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-scroll-area"]`
+  const scroller = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll"]`
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     const [element] = JSON.parse(await control.command('getElementMetrics', target))
