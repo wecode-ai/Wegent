@@ -10,7 +10,7 @@ import { inputUserMessageTexts } from './desktop-server.mjs'
 import { assertConversationTextOrder } from './conversation-navigation.mjs'
 
 import { ensureTaskRowVisible } from './memory-tool-flows.mjs'
-import { findRuntimeWorkTask } from './runtime-task-evidence.mjs'
+import { findRuntimeWorkTask, waitForForkTaskRow } from './runtime-task-evidence.mjs'
 
 import {
   ACTIVE_WORKBENCH_SELECTOR,
@@ -967,11 +967,6 @@ async function verifyRunningFollowUpFork({
   )
   assert.equal(previousTask?.running, false, 'The source turn must be complete before follow-up')
   assert.equal(typeof previousTask?.completedAt, 'number')
-  const taskRowsBeforeFork = new Set(
-    JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
-      testId.startsWith('runtime-local-task-row-')
-    )
-  )
   control.setScenario('running_fork_follow_up')
   try {
     await sendPromptUntilScenarioRequest(
@@ -1005,7 +1000,7 @@ async function verifyRunningFollowUpFork({
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       }
     )
-    const forkTaskRowTestId = await waitForNewTaskRow(control, taskRowsBeforeFork, '', 15_000)
+    const forkTaskRowTestId = await waitForForkTaskRow(control, sourceTaskId, 15_000)
     assert.notEqual(
       forkTaskRowTestId,
       sourceTaskRowTestId,
@@ -1063,11 +1058,7 @@ async function verifyCompletedTurnFork({
   sourceTaskRowTestId,
   workspacePath,
 }) {
-  const taskRowsBeforeFork = new Set(
-    JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
-      testId.startsWith('runtime-local-task-row-')
-    )
-  )
+  const sourceTaskId = sourceTaskRowTestId.replace('runtime-local-task-row-', '')
   const firstTurnForkButtonSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-testid="fork-message-button"]`
   await control.command('scrollIntoView', firstTurnForkButtonSelector)
   await control.command('waitFor', firstTurnForkButtonSelector, {
@@ -1084,13 +1075,12 @@ async function verifyCompletedTurnFork({
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
-  const forkTaskRowTestId = await waitForNewTaskRow(control, taskRowsBeforeFork, '')
+  const forkTaskRowTestId = await waitForForkTaskRow(control, sourceTaskId, DEFAULT_STEP_TIMEOUT_MS)
   assert.notEqual(
     forkTaskRowTestId,
     sourceTaskRowTestId,
     'Forking reused the source task instead of creating an independent task'
   )
-  const sourceTaskId = sourceTaskRowTestId.replace('runtime-local-task-row-', '')
   const forkTaskId = forkTaskRowTestId.replace('runtime-local-task-row-', '')
   const runtimeIndex = JSON.parse(
     await readFile(join(executorHome, 'runtime-work', 'index.json'), 'utf8')
@@ -1207,11 +1197,6 @@ async function verifyForkProviderModelPreservation({
     'The source task did not persist its local model execution request'
   )
 
-  const taskRowsBeforeFork = new Set(
-    JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
-      testId.startsWith('runtime-local-task-row-')
-    )
-  )
   await control.command(
     'clickDescendantInElementWithText',
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
@@ -1221,7 +1206,7 @@ async function verifyForkProviderModelPreservation({
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
-  const forkTaskRowTestId = await waitForNewTaskRow(control, taskRowsBeforeFork, '')
+  const forkTaskRowTestId = await waitForForkTaskRow(control, sourceTaskId, DEFAULT_STEP_TIMEOUT_MS)
   const forkTaskId = forkTaskRowTestId.replace('runtime-local-task-row-', '')
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: FORK_PROVIDER_SOURCE_COMPLETION_TEXT,
