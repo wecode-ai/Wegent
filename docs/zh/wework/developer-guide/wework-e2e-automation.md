@@ -168,7 +168,11 @@ macOS 中需要争用原生桌面前台的 checkpoint 仍通过资源锁保持�
 24 插件长列表仍验证全部条目、滚动和末项选择；启停及两次重启后的持久化改由
 `plugin-toggle-persistence` 使用一个插件独立验证，避免重复同步整个长列表。
 Linux Core/Cloud 测试在开始、结束和每 15 秒输出 `[runner-resources]` JSON 记录，
-并保存到诊断产物中的 `runner-resources.jsonl`。记录包含 CPU 使用率、load average、
+并保存到诊断产物中的 `runner-resources.jsonl`。Web 分片复用同一采样器，设置
+`RUNNER_PROCESS_DIAGNOSTICS=1` 后额外记录 PID、父 PID、状态、运行时长和进程名，
+不记录命令参数。`RUNNER_RESOURCE_LOG_PATH` 可指定日志路径；Web 日志保存在独立的
+`e2e-process-diagnostics-*` 产物中，便于定位测试结束后命令未退出的问题。
+记录包含 CPU 使用率、load average、
 内存、磁盘可用空间、Linux CPU/内存/I/O 压力及 cgroup CPU 限额、内存峰值和 OOM 计数；
 不可读取的内核指标会记录 `unavailable`。CPU 使用率是两次采样间的平均值，首次记录为 `null`。
 `[desktop-e2e-schedule]` 日志在 checkpoint 启停时记录活动列表和实际并发数，可用于确认

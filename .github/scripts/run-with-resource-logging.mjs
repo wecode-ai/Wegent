@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { appendFileSync, mkdirSync, readFileSync, statfsSync } from 'node:fs'
 import { availableParallelism, cpus, freemem, loadavg, totalmem } from 'node:os'
 import { dirname, resolve } from 'node:path'
@@ -6,7 +6,9 @@ import { dirname, resolve } from 'node:path'
 const [command, ...args] = process.argv.slice(2)
 if (!command) throw new Error('A command is required')
 
-const logPath = resolve('wework/test-results/desktop-e2e/runner-resources.jsonl')
+const logPath = resolve(
+  process.env.RUNNER_RESOURCE_LOG_PATH ?? 'wework/test-results/desktop-e2e/runner-resources.jsonl'
+)
 mkdirSync(dirname(logPath), { recursive: true })
 
 function readMetric(path) {
@@ -28,6 +30,7 @@ function cpuTimes() {
 }
 
 let previousCpu = cpuTimes()
+let child
 function sample(phase, exitCode) {
   const currentCpu = cpuTimes()
   const elapsed = currentCpu.total - previousCpu.total
@@ -36,6 +39,7 @@ function sample(phase, exitCode) {
     timestamp: new Date().toISOString(),
     phase,
     exitCode,
+    commandPid: child?.pid,
     parallelCheckpoints: process.env.WEWORK_E2E_PARALLEL_CHECKPOINTS,
     cpuCount: cpus().length,
     availableParallelism: availableParallelism(),
@@ -65,6 +69,17 @@ function sample(phase, exitCode) {
       ].map(([name, path]) => [name, readMetric(path)])
     )
   }
+  if (process.env.RUNNER_PROCESS_DIAGNOSTICS === '1') {
+    try {
+      record.processes = execFileSync('ps', ['-eo', 'pid,ppid,stat,etime,comm'], {
+        encoding: 'utf8',
+        timeout: 5_000,
+        maxBuffer: 256 * 1024,
+      })
+    } catch (error) {
+      record.processes = { unavailable: error.code ?? error.name }
+    }
+  }
   previousCpu = currentCpu
   const line = JSON.stringify(record)
   appendFileSync(logPath, `${line}\n`)
@@ -72,7 +87,7 @@ function sample(phase, exitCode) {
 }
 
 sample('start')
-const child = spawn(command, args, { stdio: 'inherit' })
+child = spawn(command, args, { stdio: 'inherit' })
 const timer = setInterval(() => sample('interval'), 15_000)
 const signalHandlers = new Map(
   ['SIGINT', 'SIGTERM'].map(signal => {

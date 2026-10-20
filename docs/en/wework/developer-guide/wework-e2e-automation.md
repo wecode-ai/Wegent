@@ -181,7 +181,11 @@ The long list still checks all 24 plugins, scrolling, and last-item selection.
 two restarts with one plugin, avoiding repeated synchronization of the whole list.
 Linux Core/Cloud tests emit `[runner-resources]` JSON records at startup, completion,
 and every 15 seconds, also saved as `runner-resources.jsonl` in the diagnostic
-artifact. Records include CPU utilization, load average, memory, available disk
+artifact. Web shards reuse this sampler with `RUNNER_PROCESS_DIAGNOSTICS=1` to
+record process IDs, parent IDs, states, elapsed times, and names without command
+arguments. `RUNNER_RESOURCE_LOG_PATH` selects the log path; separate
+`e2e-process-diagnostics-*` artifacts help diagnose commands that remain alive
+after tests finish. Records include CPU utilization, load average, memory, available disk
 space, Linux CPU/memory/I/O pressure, and cgroup CPU limits, memory peaks, and OOM
 counters. Unreadable kernel metrics report `unavailable`. CPU utilization is the
 average between samples; its initial value is `null`.
