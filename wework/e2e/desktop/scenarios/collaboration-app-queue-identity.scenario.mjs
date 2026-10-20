@@ -253,7 +253,7 @@ export function createDesktopScenario({ modelResponseTimeoutMs, workbenchReadyTi
       )
       await singlePreview(control, 'final-response', REPLY_RESULT)
       await reloadMainWindow(control, 'The workbench did not reconnect after the reply')
-      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+      await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-board"]')
       await singlePreview(control, 'final-response', REPLY_RESULT)
       assert.deepEqual(bindingAddresses(await bindings()), bindingAddresses(originalBindings))
       assert.equal(modelRequests.length, 2, 'Reloading must not execute the reply again')
