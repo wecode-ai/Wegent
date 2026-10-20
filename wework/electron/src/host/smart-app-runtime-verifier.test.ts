@@ -70,6 +70,7 @@ describe('verifySmartAppRuntime', () => {
         environment: {
           PATH: '/managed/bin',
           WEWORK_NODE_PATH: '/managed/node',
+          WEWORK_HARNESS_RESOURCE_ROOT: '/managed/harness-runtime',
           DSH_HOME: '/personal/dsh',
           WEWORK_ELECTRON_HOST_TOKEN: 'host-secret',
           WEWORK_EXECUTOR_TOKEN: 'executor-secret',
@@ -83,6 +84,7 @@ describe('verifySmartAppRuntime', () => {
     expect(verificationEnvironment).toMatchObject({
       PATH: '/managed/bin',
       WEWORK_NODE_PATH: '/managed/node',
+      WEWORK_HARNESS_RESOURCE_ROOT: '/managed/harness-runtime',
     })
     expect(verificationEnvironment).not.toHaveProperty('DSH_HOME')
     expect(verificationEnvironment).not.toHaveProperty('WEWORK_ELECTRON_HOST_TOKEN')

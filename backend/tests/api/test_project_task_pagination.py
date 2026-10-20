@@ -12,6 +12,13 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from sqlalchemy import event
+from sqlalchemy.dialects import mysql
+from sqlalchemy.engine import ExecutionContext
+from sqlalchemy.orm import Session
+
 from app.api.dependencies import get_db
 from app.api.endpoints.projects import router
 from app.core.security import get_current_user
@@ -20,12 +27,6 @@ from app.models.resource_member import ResourceMember
 from app.models.task import TaskResource
 from app.models.user import User
 from app.services import project_service
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-from sqlalchemy import event
-from sqlalchemy.dialects import mysql
-from sqlalchemy.engine import ExecutionContext
-from sqlalchemy.orm import Session
 
 
 @pytest.fixture
