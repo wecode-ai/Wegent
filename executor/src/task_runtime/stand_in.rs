@@ -77,6 +77,44 @@ impl LocalTaskStore {
                 "agentId must be a string or null".into(),
             ));
         }
+        if let Some(workspace) = value.get("workspace").filter(|value| !value.is_null()) {
+            if !["projectKey", "workspacePath"].iter().all(|key| {
+                workspace[*key]
+                    .as_str()
+                    .is_some_and(|value| !value.trim().is_empty())
+            }) || !matches!(
+                workspace["executionMode"].as_str(),
+                Some("current_workspace" | "git_worktree")
+            ) || workspace
+                .get("branch")
+                .is_some_and(|branch| !branch.is_null() && !branch.is_string())
+            {
+                return Err(TaskRuntimeError::Invalid(
+                    "invalid Stand-in workspace".into(),
+                ));
+            }
+        }
+        if value.get("goalMode").is_some_and(|goal| !goal.is_boolean())
+            || value.get("modelOptions").is_some_and(|options| {
+                !options
+                    .as_object()
+                    .is_some_and(|options| options.values().all(Value::is_string))
+            })
+            || value.get("model").is_some_and(|model| {
+                !model.is_null()
+                    && (!model.is_object()
+                        || !matches!(model["runtime"].as_str(), Some("codex" | "claude_code"))
+                        || !["provider", "model_id"].iter().all(|key| {
+                            model[*key]
+                                .as_str()
+                                .is_some_and(|text| !text.trim().is_empty())
+                        }))
+            })
+        {
+            return Err(TaskRuntimeError::Invalid(
+                "invalid Stand-in execution settings".into(),
+            ));
+        }
         let enabled = value["enabled"]
             .as_bool()
             .ok_or_else(|| TaskRuntimeError::Invalid("enabled is required".into()))?;
@@ -121,6 +159,22 @@ impl LocalTaskStore {
     }
 
     pub fn enabled_stand_in_settings(&self) -> Result<Vec<Value>, TaskRuntimeError> {
+        Ok(self
+            .all_stand_in_settings()?
+            .into_iter()
+            .filter(|value| value["enabled"] == true)
+            .collect())
+    }
+
+    pub fn user_stand_in_settings(&self, user_id: i64) -> Result<Vec<Value>, TaskRuntimeError> {
+        Ok(self
+            .all_stand_in_settings()?
+            .into_iter()
+            .filter(|value| value["userId"] == user_id)
+            .collect())
+    }
+
+    fn all_stand_in_settings(&self) -> Result<Vec<Value>, TaskRuntimeError> {
         let connection = self.connection()?;
         let mut statement = connection
             .prepare("SELECT metadata FROM loop_items WHERE resource_type='stand_in_settings'")?;
@@ -129,9 +183,7 @@ impl LocalTaskStore {
         for row in rows {
             let value: Value = serde_json::from_str(&row?)
                 .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?;
-            if value["enabled"] == true {
-                settings.push(value);
-            }
+            settings.push(value);
         }
         Ok(settings)
     }

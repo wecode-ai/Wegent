@@ -37,6 +37,7 @@ const CHECKPOINT_RESOURCES = new Map([
   ['collaboration-local-agent-dispatch', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['stand-in', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['stand-in-cloud', ['collaboration-runtime', 'desktop-runtime-intensive']],
+  ['stand-in-workspace', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['collaboration-remote-agent-dispatch', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['collaboration-local-group-coordinate', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['collaboration-remote-group-coordinate', ['collaboration-runtime', 'desktop-runtime-intensive']],
@@ -117,6 +118,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
     './scenarios/collaboration-local-agent-dispatch.scenario.mjs',
   'stand-in': './scenarios/stand-in.scenario.mjs',
   'stand-in-cloud': './scenarios/stand-in-cloud.scenario.mjs',
+  'stand-in-workspace': './scenarios/stand-in-workspace.scenario.mjs',
   'collaboration-remote-agent-dispatch':
     './scenarios/collaboration-remote-agent-dispatch.scenario.mjs',
   'collaboration-local-group-coordinate':
@@ -183,6 +185,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-local-agent-dispatch',
   'stand-in',
   'stand-in-cloud',
+  'stand-in-workspace',
   'collaboration-remote-agent-dispatch',
   'collaboration-local-group-coordinate',
   'collaboration-remote-group-coordinate',

@@ -88,8 +88,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         uiTimeoutMs
       )
       await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
-      await control.command('waitFor', '[data-testid="stand-in-prompt"]')
-      assert.equal(await control.command('getValue', '[data-testid="stand-in-agent"]'), '')
+      await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="false"]')
       assert.equal(
         await control.command(
           'getElementCount',
@@ -97,6 +96,9 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         ),
         '1'
       )
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
+      await control.command('waitFor', '[data-testid="stand-in-prompt"]')
+      assert.equal(await control.command('getValue', '[data-testid="stand-in-agent"]'), '')
       await control.command('fill', '[data-testid="stand-in-prompt"]', { value: '不保存的提示词' })
       await control.command('click', '[data-testid="stand-in-cancel"]')
       const initial = await requestExecutor(
@@ -108,8 +110,8 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       assert.equal(initial.enabled, false)
       assert.equal(initial.prompt, '')
       await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
       await control.command('waitFor', '[data-testid="stand-in-prompt"]')
-      await control.command('click', '[data-testid="stand-in-auto"]')
       await control.command('fill', '[data-testid="stand-in-prompt"]', { value: MARKER })
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
       await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })

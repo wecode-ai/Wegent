@@ -4,6 +4,8 @@ import { bindProjectStandInApi, createStandInExecutorApi, type StandInExecutorAp
 const settings = { enabled: false, prompt: '', executionDeviceId: '', version: 0 }
 function fixture() {
   const transport = {
+    catalog: vi.fn<StandInExecutorApi['catalog']>().mockResolvedValue({ models: [] }),
+    run: vi.fn<StandInExecutorApi['run']>().mockResolvedValue({ deviceId: 'mac', taskId: 'task' }),
     list: vi.fn<StandInExecutorApi['list']>().mockResolvedValue([]),
     get: vi.fn<StandInExecutorApi['get']>().mockResolvedValue(settings),
     save: vi.fn<StandInExecutorApi['save']>().mockResolvedValue(settings),
@@ -84,4 +86,36 @@ describe('device-local Stand-in settings', () => {
       expect.objectContaining({ id: 'review', tags: ['review'] })
     )
   })
+})
+
+it('explicitly runs a saved disabled stand-in through its selected device', async () => {
+  const request = vi.fn().mockResolvedValue({ deviceId: 'cloud-device', taskId: 'stand-in-human' })
+  const transport = createStandInExecutorApi(request)
+  const api = bindProjectStandInApi(transport, 7, 'cloud', async () => ({ deviceId: 'mac' }))
+  await expect(api.run!('project', 'issue', 'cloud-device')).resolves.toEqual({
+    deviceId: 'cloud-device',
+    taskId: 'stand-in-human',
+  })
+  expect(request).toHaveBeenCalledExactlyOnceWith(
+    'runtime.stand_in.run',
+    {
+      projectId: 'project',
+      issueId: 'issue',
+      userId: 7,
+      projectStore: 'cloud',
+      standInId: 'default',
+    },
+    'cloud-device'
+  )
+})
+
+it('reads list items from the object envelope required by remote Runtime RPC', async () => {
+  const request = vi.fn().mockResolvedValue({ items: [{ ...settings, id: 'default' }] })
+  const transport = createStandInExecutorApi(request)
+  await expect(transport.list(7, 'mac', true)).resolves.toEqual([{ ...settings, id: 'default' }])
+  expect(request).toHaveBeenCalledWith(
+    'runtime.stand_in.list',
+    { userId: 7, includeDisabled: true },
+    'mac'
+  )
 })

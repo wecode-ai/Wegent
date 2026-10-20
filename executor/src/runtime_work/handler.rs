@@ -141,6 +141,7 @@ mod runner_catalog;
 mod runner_cloud_models;
 mod sidebar;
 mod stand_in;
+mod stand_in_workspace;
 mod supervisor;
 mod system;
 mod tasks;
@@ -1110,6 +1111,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.stand_in.list" => self.list_stand_in_settings(payload),
             "runtime.stand_in.get" => self.stand_in_settings(payload, false).await,
             "runtime.stand_in.save" => self.stand_in_settings(payload, true).await,
+            "runtime.stand_in.run" => self.run_stand_in(payload).await,
             "runtime.tasks.list" => self.list_tasks(&payload).await,
             "runtime.tasks.get" => self.get_task(&payload),
             "runtime.tasks.running_count" => Ok(self.running_task_count()),

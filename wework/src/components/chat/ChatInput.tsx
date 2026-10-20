@@ -149,7 +149,7 @@ export interface ProjectWorkControls {
 
 export interface ChatInputProps {
   predictionAddress?: RuntimeTaskAddress | null
-  presentation?: 'chat' | 'document'
+  presentation?: 'chat' | 'document' | 'configuration'
   value: string
   onChange: (value: string) => void
   onBlur?: () => void
@@ -163,6 +163,7 @@ export interface ChatInputProps {
   pluginPickerIconOnly?: boolean
   submitDisabled?: boolean
   requireText?: boolean
+  allowEmptySubmit?: boolean
   error?: string | null
   disabledReason?: string
   placeholder?: string
@@ -318,6 +319,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
     pluginPickerIconOnly = false,
     submitDisabled = false,
     requireText = false,
+    allowEmptySubmit = false,
     error,
     disabledReason,
     placeholder,
@@ -595,6 +597,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
     disabled,
     submitDisabled,
     requireText,
+    allowEmptySubmit,
     disabledReason,
     placeholder: disabledReason ? '' : inputPlaceholder,
     inputTestId,

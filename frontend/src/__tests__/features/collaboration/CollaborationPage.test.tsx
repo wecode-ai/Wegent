@@ -337,6 +337,9 @@ describe('CollaborationPage platform routing', () => {
     expect(collaborationLocationPath({ ...base, workspaceId: null, rootView: 'home' })).toBe(
       '/collaboration'
     )
+    expect(collaborationLocationPath({ ...base, workspaceId: null, rootView: 'stand-in' })).toBe(
+      '/collaboration'
+    )
     expect(collaborationLocationPath({ ...base, workspaceId: null, rootView: 'inbox' })).toBe(
       '/collaboration/inbox'
     )
