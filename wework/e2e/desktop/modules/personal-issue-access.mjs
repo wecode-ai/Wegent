@@ -15,7 +15,8 @@ import { DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, selectE2EModel } from './shared.
 
 const MARKER = 'PERSONAL_ISSUE_ACCESS_E2E'
 const COMPLETE = `${MARKER}_COMPLETE`
-const PANEL = '[data-testid="work-item-new-task-chat-panel"]'
+const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
+const PANEL = `${CONTENT} [data-testid="work-item-new-task-chat-panel"]`
 
 const stableIssue = issue => ({
   id: issue.id,
@@ -315,15 +316,29 @@ export function createPersonalIssueAccessRegression({ uiTimeoutMs, modelResponse
         target_id: String(me.id),
         notify_target: false,
       })
-      await request(`/api/v1/loop-items/${sourceIssue.id}/work/start`, {
-        version: assigned.issue.version,
-      })
+      const started = await request(
+        `/api/v1/loop-items/${sourceIssue.id}`,
+        { version: assigned.issue.version, status: 'in_progress' },
+        cloud.authToken,
+        'PATCH'
+      )
+      assert.equal(started.status, 'in_progress')
+      assert.equal(started.human_task_binding.assignmentId, assigned.assignment.id)
       sourceBefore = stableIssue(await request(`/api/v1/loop-items/${sourceIssue.id}`))
       await control.command('openWeworkScheme', 'body', {
         value: `wework://boards/${sourceProject.id}/issues/${sourceIssue.id}`,
       })
-      await control.command('waitFor', '[data-testid="human-issue-ai-assist"]', { visible: true })
-      await control.command('click', '[data-testid="human-issue-ai-assist"]')
+      await control.command(
+        'waitFor',
+        `${CONTENT} [data-testid="cloud-todo-personal-task-start"]`,
+        {
+          visible: true,
+        }
+      )
+      await control.command(
+        'clickWhenEnabled',
+        `${CONTENT} [data-testid="cloud-todo-personal-task-start"]`
+      )
       const composer = `${PANEL} [data-testid="chat-message-input"]`
       await control.command('waitFor', composer, { visible: true })
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, PANEL)
@@ -344,7 +359,7 @@ export function createPersonalIssueAccessRegression({ uiTimeoutMs, modelResponse
       }
       await control.command(
         'waitFor',
-        '[data-testid="ai-chat-modal"] [data-testid="message-assistant"]',
+        `${CONTENT} [data-testid="ai-chat-modal"] [data-testid="message-assistant"]`,
         {
           text: COMPLETE,
           timeoutMs: modelResponseTimeoutMs,
@@ -352,7 +367,7 @@ export function createPersonalIssueAccessRegression({ uiTimeoutMs, modelResponse
       )
       assert.equal(toolRunVerified, true, 'The model completed without exercising real MCP tools')
       await assertPersistedResults()
-      await control.command('click', '[data-testid="ai-chat-modal-close"]')
+      await control.command('click', `${CONTENT} [data-testid="ai-chat-modal-close"]`)
       console.log('[e2e] Personal task same/cross project permissions and source bindings verified')
       active = false
     },
