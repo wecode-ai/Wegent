@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useReducer, useRef } from "react";
 
 import { collectIssueSubtreeIds, removeIssueSubtree } from "../board";
+import { isIssueVersionConflict } from "../issue-detail/issueVersionConflict";
 import type {
   SharedWorkspaceApi,
   WorkspaceBoardSnapshot,
@@ -670,17 +671,6 @@ interface CommandEnvironment {
     eager: boolean;
   };
   notify?(message: string, kind: "success" | "error"): void;
-}
-
-function errorStatus(error: unknown): number | null {
-  if (!error || typeof error !== "object" || !("status" in error)) return null;
-  return typeof error.status === "number" ? error.status : null;
-}
-
-function isVersionConflict(error: unknown): boolean {
-  if (errorStatus(error) === 409) return true;
-  if (!error || typeof error !== "object" || !("code" in error)) return false;
-  return error.code === "version_conflict";
 }
 
 const externalGitBoardStatuses = [
@@ -1398,10 +1388,11 @@ export function createCollaborationWorkspaceControllerCommands({
           issues: reorderedItems,
         });
       } catch (error) {
-        if (isVersionConflict(error)) {
+        if (isIssueVersionConflict(error)) {
           await loadProject(issue.cloud_project_id, false);
           reportError(messages.conflict, "conflict");
         } else {
+          await loadProject(issue.cloud_project_id, false);
           reportError(messages.saveFailed);
         }
       }
