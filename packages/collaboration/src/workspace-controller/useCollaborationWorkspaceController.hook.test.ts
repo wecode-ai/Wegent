@@ -73,12 +73,12 @@ const hookRuntime = vi.hoisted(() => {
       const index = hookIndex++;
       const hook = hooks[index] ?? { state: initialState };
       hooks[index] = hook;
-      return [
-        hook.state as State,
-        (action) => {
+      if (!hook.dispatch) {
+        hook.dispatch = (action: Action) => {
           hook.state = reducer(hook.state as State, action);
-        },
-      ];
+        };
+      }
+      return [hook.state as State, hook.dispatch as (action: Action) => void];
     },
     useRef<T>(initialValue: T) {
       const index = hookIndex++;
@@ -98,6 +98,7 @@ vi.mock("react", () => ({
 
 import {
   type CollaborationWorkspaceController,
+  initialCollaborationWorkspaceControllerState,
   useCollaborationWorkspaceController,
 } from "./useCollaborationWorkspaceController";
 
@@ -204,7 +205,7 @@ const messages = {
 };
 
 function renderController(
-  api: SharedWorkspaceApi,
+  api: SharedWorkspaceApi | null | undefined,
   location: CollaborationLocation,
   myWorkEnabled?: boolean,
   initialProject?: CollaborationProject,
@@ -395,4 +396,115 @@ describe("useCollaborationWorkspaceController location effects", () => {
     expect(controller.state.project).toEqual(projectB);
     expect(controller.state.issues).toEqual([issueB]);
   });
+
+  it.each([undefined, null, "direct"] as const)(
+    "does not carry confirmed reads to another API via %s",
+    async (disconnectedApi) => {
+      const accountA = createApi();
+      const accountB = createApi();
+      const unread = {
+        ...issueA,
+        content_revision: 3,
+        activity_read_sequence: 0,
+        is_unread: true,
+      };
+      const read = {
+        ...unread,
+        activity_read_sequence: 10,
+        is_unread: false,
+      };
+      for (const api of [accountA, accountB]) {
+        vi.mocked(api.issues.getBoardSnapshot).mockResolvedValue({
+          items: [unread],
+          members: [],
+          agents: [],
+          taskBindings: [],
+        });
+      }
+      accountA.issues.markRead = vi.fn().mockResolvedValue(read);
+      const location = {
+        projectId: projectA.id,
+        issueId: null,
+        view: "board" as const,
+      };
+
+      renderController(accountA, location);
+      await vi.waitFor(() => {
+        expect(renderController(accountA, location).state.issues).toEqual([
+          unread,
+        ]);
+      });
+      await renderController(accountA, location).commands.markIssueRead(unread);
+      expect(renderController(accountA, location).state.issues).toEqual([read]);
+
+      if (disconnectedApi !== "direct") {
+        expect(renderController(disconnectedApi, location).state).toEqual(
+          initialCollaborationWorkspaceControllerState,
+        );
+      }
+      renderController(accountB, location);
+      await vi.waitFor(() => {
+        expect(accountB.issues.getBoardSnapshot).toHaveBeenCalledOnce();
+      });
+      const controller = renderController(accountB, location);
+      expect(controller.state.issues).toEqual([unread]);
+      expect(controller.state.confirmedIssueReads).toEqual({});
+    },
+  );
+
+  it.each(["another API", "the same API after reconnect"])(
+    "rejects an old pending read after loading the same Issue from %s",
+    async (destination) => {
+      const accountA = createApi();
+      const accountB = destination === "another API" ? createApi() : accountA;
+      const pendingRead = deferred<CollaborationIssue>();
+      const unread = {
+        ...issueA,
+        content_revision: 3,
+        activity_read_sequence: 0,
+        is_unread: true,
+      };
+      for (const api of [accountA, accountB]) {
+        vi.mocked(api.issues.getBoardSnapshot).mockResolvedValue({
+          items: [unread],
+          members: [],
+          agents: [],
+          taskBindings: [],
+        });
+      }
+      accountA.issues.markRead = vi.fn().mockReturnValue(pendingRead.promise);
+      const location = {
+        projectId: projectA.id,
+        issueId: null,
+        view: "board" as const,
+      };
+      renderController(accountA, location);
+      await vi.waitFor(() => {
+        expect(renderController(accountA, location).state.issues).toEqual([
+          unread,
+        ]);
+      });
+      const readRequest = renderController(
+        accountA,
+        location,
+      ).commands.markIssueRead(unread);
+
+      renderController(undefined, location);
+      renderController(accountB, location);
+      await vi.waitFor(() => {
+        expect(renderController(accountB, location).state.issues).toEqual([
+          unread,
+        ]);
+      });
+      const beforeRead = renderController(accountB, location).state;
+      pendingRead.resolve({
+        ...unread,
+        is_unread: false,
+        activity_read_sequence: 10,
+      });
+      await readRequest;
+
+      expect(renderController(accountB, location).state).toEqual(beforeRead);
+    },
+  );
 });

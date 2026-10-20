@@ -39,7 +39,7 @@ import { IssueActivityTools } from '@wegent/collaboration/issue-detail/IssueActi
 import { canApproveIssueExecution } from '@wegent/collaboration/issue-detail/activityApproval'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { prepareCloudAttachments } from '@/lib/cloud-attachments'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type {
   ProjectChatClient,
   ProjectChatMention,
@@ -470,15 +470,28 @@ export function TaskActivityView({
   const [readError, setReadError] = useState<string | null>(null)
   const executionBinding = useActivityExecutionBinding(messages, executionDetail?.messageId)
   const compact = rail || linear
+  const readScope = useRef<object | null>(null)
+  useLayoutEffect(() => {
+    readScope.current = {}
+    return () => {
+      readScope.current = null
+    }
+  }, [currentUserId, project.id, projectDeliveryApi, task.id])
   const markActivityRead = useCallback(
     async (sequence: number) => {
-      if (!projectDeliveryApi) return
+      const scope = readScope.current
+      if (!projectDeliveryApi || !scope) return
       try {
         const updated = await projectDeliveryApi.markLoopItemRead(task.id, sequence)
+        if (readScope.current !== scope) {
+          throw new DOMException('Activity read scope changed', 'AbortError')
+        }
         setReadError(null)
         onTaskRead?.(updated)
       } catch (cause) {
-        setReadError(cause instanceof Error ? cause.message : t('workbench.save_failed'))
+        if (readScope.current === scope) {
+          setReadError(cause instanceof Error ? cause.message : t('workbench.save_failed'))
+        }
         throw cause
       }
     },

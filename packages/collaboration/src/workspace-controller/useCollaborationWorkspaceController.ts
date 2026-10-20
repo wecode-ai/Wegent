@@ -1532,6 +1532,39 @@ export function createCollaborationWorkspaceControllerCommands({
   };
 }
 
+interface ScopedWorkspaceState {
+  scope: object;
+  state: CollaborationWorkspaceControllerState;
+}
+
+type ScopedWorkspaceAction =
+  | { type: "reset"; scope: object }
+  | {
+      type: "workspace";
+      scope: object;
+      action: CollaborationWorkspaceControllerAction;
+    };
+
+function scopedWorkspaceReducer(
+  current: ScopedWorkspaceState,
+  action: ScopedWorkspaceAction,
+): ScopedWorkspaceState {
+  if (action.type === "reset") {
+    return {
+      scope: action.scope,
+      state: initialCollaborationWorkspaceControllerState,
+    };
+  }
+  if (action.scope !== current.scope) return current;
+  return {
+    ...current,
+    state: collaborationWorkspaceControllerReducer(
+      current.state,
+      action.action,
+    ),
+  };
+}
+
 export function useCollaborationWorkspaceController({
   api,
   location,
@@ -1548,14 +1581,27 @@ export function useCollaborationWorkspaceController({
   },
   notify,
 }: CollaborationWorkspaceControllerOptions): CollaborationWorkspaceController {
-  const [state, dispatch] = useReducer(
-    collaborationWorkspaceControllerReducer,
-    initialProject
+  const scope = useMemo(() => ({ api }), [api]);
+  const [scopedState, scopedDispatch] = useReducer(scopedWorkspaceReducer, {
+    scope,
+    state: initialProject
       ? {
           ...initialCollaborationWorkspaceControllerState,
           projects: [initialProject],
         }
       : initialCollaborationWorkspaceControllerState,
+  });
+  const state =
+    scopedState.scope === scope
+      ? scopedState.state
+      : initialCollaborationWorkspaceControllerState;
+  if (scopedState.scope !== scope) {
+    scopedDispatch({ type: "reset", scope });
+  }
+  const dispatch = useMemo(
+    () => (action: CollaborationWorkspaceControllerAction) =>
+      scopedDispatch({ type: "workspace", scope, action }),
+    [scope, scopedDispatch],
   );
   const selectedIssueRef = useRef(state.selectedIssue);
   const projectsRef = useRef(state.projects);
@@ -1598,7 +1644,7 @@ export function useCollaborationWorkspaceController({
       getExternalBoardOptions: () => externalBoardRef.current,
       notify: (message, kind) => notifyRef.current?.(message, kind),
     });
-  }, [api, messages, myWorkEnabled, preloadHomeSnapshots]);
+  }, [api, dispatch, messages, myWorkEnabled, preloadHomeSnapshots]);
 
   useEffect(() => {
     if (!commands) return;

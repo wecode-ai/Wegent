@@ -438,6 +438,75 @@ describe('TaskActivityView', () => {
     expect(screen.getByTestId('cloud-task-activity-WEG-1')).toHaveTextContent('共 4 条')
   })
 
+  it.each(['api', 'task', 'unmount', 'rerender'] as const)(
+    'only accepts a delayed read confirmation while its scope remains active: %s',
+    async change => {
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+        top: 0,
+        bottom: 400,
+        height: 400,
+      } as DOMRect)
+      const project = { id: '11', name: 'Wework' } as never
+      const task = {
+        id: 'WEG-1',
+        title: 'Inspect changes',
+        version: 1,
+        is_unread: true,
+        content_revision: 1,
+      } as never
+      const updated = { ...task, is_unread: false }
+      let confirmRead!: (value: typeof updated) => void
+      const pendingRead = new Promise<typeof updated>(resolve => {
+        confirmRead = resolve
+      })
+      markLoopItemRead
+        .mockImplementationOnce(() => pendingRead)
+        .mockImplementation(() => new Promise(() => {}))
+      const onTaskRead = vi.fn()
+      const onTaskUpdated = vi.fn()
+      const view = (
+        <TaskActivityView
+          project={project}
+          task={task}
+          onTaskRead={onTaskRead}
+          onTaskUpdated={onTaskUpdated}
+          issueTimeline
+          linear
+        />
+      )
+      const { rerender, unmount } = render(view)
+      await waitFor(() => expect(markLoopItemRead).toHaveBeenCalledExactlyOnceWith(task.id, 0))
+
+      if (change === 'api') {
+        const nextRead = vi.fn(() => new Promise(() => {}))
+        workbenchServices.projectSpaceApis = {
+          cloud: { markLoopItemRead: nextRead },
+          local: { markLoopItemRead: nextRead },
+        }
+        rerender(cloneElement(view))
+      } else if (change === 'task') {
+        rerender(cloneElement(view, { task: { ...task, id: 'WEG-2' } }))
+      } else if (change === 'unmount') {
+        unmount()
+      } else {
+        rerender(
+          cloneElement(view, {
+            task: { ...task, version: 2, content_revision: 2 },
+            onTaskRead: confirmation => onTaskRead(confirmation),
+          })
+        )
+      }
+      await act(async () => confirmRead(updated))
+
+      if (change === 'rerender') {
+        expect(onTaskRead).toHaveBeenCalledExactlyOnceWith(updated)
+      } else {
+        expect(onTaskRead).not.toHaveBeenCalled()
+      }
+      expect(onTaskUpdated).not.toHaveBeenCalled()
+    }
+  )
+
   it('waits for activity to load before reading and leaves subscription failures unread', async () => {
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       top: 0,
