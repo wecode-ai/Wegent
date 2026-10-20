@@ -213,7 +213,7 @@ async function shortcutEffectApplied(verifyEffect, timeoutMs = 1_000) {
   return verifyEffect()
 }
 
-async function pressBrowserShortcut(control, key, verifyEffect) {
+async function pressBrowserShortcut(control, key, verifyDeliveredEffect) {
   let focusError = null
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
@@ -229,11 +229,11 @@ async function pressBrowserShortcut(control, key, verifyEffect) {
       focusError = error
       console.warn(`[desktop-e2e] Browser shortcut focus was retargeted: ${error.message}`)
     }
-    if (await shortcutEffectApplied(verifyEffect)) return
+    if (verifyDeliveredEffect && (await shortcutEffectApplied(verifyDeliveredEffect))) return
     await control.command('click', ACTIVE_COMPOSER_SELECTOR)
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
-  if (await shortcutEffectApplied(verifyEffect)) return
+  if (verifyDeliveredEffect && (await shortcutEffectApplied(verifyDeliveredEffect))) return
   throw focusError
 }
 
@@ -436,12 +436,9 @@ export function createDesktopScenario({ captureScreenshot, executorHome, resultD
       )
       const firstBrowserLabel = (await callBridge(bridgeIdentity, { action: 'status' })).label
       const secondBrowserLabel = firstBrowserLabel + '-2'
-      await pressBrowserShortcut(
-        control,
-        OPEN_BROWSER_WHILE_CLOSED_KEY,
-        async () =>
-          Number(await control.command('getElementCount', SECOND_BROWSER_TAB_SELECTOR)) === 0
-      )
+      // The second tab is already absent before the keypress, so that state cannot prove
+      // delivery. Only a successful nativePress may satisfy this negative assertion.
+      await pressBrowserShortcut(control, OPEN_BROWSER_WHILE_CLOSED_KEY)
       await waitForSnapshot(
         control,
         snapshot =>
