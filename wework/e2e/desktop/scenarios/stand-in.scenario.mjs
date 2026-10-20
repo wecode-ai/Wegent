@@ -173,10 +173,10 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         uiTimeoutMs
       )
       assert.equal(current.assignee_user_id, USER_ID)
-      assert.notEqual(
+      assert.equal(
         current.status,
         'in_review',
-        'Default completion must wait for human submission'
+        'Completion must use the ordinary Runtime-to-Issue status projection'
       )
       assert.equal(requests, 1)
       const catalog = await requestExecutor(control, 'runtime.runner.catalog', {}, uiTimeoutMs)

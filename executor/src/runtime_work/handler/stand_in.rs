@@ -187,7 +187,8 @@ impl RuntimeWorkRpcHandler {
             {
                 continue;
             }
-            let issue_value = serde_json::to_value(&issue).unwrap();
+            let mut issue_value = serde_json::to_value(&issue).unwrap();
+            issue_value["tags"] = issue.metadata["tags"].clone();
             let Some(config) = matching_stand_in(configs, &issue_value) else {
                 continue;
             };
@@ -498,6 +499,9 @@ impl RuntimeWorkRpcHandler {
             request.extra.insert("origin".into(), origin);
             payload["executionRequest"] = json!(request);
         }
+        // Project agents are direct Wework profiles, not backend Teams.
+        payload["executionRequest"]["team_id"] = json!(0);
+        payload["executionRequest"]["user_id"] = config["userId"].clone();
         let metadata = if config["projectStore"] == "local" {
             LocalTaskStore::open(self.task_store_path.as_ref())
                 .map_err(settings_error)?
@@ -579,13 +583,9 @@ fn apply_stand_in_agent(
 
 fn assignment_after_enable(assignment: &Value, config: &Value) -> bool {
     let parse = |value: &Value| {
-        value.as_str().and_then(|text| {
-            chrono::DateTime::parse_from_rfc3339(text).ok().or_else(|| {
-                chrono::NaiveDateTime::parse_from_str(text, "%Y-%m-%dT%H:%M:%S%.f")
-                    .ok()
-                    .map(|time| time.and_utc().fixed_offset())
-            })
-        })
+        value
+            .as_str()
+            .and_then(|text| chrono::DateTime::parse_from_rfc3339(text).ok())
     };
     match (
         parse(&assignment["created_at"]),
@@ -648,15 +648,19 @@ mod tests {
     fn historical_and_invalid_assignments_never_trigger() {
         let settings = json!({"enabledAfter":"2026-10-20T12:00:00Z"});
         assert!(!assignment_after_enable(
-            &json!({"created_at":"2026-10-20T11:59:59"}),
+            &json!({"created_at":"2026-10-20T11:59:59Z"}),
             &settings
         ));
         assert!(assignment_after_enable(
-            &json!({"created_at":"2026-10-20T12:00:01"}),
+            &json!({"created_at":"2026-10-20T12:00:01Z"}),
             &settings
         ));
         assert!(assignment_after_enable(
             &json!({"created_at":"2026-10-20T20:00:01+08:00"}),
+            &settings
+        ));
+        assert!(!assignment_after_enable(
+            &json!({"created_at":"2026-10-20T20:00:01"}),
             &settings
         ));
         assert!(!assignment_after_enable(
