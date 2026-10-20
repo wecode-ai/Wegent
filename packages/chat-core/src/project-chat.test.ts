@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   createProjectChatClient,
+  type LoopItemChangedEvent,
   type ProjectChatMessage,
 } from './project-chat'
 
@@ -39,6 +40,10 @@ describe('createProjectChatClient', () => {
     socket.off.mockReset()
     ensureConnected.mockClear()
     onReconnect.mockReset()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
   })
 
   it('exposes authenticated reconnect notifications for failed subscriptions', () => {
@@ -162,6 +167,7 @@ describe('createProjectChatClient', () => {
   })
 
   it('subscribes to loop-item invalidation events on the authenticated user socket', async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined)
     const onChange = vi.fn()
     const client = createProjectChatClient({
       socketBaseUrl: 'https://cloud.example.com',
@@ -172,11 +178,89 @@ describe('createProjectChatClient', () => {
     const unsubscribe = await client.subscribeLoopItemChanges!(onChange)
 
     expect(ensureConnected).toHaveBeenCalled()
-    expect(socket.on).toHaveBeenCalledWith('wework:loop_item:changed', onChange)
+    const handler = socket.on.mock.calls.find(
+      ([event]) => event === 'wework:loop_item:changed',
+    )?.[1]
+    expect(handler).toBeTypeOf('function')
+    const event = {
+      projectId: 'project-1',
+      itemId: 'issue-1',
+      version: 3,
+      reason: 'user_update',
+      ignoredPayload: 'unrecorded secret',
+    }
+    handler(event)
+    expect(onChange).toHaveBeenCalledWith(event)
+    expect(debug).toHaveBeenCalledOnce()
+    expect(debug.mock.calls[0]?.[1]).toEqual({
+      projectId: event.projectId,
+      itemId: event.itemId,
+      version: event.version,
+      reason: event.reason,
+    })
+    expect(JSON.stringify(debug.mock.calls)).not.toContain(event.ignoredPayload)
     unsubscribe()
+    expect(socket.off).toHaveBeenCalledWith('wework:loop_item:changed', handler)
+  })
+
+  it('receives buffered invalidations delivered before connection readiness resolves', async () => {
+    vi.spyOn(console, 'debug').mockImplementation(() => undefined)
+    const listeners = new Map<string, (event: LoopItemChangedEvent) => void>()
+    socket.on.mockImplementation((event, handler) =>
+      listeners.set(event, handler),
+    )
+    let finishConnection!: () => void
+    ensureConnected.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        finishConnection = resolve
+      }),
+    )
+    const onChange = vi.fn()
+    const client = createProjectChatClient({
+      socketBaseUrl: 'https://cloud.example.com',
+      socketPath: '/socket.io',
+      getToken: () => 'token',
+    })
+    const event: LoopItemChangedEvent = {
+      projectId: 'project-1',
+      itemId: 'issue-1',
+      version: 3,
+      reason: 'user_update',
+    }
+
+    const pending = client.subscribeLoopItemChanges!(onChange)
+    listeners.get('wework:loop_item:changed')?.(event)
+    finishConnection()
+    const unsubscribe = await pending
+    unsubscribe()
+
+    expect(onChange).toHaveBeenCalledExactlyOnceWith(event)
+  })
+
+  it('removes the invalidation listener when connection readiness rejects', async () => {
+    const listeners = new Map<string, (event: LoopItemChangedEvent) => void>()
+    socket.on.mockImplementation((event, handler) =>
+      listeners.set(event, handler),
+    )
+    socket.off.mockImplementation((event, handler) => {
+      if (listeners.get(event) === handler) listeners.delete(event)
+    })
+    const connectionError = new Error('Connection failed')
+    ensureConnected.mockRejectedValueOnce(connectionError)
+    const client = createProjectChatClient({
+      socketBaseUrl: 'https://cloud.example.com',
+      socketPath: '/socket.io',
+      getToken: () => 'token',
+    })
+
+    await expect(client.subscribeLoopItemChanges!(vi.fn())).rejects.toBe(
+      connectionError,
+    )
+
+    expect(listeners.has('wework:loop_item:changed')).toBe(false)
     expect(socket.off).toHaveBeenCalledWith(
       'wework:loop_item:changed',
-      onChange,
+      expect.any(Function),
     )
   })
 

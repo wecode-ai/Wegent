@@ -89,6 +89,7 @@ describe("IssueActivityPanel", () => {
         issues: { markRead },
       } as unknown as Parameters<typeof IssueActivityPanel>[0]["api"];
       const onTaskUpdated = vi.fn();
+      const onTaskRead = vi.fn();
       await act(async () =>
         root.render(
           <IssueActivityPanel
@@ -104,6 +105,7 @@ describe("IssueActivityPanel", () => {
             onCommentsChange={vi.fn()}
             onError={vi.fn()}
             onTaskUpdated={onTaskUpdated}
+            onTaskRead={onTaskRead}
           />,
         ),
       );
@@ -114,11 +116,12 @@ describe("IssueActivityPanel", () => {
       });
       if (succeeds) {
         expect(markRead).toHaveBeenCalledExactlyOnceWith(issue.id, 0);
-        expect(onTaskUpdated).toHaveBeenCalledExactlyOnceWith(readIssue);
+        expect(onTaskRead).toHaveBeenCalledExactlyOnceWith(readIssue);
       } else {
         expect(markRead).not.toHaveBeenCalled();
-        expect(onTaskUpdated).not.toHaveBeenCalled();
+        expect(onTaskRead).not.toHaveBeenCalled();
       }
+      expect(onTaskUpdated).not.toHaveBeenCalled();
       geometry.mockRestore();
     },
   );
@@ -184,6 +187,7 @@ describe("IssueActivityPanel", () => {
           canComment={false}
           translate={createCollaborationTranslator("zh-CN")}
           onCommentsChange={vi.fn()}
+          onTaskRead={vi.fn()}
           onError={vi.fn()}
         />,
       ),
@@ -277,6 +281,7 @@ describe("IssueActivityPanel", () => {
             translate={translate}
             onOpenExecution={setTarget}
             onCommentsChange={vi.fn()}
+            onTaskRead={vi.fn()}
             onError={vi.fn()}
           />
           {target && (
@@ -380,6 +385,7 @@ describe("IssueActivityPanel", () => {
           canComment={false}
           translate={createCollaborationTranslator("zh-CN")}
           onCommentsChange={vi.fn()}
+          onTaskRead={vi.fn()}
           onError={vi.fn()}
           onOpenExecution={vi.fn()}
         />,
@@ -482,6 +488,7 @@ describe("IssueActivityPanel", () => {
           canComment={options.canComment ?? true}
           translate={createCollaborationTranslator("zh-CN")}
           onCommentsChange={onCommentsChange}
+          onTaskRead={vi.fn()}
           onError={options.onError ?? vi.fn()}
         />,
       );

@@ -269,6 +269,42 @@ describe('local delivery API', () => {
     })
   })
 
+  test('advances local content revisions with task changes while reads preserve the revision', async () => {
+    let record = {
+      ...taskRecord,
+      version: 3,
+      metadata: { ...taskRecord.metadata, is_unread: true },
+    }
+    const request = vi.fn(async (method: string) => {
+      if (method === 'todos.list') return [record]
+      if (method === 'todos.get') return record
+      if (method === 'todos.mark_read') {
+        record = { ...record, metadata: { ...record.metadata, is_unread: false } }
+        return record
+      }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    await expect(api.listLoopItems(projectRecord.id)).resolves.toMatchObject({
+      items: [{ content_revision: 3, is_unread: true }],
+    })
+    await expect(api.markLoopItemRead(record.id)).resolves.toMatchObject({
+      content_revision: 3,
+      is_unread: false,
+    })
+
+    record = { ...record, version: 4, metadata: { ...record.metadata, is_unread: true } }
+
+    await expect(api.listLoopItems(projectRecord.id)).resolves.toMatchObject({
+      items: [{ content_revision: 4, is_unread: true }],
+    })
+    await expect(api.getLoopItem(record.id)).resolves.toMatchObject({
+      content_revision: 4,
+      is_unread: true,
+    })
+  })
+
   test.each([
     ['user', '7', { assignee_user_id: 7 }, { assignee_user_id: 7 }, { assignee_user_id: 7 }],
     [

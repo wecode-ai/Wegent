@@ -17,6 +17,7 @@ vi.mock('./TodoEditor', () => ({
     headerActions,
     selectedTaskId,
     deviceNamesById,
+    onRead,
     onUpdated,
     onOpenTaskConversation,
   }: {
@@ -28,6 +29,7 @@ vi.mock('./TodoEditor', () => ({
     headerActions?: React.ReactNode
     selectedTaskId?: string | null
     deviceNamesById?: Readonly<Record<string, string>>
+    onRead?: (item: CloudLoopItem) => void
     onUpdated: (item: CloudLoopItem) => void
     onOpenTaskConversation?: (task: {
       id: number
@@ -44,9 +46,20 @@ vi.mock('./TodoEditor', () => ({
       data-selected-task={selectedTaskId}
       data-device-name={deviceNamesById?.['local-device']}
       data-item-count={allItems.length}
+      data-item-unread={String(item.is_unread)}
+      data-list-item-unread={String(
+        allItems.find(candidate => candidate.id === item.id)?.is_unread
+      )}
     >
       {headerActions}
       <span>{item.title}</span>
+      <button
+        type="button"
+        data-testid="mock-read-item"
+        onClick={() => onRead?.({ ...item, is_unread: false })}
+      >
+        标记已读
+      </button>
       <button
         type="button"
         data-testid="mock-related-task"
@@ -168,5 +181,33 @@ describe('WorkItemContextPanel', () => {
 
     await userEvent.click(screen.getByTestId('mock-update-item'))
     expect(screen.getByTestId('mock-todo-editor')).toHaveTextContent('更新后的工作项')
+  })
+
+  test('keeps read confirmations in the detail and item list', async () => {
+    const unreadItem = { ...item, is_unread: true, content_revision: 1 }
+    const api = {
+      listLoopItems: vi.fn().mockResolvedValue({ items: [unreadItem] }),
+    } as unknown as ProjectSpaceApi
+
+    render(
+      <WorkItemContextPanel
+        api={api}
+        project={project}
+        item={unreadItem}
+        currentTask={{ deviceId: 'local-device', taskId: 'runtime-1' }}
+        onOpenBoard={vi.fn()}
+        onOpenTask={vi.fn()}
+      />
+    )
+
+    const editor = screen.getByTestId('mock-todo-editor')
+    expect(editor).toHaveAttribute('data-item-unread', 'true')
+    expect(editor).toHaveAttribute('data-list-item-unread', 'true')
+
+    await userEvent.click(screen.getByTestId('mock-read-item'))
+
+    expect(editor).toHaveAttribute('data-item-unread', 'false')
+    expect(editor).toHaveAttribute('data-list-item-unread', 'false')
+    expect(editor).toHaveTextContent(unreadItem.title)
   })
 })

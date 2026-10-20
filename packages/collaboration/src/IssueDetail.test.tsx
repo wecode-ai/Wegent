@@ -16,7 +16,8 @@ vi.mock("react", async (importOriginal) => {
   };
 });
 
-vi.mock("./issue-detail", () => ({
+vi.mock("./issue-detail", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./issue-detail")>()),
   createSharedIssueDetailPort: () => ({
     issues: {
       create: vi.fn(),
@@ -28,6 +29,7 @@ vi.mock("./issue-detail", () => ({
 
 import { IssueCreate, IssueDetail } from "./IssueDetail";
 import { SharedIssueDetailEditor } from "./SharedIssueDetailEditor";
+import { IssueActivityPanel } from "./issue-detail/IssueActivityPanel";
 import { collaborationMessages } from "./i18n";
 import type { SharedWorkspaceApi } from "./ports/SharedWorkspaceApi";
 import type { CollaborationIssue, CollaborationProject } from "./types";
@@ -100,6 +102,35 @@ describe("IssueDetail browser due date boundary", () => {
     vi.unstubAllEnvs();
   });
 
+  it("routes activity read confirmations separately from content updates", () => {
+    const onRead = vi.fn();
+    const onChange = vi.fn();
+    const editor = editorFrom(
+      IssueDetail({
+        api: {} as SharedWorkspaceApi,
+        project,
+        issue,
+        allIssues: [issue],
+        comments: [],
+        messages: collaborationMessages.en,
+        onClose: vi.fn(),
+        onRead,
+        onChange,
+        onCommentsChange: vi.fn(),
+        onConflict: vi.fn(),
+        onError: vi.fn(),
+      }),
+    );
+    const activity = editor.props.extensions.renderActivity({ tasks: [] });
+    expect(activity.type).toBe(IssueActivityPanel);
+    const read = { ...issue, is_unread: false };
+    activity.props.onTaskRead(read);
+    expect(onRead).toHaveBeenCalledExactlyOnceWith(read);
+    expect(onChange).not.toHaveBeenCalled();
+    activity.props.onTaskUpdated(issue);
+    expect(onChange).toHaveBeenCalledExactlyOnceWith(issue);
+  });
+
   it.each([
     [
       "create",
@@ -126,6 +157,7 @@ describe("IssueDetail browser due date boundary", () => {
           messages: collaborationMessages["zh-CN"],
           onClose: vi.fn(),
           onChange: vi.fn(),
+          onRead: vi.fn(),
           onCommentsChange: vi.fn(),
           onConflict: vi.fn(),
           onError: vi.fn(),

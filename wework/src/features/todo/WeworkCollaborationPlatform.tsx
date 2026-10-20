@@ -1011,6 +1011,7 @@ export function WeworkSharedProject({
             allIssues,
             assignments,
             taskBindings,
+            onRead,
             onChange,
             onClose,
             onCreateTask,
@@ -1106,6 +1107,7 @@ export function WeworkSharedProject({
                     taskComposer?.issue.id === issue.id ? () => setTaskComposer(null) : closeDrawers
                   }
                   onUpdated={updated => onChange(updated as unknown as CollaborationIssue)}
+                  onRead={updated => onRead(updated as unknown as CollaborationIssue)}
                   onClose={closeDrawers}
                 />
               )}

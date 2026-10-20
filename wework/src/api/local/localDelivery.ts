@@ -818,7 +818,7 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
     can_view_detail: true,
     can_edit: ['Owner', 'Maintainer', 'Developer'].includes(role),
     security_level: record.metadata.security_level === 'related' ? 'related' : 'open',
-    content_revision: 1,
+    content_revision: record.version,
     activity_read_sequence:
       typeof record.metadata.activity_read_sequence === 'number'
         ? record.metadata.activity_read_sequence

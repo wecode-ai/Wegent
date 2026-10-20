@@ -1,3 +1,4 @@
+import { mergeIssueReadConfirmation } from '@wegent/collaboration'
 import { ArrowUpRight } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
@@ -76,6 +77,16 @@ export function WorkItemContextPanel({
           project={project}
           allItems={allItems}
           onClose={() => undefined}
+          onRead={updated => {
+            setCurrentItem(current => mergeIssueReadConfirmation(current, updated))
+            setAllItems(items =>
+              items.map(candidate =>
+                candidate.id === updated.id
+                  ? mergeIssueReadConfirmation(candidate, updated)
+                  : candidate
+              )
+            )
+          }}
           onUpdated={updated => {
             setCurrentItem(updated)
             setAllItems(items =>

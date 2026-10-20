@@ -94,6 +94,7 @@ interface TaskActivityViewProps {
   project: CloudProject
   task: CloudLoopItem
   currentUserId?: string | number
+  onTaskRead?: (task: CloudLoopItem) => void
   onTaskUpdated?: (task: CloudLoopItem) => void
   projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
   localProjects?: ProjectWithTasks[]
@@ -217,6 +218,7 @@ export function TaskActivityView({
   project,
   task,
   currentUserId,
+  onTaskRead,
   onTaskUpdated,
   projectChatAgentApi,
   localProjects = [],
@@ -474,13 +476,13 @@ export function TaskActivityView({
       try {
         const updated = await projectDeliveryApi.markLoopItemRead(task.id, sequence)
         setReadError(null)
-        onTaskUpdated?.(updated)
+        onTaskRead?.(updated)
       } catch (cause) {
         setReadError(cause instanceof Error ? cause.message : t('workbench.save_failed'))
         throw cause
       }
     },
-    [onTaskUpdated, projectDeliveryApi, t, task.id]
+    [onTaskRead, projectDeliveryApi, t, task.id]
   )
   const { listRef, followCard, scrollTaskCommentsToBottom, revealCardBottom } =
     useIssueActivityScroll({

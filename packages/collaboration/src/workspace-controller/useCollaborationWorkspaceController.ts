@@ -5,6 +5,12 @@
 import { useEffect, useMemo, useReducer, useRef } from "react";
 
 import { collectIssueSubtreeIds, removeIssueSubtree } from "../board";
+import {
+  mergeIssueReadConfirmation,
+  mergeIssueReadState,
+  newestIssue,
+  type IssueReadProjection,
+} from "./issueReadState";
 import type {
   SharedWorkspaceApi,
   WorkspaceBoardSnapshot,
@@ -28,7 +34,7 @@ import type {
   CollaborationStatus,
 } from "../types";
 
-export interface CollaborationWorkspaceControllerState {
+export interface CollaborationWorkspaceControllerState extends IssueReadProjection {
   projects: CollaborationProject[];
   myWork: WorkspaceMyWorkItem[];
   projectItems: Record<string, CollaborationIssue[]>;
@@ -95,6 +101,7 @@ export interface CollaborationWorkspaceControllerCommands {
   getIssue(issueId: string): Promise<CollaborationIssue | null>;
   loadSelectedIssue(issueId: string): Promise<CollaborationIssue | null>;
   markIssueRead(issue: CollaborationIssue): Promise<CollaborationIssue | null>;
+  confirmIssueRead(issue: CollaborationIssue): CollaborationIssue;
   clearProject(): void;
   clearSelectedIssue(): void;
   createProject(
@@ -168,6 +175,7 @@ const unavailableCollaborationWorkspaceControllerCommands: CollaborationWorkspac
     getIssue: async () => null,
     loadSelectedIssue: async () => null,
     markIssueRead: async () => null,
+    confirmIssueRead: (issue) => issue,
     clearProject: () => undefined,
     clearSelectedIssue: () => undefined,
     createProject: async () => null,
@@ -263,6 +271,7 @@ export type CollaborationWorkspaceControllerAction =
   | { type: "merge-reorder-issues"; issues: CollaborationIssue[] }
   | { type: "append-issue"; issue: CollaborationIssue }
   | { type: "replace-issue"; issue: CollaborationIssue }
+  | { type: "issue-read"; issue: CollaborationIssue }
   | { type: "remove-issue"; issueId: string }
   | { type: "replace-attachments"; attachments: CollaborationAttachment[] }
   | { type: "replace-comments"; comments: CollaborationComment[] }
@@ -273,6 +282,7 @@ export type CollaborationWorkspaceControllerAction =
 
 export const initialCollaborationWorkspaceControllerState: CollaborationWorkspaceControllerState =
   {
+    confirmedIssueReads: {},
     projects: [],
     myWork: [],
     projectItems: {},
@@ -298,15 +308,6 @@ export const initialCollaborationWorkspaceControllerState: CollaborationWorkspac
     errorSource: null,
   };
 
-function newestIssue(
-  current: CollaborationIssue | null | undefined,
-  incoming: CollaborationIssue,
-): CollaborationIssue {
-  return current?.id === incoming.id && current.version > incoming.version
-    ? current
-    : incoming;
-}
-
 function mergeReorderIssues(
   current: CollaborationIssue[],
   incoming: CollaborationIssue[],
@@ -323,6 +324,17 @@ function mergeReorderIssues(
 }
 
 export function collaborationWorkspaceControllerReducer(
+  state: CollaborationWorkspaceControllerState,
+  action: CollaborationWorkspaceControllerAction,
+): CollaborationWorkspaceControllerState {
+  return mergeIssueReadState(
+    state,
+    reduceWorkspaceState(state, action),
+    action.type === "issue-read" ? action.issue : undefined,
+  );
+}
+
+function reduceWorkspaceState(
   state: CollaborationWorkspaceControllerState,
   action: CollaborationWorkspaceControllerAction,
 ): CollaborationWorkspaceControllerState {
@@ -605,6 +617,7 @@ export function collaborationWorkspaceControllerReducer(
         },
       };
     case "replace-issue":
+    case "issue-read":
       return {
         ...state,
         selectedIssue:
@@ -664,6 +677,7 @@ interface CommandEnvironment {
   getSelectedIssue(): CollaborationIssue | null;
   getExternalBoardState(): Pick<
     CollaborationWorkspaceControllerState,
+    | "confirmedIssueReads"
     | "project"
     | "issues"
     | "taskBindings"
@@ -890,6 +904,24 @@ export function createCollaborationWorkspaceControllerCommands({
     string,
     Promise<CollaborationIssue | null>
   >();
+  const confirmIssueRead = (
+    updated: CollaborationIssue,
+  ): CollaborationIssue => {
+    const state = getExternalBoardState();
+    const current = state.issues.find(
+      (candidate) => candidate.id === updated.id,
+    );
+    const selected = getSelectedIssue();
+    const latest =
+      selected?.id === updated.id ? newestIssue(current, selected) : current;
+    const resolved = mergeIssueReadConfirmation(
+      latest,
+      updated,
+      state.confirmedIssueReads[updated.id],
+    );
+    dispatch({ type: "issue-read", issue: updated });
+    return resolved;
+  };
   const markIssueRead = (
     issue: CollaborationIssue,
   ): Promise<CollaborationIssue | null> => {
@@ -898,33 +930,7 @@ export function createCollaborationWorkspaceControllerCommands({
     if (pending) return pending;
     const request = api.issues
       .markRead(issue.id)
-      .then((updated) => {
-        const current = getExternalBoardState().issues.find(
-          (candidate) => candidate.id === issue.id,
-        );
-        const selected = getSelectedIssue();
-        const latest =
-          selected?.id === issue.id &&
-          (!current || selected.version >= current.version)
-            ? selected
-            : current;
-        const resolved =
-          latest &&
-          (latest.version > updated.version ||
-            (latest.content_revision ?? 0) > (updated.content_revision ?? 0))
-            ? {
-                ...latest,
-                is_unread:
-                  (latest.content_revision ?? 0) >
-                  (updated.content_revision ?? 0)
-                    ? latest.is_unread
-                    : updated.is_unread,
-              }
-            : updated;
-        markProjectMutated(issue.cloud_project_id);
-        dispatch({ type: "replace-issue", issue: resolved });
-        return resolved;
-      })
+      .then(confirmIssueRead)
       .catch(() => {
         reportError(messages.saveFailed);
         return null;
@@ -1204,6 +1210,7 @@ export function createCollaborationWorkspaceControllerCommands({
       }
     },
     markIssueRead,
+    confirmIssueRead,
     async loadSelectedIssue(issueId) {
       const revision = ++selectedIssueLoadRevision;
       const attachmentsRevision = collectionRevision(

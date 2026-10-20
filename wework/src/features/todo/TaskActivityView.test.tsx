@@ -339,12 +339,14 @@ describe('TaskActivityView', () => {
           unsubscribe: vi.fn(),
         }),
       } as unknown as ProjectChatClient
+      const onTaskRead = vi.fn()
       const onTaskUpdated = vi.fn()
       const { rerender } = render(
         <TaskActivityView
           client={client}
           project={project}
           task={task}
+          onTaskRead={onTaskRead}
           onTaskUpdated={onTaskUpdated}
           issueTimeline
           linear
@@ -352,12 +354,14 @@ describe('TaskActivityView', () => {
       )
 
       await waitFor(() => expect(expectedRead).toHaveBeenCalledExactlyOnceWith(task.id, 0))
-      expect(onTaskUpdated).toHaveBeenCalledExactlyOnceWith(updated)
+      expect(onTaskRead).toHaveBeenCalledExactlyOnceWith(updated)
+      expect(onTaskUpdated).not.toHaveBeenCalled()
       rerender(
         <TaskActivityView
           client={client}
           project={project}
           task={updated}
+          onTaskRead={onTaskRead}
           onTaskUpdated={onTaskUpdated}
           issueTimeline
           linear
@@ -513,21 +517,25 @@ describe('TaskActivityView', () => {
     const client = {
       subscribe: vi.fn().mockResolvedValue({ snapshot: { messages: [] }, unsubscribe: vi.fn() }),
     } as unknown as ProjectChatClient
+    const onTaskRead = vi.fn()
     const onTaskUpdated = vi.fn()
     render(
       <TaskActivityView
         client={client}
         project={{ id: '11', name: 'Wework' } as never}
         task={task}
+        onTaskRead={onTaskRead}
         onTaskUpdated={onTaskUpdated}
         issueTimeline
         linear
       />
     )
     expect(await screen.findByRole('alert')).toHaveTextContent('read persistence failed')
+    expect(onTaskRead).not.toHaveBeenCalled()
     expect(onTaskUpdated).not.toHaveBeenCalled()
     fireEvent.scroll(screen.getByTestId('cloud-task-activity-list'))
-    await waitFor(() => expect(onTaskUpdated).toHaveBeenCalledOnce())
+    await waitFor(() => expect(onTaskRead).toHaveBeenCalledOnce())
+    expect(onTaskUpdated).not.toHaveBeenCalled()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(markLoopItemRead.mock.calls).toEqual([
       [task.id, 0],
@@ -1610,6 +1618,7 @@ describe('TaskActivityView', () => {
     // Content revisions are acknowledged independently from the activity cursor.
     const updated = { ...task, is_unread: false, activity_read_sequence: 2 }
     markLoopItemRead.mockResolvedValue(updated)
+    const onTaskRead = vi.fn()
     const onTaskUpdated = vi.fn()
     const messages = [1, 2, 3].map(sequence => ({
       ...userMessage,
@@ -1640,6 +1649,7 @@ describe('TaskActivityView', () => {
         client={client}
         project={{ id: '11', name: 'Wework' } as never}
         task={task as never}
+        onTaskRead={onTaskRead}
         onTaskUpdated={onTaskUpdated}
         statusHistory={[{ from_status: '', to_status: 'inbox', at: '2026-10-13T00:00:00Z' }]}
         issueTimeline
@@ -1648,7 +1658,8 @@ describe('TaskActivityView', () => {
     )
     await waitFor(() => expect(markLoopItemRead).toHaveBeenCalledWith(task.id, 2))
     expect(markLoopItemRead).not.toHaveBeenCalledWith(task.id, 3)
-    expect(onTaskUpdated).toHaveBeenCalledWith(updated)
+    expect(onTaskRead).toHaveBeenCalledWith(updated)
+    expect(onTaskUpdated).not.toHaveBeenCalled()
   })
 
   it('shows parent comments from oldest to newest without scrolling on load', async () => {

@@ -5,8 +5,11 @@ import '@/i18n'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { TodoEditor } from './TodoEditor'
 
+const renderActivity = vi.hoisted(() => vi.fn())
+
 vi.mock('./TaskActivityView', () => ({
-  TaskActivityView: () => {
+  TaskActivityView: (props: unknown) => {
+    renderActivity(props)
     const [draft, setDraft] = useState('')
     return (
       <textarea
@@ -78,4 +81,31 @@ it('starts a fresh activity draft when opening a different Issue', () => {
 
   expect(screen.getByTestId('activity-draft')).not.toBe(composer)
   expect(screen.getByTestId('activity-draft')).toHaveValue('')
+})
+
+it('reports activity read confirmations without reporting a content update', () => {
+  const onRead = vi.fn()
+  const onUpdated = vi.fn()
+  render(
+    <TodoEditor
+      mode="edit"
+      item={item}
+      project={project}
+      allItems={[item]}
+      onRead={onRead}
+      onUpdated={onUpdated}
+      onClose={vi.fn()}
+      api={api}
+      projectChatClient={client}
+    />
+  )
+  const activity = renderActivity.mock.calls.at(-1)?.[0] as {
+    onTaskRead: (updated: CloudLoopItem) => void
+  }
+  const read = { ...item, is_unread: false, activity_read_sequence: 5 }
+
+  activity.onTaskRead(read)
+
+  expect(onRead).toHaveBeenCalledExactlyOnceWith(read)
+  expect(onUpdated).not.toHaveBeenCalled()
 })
