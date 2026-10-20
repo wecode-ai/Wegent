@@ -1067,7 +1067,12 @@ async function pressNativeDesktopControlKey(
   const recordKey = (event: KeyboardEvent) => received.push(event)
   window.addEventListener(eventType, recordKey, true)
   try {
-    await invokeDesktopHost('e2e.pressKey', { windowLabel, key, phase })
+    await invokeDesktopHost('e2e.pressKey', {
+      windowLabel,
+      key,
+      phase,
+      focus: false,
+    })
     await waitForDesktopControlTick()
     if (!received.some(event => event.isTrusted && event.target === element)) {
       throw new Error(

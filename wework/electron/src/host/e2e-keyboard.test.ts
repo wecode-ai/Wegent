@@ -93,6 +93,18 @@ describe('isolated native keyboard verification', () => {
     ])
   })
 
+  test('can send native input without re-focusing the window', async () => {
+    const { view, contents, focusWindow } = fixture()
+    await sendE2EKey(contents, 'Enter', focusWindow, environment, 'press', false)
+    expect(focusWindow).not.toHaveBeenCalled()
+    expect(view.focus).not.toHaveBeenCalled()
+    expect(view.sendInputEvent.mock.calls).toEqual([
+      [{ type: 'keyDown', keyCode: 'Enter', modifiers: [] }],
+      [{ type: 'char', keyCode: '\r', modifiers: [] }],
+      [{ type: 'keyUp', keyCode: 'Enter', modifiers: [] }],
+    ])
+  })
+
   test('inserts ordinary text through a native character event', async () => {
     const { view, contents, focusWindow } = fixture()
     await sendE2EKey(contents, 'x', focusWindow, environment)
