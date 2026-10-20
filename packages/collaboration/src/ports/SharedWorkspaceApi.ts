@@ -915,7 +915,29 @@ export interface SharedWorkspaceRuntimeApi extends RuntimeConversationClient {
   ): Promise<Blob>;
 }
 
+export interface WorkspaceStandInSettings {
+  id?: string;
+  name?: string;
+  tags?: string[];
+  agentId?: string | null;
+  enabled: boolean;
+  prompt: string;
+  executionDeviceId: string;
+  version: number;
+}
+
 export interface SharedWorkspaceApi {
+  standIn?: {
+    get(
+      projectId: string,
+      deviceId?: string,
+      standInId?: string,
+    ): Promise<WorkspaceStandInSettings>;
+    save(
+      projectId: string,
+      settings: WorkspaceStandInSettings,
+    ): Promise<WorkspaceStandInSettings>;
+  };
   /** Device-addressed execution transcripts and live runtime events. */
   runtime?: SharedWorkspaceRuntimeApi;
   /** Live project threads, when supported by the host. */

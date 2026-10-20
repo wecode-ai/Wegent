@@ -85,6 +85,7 @@ export type ProjectBoardIssueCardRenderer = (
 ) => ReactNode;
 
 interface ProjectBoardAdapterProps {
+  toolbarAction?: ReactNode;
   runtime?: SharedWorkspaceRuntimeApi;
   previewDisabled?: boolean;
   onMarkRead?(issue: CollaborationIssue): void;
@@ -130,6 +131,7 @@ function issueSearchText(
 }
 
 export function ProjectBoardAdapter({
+  toolbarAction,
   runtime,
   previewDisabled = false,
   translate,
@@ -245,6 +247,7 @@ export function ProjectBoardAdapter({
       className="flex min-h-0 min-w-0 flex-1 flex-col"
     >
       <ProjectBoardBody<CollaborationIssue>
+        toolbarAction={toolbarAction}
         state={controller.state}
         activeDragItemId={controller.activeDragItemId}
         boardError={boardError ?? runtimeWork?.error ?? null}

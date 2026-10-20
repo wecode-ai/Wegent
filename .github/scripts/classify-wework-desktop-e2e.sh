@@ -13,6 +13,8 @@ core_segments=(
   collaboration-worktree-policy
   collaboration-group-onboarding
   collaboration-local-agent-dispatch
+  stand-in
+  stand-in-cloud
   collaboration-remote-agent-dispatch
   collaboration-local-group-coordinate
   collaboration-remote-group-coordinate
@@ -176,7 +178,7 @@ core_shards=(
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,task-board-bulk-actions,change-request-status,git-commit-generation,context-compaction
   window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
-  project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,collaboration-local-group-coordinate,collaboration-human-round-resume
+  project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,stand-in,collaboration-local-group-coordinate,collaboration-human-round-resume
   resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-task-discovery,collaboration-app-queue-identity,collaboration-issue-archive,collaboration-local-group-cancellation
   workspace-attachments,automation-lifecycle,drawing-attachment
   project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention
@@ -185,7 +187,7 @@ core_shards=(
   local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification,collaboration-issue-mcp-comments
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,model-overload-recovery
   model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy
-  collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details
+  collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details,stand-in-cloud
 )
 
 validate_core_shards() {
@@ -324,6 +326,8 @@ select_collaboration_dispatch_checkpoints() {
   select_target "core:collaboration-worktree-policy"
   select_target "core:project-assignment-notification"
   select_target "core:collaboration-local-agent-dispatch"
+  select_target "core:stand-in"
+  select_target "core:stand-in-cloud"
   select_target "core:collaboration-remote-agent-dispatch"
   select_target "core:collaboration-local-group-coordinate"
   select_target "core:collaboration-remote-group-coordinate"
@@ -692,6 +696,11 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/collaboration-group-onboarding.scenario.mjs)
       select_target "core:collaboration-group-onboarding"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/stand-in.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-cloud.scenario.mjs|wework/src/features/todo/StandInIcon.tsx|wework/src/features/todo/useStandInProjects.ts|wework/src/features/todo/useStandInProjects.test.tsx|wework/src/features/todo/StandInPopover.tsx|wework/src/features/todo/StandInPopover.test.tsx|wework/src/api/standIn.ts|wework/src/api/standIn.test.ts|executor/src/runtime_work/handler/stand_in.rs|executor/src/task_runtime/stand_in.rs)
+      select_target "core:stand-in"
+      select_target "core:stand-in-cloud"
       return
       ;;
     wework/e2e/desktop/scenarios/collaboration-local-agent-dispatch.scenario.mjs)

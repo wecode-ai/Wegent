@@ -5170,5 +5170,32 @@
     "without_notification": "不通知",
     "with_notification": "通知对方",
     "connect": "连接云端后查看通知"
+  },
+  "standIn": {
+    "title": "我的替身",
+    "close": "关闭",
+    "auto": "开启替身",
+    "prompt": "你希望替身怎么做？（选填）",
+    "prompt_placeholder": "例如：先给出处理思路，完成后说明做了什么、验证了什么；遇到不确定的地方先问我。",
+    "current_device": "当前设备",
+    "device": "在哪里处理",
+    "select_device": "选择设备",
+    "device_unavailable": "已选设备不可用，请重新选择",
+    "offline": "离线",
+    "no_permission": "需要项目开发者权限才能开启替身。",
+    "future_only": "已有任务不会自动开始处理",
+    "cancel": "取消",
+    "save": "保存",
+    "saving": "保存中…",
+    "loading": "加载中…",
+    "reload": "重新加载",
+    "saved": "替身设置已保存",
+    "enabled": "我的替身 · 自动处理已开启",
+    "project_enabled": "替身已开启",
+    "description": "忙碌时，让替身替你接手任务。它会处理新分配给你的任务，完成后由你检查结果。",
+    "agent": "使用哪个智能体",
+    "default_agent": "通用助手（默认）",
+    "agent_unavailable": "已选智能体暂不可用",
+    "agent_load_failed": "暂时无法加载智能体，请重新打开设置重试。"
   }
 }

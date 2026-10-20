@@ -1123,6 +1123,7 @@ function CollaborationPlatformNavigation({
                             })
                           }
                         >
+                          {host.renderProjectSidebarBadge?.(project)}
                           <span>{project.name}</span>
                         </button>
                         <div className="collaboration-project-row-actions">
