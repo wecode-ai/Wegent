@@ -113,6 +113,7 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
       await control.command('click', '[data-testid="cancel-goal-draft-button"]')
       await control.command('click', '[data-testid="stand-in-auto"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
+      await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
       saved = await requestExecutor(
         control,
         'runtime.stand_in.get',

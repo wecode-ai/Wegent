@@ -104,6 +104,54 @@ async fn existing_manual_binding_prevents_another_device_from_creating_a_task() 
 }
 
 #[tokio::test]
+async fn manual_cloud_retry_reaches_preparation_without_mutating_an_existing_binding() {
+    let mutations = Arc::new(AtomicUsize::new(0));
+    let writes = mutations.clone();
+    let router = Router::new()
+        .route("/api/users/me", get(|| async { Json(json!({"id":7})) }))
+        .route("/api/v1/cloud-projects/project", get(|| async { Json(json!({"access_role":"Developer"})) }))
+        .route("/api/v1/cloud-projects/project/execution-environments", get(|| async { Json(json!({"items":[{"device_key":"mac","can_use":true}]})) }))
+        .route("/api/v1/loop-items/issue/assignments", get(|| async { Json(json!({"items":[{"id":"assignment","status":"active"}]})) }))
+        .route("/api/v1/loop-items/issue/tasks", get(|| async { Json(json!([{"human_assignment_id":"human","device_id":"mac","task_id":"stand-in-human"}])) }).post(move || {
+            writes.fetch_add(1, Ordering::SeqCst);
+            async { Json(json!({})) }
+        }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
+    handler.worktrees = WorktreeManager::new(root.path().join("worktrees.json"));
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
+        backend_url: url,
+        auth_token: "test".into(),
+        ..Default::default()
+    })));
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: "stand-in-human".into(),
+        status: "failed".into(),
+        ..RuntimeTaskLink::default()
+    });
+    let mut config = json!({"projectId":"project","projectStore":"cloud","userId":7,"manual":true,"workspace":{"projectKey":"unregistered-retry-project"}});
+    let issue = json!({"id":"issue","assignee_user_id":7,"human_task_binding":{"humanAssignmentId":"human","assignmentId":"assignment"}});
+    let error = handler
+        .start_cloud_stand_in(&config, &issue)
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "workspace_unavailable");
+    config["manual"] = json!(false);
+    handler.start_cloud_stand_in(&config, &issue).await.unwrap();
+    assert_eq!(mutations.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        handler.local_task_link("stand-in-human").unwrap().status,
+        "failed"
+    );
+    server.abort();
+}
+
+#[tokio::test]
 async fn rejected_local_creation_rolls_back_the_issue_binding() {
     let root = tempfile::tempdir().unwrap();
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");

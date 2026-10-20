@@ -264,6 +264,9 @@ export function StandInPopover({
     row => row.projectId !== project.id || row.projectStore !== projectStore
   )
   const agentMissing = Boolean(draft.agentId && !agents.some(agent => agent.id === draft.agentId))
+  const hasChanges =
+    JSON.stringify(draft) !==
+    JSON.stringify({ ...saved, executionDeviceId: saved.executionDeviceId || currentDeviceId })
   const editor = (
     <>
       <div className="p-4">
@@ -489,7 +492,7 @@ export function StandInPopover({
             </button>
           </div>
         )}
-        {(draft.enabled || saved.enabled || embedded) && (
+        {(draft.enabled || saved.enabled || embedded || (loaded && hasChanges)) && (
           <div className="mt-4 flex items-center justify-end gap-2">
             <button
               type="button"

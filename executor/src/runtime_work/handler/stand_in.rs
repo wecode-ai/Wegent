@@ -510,12 +510,23 @@ impl RuntimeWorkRpcHandler {
                 None,
             )
             .await?;
-        if existing
+        if let Some(row) = existing
             .as_array()
             .into_iter()
             .flatten()
-            .any(|row| row["human_assignment_id"] == human_id)
+            .find(|row| row["human_assignment_id"] == human_id)
         {
+            let task_id = format!("stand-in-{human_id}");
+            if config["manual"] == true
+                && row["device_id"] == self.device_id
+                && row["task_id"] == task_id
+                && self
+                    .local_task_link(&task_id)
+                    .is_some_and(|task| task.status == "failed")
+            {
+                let payload = self.prepare_stand_in_task(config, issue, binding).await?;
+                self.dispatch_stand_in_task(payload, true).await?;
+            }
             return Ok(());
         }
         let payload = self.prepare_stand_in_task(config, issue, binding).await?;
@@ -571,23 +582,7 @@ impl RuntimeWorkRpcHandler {
             )
             .await?;
         }
-        let result = if retry {
-            self.send_message(payload).await
-        } else {
-            self.create_task(payload).await
-        };
-        let result = result.and_then(|result| {
-            if result["success"] == false || result["accepted"] == false {
-                Err(AppIpcError::new(
-                    "stand_in_start_failed",
-                    result["error"]
-                        .as_str()
-                        .unwrap_or("Stand-in execution was not accepted"),
-                ))
-            } else {
-                Ok(result)
-            }
-        });
+        let result = self.dispatch_stand_in_task(payload, retry).await;
         if let Err(error) = result {
             let cleanup = if local {
                 LocalTaskStore::open(self.task_store_path.as_ref())
@@ -612,6 +607,30 @@ impl RuntimeWorkRpcHandler {
         }
         Ok(())
     }
+    async fn dispatch_stand_in_task(
+        &self,
+        payload: Value,
+        retry: bool,
+    ) -> Result<Value, AppIpcError> {
+        let result = if retry {
+            self.send_message(payload).await
+        } else {
+            self.create_task(payload).await
+        };
+        result.and_then(|result| {
+            if result["success"] == false || result["accepted"] == false {
+                Err(AppIpcError::new(
+                    "stand_in_start_failed",
+                    result["error"]
+                        .as_str()
+                        .unwrap_or("Stand-in execution was not accepted"),
+                ))
+            } else {
+                Ok(result)
+            }
+        })
+    }
+
     async fn start_local_stand_in(
         &self,
         config: &Value,

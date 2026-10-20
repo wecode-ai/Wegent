@@ -109,6 +109,24 @@ describe('StandInPopover', () => {
     expect(screen.getByTestId('stand-in-open').querySelectorAll('circle')).toHaveLength(2)
   })
 
+  it('saves manual-only edits after enabling and disabling an initially disabled profile', async () => {
+    const { props, save } = fixture()
+    const user = userEvent.setup()
+    render(<StandInPopover {...props} />)
+    await user.click(screen.getByTestId('stand-in-open'))
+    await user.click(await screen.findByTestId('stand-in-auto'))
+    await user.type(screen.getByTestId('stand-in-prompt'), 'Manual review')
+    await user.click(screen.getByTestId('stand-in-auto'))
+    expect(screen.queryByTestId('stand-in-prompt')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('stand-in-save'))
+    await waitFor(() =>
+      expect(save).toHaveBeenCalledWith(
+        'project',
+        expect.objectContaining({ enabled: false, prompt: 'Manual review' })
+      )
+    )
+  })
+
   it('lets users choose a project agent and saves its reference with supplementary instructions', async () => {
     const { props, save } = fixture()
     const user = userEvent.setup()
