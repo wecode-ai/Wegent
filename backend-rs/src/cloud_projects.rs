@@ -4,13 +4,13 @@
 
 //! Cloud-project reads and migration candidates.
 //!
-//! The selected project-list API and project execution-environment API use
+//! The selected project list, detail and execution-environment APIs use
 //! `collaboration_access` to enforce the approved CP contract. A single query
 //! resolves explicit and inherited grants, a unique active parent, provenance,
 //! and read-only public discovery. Historical creators receive no implicit grant.
 //!
-//! Unselected route bodies remain migration candidates. The shared point-access
-//! guard uses the same policy; route ownership is defined by config/routes.toml.
+//! Unselected route bodies remain migration candidates. Route ownership is
+//! defined by config/routes.toml.
 use brz_http_server::StatusCode;
 use brz_json::{JsonProjection, OpaqueJson};
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlRow};
@@ -300,8 +300,14 @@ async fn get_cloud_project(
     #[inject(state)] state: &AppState,
     project_id: &str,
     #[auth] current_user: SessionUser,
-) -> Result<CloudProjectBody, FastApiError> {
-    cloud_project(state, project_id, &current_user).await
+) -> Result<collaboration_access::CollaborativeProject, FastApiError> {
+    cloud_project(
+        &state.mysql,
+        project_id,
+        current_user.0.id,
+        &current_user.0.user_name,
+    )
+    .await
 }
 
 /// `project_id: int` path parameter: FastAPI parses it as an integer and
@@ -323,53 +329,22 @@ fn cloud_project_not_found() -> FastApiError {
     FastApiError::detail(StatusCode::NOT_FOUND, "Cloud project not found")
 }
 
-/// Handler body for `GET /api/v1/cloud-projects/{project_id}`.
-///
-/// Mirrors `app.api.endpoints.cloud_projects.get_cloud_project`:
-/// `cloud_project_service.get(db, project_id, current_user.id)` resolves the
-/// project through one `require_cloud_project_role` read, then
-/// `_project_response(db, project, current_user)` =
-/// `responses.project_response` re-runs `require_cloud_project_role` for the
-/// effective role and adds the `_parent_contexts` and `_all_user_grant_roles`
-/// reads before rendering `CloudProjectResponse`.
-async fn cloud_project(
-    state: &AppState,
+/// Resolve project detail with the catalog's authorization and response projection.
+async fn cloud_project<M: Mysql>(
+    mysql: &M,
     project_id: &str,
-    current_user: &SessionUser,
-) -> Result<CloudProjectBody, FastApiError> {
+    user_id: i32,
+    user_name: &str,
+) -> Result<collaboration_access::CollaborativeProject, FastApiError> {
     let project_number = parse_project_id(project_id)?;
-    // `cloud_project_service.get` -> `require_cloud_project_role(...).project`.
-    let (project, _) = project_access(&state.mysql, project_number, current_user.0.id)
-        .await
-        .map_err(internal_error)?
-        .ok_or_else(cloud_project_not_found)?;
-
-    // `_project_response` re-runs `require_cloud_project_role(db,
-    // int(project.id), current_user.id, Viewer)` for the resolved role.
-    let project_number: i64 = project.id.parse().map_err(|_| cloud_project_not_found())?;
-    let (_, role_priority) = project_access(&state.mysql, project_number, current_user.0.id)
-        .await
-        .map_err(internal_error)?
-        .ok_or_else(cloud_project_not_found)?;
-
-    let project_ids = [project.id.clone()];
-    let contexts = parent_contexts(&state.mysql, &project_ids)
-        .await
-        .map_err(internal_error)?;
-    let all_user_roles = all_user_grant_roles(&state.mysql, &project_ids)
-        .await
-        .map_err(internal_error)?;
-
-    Ok(response::project_response(
-        &project,
-        current_user.0.id,
-        &current_user.0.user_name,
-        // The point union only emits priorities 0..=4, all of which satisfy the
-        // Viewer requirement; the source indexes `ROLES_BY_PRIORITY` plainly.
-        role_for_priority(role_priority).unwrap_or("RestrictedAnalyst"),
-        all_user_roles.get(&project.id).map(String::as_str),
-        contexts.get(&project.id),
-    ))
+    let project =
+        collaboration_access::authorized_projects(mysql, user_id, Some(project_number), None)
+            .await
+            .map_err(internal_error)?
+            .into_iter()
+            .next()
+            .ok_or_else(cloud_project_not_found)?;
+    Ok(project.response(user_id, user_name))
 }
 
 pub(crate) fn internal_error(error: brz_mysql::MysqlError) -> FastApiError {
@@ -473,6 +448,43 @@ async fn project_chat_agents(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn cp06_cp13_detail_uses_catalog_authorization_and_denies_missing_access() {
+        let mysql = crate::sql_test_support::KindQueryCapture::default();
+        let result = cloud_project(&mysql, "1001", 52, "historical-creator").await;
+        let error = result
+            .err()
+            .expect("missing authorization must deny access");
+        assert_eq!(error.status(), StatusCode::NOT_FOUND);
+        assert_eq!(error.detail_message(), Some("Cloud project not found"));
+
+        let queries = mysql.queries();
+        assert_eq!(queries.len(), 1);
+        let expected = collaboration_access::access_sql(52, Some(1001), None)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(queries[0].sql, expected);
+    }
+
+    #[tokio::test]
+    async fn detail_rejects_invalid_project_id_before_querying_permissions() {
+        let mysql = crate::sql_test_support::KindQueryCapture::default();
+        let result = cloud_project(&mysql, "invalid", 52, "reader").await;
+        let error = result.err().expect("invalid project ID must be rejected");
+        assert_eq!(error.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&error.validation_detail()).unwrap(),
+            json!([{
+                "type": "int_parsing",
+                "loc": ["path", "project_id"],
+                "msg": "Input should be a valid integer, unable to parse string as an integer",
+                "input": "invalid",
+            }])
+        );
+        assert!(mysql.queries().is_empty());
+    }
 
     #[test]
     fn placeholders_render_one_marker_per_project() {
