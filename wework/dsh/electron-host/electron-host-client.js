@@ -4,6 +4,8 @@ import { createInterface } from 'node:readline'
 export const ELECTRON_HOST_PROTOCOL_VERSION = 1
 const MAX_FRAME_BYTES = 64 * 1024 * 1024
 const DEFAULT_TIMEOUT_MS = 120_000
+const RUNTIME_PREPARATION_TIMEOUT_MS = 15 * 60_000
+const RUNTIME_PREPARATION_CAPABILITIES = new Set(['smartApps.start', 'smartApps.verify'])
 const DEFAULT_PRINCIPAL = '@wegent/dsh-app-wework'
 // Native dialogs complete when the user responds, regardless of elapsed time.
 const USER_INTERACTION_CAPABILITIES = new Set(['dialog.open', 'dialog.save', 'dialog.message'])
@@ -139,7 +141,9 @@ export class ElectronHostClient {
       }
       return await withTimeout(
         response.promise,
-        this.timeoutMs,
+        RUNTIME_PREPARATION_CAPABILITIES.has(capability)
+          ? Math.max(this.timeoutMs, RUNTIME_PREPARATION_TIMEOUT_MS)
+          : this.timeoutMs,
         `Electron host request timed out: ${capability}`
       )
     } finally {

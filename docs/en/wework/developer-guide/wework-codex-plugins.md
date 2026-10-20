@@ -173,3 +173,13 @@ When the user clicks "Try in chat" from plugin detail or marketplace rows, Wewor
 Backend accepts both Codex and Claude Code plugin packages for upload, cloud marketplace publication, installation, and device synchronization. It normalizes each stored package with manifests for both runtimes. Backend installation records are the source of truth for the Wegent cloud marketplace; local custom marketplaces and the OpenAI official marketplace still use the local Codex app-server.
 
 After catalog rebuilds or migrations, Backend reconciles installed Kinds by checking `pluginId`, `releaseId`, `source.catalogItemId`, and `source.marketplace`. Even when the Plugin and Release IDs are unchanged, a `source.marketplace` value that no longer matches the plugin's current visibility-derived marketplace must update the installed record and reset failed device installation state. This keeps installed rows moving from `wework` to `wegent` when visibility changes from `public` to `workspace` instead of incorrectly treating the row as a no-op.
+
+## Project-space Issue comments
+
+Plugins such as PR Review read Issue activity discussions with `wework_space.list_board_item_comments` and publish visible comments with `add_board_item_comment`. Both tools reuse project/Issue permissions and the activity message store. The returned comment ID is the activity message ID. Existing Socket.IO pushes refresh the UI, and comments remain available after reload.
+
+The native Executor uses `GET/POST /api/v1/cloud-projects/{project_id}/loop-items/{item_id}/activity-comments`. Reads return the latest 200 messages by default, up to 500, ordered by ascending sequence number; use `after_sequence` to page forward. Read-only members can read but cannot post, and messages from other Issues are excluded.
+
+The legacy `/loop-items/{item_id}/comments` endpoint still handles provider comments and historical assignment events. Its underlying data must not be deleted wholesale, and historical records are not automatically migrated into Issue activity. Plugins should use project-space tools instead of treating an ID returned by the old endpoint as evidence of a visible activity comment.
+
+Desktop CI Core shard 15 includes `collaboration-issue-mcp-comments`: MCP writes appear in the UI, survive reload, native HTTP writes appear live, MCP reads back the PR link, Issues remain isolated, and the page has no collaboration loading error. Cleanup closes Electron before stopping cloud test services so an open page cannot display a service-shutdown error.

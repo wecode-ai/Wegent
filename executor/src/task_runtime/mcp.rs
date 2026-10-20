@@ -32,6 +32,8 @@ use super::{
     TaskRuntime, TaskSearch, TaskUpdate,
 };
 
+mod comments;
+
 pub const SPACE_MCP_SERVER_NAME: &str = "wework_space";
 pub const NOTIFICATIONS_MCP_SERVER_NAME: &str = "wework_notifications";
 const SPACE_MCP_LOG_FILE: &str = "space-mcp.log";
@@ -1285,6 +1287,7 @@ async fn call_tool_with_runtime_context(
                 (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
             }
         }
+        "list_board_item_comments" => comments::list(runtime, &arguments).await,
         "add_board_item_comment" => {
             let project_id = string_argument(&arguments, "space_id");
             let task_id = string_argument(&arguments, "item_id");
@@ -2245,9 +2248,20 @@ async fn call_backend_tool(
         "update_board_item" => client
             .patch(format!("{base}/loop-items/{}", encode_segment(task_id()?)))
             .json(arguments.get("item").unwrap_or(arguments)),
+        "list_board_item_comments" => client
+            .get(format!(
+                "{base}/cloud-projects/{}/loop-items/{}/activity-comments",
+                encode_segment(project_id),
+                encode_segment(task_id()?)
+            ))
+            .query(&[
+                ("after_sequence", arguments.get("after_sequence").and_then(Value::as_i64).unwrap_or(0)),
+                ("limit", arguments.get("limit").and_then(Value::as_i64).unwrap_or(200)),
+            ]),
         "add_board_item_comment" => client
             .post(format!(
-                "{base}/loop-items/{}/comments",
+                "{base}/cloud-projects/{}/loop-items/{}/activity-comments",
+                encode_segment(project_id),
                 encode_segment(task_id()?)
             ))
             .json(&json!({
@@ -3154,8 +3168,22 @@ fn tools() -> Vec<Value> {
             }),
         ),
         tool(
+            "list_board_item_comments",
+            "Read the latest Wework Issue activity comments (oldest first), including previous feedback and PR links. Use after_sequence to page forward; limit defaults to 200 (max 500).",
+            json!({
+                "type": "object",
+                "properties": {
+                    "space_id": {"type": "string"},
+                    "item_id": {"type": "string"},
+                    "after_sequence": {"type": "integer", "minimum": 0},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 500}
+                },
+                "required": ["space_id", "item_id"]
+            }),
+        ),
+        tool(
             "add_board_item_comment",
-            "Add a comment to a board item",
+            "Add a visible comment to the Wework Issue activity",
             json!({
                 "type": "object",
                 "properties": {
@@ -3565,6 +3593,7 @@ fn board_tool_category(name: &str) -> Option<BoardToolCategory> {
         | "read_space_file"
         | "search_board_items"
         | "get_board_item"
+        | "list_board_item_comments"
         | "add_board_item_comment"
         | "list_item_attachments"
         | "upload_item_attachment"

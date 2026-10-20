@@ -89,7 +89,10 @@ import type {
 import { getRuntimeWorkDeviceNamesById, getWorkbenchDeviceNamesById } from '@/lib/workbench-device'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import { runtimeConversationKey } from '@/features/workbench/runtimeConversationCache'
-import { hydrateRuntimeTaskAddress } from '@/features/workbench/workbenchRuntimeHelpers'
+import {
+  findRuntimeTask,
+  hydrateRuntimeTaskAddress,
+} from '@/features/workbench/workbenchRuntimeHelpers'
 import {
   isRuntimeTaskExecutionRunning,
   runtimeTaskTrackingExecutionStatus,
@@ -383,7 +386,7 @@ export function WeworkSharedProject({
     conversationKey: string
     taskRequest?: RuntimeTaskCreateRequest | null
     dispatch?: IssueTaskDispatchInput
-    humanWorkBinding?: NonNullable<CollaborationIssue['human_work']>['ai_task_binding']
+    humanTaskBinding?: CollaborationIssue['human_task_binding']
   } | null>(null)
   const latestProjectRef = useRef(project)
   const previousProjectPropRef = useRef(project)
@@ -717,15 +720,13 @@ export function WeworkSharedProject({
         return
       }
       clearNotice()
-      const humanWorkBinding = issue.human_work?.can_submit
-        ? issue.human_work.ai_task_binding
-        : null
+      const humanTaskBinding = issue.human_task_binding ?? null
       const currentProject = latestProjectRef.current
       setTaskComposer({
         issue,
         conversationKey: `${issue.id}:new:${++taskComposerSequenceRef.current}`,
         dispatch,
-        humanWorkBinding,
+        humanTaskBinding,
         taskRequest: {
           schemaVersion: 2,
           runtime: 'codex',
@@ -745,17 +746,17 @@ export function WeworkSharedProject({
                   humanAssignmentId: dispatch.humanAssignmentId,
                 },
               }
-            : humanWorkBinding
+            : humanTaskBinding
               ? {
                   cloudProjectId: String(currentProject.id),
                   origin: {
                     type: 'issue_dispatch',
                     cloudProjectId: String(currentProject.id),
                     loopItemId: issue.id,
-                    dispatchId: humanWorkBinding.dispatchId,
-                    roundId: humanWorkBinding.dispatchRoundId,
-                    assignmentId: humanWorkBinding.assignmentId,
-                    humanAssignmentId: humanWorkBinding.humanAssignmentId,
+                    dispatchId: humanTaskBinding.dispatchId,
+                    roundId: humanTaskBinding.dispatchRoundId,
+                    assignmentId: humanTaskBinding.assignmentId,
+                    humanAssignmentId: humanTaskBinding.humanAssignmentId,
                   },
                 }
               : {}),
@@ -891,16 +892,7 @@ export function WeworkSharedProject({
         initialTaskInput={
           taskComposer.dispatch
             ? `${workItemComposerReference(project, taskComposer.issue)} ${issueDispatchPersonalTaskInput(taskComposer.dispatch)}`
-            : taskComposer.humanWorkBinding
-              ? [
-                  workItemComposerReference(project, taskComposer.issue),
-                  taskComposer.issue.title,
-                  taskComposer.issue.description,
-                  t('todo.human_work_ai_prompt'),
-                ]
-                  .filter(Boolean)
-                  .join('\n\n')
-              : workItemComposerReference(project, taskComposer.issue)
+            : workItemComposerReference(project, taskComposer.issue)
         }
         initialAddress={taskComposer.address}
         onClose={() => setTaskComposer(null)}
@@ -925,7 +917,7 @@ export function WeworkSharedProject({
                   dispatchRoundId: taskComposer.dispatch.roundId,
                   assignmentId: taskComposer.dispatch.assignmentId,
                 }
-              : (taskComposer.humanWorkBinding ?? null)
+              : (taskComposer.humanTaskBinding ?? null)
           )
           const projectRef = {
             projectStore: project.project_store,
@@ -1133,6 +1125,16 @@ export function WeworkSharedProject({
                     ) ?? false,
                   modelSelection: binding.modelSelection,
                   executionContext: binding.executionContext,
+                  runtimeAddress: workspaceExecutionAddress(
+                    binding,
+                    runtimeWork,
+                    issue.id,
+                    project.project_store
+                  ),
+                  runtimeTask: findRuntimeTask(runtimeWork, {
+                    deviceId: binding.deviceId,
+                    taskId: binding.taskId,
+                  }),
                 }) as CloudTodoBoardTaskBinding
             )
             return (
@@ -1145,6 +1147,7 @@ export function WeworkSharedProject({
                     } as unknown as CloudLoopItem
                   }
                   taskBindings={boardTaskBindings}
+                  getRuntimeTranscript={services.runtimeWorkApi?.getRuntimeTranscript}
                   unread={false}
                   onClick={onOpen}
                   onArchive={onDelete ?? (() => undefined)}
