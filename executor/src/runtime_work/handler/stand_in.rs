@@ -51,6 +51,9 @@ impl RuntimeWorkRpcHandler {
                 format!("Issue synchronization returned {}", response.status()),
             ));
         }
+        if response.status() == reqwest::StatusCode::NO_CONTENT {
+            return Ok(Value::Null);
+        }
         response
             .json()
             .await
@@ -350,12 +353,27 @@ impl RuntimeWorkRpcHandler {
             )
             .await?;
         }
-        let response = self.create_task(payload).await?;
-        if response["accepted"] != true {
-            return Err(AppIpcError::new(
-                "runtime_rejected",
-                "Stand-in task was not accepted",
-            ));
+        if let Err(error) = self.create_task(payload).await {
+            let cleanup = if local {
+                LocalTaskStore::open(self.task_store_path.as_ref())
+                    .and_then(|store| store.unbind_task(&self.device_id, &task_id, Some(issue_id)))
+                    .map_err(settings_error)
+            } else {
+                self.stand_in_http(
+                    reqwest::Method::DELETE,
+                    &format!("/v1/loop-items/{issue_id}/tasks"),
+                    Some(&binding),
+                )
+                .await
+                .map(|_| ())
+            };
+            if let Err(cleanup_error) = cleanup {
+                log_executor_event(
+                    "stand-in binding rollback failed",
+                    &[("task_id", task_id), ("error", cleanup_error.message)],
+                );
+            }
+            return Err(error);
         }
         Ok(())
     }
@@ -696,6 +714,78 @@ mod tests {
         handler.start_cloud_stand_in(&config, &issue).await.unwrap();
         assert_eq!(bindings.load(Ordering::SeqCst), 1);
         assert!(handler.local_task_link("stand-in-human").is_none());
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn rejected_local_creation_rolls_back_the_issue_binding() {
+        let root = tempfile::tempdir().unwrap();
+        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+        handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let project = store
+            .create_project(serde_json::from_value(json!({"name":"Stand-in"})).unwrap())
+            .unwrap();
+        let issue = store
+            .create_task(
+                &project.id,
+                serde_json::from_value(json!({"title":"Issue"})).unwrap(),
+            )
+            .unwrap();
+        let error = handler
+            .create_stand_in_task(
+                &json!({"projectId":project.id,"projectStore":"local"}),
+                &serde_json::to_value(&issue).unwrap(),
+                &json!({"humanAssignmentId":"human"}),
+                json!({"schemaVersion":99}),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "unsupported_schema_version");
+        assert!(store
+            .find_user_task_binding("mac", "stand-in-human")
+            .is_err());
+        assert!(handler.local_task_link("stand-in-human").is_none());
+    }
+
+    #[tokio::test]
+    async fn rejected_cloud_creation_rolls_back_the_issue_binding() {
+        let bindings = Arc::new(AtomicUsize::new(0));
+        let created = bindings.clone();
+        let removed = bindings.clone();
+        let router = Router::new().route(
+            "/api/v1/loop-items/issue/tasks",
+            axum::routing::post(move || {
+                created.fetch_add(1, Ordering::SeqCst);
+                async { Json(json!({"id":1})) }
+            })
+            .delete(move || {
+                removed.fetch_sub(1, Ordering::SeqCst);
+                async { axum::http::StatusCode::NO_CONTENT }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
+        let handler = RuntimeWorkRpcHandler {
+            backend_connection: Arc::new(Mutex::new(Some(ConnectionConfig {
+                backend_url: url,
+                auth_token: "test".into(),
+                ..Default::default()
+            }))),
+            ..RuntimeWorkRpcHandler::new("mac", "unused")
+        };
+        let error = handler
+            .create_stand_in_task(
+                &json!({"projectId":"project","projectStore":"cloud"}),
+                &json!({"id":"issue","title":"Issue"}),
+                &json!({"humanAssignmentId":"human"}),
+                json!({"schemaVersion":99}),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "unsupported_schema_version");
+        assert_eq!(bindings.load(Ordering::SeqCst), 0);
         server.abort();
     }
 

@@ -133,6 +133,10 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       await reloadMainWindow(control, 'Stand-in settings did not survive renderer reload')
       await control.command('waitFor', `${CONTENT} [data-testid="stand-in-project-${project.id}"]`)
       // Execution must not depend on the board being mounted or on composer navigation.
+      await control.command('waitFor', `${CONTENT} [data-testid="collaboration-tab-table"]`, {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('click', `${CONTENT} [data-testid="collaboration-tab-table"]`)
       const issue = await requestExecutor(
         control,

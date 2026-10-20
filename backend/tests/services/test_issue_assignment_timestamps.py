@@ -1,6 +1,6 @@
 """Assignment timestamps must be unambiguous across Executor timezones."""
 
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
@@ -35,7 +35,7 @@ def test_assignment_response_normalizes_database_clock(
 
     result = IssueAssignmentService.response_values(db, assignment)
 
-    expected = datetime(2026, 10, 20, utc_hour, 0, 1, tzinfo=UTC)
+    expected = datetime(2026, 10, 20, utc_hour, 0, 1, tzinfo=timezone.utc)
     assert result["created_at"] == expected
     assert result["updated_at"] == expected
     assert result["created_at"].isoformat().endswith("+00:00")
