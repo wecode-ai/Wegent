@@ -3779,13 +3779,7 @@ export function CollaborationPlatformApp({
     const rootView = host.location.rootView ?? "home";
     const inboxItems = state.myWork.filter((item) => {
       const operation = workspaceIssueOperationState(item);
-      return (
-        item.is_unread ||
-        item.human_work?.can_start ||
-        item.human_work?.can_review ||
-        operation === "failed" ||
-        operation === "review"
-      );
+      return item.is_unread || operation === "failed" || operation === "review";
     });
     content =
       rootView === "agents" ||

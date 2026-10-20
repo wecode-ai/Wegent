@@ -1,4 +1,5 @@
 import { BrowserTaskDrafts } from "./issue-detail/BrowserTaskDrafts";
+import { isIssueVersionConflict } from "./issue-detail/issueVersionConflict";
 import { RuntimeConversationScope } from "./conversation/RuntimeConversationScope";
 import { IssueTaskConversation } from "./issue-detail/IssueTaskConversation";
 import type { SharedIssueDetailTaskBinding } from "./issue-detail/createSharedIssueDetailPort";
@@ -148,13 +149,7 @@ function useBrowserIssueDetailPort(
           try {
             return await basePort.issues.update(...args);
           } catch (error) {
-            if (
-              callbacks.current.onConflict &&
-              error &&
-              typeof error === "object" &&
-              "status" in error &&
-              error.status === 409
-            ) {
+            if (callbacks.current.onConflict && isIssueVersionConflict(error)) {
               await callbacks.current.onConflict();
             } else {
               callbacks.current.onError();

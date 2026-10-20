@@ -22,6 +22,7 @@ export const DESKTOP_CHECKPOINTS = [
   'collaboration-local-group-cancellation',
   'collaboration-issue-comment-mention',
   'collaboration-issue-assignment-activity',
+  'collaboration-issue-comment-attachments',
   'collaboration-issue-comment-notification',
   'collaboration-issue-mcp-comments',
   'collaboration-issue-archive',

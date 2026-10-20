@@ -21,6 +21,7 @@ core_segments=(
   collaboration-local-group-cancellation
   collaboration-issue-comment-mention
   collaboration-issue-assignment-activity
+  collaboration-issue-comment-attachments
   collaboration-issue-comment-notification
   collaboration-issue-mcp-comments
   cloud-space-mention
@@ -180,7 +181,7 @@ core_shards=(
   project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,collaboration-local-group-coordinate,collaboration-human-round-resume
   resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-task-discovery,collaboration-app-queue-identity,collaboration-issue-archive,collaboration-local-group-cancellation
   workspace-attachments,automation-lifecycle,drawing-attachment
-  project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention,collaboration-issue-assignment-activity
+  project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention,collaboration-issue-assignment-activity,collaboration-issue-comment-attachments
   rendering-extensions,transcript-sync,background-terminals
   runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification,collaboration-issue-mcp-comments
@@ -742,6 +743,10 @@ classify_wework_path() {
       select_target "core:collaboration-issue-assignment-activity"
       return
       ;;
+    wework/e2e/desktop/scenarios/collaboration-issue-comment-attachments.scenario.mjs)
+      select_target "core:collaboration-issue-comment-attachments"
+      return
+      ;;
     wework/e2e/desktop/scenarios/collaboration-issue-comment-notification.scenario.mjs)
       select_target "core:collaboration-issue-comment-notification"
       return
@@ -1301,6 +1306,7 @@ classify_path() {
       select_collaboration_dispatch_checkpoints
       select_target "core:collaboration-issue-comment-mention"
       select_target "core:collaboration-issue-assignment-activity"
+      select_target "core:collaboration-issue-comment-attachments"
       select_target "core:collaboration-issue-comment-notification"
       ;;
     executor/src/server/codex_model_catalog*.rs)

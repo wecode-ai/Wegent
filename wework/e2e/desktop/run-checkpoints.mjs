@@ -47,8 +47,9 @@ const CHECKPOINT_RESOURCES = new Map([
     'collaboration-local-group-cancellation',
     ['collaboration-runtime', 'desktop-runtime-intensive'],
   ],
-  ['collaboration-issue-comment-notification', ['collaboration-runtime']],
   ['collaboration-issue-assignment-activity', ['collaboration-runtime']],
+  ['collaboration-issue-comment-attachments', ['collaboration-runtime']],
+  ['collaboration-issue-comment-notification', ['collaboration-runtime']],
   ['collaboration-issue-mcp-comments', ['collaboration-runtime']],
   ['collaboration-issue-archive', ['collaboration-runtime', 'desktop-runtime-intensive']],
 ])
@@ -127,6 +128,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
     './scenarios/collaboration-issue-comment-mention.scenario.mjs',
   'collaboration-issue-assignment-activity':
     './scenarios/collaboration-issue-assignment-activity.scenario.mjs',
+  'collaboration-issue-comment-attachments':
+    './scenarios/collaboration-issue-comment-attachments.scenario.mjs',
   'collaboration-issue-comment-notification':
     './scenarios/collaboration-issue-comment-notification.scenario.mjs',
   'collaboration-issue-mcp-comments': './scenarios/collaboration-issue-mcp-comments.scenario.mjs',
@@ -184,6 +187,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-local-group-cancellation',
   'collaboration-issue-comment-mention',
   'collaboration-issue-assignment-activity',
+  'collaboration-issue-comment-attachments',
   'collaboration-issue-comment-notification',
   'collaboration-issue-mcp-comments',
   'collaboration-issue-archive',

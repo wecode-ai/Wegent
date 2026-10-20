@@ -78,6 +78,36 @@ function editorElement(item: CloudLoopItem) {
 }
 
 describe('TodoEditor external item sync', () => {
+  it('saves the status of a human assignment without a submission form', async () => {
+    const user = userEvent.setup()
+    const item = { ...baseItem, assignee_agent_id: '', assignee_user_id: 1 }
+    const saved = { ...item, status: 'completed', version: 2 }
+    const updateLoopItem = vi.fn(async () => saved)
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={item}
+        project={project}
+        allItems={[item]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={{ ...api, updateLoopItem } as never}
+        currentUserId={1}
+      />
+    )
+    expect(screen.queryByTestId('human-issue-work-panel')).not.toBeInTheDocument()
+    await user.selectOptions(screen.getByTestId('cloud-todo-detail-status'), 'completed')
+    await user.click(screen.getByTestId('cloud-todo-save'))
+    await waitFor(() =>
+      expect(updateLoopItem).toHaveBeenCalledExactlyOnceWith(item.id, {
+        version: 1,
+        status: 'completed',
+      })
+    )
+    expect(screen.queryByTestId('human-issue-result')).not.toBeInTheDocument()
+  })
+
   it('persists a title edit when execution changes the Issue version during saving', async () => {
     const user = userEvent.setup()
     const latest = { ...baseItem, version: 2, status: 'in_review' } as CloudLoopItem
