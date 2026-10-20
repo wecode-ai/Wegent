@@ -42,6 +42,7 @@ from app.schemas.runtime_work import (
 )
 from app.services import runtime_work_service
 from app.services.cloud_projects.service import cloud_project_service
+from app.services.device.identity import owned_device_aliases
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.loop_item_status_history import project_status_transition
 from app.services.loop_items.external_provider import external_loop_item_provider
@@ -1365,7 +1366,15 @@ class ProjectAutomationProcessor:
             db.query(LoopItemExecution)
             .filter(
                 LoopItemExecution.loop_item_id == binding.loop_item_id,
-                LoopItemExecution.runtime_device_id == binding.device_id,
+                LoopItemExecution.cloud_project_id == binding.cloud_project_id,
+                LoopItemExecution.executor_owner_user_id == binding.task_user_id,
+                LoopItemExecution.runtime_device_id.in_(
+                    owned_device_aliases(
+                        db,
+                        user_id=binding.task_user_id,
+                        device_id=binding.device_id,
+                    )
+                ),
                 LoopItemExecution.runtime_task_id == binding.task_id,
             )
             .order_by(LoopItemExecution.id.desc())

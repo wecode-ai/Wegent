@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import logging
-from typing import Any, Dict, List, Literal, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
@@ -12,7 +12,6 @@ logger = logging.getLogger(__name__)
 
 from app.api.dependencies import get_db
 from app.core import security
-from app.core.config import settings
 from app.models.user import User
 from app.schemas.shared_team import (
     JoinSharedTeamRequest,
@@ -26,56 +25,9 @@ from app.schemas.team import (
     TeamUpdate,
 )
 from app.services.adapters.team_kinds import team_kinds_service
-from app.services.default_team import resolve_default_team
 from app.services.shared_team import shared_team_service
-from shared.telemetry.decorators import trace_sync
 
 router = APIRouter()
-
-
-def _get_default_teams_config() -> Dict[str, Dict[str, str]]:
-    """
-    Parse default teams configuration from environment variables.
-    Returns a dict mapping mode -> {name, namespace}.
-    """
-    config = {}
-    mode_settings = {
-        "wework": settings.DEFAULT_TEAM_WEWORK,
-        "chat": settings.DEFAULT_TEAM_CHAT,
-        "code": settings.DEFAULT_TEAM_CODE,
-        "knowledge": settings.DEFAULT_TEAM_KNOWLEDGE,
-        "task": settings.DEFAULT_TEAM_TASK,
-    }
-
-    for mode, value in mode_settings.items():
-        if value and value.strip():
-            parts = value.strip().split("#", 1)
-            name = parts[0].strip()
-            namespace = parts[1].strip() if len(parts) > 1 else "default"
-            if name:
-                config[mode] = {"name": name, "namespace": namespace}
-
-    return config
-
-
-def _add_default_for_modes(
-    items: List[Dict[str, Any]], default_config: Dict[str, Dict[str, str]]
-) -> List[Dict[str, Any]]:
-    """
-    Add default_for_modes field to each team item based on default teams config.
-    """
-    for item in items:
-        default_modes = []
-        team_name = item.get("name")
-        team_namespace = item.get("namespace") or "default"
-
-        for mode, config in default_config.items():
-            if config["name"] == team_name and config["namespace"] == team_namespace:
-                default_modes.append(mode)
-
-        item["default_for_modes"] = default_modes
-
-    return items
 
 
 @router.post("", response_model=TeamInDB, status_code=status.HTTP_201_CREATED)
@@ -95,23 +47,6 @@ def create_team(
     return team_kinds_service.create_with_user(
         db=db, obj_in=team_create, user_id=current_user.id, group_name=group_name
     )
-
-
-# MIGRATION-CANDIDATE(api="GET /api/teams/default"): remove after final confirmation.
-# @router.get("/default")
-@trace_sync(span_name="teams.default", tracer_name="backend.teams")
-def get_default_team(
-    mode: Literal["chat", "code", "knowledge", "task"] = Query("chat"),
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Return the configured accessible default, or null when unavailable."""
-    defaults = _get_default_teams_config()
-    config = defaults.get(mode)
-    if config is None:
-        return None
-    team = resolve_default_team(db, user_id=current_user.id, mode=mode, **config)
-    return _add_default_for_modes([team], defaults)[0] if team else None
 
 
 @router.get("/{team_id}", response_model=TeamDetail)

@@ -142,6 +142,22 @@ export function getWorkbenchDeviceIds(device: DeviceInfo): string[] {
   })
 }
 
+export function getUnambiguousWorkbenchDeviceAliases(devices: DeviceInfo[]): Map<string, string> {
+  const candidates = new Map<string, Set<string>>()
+  for (const device of mergeDeviceLists(devices, [])) {
+    const canonicalDeviceId = device.device_id.trim()
+    if (!canonicalDeviceId) continue
+    for (const alias of getWorkbenchDeviceIds(device)) {
+      const matches = candidates.get(alias) ?? new Set<string>()
+      matches.add(canonicalDeviceId)
+      candidates.set(alias, matches)
+    }
+  }
+  return new Map(
+    [...candidates].map(([alias, matches]) => [alias, matches.size === 1 ? [...matches][0] : alias])
+  )
+}
+
 export function getWorkbenchDeviceNamesById(
   devices: DeviceInfo[]
 ): Readonly<Record<string, string>> {
