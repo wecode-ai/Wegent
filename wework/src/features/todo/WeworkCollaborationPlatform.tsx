@@ -1101,6 +1101,7 @@ export function WeworkSharedProject({
             </IssueConversationDrawers>
           )}
           renderBoardIssueCard={({
+            column,
             display,
             focused,
             issue,
@@ -1140,6 +1141,7 @@ export function WeworkSharedProject({
             return (
               <div className="w-full" data-testid={collaborationTestIds.issue(issue.id)}>
                 <CloudTodoBoardCard
+                  columnKey={column.key}
                   item={
                     {
                       ...issue,
