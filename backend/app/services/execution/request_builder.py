@@ -32,6 +32,10 @@ from app.services.execution.git_credentials import (
     classify_git_auth_transport,
     extract_git_domain,
 )
+from app.services.execution.provider_guidance import (
+    apply_provider_configuration_guidance,
+    build_provider_configuration_prompt,
+)
 from app.services.execution.skill_generation import (
     apply_skill_generation_to_skills,
 )
@@ -624,6 +628,7 @@ class TaskRequestBuilder:
             executor_name=getattr(subtask, "executor_name", None),
             executor_namespace=getattr(subtask, "executor_namespace", None),
         )
+        apply_provider_configuration_guidance(execution_request)
         logger.info(
             "[TaskRequestBuilder] Execution request attachment diagnostics: "
             "task_id=%s, subtask_id=%s, shell_type=%s, attachments=%d, "
@@ -856,6 +861,7 @@ class TaskRequestBuilder:
             if skill_name not in existing_skill_names
         ]
         if not missing_skill_names:
+            apply_provider_configuration_guidance(request)
             return request
 
         if not request.task_data:
@@ -920,6 +926,7 @@ class TaskRequestBuilder:
         request.user_selected_skills = resolved_user_selected
         request.skill_refs = skill_refs
         request.preload_skill_refs = preload_skill_refs
+        apply_provider_configuration_guidance(request)
 
         if not request.bot:
             return request
@@ -2015,13 +2022,9 @@ class TaskRequestBuilder:
 
                 if not configured_server:
                     skill_data.pop("mcpServers", None)
-                    skill_data["prompt"] = (
-                        self._build_unconfigured_provider_skill_prompt(
-                            skill_data.get("prompt"),
-                            provider_id=provider["provider_id"],
-                            provider_display_name=provider["display_name"],
-                            service=service,
-                        )
+                    skill_data["configuration_required"] = True
+                    skill_data["prompt"] = build_provider_configuration_prompt(
+                        provider, service
                     )
                 elif user:
                     self._apply_user_mcp_oauth_header(
@@ -2131,44 +2134,6 @@ class TaskRequestBuilder:
         headers["Authorization"] = f"Bearer {access_token}"
         server["headers"] = headers
 
-    @staticmethod
-    def _build_unconfigured_provider_skill_prompt(
-        existing_prompt: str | None,
-        *,
-        provider_id: str,
-        provider_display_name: str,
-        service: dict[str, Any],
-    ) -> str:
-        """Build a guidance-only prompt when a provider skill is not configured."""
-        display_name = service.get("display_name") or service["service_id"]
-        modal_link = (
-            f"wegent://modal/mcp-provider-config?provider={provider_id}"
-            f"&service={service['service_id']}"
-        )
-
-        guidance_prompt = f"""
-## Configuration Required
-
-The current session does not have a usable {display_name} MCP configured.
-
-Required behavior:
-- Do not pretend to access {provider_display_name} data or local files for this request.
-- Tell the user that {display_name} MCP is not available in the current session.
-- Ask the user to click [打开{display_name} MCP 配置弹窗]({modal_link}) to finish configuration.
-- Keep the guidance brief. If the user asks how to get the URL, direct them to the provider MCP page for this service.
-
-Response template:
-当前会话还没有可用的{display_name} MCP，所以我现在不能直接访问{provider_display_name}能力。
-
-请先点击 [打开{display_name} MCP 配置弹窗]({modal_link}) 完成配置。
-
-配置完成后，再让我继续处理你的{provider_display_name}请求。
-""".strip()
-
-        if existing_prompt:
-            return f"{existing_prompt.rstrip()}\n\n{guidance_prompt}"
-        return guidance_prompt
-
     # =========================================================================
     # Bot Configuration Building
     # =========================================================================
@@ -2235,7 +2200,6 @@ Response template:
 
         bot_configs = []
         for bot, member in bot_members:
-
             bot_crd = Bot.model_validate(bot.json)
             bot_spec = bot_crd.spec
 

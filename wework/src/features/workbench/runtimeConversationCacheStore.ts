@@ -280,6 +280,20 @@ export function cacheRuntimeConversationTurns(key: string, turns: RuntimeConvers
   scheduleTerminalConversationEviction(key)
 }
 
+export function cacheRuntimeConversationQueuedMessagesByKey(
+  key: string,
+  messages: RuntimePaneQueuedMessage[]
+): void {
+  if (messages.length === 0) {
+    queuedMessagesByConversation.delete(key)
+    scheduleTerminalConversationEviction(key)
+  } else {
+    cancelTerminalConversationEviction(key)
+    cacheBoundedEntry(queuedMessagesByConversation, key, messages)
+  }
+  notifyRuntimeConversation(key)
+}
+
 function reconcileAcceptedQueuedMessages(key: string, turns: RuntimeConversationTurn[]): void {
   const queuedMessages = queuedMessagesByConversation.get(key)
   if (!queuedMessages) return
@@ -290,8 +304,7 @@ function reconcileAcceptedQueuedMessages(key: string, turns: RuntimeConversation
       !turns.some(turn => turn.id !== null && turnContainsClientUserMessage(turn, message.id))
   )
   if (remaining.length === queuedMessages.length) return
-  if (remaining.length === 0) queuedMessagesByConversation.delete(key)
-  else cacheBoundedEntry(queuedMessagesByConversation, key, remaining)
+  cacheRuntimeConversationQueuedMessagesByKey(key, remaining)
 }
 
 export function turnContainsClientUserMessage(

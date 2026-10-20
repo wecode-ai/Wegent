@@ -56,6 +56,25 @@ describe('runtime conversation identity synchronization', () => {
     vi.useRealTimers()
   })
 
+  it('notifies migrated subscribers when the follow-up queue changes or clears', () => {
+    cacheRuntimeConversationQueuedMessages(alias, [queue('original')])
+    const listener = vi.fn()
+    const unsubscribe = subscribeRuntimeConversation(alias, listener)
+    syncRuntimeConversationDeviceAliases([device])
+    listener.mockClear()
+
+    cacheRuntimeConversationQueuedMessages(canonical, [queue('reply')])
+
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(getRuntimeConversationQueuedMessages(alias)).toEqual([queue('reply')])
+
+    cacheRuntimeConversationQueuedMessages(alias, [])
+
+    expect(listener).toHaveBeenCalledTimes(2)
+    expect(getRuntimeConversationQueuedMessages(canonical)).toEqual([])
+    unsubscribe()
+  })
+
   it('merges existing state without replacing a completed canonical turn with stale streaming', () => {
     replaceRuntimeConversationSnapshot(alias, turns('Old progress'))
     replaceRuntimeConversationSnapshot(canonical, turns('Completed result', 'done'))
