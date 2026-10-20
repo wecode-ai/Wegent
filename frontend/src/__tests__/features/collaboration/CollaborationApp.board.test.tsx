@@ -448,6 +448,73 @@ describe('CollaborationApp shared project board', () => {
     await waitFor(assertion.assert)
   })
 
+  it.each(['priority', 'assignee', 'tag'] as const)(
+    'saves manual %s ordering without mutating Issue fields',
+    async groupBy => {
+      const currentProject = project(groupBy)
+      const first = issue()
+      const second = { ...first, id: 'second', status: 'completed', sort_order: 1 }
+      const update = jest.fn()
+      const assign = jest.fn()
+      const reordered = [
+        { ...second, sort_order: 0, version: 2 },
+        { ...first, sort_order: 1, version: 2 },
+      ]
+      const reorder = jest.fn().mockResolvedValue(reordered)
+      const api = {
+        projects: {
+          get: jest.fn().mockResolvedValue(currentProject),
+          listExecutionEnvironments: jest.fn().mockResolvedValue([]),
+        },
+        issues: {
+          getBoardSnapshot: jest.fn().mockResolvedValue({
+            items: [first, second],
+            members: [],
+            agents: [],
+            taskBindings: [],
+          }),
+          update,
+          assign,
+          reorder,
+        },
+      } as unknown as SharedWorkspaceApi
+      const host: CollaborationHostAdapter = {
+        capabilities: { automation: true, dingtalkAitable: false },
+        location: { projectId: currentProject.id, issueId: null, view: 'board' },
+        navigate: jest.fn(),
+      }
+      render(<CollaborationApp api={api} host={host} locale="zh-CN" pollIntervalMs={0} />)
+      const lane =
+        groupBy === 'priority'
+          ? 'priority-high'
+          : groupBy === 'assignee'
+            ? 'assignee-1'
+            : 'tag-共享'
+      const sort = await screen.findByTestId(`cloud-board-sort-by-${lane}`)
+      fireEvent.click(sort)
+      fireEvent.click(screen.getByTestId(`cloud-board-sort-by-${lane}-manual`))
+      fireEvent.click(sort)
+      await dragCardTo(
+        screen.getByTestId('collaboration-issue-second'),
+        screen.getByTestId('collaboration-issue-issue-1')
+      )
+      await waitFor(() =>
+        expect(reorder).toHaveBeenCalledWith(currentProject.id, {
+          parentId: null,
+          status: null,
+          issueIds: ['second', 'issue-1'],
+        })
+      )
+      expect(update).not.toHaveBeenCalled()
+      expect(assign).not.toHaveBeenCalled()
+      await waitFor(() =>
+        expect(
+          screen.getByTestId(`cloud-todo-column-${lane}`).querySelector('article')
+        ).toHaveAttribute('data-testid', 'collaboration-issue-second')
+      )
+    }
+  )
+
   it('loads and renders all paged GitHub board statuses through the shared API', async () => {
     const externalProject = {
       ...project(),

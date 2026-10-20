@@ -52,6 +52,10 @@ vi.mock('@/telemetry/client', () => telemetryMocks)
 vi.mock('@dnd-kit/core', async importOriginal => {
   const actual = await importOriginal<typeof import('@dnd-kit/core')>()
   const ActualDndContext = actual.DndContext
+  const activeCard = () => ({
+    id: JSON.stringify([item.status, item.id]),
+    data: { current: { itemId: item.id } },
+  })
   return {
     ...actual,
     DndContext: ({ children, ...props }: DndContextProps) => (
@@ -63,7 +67,7 @@ vi.mock('@dnd-kit/core', async importOriginal => {
           data-testid="mock-dnd-drag-start"
           onClick={() =>
             props.onDragStart?.({
-              active: { id: item.id },
+              active: activeCard(),
             } as DragStartEvent)
           }
         />
@@ -73,7 +77,7 @@ vi.mock('@dnd-kit/core', async importOriginal => {
           data-testid="mock-dnd-drag-cancel"
           onClick={() =>
             props.onDragCancel?.({
-              active: { id: item.id },
+              active: activeCard(),
             } as DragCancelEvent)
           }
         />
@@ -83,7 +87,7 @@ vi.mock('@dnd-kit/core', async importOriginal => {
           data-testid="mock-dnd-drag-to-pending"
           onClick={() =>
             props.onDragEnd?.({
-              active: { id: item.id },
+              active: activeCard(),
               over: { id: 'todo-column:pending' },
             } as DragEndEvent)
           }
@@ -94,7 +98,7 @@ vi.mock('@dnd-kit/core', async importOriginal => {
           data-testid="mock-dnd-drag-to-in-progress"
           onClick={() =>
             props.onDragEnd?.({
-              active: { id: item.id },
+              active: activeCard(),
               over: { id: 'todo-column:in_progress' },
             } as DragEndEvent)
           }

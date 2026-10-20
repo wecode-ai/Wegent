@@ -1357,7 +1357,7 @@ export function createLocalDeliveryApi(
       projectId: CloudProjectId,
       data: {
         parent_id: string | null
-        status: CloudLoopItem['status']
+        status: CloudLoopItem['status'] | null
         item_ids: string[]
       }
     ) {

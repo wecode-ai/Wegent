@@ -305,13 +305,15 @@ export function resolveStandardCloudBoardDrop<
     if (beforeItemId === activeItemId) return null;
     const target = items.find((item) => item.id === beforeItemId);
     const column = target
-      ? columns.find((candidate) =>
-          matchesStandardCloudBoardColumn(
-            target,
-            candidate,
-            groupBy,
-            extensions,
-          ),
+      ? columns.find(
+          (candidate) =>
+            (!columnDropKey || candidate.key === columnDropKey) &&
+            matchesStandardCloudBoardColumn(
+              target,
+              candidate,
+              groupBy,
+              extensions,
+            ),
         )
       : undefined;
     return column ? { beforeItemId, column, itemId: activeItemId } : null;
@@ -339,7 +341,7 @@ export interface StandardCloudBoardControllerOptions<
   ): Promise<void> | void;
 }
 
-export type StandardCloudBoardMutation<T extends StandardCloudBoardItem> =
+export type StandardCloudBoardMutation<T extends StandardCloudBoardItem> = (
   | {
       kind: "status";
       optimisticItems: T[];
@@ -361,7 +363,9 @@ export type StandardCloudBoardMutation<T extends StandardCloudBoardItem> =
       kind: "tag";
       optimisticItems: T[];
       tags: string[];
-    };
+    }
+  | { kind: "reorder"; optimisticItems: T[]; laneIds: string[] }
+) & { laneIds?: string[] };
 
 export interface StandardCloudBoardMutationUpdate {
   assignee_agent_id?: string | null;
@@ -389,15 +393,16 @@ export interface StandardCloudBoardMutationCommands<
     input: {
       laneIds: string[];
       optimisticItems: T[];
-      status: string;
+      status: string | null;
     },
-  ): Promise<void>;
+  ): Promise<T | void>;
   update(item: T, input: TUpdate): Promise<T>;
 }
 
 export function standardCloudBoardMutationUpdate<
   T extends StandardCloudBoardItem,
 >(mutation: StandardCloudBoardMutation<T>): StandardCloudBoardMutationUpdate {
+  if (mutation.kind === "reorder") return {};
   if (mutation.kind === "status") return { status: mutation.status };
   if (mutation.kind === "priority") return { priority: mutation.priority };
   if (mutation.kind === "assignee") {
@@ -431,21 +436,23 @@ export async function executeStandardCloudBoardMutation<
 }): Promise<T> {
   const standardUpdate = standardCloudBoardMutationUpdate(mutation);
   const updated =
-    mutation.kind === "assignee" &&
-    mutation.assigneeType &&
-    mutation.assigneeId &&
-    commands.assign
-      ? await commands.assign(item, {
-          assigneeId: mutation.assigneeId,
-          assigneeType: mutation.assigneeType,
-          notifyAssignee,
-        })
-      : await commands.update(item, {
-          ...additionalUpdate,
-          ...standardUpdate,
-        } as TUpdate);
+    mutation.kind === "reorder"
+      ? item
+      : mutation.kind === "assignee" &&
+          mutation.assigneeType &&
+          mutation.assigneeId &&
+          commands.assign
+        ? await commands.assign(item, {
+            assigneeId: mutation.assigneeId,
+            assigneeType: mutation.assigneeType,
+            notifyAssignee,
+          })
+        : await commands.update(item, {
+            ...additionalUpdate,
+            ...standardUpdate,
+          } as TUpdate);
 
-  if (mutation.kind === "status" && commands.reorder) {
+  if (mutation.laneIds && commands.reorder) {
     const optimisticItems = mutation.optimisticItems.map((candidate) =>
       candidate.id === updated.id
         ? {
@@ -455,16 +462,20 @@ export async function executeStandardCloudBoardMutation<
           }
         : candidate,
     );
-    await commands.reorder(updated, {
+    const reordered = await commands.reorder(updated, {
       laneIds: mutation.laneIds,
       optimisticItems,
-      status: mutation.status,
+      status: mutation.kind === "status" ? mutation.status : null,
     });
+    return (
+      reordered ??
+      optimisticItems.find((candidate) => candidate.id === updated.id)!
+    );
   }
   return updated;
 }
 
-export function resolveStandardCloudBoardMutation<
+function resolveStandardCloudBoardGroupMutation<
   T extends StandardCloudBoardItem,
 >({
   beforeItemId,
@@ -543,6 +554,83 @@ export function resolveStandardCloudBoardMutation<
   };
 }
 
+export function resolveStandardCloudBoardMutation<
+  T extends StandardCloudBoardItem,
+>({
+  manualSort = false,
+  extensions = {},
+  ...input
+}: {
+  beforeItemId: string | null;
+  column: ProjectBoardColumn;
+  groupBy: ProjectBoardGroupBy;
+  item: T;
+  items: T[];
+  manualSort?: boolean;
+  extensions?: Pick<StandardCloudBoardHostExtensions<T>, "noTagGroupValue">;
+}): StandardCloudBoardMutation<T> | null {
+  if (input.groupBy === "status")
+    return resolveStandardCloudBoardGroupMutation(input);
+  const sameColumn = matchesStandardCloudBoardColumn(
+    input.item,
+    input.column,
+    input.groupBy,
+    extensions,
+  );
+  const mutation: StandardCloudBoardMutation<T> | null = sameColumn
+    ? manualSort
+      ? { kind: "reorder", optimisticItems: input.items, laneIds: [] }
+      : null
+    : resolveStandardCloudBoardGroupMutation(input);
+  if (!mutation || !manualSort) return mutation;
+
+  // One canonical sibling order spans statuses and is projected into every grouping.
+  // Unrelated siblings keep their relative order, including cards hidden by filters.
+  const siblings = mutation.optimisticItems
+    .filter((candidate) => candidate.parent_id === input.item.parent_id)
+    .sort((a, b) => compareProjectBoardItems(a, b, []));
+  const remaining = siblings.filter(
+    (candidate) => candidate.id !== input.item.id,
+  );
+  const lane = remaining.filter((candidate) =>
+    matchesStandardCloudBoardColumn(
+      candidate,
+      input.column,
+      input.groupBy,
+      extensions,
+    ),
+  );
+  if (
+    input.beforeItemId &&
+    !lane.some((candidate) => candidate.id === input.beforeItemId)
+  )
+    return null;
+  const insertion = input.beforeItemId
+    ? remaining.findIndex((candidate) => candidate.id === input.beforeItemId)
+    : lane.length
+      ? remaining.findIndex((candidate) => candidate.id === lane.at(-1)!.id) + 1
+      : remaining.length;
+  const moved = siblings.find((candidate) => candidate.id === input.item.id)!;
+  remaining.splice(insertion, 0, moved);
+  if (
+    sameColumn &&
+    remaining.every((candidate, index) => candidate.id === siblings[index].id)
+  )
+    return null;
+  const positions = new Map(
+    remaining.map((candidate, index) => [candidate.id, index]),
+  );
+  return {
+    ...mutation,
+    laneIds: remaining.map((candidate) => candidate.id),
+    optimisticItems: mutation.optimisticItems.map((candidate) =>
+      positions.has(candidate.id)
+        ? { ...candidate, sort_order: positions.get(candidate.id)! }
+        : candidate,
+    ),
+  };
+}
+
 export function useStandardCloudBoardController<
   T extends StandardCloudBoardItem,
 >({
@@ -617,6 +705,8 @@ export function useStandardCloudBoardController<
         groupBy: boardState.groupBy,
         item,
         items,
+        manualSort,
+        extensions,
       });
       if (mutation) void onMove(item, column, targetBeforeItemId, mutation);
     },

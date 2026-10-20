@@ -126,10 +126,10 @@ export interface CollaborationWorkspaceControllerCommands {
   ): Promise<boolean>;
   reorderIssue(input: {
     issue: CollaborationIssue;
-    status: string;
+    status: string | null;
     laneIds: string[];
     optimisticItems: CollaborationIssue[];
-  }): Promise<void>;
+  }): Promise<CollaborationIssue | null>;
   changeProjectGroup(input: {
     project: CollaborationProject;
     groupBy: "status" | "priority" | "assignee" | "tag";
@@ -177,7 +177,7 @@ const unavailableCollaborationWorkspaceControllerCommands: CollaborationWorkspac
     updateIssue: async () => null,
     assignIssue: async () => null,
     archiveIssue: async () => false,
-    reorderIssue: async () => undefined,
+    reorderIssue: async () => null,
     changeProjectGroup: async () => undefined,
     refreshSelectedIssue: async () => undefined,
     refreshProjectAgents: async () => undefined,
@@ -1372,7 +1372,7 @@ export function createCollaborationWorkspaceControllerCommands({
       );
       dispatch({ type: "replace-issues", issues: mergedOptimisticItems });
       try {
-        if (issue.status !== status) {
+        if (status !== null && issue.status !== status) {
           const movedIssue = await api.issues.update(issue.id, {
             version: issue.version,
             status,
@@ -1399,6 +1399,7 @@ export function createCollaborationWorkspaceControllerCommands({
           type: "merge-reorder-issues",
           issues: reorderedItems,
         });
+        return byId.get(issue.id) ?? issue;
       } catch (error) {
         if (isVersionConflict(error)) {
           await loadProject(issue.cloud_project_id, false);
@@ -1406,6 +1407,7 @@ export function createCollaborationWorkspaceControllerCommands({
         } else {
           reportError(messages.saveFailed);
         }
+        return null;
       }
     },
     async changeProjectGroup({ project, groupBy, defaultStatuses }) {

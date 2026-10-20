@@ -114,10 +114,10 @@ class LoopItemUpdate(BaseModel):
 
 
 class LoopItemReorder(BaseModel):
-    """Manual order of the TODOs inside one board lane (parent + status)."""
+    """Manual sibling order, optionally restricted to a status lane."""
 
     parent_id: str | None = Field(default=None, max_length=64)
-    status: str = Field(max_length=32)
+    status: str | None = Field(default=None, max_length=32)
     item_ids: list[str] = Field(min_length=1, max_length=1000)
 
 

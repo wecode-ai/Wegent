@@ -522,7 +522,11 @@ export interface SharedWorkspaceIssuesApi {
   restore(issueId: string): Promise<CollaborationIssue[]>;
   reorder(
     projectId: string,
-    input: { parentId: string | null; status: string; issueIds: string[] },
+    input: {
+      parentId: string | null;
+      status: string | null;
+      issueIds: string[];
+    },
   ): Promise<CollaborationIssue[]>;
   markRead(
     issueId: string,

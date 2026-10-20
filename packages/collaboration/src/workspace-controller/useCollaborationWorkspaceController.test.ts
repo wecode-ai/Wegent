@@ -1149,6 +1149,28 @@ describe("collaboration workspace controller", () => {
     });
   });
 
+  it("saves cross-status sibling order without changing status and returns the saved version", async () => {
+    const api = createApi();
+    const saved = { ...issue, sort_order: 1, version: 7 };
+    api.issues.reorder = vi.fn().mockResolvedValue([saved]);
+    const { commands } = createController(api);
+    await expect(
+      commands.reorderIssue({
+        issue,
+        status: null,
+        laneIds: [issue.id],
+        optimisticItems: [saved],
+      }),
+    ).resolves.toEqual(saved);
+    expect(api.issues.update).not.toHaveBeenCalled();
+    expect(api.issues.reorder).toHaveBeenCalledWith(project.id, {
+      parentId: null,
+      status: null,
+      issueIds: [issue.id],
+    });
+    expect(state.issues).toEqual([saved]);
+  });
+
   it("moves an issue into its target status before reordering that lane", async () => {
     const api = createApi();
     const movedIssue = { ...issue, status: "completed", version: 2 };

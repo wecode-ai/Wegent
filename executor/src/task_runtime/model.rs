@@ -358,7 +358,7 @@ pub struct LocalRuntimeCommentStart<'a> {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TaskReorder {
     pub parent_id: Option<String>,
-    pub status: String,
+    pub status: Option<String>,
     pub item_ids: Vec<String>,
 }
 

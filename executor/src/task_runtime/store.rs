@@ -2628,7 +2628,9 @@ impl LocalTaskStore {
         project_id: &str,
         input: TaskReorder,
     ) -> Result<Vec<LoopItem>, TaskRuntimeError> {
-        validate_status(&input.status)?;
+        if let Some(status) = &input.status {
+            validate_status(status)?;
+        }
         if input.item_ids.is_empty() {
             return Err(TaskRuntimeError::Invalid(
                 "item_ids must contain at least one task".to_owned(),
@@ -2648,7 +2650,8 @@ impl LocalTaskStore {
                     metadata, version, created_at, updated_at, completed_at,
                     assignee_agent_id, created_by_user_id, assignee_user_id
              FROM loop_items
-             WHERE resource_type = 'task' AND cloud_project_id = ?1 AND status = ?2
+             WHERE resource_type = 'task' AND cloud_project_id = ?1
+               AND (?2 IS NULL OR status = ?2)
                AND ((?3 IS NULL AND (parent_id IS NULL OR parent_id = '')) OR parent_id = ?3)
                AND deleted_at IS NULL
              ORDER BY sort_order, updated_at DESC",
@@ -9974,7 +9977,7 @@ mod tests {
                 &project.id,
                 TaskReorder {
                     parent_id: None,
-                    status: "inbox".to_owned(),
+                    status: Some("inbox".to_owned()),
                     item_ids: vec![second.id.clone(), first.id.clone()],
                 },
             )
@@ -9989,6 +9992,54 @@ mod tests {
         );
         assert_eq!(reordered[0].sort_order, 0);
         assert_eq!(reordered[1].sort_order, 1);
+    }
+
+    #[test]
+    fn reorders_local_siblings_across_statuses_without_touching_children() {
+        let (_directory, store) = store();
+        let project = local_project(&store);
+        let create = |title: &str, status: &str, parent_id: Option<String>| {
+            store
+                .create_task(
+                    &project.id,
+                    serde_json::from_value::<TaskCreate>(serde_json::json!({
+                        "title": title, "status": status, "parent_id": parent_id
+                    }))
+                    .unwrap(),
+                )
+                .unwrap()
+        };
+        let first = create("First", "inbox", None);
+        let second = create("Second", "completed", None);
+        let child = create("Child", "inbox", Some(first.id.clone()));
+        let reordered = store
+            .reorder_tasks(
+                &project.id,
+                TaskReorder {
+                    parent_id: None,
+                    status: None,
+                    item_ids: vec![second.id.clone(), first.id.clone(), child.id.clone()],
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            reordered
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![second.id.as_str(), first.id.as_str()]
+        );
+        assert_eq!(reordered[0].status.as_deref(), Some("completed"));
+        assert_eq!(reordered[0].sort_order, 0);
+        assert_eq!(reordered[1].sort_order, 1);
+        assert_eq!(
+            store.get_task(&project.id, &child.id).unwrap().sort_order,
+            child.sort_order
+        );
+        assert_eq!(
+            store.get_task(&project.id, &child.id).unwrap().version,
+            child.version
+        );
     }
 
     #[test]

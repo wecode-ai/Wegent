@@ -26,9 +26,13 @@ async function waitForValue(load, expected, message, timeoutMs) {
   assert.deepEqual(actual, expected, message)
 }
 
-async function dragCard(control, id, beforeId, timeoutMs) {
-  const source = cardSelector(id)
-  const target = dropSelector(beforeId)
+async function dragCard(control, id, beforeId, timeoutMs, sourceLane, targetLane = sourceLane) {
+  const source = sourceLane
+    ? `${laneSelector(sourceLane)} [data-testid="cloud-todo-card-${id}"]`
+    : cardSelector(id)
+  const target = targetLane
+    ? `${laneSelector(targetLane)} [data-testid="cloud-todo-card-drop-${beforeId}"]`
+    : dropSelector(beforeId)
   await control.command('scrollIntoView', source)
   await control.command('scrollIntoView', target)
   await control.command('dragStart', source, { target })
@@ -124,7 +128,9 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       timeoutMs: workbenchReadyTimeoutMs,
     })
     await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
-    await control.command('waitFor', sortSelector('pending'), { timeoutMs: uiTimeoutMs })
+    await control.command('waitFor', scoped('[data-testid="cloud-board-group-by"]'), {
+      timeoutMs: uiTimeoutMs,
+    })
   }
 
   return {
@@ -234,6 +240,82 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       await expectRules(control, 'completed', 'created-asc')
       await expectOrder(control, 'pending', finalPending)
       await expectOrder(control, 'completed', [urgent.id, completedUrgent.id])
+
+      // Every non-status lane spans pending/completed Issues and uses the same save path.
+      for (const groupBy of ['priority', 'assignee', 'tag']) {
+        assert.ok(project.current_user_id, 'The project must identify the current user')
+        const currentItems = (await snapshot()).items
+        for (const item of currentItems) {
+          const outside = item.id === low.id
+          await request(`/api/v1/loop-items/${item.id}`, 'PATCH', {
+            version: item.version,
+            priority: outside ? 'low' : 'high',
+            assignee_user_id: outside ? project.current_user_id : null,
+            tags: outside ? ['other'] : ['backend', 'shared'],
+          })
+        }
+        const tail = [newerHigh.id, completedHigh.id, urgent.id]
+        const original = [high.id, completedUrgent.id, ...tail]
+        await request(`${issuePath()}/reorder`, 'POST', {
+          parent_id: null,
+          status: null,
+          item_ids: [...original, low.id],
+        })
+        await reloadMainWindow(control, 'The non-status sorting fixtures did not reload')
+        await openBoard(control)
+        await control.command('click', scoped('[data-testid="cloud-board-group-by"]'))
+        await control.command('click', `[data-testid="cloud-board-group-option-${groupBy}"]`)
+        const lane =
+          groupBy === 'priority'
+            ? 'priority-high'
+            : groupBy === 'assignee'
+              ? 'assignee-unassigned'
+              : 'tag-shared'
+        const outsideLane =
+          groupBy === 'priority'
+            ? 'priority-low'
+            : groupBy === 'assignee'
+              ? `assignee-${project.current_user_id}`
+              : 'tag-other'
+        await expectRules(control, lane, 'priority-desc')
+        await expectOrder(control, lane, original)
+        const before = await serverState()
+        await dragCard(control, completedUrgent.id, high.id, uiTimeoutMs, lane)
+        await expectOrder(control, lane, original)
+        assert.deepEqual(await serverState(), before)
+        await editRules(control, lane, ['manual'])
+        await dragCard(control, completedUrgent.id, high.id, uiTimeoutMs, lane)
+        const reordered = [completedUrgent.id, high.id, ...tail]
+        await expectOrder(control, lane, reordered)
+        const savedOrder = async () =>
+          (await snapshot()).items.sort((a, b) => a.sort_order - b.sort_order).map(item => item.id)
+        await waitForValue(
+          savedOrder,
+          [...reordered, low.id],
+          'Non-status manual order was not saved',
+          uiTimeoutMs
+        )
+        await reloadMainWindow(control, 'The non-status manual order did not survive reopening')
+        await openBoard(control)
+        await expectRules(control, lane, 'manual')
+        await expectOrder(control, lane, reordered)
+        await dragCard(control, low.id, high.id, uiTimeoutMs, outsideLane, lane)
+        const final = [completedUrgent.id, low.id, high.id, ...tail]
+        await expectOrder(control, lane, final)
+        await waitForValue(
+          savedOrder,
+          final,
+          'Non-status cross-lane insertion was not saved',
+          uiTimeoutMs
+        )
+        await reloadMainWindow(control, 'The non-status cross-lane order did not survive reopening')
+        await openBoard(control)
+        await expectOrder(control, lane, final)
+        const saved = (await snapshot()).items.find(item => item.id === completedUrgent.id)
+        assert.equal(saved.status, 'completed')
+        assert.deepEqual(saved.tags, ['backend', 'shared'])
+        assert.equal(saved.assignee_user_id, null)
+      }
     },
 
     async cleanup() {

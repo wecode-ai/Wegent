@@ -926,7 +926,7 @@ class LoopItemService:
         user_id: int,
         values: LoopItemReorder,
     ) -> list[LoopItem]:
-        """Persist the manual order of the TODOs in one board lane."""
+        """Persist sibling order, optionally restricted to a status lane."""
 
         self._require_internal_task_project(
             db, cloud_project_id, user_id, BaseRole.Developer
@@ -936,17 +936,18 @@ class LoopItemService:
             parent_filter = or_(LoopItem.parent_id.is_(None), LoopItem.parent_id == "")
         else:
             parent_filter = LoopItem.parent_id == values.parent_id
-        lane = (
+        query = (
             db.query(LoopItem)
             .filter(
                 LoopItem.cloud_project_id == cloud_project_id,
-                LoopItem.status == values.status,
                 parent_filter,
                 loop_datetime_is_unset(LoopItem.deleted_at),
             )
             .order_by(LoopItem.sort_order, LoopItem.updated_at.desc())
-            .all()
         )
+        if values.status is not None:
+            query = query.filter(LoopItem.status == values.status)
+        lane = query.all()
         by_id = {item.id: item for item in lane}
         requested_ids = [item_id for item_id in values.item_ids if item_id in by_id]
         if not requested_ids:

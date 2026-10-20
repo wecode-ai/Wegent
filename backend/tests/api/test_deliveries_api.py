@@ -1943,3 +1943,47 @@ def test_pr_delivery_resolves_unresolved_external_event_and_binds_run(
     assert run.task_id == str(item["id"])
     assert event.status == "processed"
     send_runtime_message.assert_awaited_once()
+
+
+@pytest.mark.parametrize("status_scope", [None, "inbox"])
+def test_loop_item_reorder_respects_sibling_scope_across_statuses(
+    test_client: TestClient,
+    test_token: str,
+    delivery_project: CloudProject,
+    status_scope: str | None,
+) -> None:
+    headers = _auth(test_token)
+    path = f"/api/v1/cloud-projects/{delivery_project.id}/loop-items"
+
+    def create(title: str, **values: Any) -> dict[str, Any]:
+        response = test_client.post(
+            path, headers=headers, json={"title": title, **values}
+        )
+        assert response.status_code == 201
+        return response.json()
+
+    first = create("First", status="inbox")
+    second = create("Second", status="completed")
+    child = create("Child", parent_id=first["id"], status="completed")
+    requested = [second["id"], first["id"], child["id"]]
+    response = test_client.post(
+        f"{path}/reorder",
+        headers=headers,
+        json={"parent_id": None, "status": status_scope, "item_ids": requested},
+    )
+    assert response.status_code == 200
+    expected = requested[:2] if status_scope is None else [first["id"]]
+    assert [item["id"] for item in response.json()["items"]] == expected
+    listed = test_client.get(path, headers=headers).json()["items"]
+    siblings = sorted(
+        [item for item in listed if item["id"] in expected],
+        key=lambda item: item["sort_order"],
+    )
+    assert [item["id"] for item in siblings] == expected
+    assert [item["sort_order"] for item in siblings] == list(range(len(expected)))
+    assert next(item for item in listed if item["id"] == child["id"]) == child
+    assert {item["id"]: item["status"] for item in listed} == {
+        first["id"]: "inbox",
+        second["id"]: "completed",
+        child["id"]: "completed",
+    }

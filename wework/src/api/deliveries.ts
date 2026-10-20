@@ -1030,7 +1030,7 @@ export function createDeliveryApi(client: HttpClient) {
       projectId: CloudProjectIdInput,
       data: {
         parent_id: string | null
-        status: string
+        status: string | null
         item_ids: string[]
       }
     ): Promise<{ items: CloudLoopItem[] }> {

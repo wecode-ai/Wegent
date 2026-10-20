@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import { REGULAR_USER } from '../../config/test-users'
 import { createApiClient } from '../../utils/api-client'
 import { webApi } from '../../utils/collaboration-test-support'
@@ -176,6 +176,146 @@ projectTest(
     await expect(completedSort).toHaveAttribute('data-sort-rules', 'created-asc')
   }
 )
+
+async function dragBefore(
+  page: Page,
+  sourceLane: string,
+  id: string,
+  lane: string,
+  beforeId: string
+) {
+  const source = page
+    .getByTestId(`cloud-todo-column-${sourceLane}`)
+    .getByTestId(`cloud-todo-card-${id}`)
+  const target = page
+    .getByTestId(`cloud-todo-column-${lane}`)
+    .getByTestId(`collaboration-issue-${beforeId}`)
+  await source.scrollIntoViewIfNeeded()
+  const from = (await source.boundingBox())!
+  await page.mouse.move(from.x + 20, from.y + 20)
+  await page.mouse.down()
+  try {
+    await page.mouse.move(from.x + 30, from.y + 20)
+    await expect(page.getByTestId('project-board-drag-overlay')).toBeVisible()
+    await target.scrollIntoViewIfNeeded()
+    const to = (await target.boundingBox())!
+    await page.mouse.move(to.x + to.width / 2, to.y + 10, { steps: 10 })
+  } finally {
+    await page.mouse.up()
+  }
+  await expect(page.getByTestId('project-board-drag-overlay')).toHaveCount(0)
+}
+
+for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
+  projectTest(
+    `saves manual ${groupBy} lane order across statuses and reloads`,
+    async ({ page, scheduledProject: { path, issueId } }) => {
+      const projectId = path.split('/').at(-1)!
+      const project = await webApi<Resource & { current_user_id: number }>(
+        page,
+        `/api/v1/cloud-projects/${projectId}`
+      )
+      const create = (title: string, extra: object = {}) =>
+        webApi<Resource>(page, `/api/v1/cloud-projects/${projectId}/loop-items`, {
+          method: 'POST',
+          body: {
+            title,
+            priority: 'high',
+            status: 'pending',
+            tags: ['backend', 'shared'],
+            ...extra,
+          },
+        })
+      const first = await create('First')
+      const second = await create('Second', { status: 'completed' })
+      const outside = await create('Outside', {
+        priority: 'low',
+        tags: ['other'],
+        assignee_user_id: project.current_user_id,
+      })
+      const snapshot = () =>
+        webApi<{
+          items: Array<
+            Resource & {
+              sort_order: number
+              status: string
+              tags: string[]
+              assignee_user_id: number | null
+            }
+          >
+        }>(page, `/api/v1/cloud-projects/${projectId}/board-snapshot`)
+      await webApi(page, `/api/v1/cloud-projects/${projectId}/loop-items/reorder`, {
+        method: 'POST',
+        body: {
+          parent_id: null,
+          status: null,
+          item_ids: [issueId, first.id, second.id, outside.id],
+        },
+      })
+      await page.goto(path)
+      await page.getByTestId('cloud-board-group-by').click()
+      await page.getByTestId(`cloud-board-group-option-${groupBy}`).click()
+      const lane =
+        groupBy === 'priority'
+          ? 'priority-high'
+          : groupBy === 'assignee'
+            ? 'assignee-unassigned'
+            : 'tag-shared'
+      const sourceLane =
+        groupBy === 'priority'
+          ? 'priority-low'
+          : groupBy === 'assignee'
+            ? `assignee-${project.current_user_id}`
+            : 'tag-other'
+      const sort = page.getByTestId(`cloud-board-sort-by-${lane}`)
+      const prefix = groupBy === 'assignee' ? [issueId] : []
+      const assertOrder = async (ids: string[]) => {
+        const cards = page
+          .getByTestId(`cloud-todo-column-${lane}`)
+          .locator('article[data-testid^="collaboration-issue-"]')
+        await expect(cards).toHaveCount(ids.length)
+        for (const [index, id] of ids.entries())
+          await expect(cards.nth(index)).toHaveAttribute('data-testid', `collaboration-issue-${id}`)
+      }
+      await expect(sort).toHaveAttribute('data-sort-rules', 'priority-desc')
+      const before = await snapshot()
+      await dragBefore(page, lane, second.id, lane, first.id)
+      await assertOrder([first.id, second.id, ...prefix])
+      expect(
+        (await snapshot()).items.map(({ id, version, sort_order }) => ({ id, version, sort_order }))
+      ).toEqual(before.items.map(({ id, version, sort_order }) => ({ id, version, sort_order })))
+      await sort.click()
+      await page.getByTestId(`cloud-board-sort-by-${lane}-manual`).click()
+      await sort.click()
+      const reorder = page.waitForResponse(
+        response =>
+          response.request().method() === 'POST' && response.url().endsWith('/loop-items/reorder')
+      )
+      await dragBefore(page, lane, second.id, lane, first.id)
+      expect((await reorder).ok()).toBe(true)
+      await assertOrder([...prefix, second.id, first.id])
+      await page.reload()
+      await expect(sort).toHaveAttribute('data-sort-rules', 'manual')
+      await assertOrder([...prefix, second.id, first.id])
+      const crossReorder = page.waitForResponse(
+        response =>
+          response.request().method() === 'POST' && response.url().endsWith('/loop-items/reorder')
+      )
+      await dragBefore(page, sourceLane, outside.id, lane, first.id)
+      expect((await crossReorder).ok()).toBe(true)
+      await assertOrder([...prefix, second.id, outside.id, first.id])
+      await page.reload()
+      await assertOrder([...prefix, second.id, outside.id, first.id])
+      const saved = (await snapshot()).items
+      expect(saved.find(item => item.id === second.id)).toMatchObject({
+        status: 'completed',
+        tags: ['backend', 'shared'],
+        assignee_user_id: null,
+      })
+      expect(saved.find(item => item.id === first.id)?.status).toBe('pending')
+    }
+  )
+}
 
 for (const view of ['calendar', 'gantt'] as const) {
   projectTest(

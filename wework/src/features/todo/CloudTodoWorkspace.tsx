@@ -16,6 +16,7 @@ import {
   projectBoardDnd,
   projectBoardCollisionDetection,
   projectBoardDrop,
+  projectBoardActiveItemId,
   useProjectBoardSensors,
 } from '@wegent/collaboration/project-board/projectBoardDnd'
 import { ProjectBoardDragOverlay } from '@wegent/collaboration/project-board/ProjectBoardDragOverlay'
@@ -3260,19 +3261,31 @@ export function CloudTodoWorkspace({
                     )
                     return optimistic ?? candidate
                   })
-                  await cloudWorkspace.commands.reorderIssue({
+                  const saved = await cloudWorkspace.commands.reorderIssue({
                     issue: reorderedItem as unknown as CollaborationIssue,
                     status: reorder.status,
                     laneIds: reorder.laneIds,
                     optimisticItems: optimisticItems as unknown as CollaborationIssue[],
                   })
-                  return
+                  if (!saved) throw new Error(cloudWorkspaceMessages.saveFailed)
+                  return { ...toCloudLoopItem(saved), project_store: item.project_store }
                 }
-                await itemApi!.reorderLoopItems(item.cloud_project_id, {
+                const saved = await itemApi!.reorderLoopItems(item.cloud_project_id, {
                   parent_id: item.parent_id,
                   status: reorder.status,
                   item_ids: reorder.laneIds,
                 })
+                const byId = new Map(saved.items.map(candidate => [candidate.id, candidate]))
+                setItems(current =>
+                  current.map(candidate => {
+                    const savedItem = byId.get(candidate.id)
+                    return savedItem
+                      ? { ...savedItem, project_store: candidate.project_store }
+                      : candidate
+                  })
+                )
+                const savedItem = byId.get(item.id)
+                return savedItem ? { ...savedItem, project_store: item.project_store } : undefined
               },
         },
         item,
@@ -4746,7 +4759,7 @@ export function CloudTodoWorkspace({
                         sensors: boardSensors,
                         collisionDetection: projectBoardCollisionDetection,
                         onDragStart: (event: DragStartEvent) => {
-                          setActiveDragItemId(String(event.active.id))
+                          setActiveDragItemId(projectBoardActiveItemId(event.active))
                         },
                         onDragCancel: () => setActiveDragItemId(null),
                         onDragEnd: finishBoardDrop,
@@ -5036,6 +5049,7 @@ export function CloudTodoWorkspace({
                             : 'compact'
                         return (
                           <CloudTodoBoardCard
+                            columnKey={column.key}
                             item={item}
                             unread={isMyTasksBoard && isTaskBoardItemUnread(item)}
                             taskBindings={
