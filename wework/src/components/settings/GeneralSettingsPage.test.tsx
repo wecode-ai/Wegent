@@ -314,6 +314,42 @@ describe('GeneralSettingsPage', () => {
     expect(select).toHaveValue('2')
   })
 
+  test('waits for runtime settings even when app preferences are cached', async () => {
+    let resolveSettings!: (settings: { maxConcurrentTasks: number }) => void
+    getRuntimeSettingsMock.mockReturnValue(
+      new Promise(resolve => {
+        resolveSettings = resolve
+      })
+    )
+    render(
+      <AppPreferencesContext.Provider value={{ loaded: true, preferences: defaultPreferences }}>
+        <WorkbenchContext.Provider
+          value={
+            {
+              services: {
+                runtimeWorkApi: {
+                  getRuntimeSettings: getRuntimeSettingsMock,
+                  updateRuntimeSettings: updateRuntimeSettingsMock,
+                },
+              },
+            } as unknown as WorkbenchContextValue
+          }
+        >
+          <GeneralSettingsPage />
+        </WorkbenchContext.Provider>
+      </AppPreferencesContext.Provider>
+    )
+
+    const select = await screen.findByTestId('general-max-concurrent-tasks-select')
+    expect(select).toBeDisabled()
+    await userEvent.selectOptions(select, '2')
+    expect(updateRuntimeSettingsMock).not.toHaveBeenCalled()
+
+    resolveSettings({ maxConcurrentTasks: 5 })
+    await waitFor(() => expect(select).toBeEnabled())
+    expect(select).toHaveValue('5')
+  })
+
   test('uses ten parallel tasks when runtime settings are unavailable', async () => {
     getRuntimeSettingsMock.mockResolvedValue(undefined)
     render(<GeneralSettingsPage />)
