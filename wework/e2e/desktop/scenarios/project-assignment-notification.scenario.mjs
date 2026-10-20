@@ -639,7 +639,9 @@ export function createDesktopScenario({
       )
       await changeIssueStatus(control, ownerRequest, issue.id, 'in_progress', uiTimeoutMs)
       await captureScreenshot(control, 'assignment-02-human-work-started.png', CONTENT)
-      await control.command('click', '[data-testid="cloud-todo-create-task"]', { visible: true })
+      await control.command('click', scoped('[data-testid="cloud-todo-personal-task-start"]'), {
+        visible: true,
+      })
       await control.command('waitFor', '[data-testid="ai-chat-modal"]', {
         timeoutMs: uiTimeoutMs,
         visible: true,
@@ -718,7 +720,9 @@ export function createDesktopScenario({
       assert.equal(binding.modelSelection?.modelName, MODEL)
       // Change the new-chat default without sending, then reopen the bound personal
       // task through the Issue drawer. Its model must come from the binding.
-      await control.command('click', '[data-testid="cloud-todo-create-task"]', { visible: true })
+      await control.command('click', scoped('[data-testid="cloud-todo-personal-task-start"]'), {
+        visible: true,
+      })
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, taskPanel)
       await control.command('click', '[data-testid="ai-chat-modal-close"]', { visible: true })
       await setExecutionDetailsExpanded(control, true)
