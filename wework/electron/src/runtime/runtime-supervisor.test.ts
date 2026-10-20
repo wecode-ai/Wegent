@@ -24,6 +24,7 @@ setInterval(() => {}, 1000)
 const supervisors = new Set<RuntimeSupervisor>()
 
 afterEach(async () => {
+  vi.useRealTimers()
   await Promise.allSettled([...supervisors].map(supervisor => supervisor.stop()))
   supervisors.clear()
 })
@@ -64,6 +65,74 @@ describe('RuntimeSupervisor', () => {
       }
     )
   })
+
+  test('kills a Linux child that appears after a zombie-only process-group scan', async () => {
+    vi.useFakeTimers()
+    let scans = 0
+    await withLinuxProcessGroup(
+      killed => {
+        scans += 1
+        return scans === 1
+          ? [linuxStat(12, 'Z')]
+          : [linuxStat(12, 'Z'), linuxStat(13, killed ? 'Z' : 'S')]
+      },
+      async (child, kill) => {
+        const stopped = terminateProcessTree(child, 50)
+        await vi.advanceTimersByTimeAsync(75)
+        await stopped
+
+        expect(kill).toHaveBeenCalledWith(-42, 'SIGKILL')
+      }
+    )
+  })
+
+  test('does not accept a first zombie-only observation at the Linux shutdown deadline', async () => {
+    vi.useFakeTimers()
+    let scansAfterKill = 0
+    await withLinuxProcessGroup(
+      killed => {
+        if (!killed) return [linuxStat(12, 'S')]
+        scansAfterKill += 1
+        return [linuxStat(12, scansAfterKill === 1 ? 'S' : 'Z')]
+      },
+      async (child, kill) => {
+        const stopped = expect(terminateProcessTree(child, 25)).rejects.toThrow(
+          'Timed out waiting for process group 42 to exit'
+        )
+        await vi.advanceTimersByTimeAsync(50)
+        await stopped
+
+        expect(kill).toHaveBeenCalledWith(-42, 'SIGKILL')
+      }
+    )
+  })
+
+  test.each(['live', 'unknown'])(
+    'resets Linux dead-member confirmation after a %s process-group observation',
+    async observation => {
+      vi.useFakeTimers()
+      let scans = 0
+      await withLinuxProcessGroup(
+        killed => {
+          scans += 1
+          if (!killed && scans === 2) {
+            if (observation === 'unknown') {
+              throw Object.assign(new Error('Permission denied'), { code: 'EACCES' })
+            }
+            return [linuxStat(12, 'S')]
+          }
+          return [linuxStat(12, 'Z')]
+        },
+        async (child, kill) => {
+          const stopped = terminateProcessTree(child, 50)
+          await vi.advanceTimersByTimeAsync(75)
+          await stopped
+
+          expect(kill).toHaveBeenCalledWith(-42, 'SIGKILL')
+        }
+      )
+    }
+  )
 
   test('restarts crashed processes with backoff and stops without another restart', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-supervisor-'))
@@ -281,14 +350,18 @@ async function withLinuxProcessGroup(
     signalCode: null,
   }) as unknown as ChildProcessWithoutNullStreams
   let killed = false
+  let snapshot: string[] = []
   const list = vi.spyOn(fs, 'readdirSync').mockImplementation(() => {
+    snapshot = stats(killed)
     // Include an unrelated live group and a process that disappears during inspection.
-    return ['1', '12', '13', '14', '15'] as unknown as ReturnType<typeof fs.readdirSync>
+    return ['1', ...snapshot.map(stat => stat.split(' ')[0]), '15'] as unknown as ReturnType<
+      typeof fs.readdirSync
+    >
   })
   const read = vi.spyOn(fs, 'readFileSync').mockImplementation(path => {
     const pid = Number(String(path).split('/')[2])
     if (pid === 1) return '1 (init) S 0 1 0 0 0'
-    const stat = stats(killed).find(value => value.startsWith(`${pid} `))
+    const stat = snapshot.find(value => value.startsWith(`${pid} `))
     if (stat) return stat
     throw Object.assign(new Error('Process exited'), { code: 'ENOENT' })
   })

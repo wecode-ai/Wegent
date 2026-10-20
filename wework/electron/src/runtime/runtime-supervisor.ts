@@ -8,6 +8,8 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { RotatingLog, type RotatingLogOptions } from './rotating-log.js'
 import { resolveSpawnCommand } from './spawn-command.js'
 
+const PROCESS_GROUP_POLL_INTERVAL_MS = 25
+
 export type RuntimeSupervisorState =
   | 'idle'
   | 'starting'
@@ -308,25 +310,37 @@ async function waitForProcessGroupExit(
   timeoutMs: number
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    if (!processGroupExists(processGroupId)) return true
-    await new Promise(resolve => setTimeout(resolve, 25))
+  let firstDeadAt: number | null = null
+  while (true) {
+    const state = inspectProcessGroup(processGroupId)
+    const now = Date.now()
+    if (state === 'absent') return true
+    if (state === 'dead') {
+      // A second scan can find children forked after the previous /proc listing.
+      if (firstDeadAt !== null && now - firstDeadAt >= PROCESS_GROUP_POLL_INTERVAL_MS) {
+        return true
+      }
+      firstDeadAt ??= now
+    } else {
+      firstDeadAt = null
+    }
+    if (now >= deadline) return false
+    await new Promise(resolve => setTimeout(resolve, PROCESS_GROUP_POLL_INTERVAL_MS))
   }
-  return !processGroupExists(processGroupId)
 }
 
-function processGroupExists(processGroupId: number): boolean {
+function inspectProcessGroup(processGroupId: number): 'absent' | 'dead' | 'present' {
   try {
     process.kill(-processGroupId, 0)
     if (process.platform === 'linux') {
       const hasLiveMembers = linuxProcessGroupHasLiveMembers(processGroupId)
-      if (hasLiveMembers !== null) return hasLiveMembers
+      if (hasLiveMembers === false) return 'dead'
     }
-    return true
+    return 'present'
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code
-    if (code === 'ESRCH') return false
-    if (code === 'EPERM') return true
+    if (code === 'ESRCH') return 'absent'
+    if (code === 'EPERM') return 'present'
     throw error
   }
 }
