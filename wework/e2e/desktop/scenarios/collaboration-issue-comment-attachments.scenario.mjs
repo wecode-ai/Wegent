@@ -82,7 +82,7 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs, workbenchRead
       mimeType: 'image/png',
       value: PNG.toString('base64'),
     })
-    await control.command('waitFor', `${FORM} img[alt="${filename}"]`)
+    await control.command('waitFor', `${BADGE} img[alt="${filename}"]`)
     assert.equal(Number(await control.command('getElementCount', BADGE)), count)
     assert.equal(
       Number(
