@@ -108,7 +108,7 @@ fn cloud_settings_need_no_local_project_mirror_and_preserve_enable_time_on_edit(
 #[test]
 fn workspace_settings_round_trip_and_reject_invalid_modes() {
     let directory = tempfile::tempdir().unwrap();
-    let store = LocalTaskStore::open(&directory.path().join("tasks.sqlite")).unwrap();
+    let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
     let mut settings = json!({"projectStore":"cloud","enabled":false,"prompt":"","executionDeviceId":"mac","version":0,
         "workspace":{"projectKey":"repo","workspacePath":"/repo","executionMode":"git_worktree","branch":"develop"}});
     let saved = store
