@@ -53,6 +53,50 @@ def resolve_conversation_reference(
     return task, _task_title(task)
 
 
+def validate_conversation_references(
+    db: Session,
+    *,
+    contexts: Iterable[Any] | None,
+    user_id: int,
+    current_task_id: int | None = None,
+) -> None:
+    """Validate conversation references before any task or subtask is persisted."""
+    seen_task_ids: set[int] = set()
+    for context in contexts or []:
+        if context.type != ContextType.CONVERSATION.value:
+            continue
+        data = context.data if isinstance(context.data, dict) else {}
+        try:
+            task_id = int(data.get("task_id"))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid conversation reference",
+            ) from exc
+        if current_task_id is not None and task_id == current_task_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot reference the current task",
+            )
+        if task_id in seen_task_ids:
+            continue
+        seen_task_ids.add(task_id)
+        resolve_conversation_reference(db, task_id=task_id, user_id=user_id)
+        subtasks = subtask_store.list_by_task(
+            db,
+            task_id=task_id,
+            user_id=user_id,
+            access_store=task_access_store,
+            limit=MAX_REFERENCE_MESSAGES,
+            from_latest=True,
+        )
+        if not _conversation_blocks(subtasks):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Referenced task has no conversation content",
+            )
+
+
 def build_conversation_reference_context(
     db: Session,
     *,
@@ -94,7 +138,7 @@ def build_conversation_reference_context(
                 f'<referenced_conversation id="{boundary}" task_id="{task.id}" '
                 f'title="{escape(title, quote=True)}">'
             ),
-            f"{omitted_note}{rendered}".strip(),
+            escape(f"{omitted_note}{rendered}".strip(), quote=False),
             f'</referenced_conversation id="{boundary}">',
         ]
     )
@@ -157,6 +201,7 @@ def prepend_conversation_reference_context(
 
 
 def _task_title(task: TaskResource) -> str:
+    """Return the task title used in the reference wrapper."""
     task_json = task.json if isinstance(task.json, dict) else {}
     spec = task_json.get("spec") if isinstance(task_json.get("spec"), dict) else {}
     title = str(spec.get("title") or task.name or task.id).strip()
@@ -164,6 +209,7 @@ def _task_title(task: TaskResource) -> str:
 
 
 def _conversation_blocks(subtasks: Iterable[Any]) -> list[tuple[str, str]]:
+    """Render stored subtasks into ordered role/content pairs."""
     blocks: list[tuple[str, str]] = []
     for subtask in subtasks:
         if subtask.status == SubtaskStatus.DELETE:
@@ -180,6 +226,7 @@ def _conversation_blocks(subtasks: Iterable[Any]) -> list[tuple[str, str]]:
 
 
 def _assistant_text_blocks(result: Any) -> list[tuple[str, str]]:
+    """Extract assistant text blocks when no final value is stored."""
     if not isinstance(result, dict):
         return []
     stored_blocks = result.get("blocks")
@@ -200,6 +247,7 @@ def _bounded_transcript(
     *,
     max_chars: int,
 ) -> tuple[str, int]:
+    """Keep the newest whole transcript entries within a character budget."""
     kept: list[str] = []
     total_chars = 0
     for role, content in reversed(blocks):
@@ -217,5 +265,6 @@ def _bounded_transcript(
 
 
 def _render_block(role: str, content: str) -> str:
+    """Render one transcript entry with a normalized role label."""
     normalized_role = "assistant" if role == "assistant_attempt" else role
     return f"[{normalized_role}]\n{content.strip()}"

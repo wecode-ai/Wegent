@@ -10,6 +10,7 @@ import ChatInput from '@/features/tasks/components/input/ChatInput'
 import {
   buildTaskMentionCandidates,
   default as MentionAutocomplete,
+  taskMentionName,
 } from '@/features/tasks/components/chat/MentionAutocomplete'
 import { taskApis } from '@/apis/tasks'
 import type { Task, Team } from '@/types/api'
@@ -177,6 +178,30 @@ describe('task conversation mentions', () => {
     fireEvent.keyDown(document, { key: 'ArrowDown' })
     fireEvent.keyDown(document, { key: 'Enter' })
     expect(onSelectTask).toHaveBeenCalledWith(older)
+  })
+
+  it('ignores Enter while an IME composition is active', () => {
+    const task = makeTask(3, 'IME task', '2026-04-01T00:00:00Z')
+    const onSelectTask = jest.fn()
+
+    render(
+      <MentionAutocomplete
+        team={null}
+        tasks={[task]}
+        enableTaskMentions
+        onSelect={jest.fn()}
+        onSelectTask={onSelectTask}
+        onClose={jest.fn()}
+        position={{ top: 100, bottom: 126, left: 0 }}
+      />
+    )
+
+    fireEvent.keyDown(document, { key: 'Enter', keyCode: 229 })
+    expect(onSelectTask).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the task id when title and prompt are missing', () => {
+    expect(taskMentionName({ id: 42, title: '', prompt: undefined } as unknown as Task)).toBe('42')
   })
 
   it('searches older tasks outside the loaded task list', async () => {

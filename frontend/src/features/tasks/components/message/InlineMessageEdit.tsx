@@ -20,6 +20,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { Loader2, MessageSquareText, X } from 'lucide-react'
 import MentionAutocomplete, {
   type MentionMenuAnchor,
+  taskMentionName,
 } from '@/features/tasks/components/chat/MentionAutocomplete'
 import type { Task } from '@/types/api'
 
@@ -124,7 +125,7 @@ const InlineMessageEdit: React.FC<InlineMessageEditProps> = ({
         ...previous,
         {
           task_id: task.id,
-          name: task.title || task.prompt.slice(0, 100) || String(task.id),
+          name: taskMentionName(task),
           task_updated_at: task.updated_at,
         },
       ]
@@ -219,8 +220,8 @@ const InlineMessageEdit: React.FC<InlineMessageEditProps> = ({
               <button
                 type="button"
                 onClick={() => removeConversationRef(ref.task_id)}
-                aria-label={`Remove ${ref.name}`}
-                className="text-text-muted hover:text-text-primary"
+                aria-label={t('chat:mention.removeTaskReference', { name: ref.name })}
+                className="flex h-11 w-11 items-center justify-center rounded text-text-muted hover:text-text-primary md:h-5 md:w-5"
               >
                 <X className="h-3 w-3" />
               </button>

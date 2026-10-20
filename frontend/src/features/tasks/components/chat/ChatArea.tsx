@@ -24,6 +24,7 @@ import { GuidedQuestions } from '@/features/knowledge/document/components/Guided
 import type { PipelineStageInfo } from '@/apis/tasks'
 import { useChatAreaState } from './useChatAreaState'
 import { useChatStreamHandlers, type SendMessageOptions } from './useChatStreamHandlers'
+import { taskMentionName } from './MentionAutocomplete'
 import { allBotsHavePredefinedModel, DEFAULT_MODEL_NAME } from '../selector/ModelSelector'
 import { QuoteProvider, SelectionTooltip, useQuote } from '../text-selection'
 import type { Attachment, SubtaskContextBrief, Task, TaskType, Team } from '@/types/api'
@@ -1662,7 +1663,7 @@ function ChatAreaContent({
           ...previous,
           {
             id: `conversation:${task.id}`,
-            name: task.title || task.prompt.slice(0, 100) || String(task.id),
+            name: taskMentionName(task),
             type: 'conversation',
             task_id: task.id,
             task_updated_at: task.updated_at,

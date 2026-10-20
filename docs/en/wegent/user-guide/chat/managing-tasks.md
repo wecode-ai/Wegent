@@ -14,7 +14,7 @@ This guide explains how to create conversation-type tasks in the Wegent frontend
 - [Creating a Conversation](#-creating-a-conversation)
 - [Conversation Interface](#-conversation-interface)
 - [Advanced Features](#-advanced-features)
-- [Continuing a Previous Task](#-continuing-a-previous-task)
+- [Continuing a Previous Task](#continuing-a-previous-task)
 - [Managing Task Knowledge](#-managing-task-knowledge)
 - [Best Practices](#-best-practices)
 - [Common Issues](#-common-issues)

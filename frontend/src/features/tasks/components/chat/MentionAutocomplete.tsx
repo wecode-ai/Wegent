@@ -91,6 +91,10 @@ function timestamp(value?: string | null): number {
   return Number.isNaN(parsed) ? 0 : parsed
 }
 
+export function taskMentionName(task: Task): string {
+  return task.title?.trim() || (task.prompt ?? '').slice(0, 100) || String(task.id)
+}
+
 export default function MentionAutocomplete({
   team,
   query = '',
@@ -218,6 +222,7 @@ export default function MentionAutocomplete({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.isComposing || event.keyCode === 229) return
       if (event.key === 'Escape') {
         event.preventDefault()
         event.stopPropagation()
@@ -335,7 +340,7 @@ export default function MentionAutocomplete({
                       isSelected ? 'text-primary' : 'text-text-primary'
                     }`}
                   >
-                    {row.task.title || row.task.prompt}
+                    {taskMentionName(row.task)}
                   </span>
                   <span
                     className={`block truncate text-xs ${

@@ -16,6 +16,9 @@ from app.services.chat.preprocessing.contexts import (
     link_contexts_to_subtask,
     prepare_contexts_for_chat,
 )
+from app.services.chat.preprocessing.conversation_references import (
+    validate_conversation_references,
+)
 from app.services.context import context_service
 
 
@@ -148,3 +151,46 @@ def test_conversation_reference_requires_task_access(
         )
 
     assert error.value.status_code == 404
+
+
+def test_conversation_reference_validation_rejects_current_task(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    current_task = _create_task(test_db, test_user, "Current task")
+
+    with pytest.raises(HTTPException) as error:
+        validate_conversation_references(
+            test_db,
+            contexts=[
+                ContextItem(
+                    type="conversation",
+                    data={"task_id": current_task.id},
+                )
+            ],
+            user_id=test_user.id,
+            current_task_id=current_task.id,
+        )
+
+    assert error.value.status_code == 400
+
+
+def test_conversation_reference_validation_requires_conversation_content(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    empty_task = _create_task(test_db, test_user, "Empty task")
+
+    with pytest.raises(HTTPException) as error:
+        validate_conversation_references(
+            test_db,
+            contexts=[
+                ContextItem(
+                    type="conversation",
+                    data={"task_id": empty_task.id},
+                )
+            ],
+            user_id=test_user.id,
+        )
+
+    assert error.value.status_code == 400

@@ -10,7 +10,8 @@ import type { Task } from '@/types/api'
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (key: string) => key,
+    t: (key: string, params?: Record<string, unknown>) =>
+      params?.name ? `${key}:${String(params.name)}` : key,
     i18n: { language: 'en' },
   }),
 }))
@@ -78,7 +79,9 @@ describe('InlineMessageEdit task handoff', () => {
     )
 
     expect(screen.getByTestId('inline-conversation-ref-3')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Remove Referenced task' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: 'chat:mention.removeTaskReference:Referenced task' })
+    )
     expect(screen.queryByTestId('inline-conversation-ref-3')).not.toBeInTheDocument()
   })
 

@@ -97,3 +97,35 @@ def test_fetch_subtasks_for_task_join_incremental_uses_fork_resolver(monkeypatch
     assert subtasks[0]["id"] == 2
     assert subtasks[0]["message_id"] == 2
     assert subtasks[0]["role"] == "ASSISTANT"
+
+
+def test_fetch_subtasks_for_task_join_filters_incremental_conversation_contexts(
+    monkeypatch,
+):
+    item = ForkHistoryItem(_subtask(2), True, 1, 2)
+    filtered = []
+
+    monkeypatch.setattr(chat_namespace, "get_db_session", _db_session)
+    monkeypatch.setattr(
+        chat_namespace,
+        "task_fork_history_resolver",
+        SimpleNamespace(
+            resolve_for_task=lambda db, *, task_id, user_id, after_message_id=None: [
+                item
+            ]
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "app.services.context.context_service.get_briefs_by_subtask",
+        lambda db, subtask_id: [],
+    )
+    monkeypatch.setattr(
+        "app.services.adapters.task_kinds.task_detail_helpers."
+        "filter_conversation_contexts_for_viewer",
+        lambda db, *, subtasks, user_id: filtered.append((subtasks, user_id)),
+    )
+
+    subtasks = chat_namespace._fetch_subtasks_for_task_join(2, 7, 1)
+
+    assert filtered == [(subtasks, 7)]
