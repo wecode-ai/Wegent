@@ -23,6 +23,15 @@ fn result_value(result: Value) -> Value {
 
 #[tokio::test]
 async fn personal_issue_task_operates_on_another_local_issue_without_rebinding() {
+    assert_local_issue_access(false).await;
+}
+
+#[tokio::test]
+async fn personal_issue_task_operates_on_another_local_project_without_rebinding() {
+    assert_local_issue_access(true).await;
+}
+
+async fn assert_local_issue_access(cross_project: bool) {
     let directory = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
     let project = store
@@ -34,13 +43,30 @@ async fn personal_issue_task_operates_on_another_local_issue_without_rebinding()
             provider_config: json!({}),
         })
         .unwrap();
+    let other_project = store
+        .create_project(ProjectCreate {
+            name: "Other project".to_owned(),
+            project_key: Some("OTHER".to_owned()),
+            description: String::new(),
+            task_provider: TaskProviderKind::Local,
+            provider_config: json!({}),
+        })
+        .unwrap();
+    let target_project = if cross_project {
+        &other_project
+    } else {
+        &project
+    };
     let runtime = TaskRuntime::new(store).unwrap();
     let mut items = Vec::new();
-    for title in ["Source Issue", "Target Issue"] {
+    for (project_id, title) in [
+        (&project.id, "Source Issue"),
+        (&target_project.id, "Target Issue"),
+    ] {
         items.push(
             runtime
                 .create_task(
-                    &project.id,
+                    project_id,
                     TaskCreate {
                         title: title.to_owned(),
                         description: String::new(),
@@ -70,7 +96,7 @@ async fn personal_issue_task_operates_on_another_local_issue_without_rebinding()
         call_tool_with_runtime_context(
             &runtime,
             "get_board_item",
-            json!({"space_id": project.id, "item_id": target.id}),
+            json!({"space_id": target_project.id, "item_id": target.id}),
             &context,
         )
         .await,
@@ -81,6 +107,7 @@ async fn personal_issue_task_operates_on_another_local_issue_without_rebinding()
             &runtime,
             "update_board_item",
             json!({
+                "space_id": target_project.id,
                 "item_id": target.id,
                 "item": {"version": read["version"], "title": "Updated target"}
             }),
@@ -93,26 +120,23 @@ async fn personal_issue_task_operates_on_another_local_issue_without_rebinding()
     let current = result_value(
         call_tool_with_runtime_context(&runtime, "get_current_context", json!({}), &context).await,
     );
+    assert_eq!(current["space_id"], project.id);
     assert_eq!(current["item_id"], source.id);
     assert_eq!(current["item"]["title"], "Source Issue");
     assert_eq!(current["item"]["version"], source.version);
-
-    let denied = call_tool_with_runtime_context(
-        &runtime,
-        "get_board_item",
-        json!({"space_id": "other-project", "item_id": target.id}),
-        &context,
-    )
-    .await;
-    assert_eq!(denied["isError"], true);
-    assert!(denied["content"][0]["text"]
-        .as_str()
-        .unwrap()
-        .contains("project space is outside"));
 }
 
 #[tokio::test]
 async fn personal_issue_task_routes_cloud_issue_targets_and_preserves_permission_errors() {
+    assert_cloud_issue_access("12").await;
+}
+
+#[tokio::test]
+async fn personal_issue_task_routes_other_cloud_projects_and_preserves_permission_errors() {
+    assert_cloud_issue_access("34").await;
+}
+
+async fn assert_cloud_issue_access(target_project_id: &'static str) {
     use axum::{
         extract::{Json, Path as AxumPath},
         http::{HeaderMap, StatusCode},
@@ -129,7 +153,7 @@ async fn personal_issue_task_routes_cloud_issue_targets_and_preserves_permission
         .route(
             "/api/v1/loop-items/{item_id}",
             get(
-                |headers: HeaderMap, AxumPath(item_id): AxumPath<String>| async move {
+                move |headers: HeaderMap, AxumPath(item_id): AxumPath<String>| async move {
                     assert_eq!(headers.get("authorization").unwrap(), "Bearer unit-token");
                     if item_id == "PRIVATE-3" {
                         return (
@@ -137,21 +161,37 @@ async fn personal_issue_task_routes_cloud_issue_targets_and_preserves_permission
                             Json(json!({"detail": "Issue access denied"})),
                         );
                     }
-                    (StatusCode::OK, Json(json!({"id": item_id, "version": 1})))
+                    let project_id = if item_id == "ISSUE-1" {
+                        "12"
+                    } else {
+                        target_project_id
+                    };
+                    (StatusCode::OK, Json(json!({
+                        "id": item_id, "cloud_project_id": project_id, "version": 1
+                    })))
                 },
             )
             .patch(
-                |headers: HeaderMap,
+                move |headers: HeaderMap,
                  AxumPath(item_id): AxumPath<String>,
                  Json(body): Json<Value>| async move {
                     assert_eq!(headers.get("authorization").unwrap(), "Bearer unit-token");
+                    if item_id == "READ-ONLY-4" {
+                        return (
+                            StatusCode::FORBIDDEN,
+                            Json(json!({"detail": "Issue write access denied"})),
+                        );
+                    }
                     assert_eq!(body, json!({"version": 1, "title": "Updated target"}));
-                    Json(json!({"id": item_id, "title": body["title"], "version": 2}))
+                    (StatusCode::OK, Json(json!({
+                        "id": item_id, "cloud_project_id": target_project_id,
+                        "title": body["title"], "version": 2
+                    })))
                 },
             ),
         )
         .route(
-            "/api/v1/cloud-projects/12/loop-items/{item_id}/activity-comments",
+            &format!("/api/v1/cloud-projects/{target_project_id}/loop-items/{{item_id}}/activity-comments"),
             post(
                 |headers: HeaderMap,
                  AxumPath(item_id): AxumPath<String>,
@@ -174,28 +214,30 @@ async fn personal_issue_task_routes_cloud_issue_targets_and_preserves_permission
         call_tool_with_runtime_context(
             &runtime,
             "get_board_item",
-            json!({"space_id": "12", "item_id": "ISSUE-2"}),
+            json!({"space_id": target_project_id, "item_id": "ISSUE-2"}),
             &context,
         )
         .await,
     );
     assert_eq!(read["id"], "ISSUE-2");
+    assert_eq!(read["cloud_project_id"], target_project_id);
     let updated = result_value(
         call_tool_with_runtime_context(
             &runtime,
             "update_board_item",
-            json!({"item_id": "ISSUE-2", "item": {"version": read["version"], "title": "Updated target"}}),
+            json!({"space_id": target_project_id, "item_id": "ISSUE-2", "item": {"version": read["version"], "title": "Updated target"}}),
             &context,
         )
         .await,
     );
     assert_eq!(updated["id"], "ISSUE-2");
+    assert_eq!(updated["cloud_project_id"], target_project_id);
     assert_eq!(updated["title"], "Updated target");
     let comment = result_value(
         call_tool_with_runtime_context(
             &runtime,
             "add_board_item_comment",
-            json!({"item_id": "ISSUE-2", "body": "Related work completed"}),
+            json!({"space_id": target_project_id, "item_id": "ISSUE-2", "body": "Related work completed"}),
             &context,
         )
         .await,
@@ -205,7 +247,7 @@ async fn personal_issue_task_routes_cloud_issue_targets_and_preserves_permission
     let denied = call_tool_with_runtime_context(
         &runtime,
         "get_board_item",
-        json!({"item_id": "PRIVATE-3"}),
+        json!({"space_id": target_project_id, "item_id": "PRIVATE-3"}),
         &context,
     )
     .await;
@@ -214,10 +256,24 @@ async fn personal_issue_task_routes_cloud_issue_targets_and_preserves_permission
         .as_str()
         .unwrap()
         .contains("Issue access denied"));
+    let denied_write = call_tool_with_runtime_context(
+        &runtime,
+        "update_board_item",
+        json!({"space_id": target_project_id, "item_id": "READ-ONLY-4", "item": {"version": 1, "title": "Denied"}}),
+        &context,
+    )
+    .await;
+    assert_eq!(denied_write["isError"], true);
+    assert!(denied_write["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("Issue write access denied"));
     let current = result_value(
         call_tool_with_runtime_context(&runtime, "get_current_context", json!({}), &context).await,
     );
+    assert_eq!(current["space_id"], "12");
     assert_eq!(current["item_id"], "ISSUE-1");
     assert_eq!(current["item"]["id"], "ISSUE-1");
+    assert_eq!(current["item"]["cloud_project_id"], "12");
     server.abort();
 }
