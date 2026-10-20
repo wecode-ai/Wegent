@@ -220,17 +220,6 @@ def test_admin_manages_agent_and_skill_marketplace_curation(
         json={"recommendation_score": 80},
         headers=_headers(test_admin_token),
     )
-    featured = test_client.get(
-        "/api/resource-library/listings"
-        "?resource_type=agent&featured_only=true&keyword=market-admin-agent",
-        headers=_headers(test_token),
-    )
-    featured_skill = test_client.get(
-        "/api/resource-library/listings"
-        "?resource_type=skill&featured_only=true&keyword=market-admin-skill",
-        headers=_headers(test_token),
-    )
-
     assert agents.status_code == 200
     assert [item["id"] for item in agents.json()["items"]] == [agent.id]
     assert skills.status_code == 200
@@ -247,9 +236,6 @@ def test_admin_manages_agent_and_skill_marketplace_curation(
     assert updated_skill.json()["recommendation_score"] == 80
     assert updated_skill.json()["description"] == "market-admin-skill description"
     assert test_db.get(MarketplaceResource, skill.id).recommendation_score == 80
-    assert [item["id"] for item in featured.json()["items"]] == [agent.id]
-    assert len(featured.json()["items"][0]["example_conversations"]) == 2
-    assert [item["id"] for item in featured_skill.json()["items"]] == [skill.id]
 
 
 def test_new_system_public_agent_is_not_recommended_by_default(

@@ -6,30 +6,24 @@
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
-from app.models.subtask_context import SubtaskContext
 from app.models.user import User
-from app.schemas.marketplace_tags import MarketplaceTagsResponse
 from app.schemas.resource_library import (
     ResourceLibraryAgentBindings,
     ResourceLibraryAgentBindingsUpdateRequest,
     ResourceLibraryCreateListingRequest,
-    ResourceLibraryDiscoveryList,
     ResourceLibraryInstall,
     ResourceLibraryInstallList,
     ResourceLibraryInstallRequest,
     ResourceLibraryListing,
-    ResourceLibraryListingList,
     ResourceLibraryPublicationUpdateRequest,
     ResourceLibraryReferenceUsage,
 )
 from app.schemas.resource_search import ResourceSearchResponse
-from app.services.context import context_service
-from app.services.marketplace_tag_service import marketplace_tag_service
 from app.services.resource_library_service import resource_library_service
 from app.services.resource_search import search_resources
 
@@ -71,71 +65,6 @@ def search_managed_resources(
         group_names=group_names,
         source_filter=source_filter,
         mode=mode,
-        cursor=cursor,
-        limit=limit,
-    )
-
-
-@router.get("/assets/team-icons/{asset_id}", include_in_schema=False)
-def get_public_team_icon(
-    asset_id: int,
-    db: Session = Depends(get_db),
-) -> Response:
-    """Serve a public team icon from the configured attachment storage."""
-    asset = db.get(SubtaskContext, asset_id)
-    if (
-        asset is None
-        or (asset.type_data or {}).get("public_asset_type")
-        != PUBLIC_TEAM_ICON_ASSET_TYPE
-    ):
-        raise HTTPException(status_code=404, detail="Team icon asset not found")
-    content = context_service.get_attachment_binary_data(db, asset)
-    if content is None:
-        raise HTTPException(status_code=404, detail="Team icon asset not found")
-    return Response(
-        content=content,
-        media_type=asset.mime_type,
-        headers={
-            "Cache-Control": "public, max-age=31536000, immutable",
-            "X-Content-Type-Options": "nosniff",
-        },
-    )
-
-
-@router.get("/tags", response_model=MarketplaceTagsResponse)
-def get_marketplace_tags(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-):
-    """Return the marketplace tag catalog for display and selection."""
-    return marketplace_tag_service.get_config(db)
-
-
-@router.get("/listings", response_model=ResourceLibraryDiscoveryList)
-def list_resource_library(
-    resource_type: str | None = Query(
-        default=None, pattern="^(agent|skill|model|shell|retriever)$"
-    ),
-    system_only: bool = Query(default=False),
-    featured_only: bool = Query(default=False),
-    keyword: str | None = Query(default=None, max_length=200),
-    tags: str | None = Query(default=None),
-    target_namespace: str = Query(default="default", min_length=1, max_length=100),
-    cursor: str | None = Query(default=None, max_length=512),
-    limit: int = Query(default=20, ge=1, le=100),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-):
-    """List active public Team and Skill capabilities."""
-    return resource_library_service.list_public(
-        db,
-        user_id=current_user.id,
-        resource_type=resource_type,
-        system_only=system_only,
-        featured_only=featured_only,
-        keyword=keyword,
-        tags=_parse_tags(tags),
-        target_namespace=target_namespace,
         cursor=cursor,
         limit=limit,
     )
@@ -325,26 +254,6 @@ def sync_agent_bindings(
         agent_id=agent_id,
         group_names=request.group_names,
         current_user=current_user,
-    )
-
-
-@router.get("/users/me/published", response_model=ResourceLibraryListingList)
-def list_my_resource_library_publications(
-    resource_type: str | None = Query(
-        default=None, pattern="^(agent|skill|model|shell|retriever)$"
-    ),
-    page: int = Query(default=1, ge=1),
-    limit: int = Query(default=20, ge=1, le=100),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-):
-    """List current-user publications that the user can still manage."""
-    return resource_library_service.list_published(
-        db,
-        current_user=current_user,
-        resource_type=resource_type,
-        page=page,
-        limit=limit,
     )
 
 

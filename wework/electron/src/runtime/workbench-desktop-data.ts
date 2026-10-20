@@ -1,5 +1,5 @@
 import { mkdirSync } from 'node:fs'
-import { isAbsolute, join, relative, sep } from 'node:path'
+import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 
 import {
   migrateWorkbenchDataEntry,
@@ -46,7 +46,8 @@ export function migrateWorkbenchDesktopData(options: {
     logs = join(migration.target, logSuffix)
   } else {
     const logMigration = desktopDataMigration(options.logs, desktop, 'electron-logs')
-    recoverWorkbenchDataBridge(logMigration)
+    mkdirSync(dirname(options.logs), { recursive: true, mode: 0o700 })
+    recoverWorkbenchDataBridge(logMigration, { replaceEmptyDirectory: true })
     mkdirSync(options.logs, { recursive: true, mode: 0o700 })
     migrateWorkbenchDataEntry(logMigration)
     logs = logMigration.target

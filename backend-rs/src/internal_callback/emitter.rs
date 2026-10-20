@@ -16,7 +16,7 @@ use serde_json::{Map, Value, json};
 
 use super::event::ExecutionEvent;
 use super::session;
-use super::socketio::publish_emit;
+use super::socketio::{publish_emit, publish_emit_in_room};
 
 const TASK_STREAMING_ACTIVITY_TOUCH_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -127,9 +127,9 @@ impl<'r, R: Redis> StatusUpdatingEmitter<'r, R> {
 
         self.collect_blocks(event).await?;
 
-        // Terminal (done/error/cancelled) events are handled by the task
-        // completion subsystem, which this callback migration does not yet
-        // cover; see the module note in `mod.rs`.
+        // A terminal event's frames are emitted by the caller after the task
+        // completion subsystem has run, so its `chat:done` payload carries the
+        // collected result; see `mod.rs`.
         if !is_terminal(&event.event_type) {
             self.forward_to_socketio(event).await?;
         }
@@ -450,6 +450,84 @@ fn is_terminal(event_type: &str) -> bool {
     matches!(event_type, "done" | "error" | "cancelled")
 }
 
+/// `WebSocketResultEmitter.emit`'s terminal branch
+/// (`app/services/execution/emitters/websocket.py:157-169`): the `chat:done`
+/// result frame for `task:{task_id}`, then the `task:status` frame for the
+/// owner's `user:{user_id}` room.
+///
+/// The caller runs this after the completion subsystem has collected the final
+/// result, so `result` is the payload the wrapped emitter forwards.
+pub(crate) async fn emit_done_frames<R: Redis>(
+    redis: &R,
+    event: &ExecutionEvent,
+    user_id: Option<i64>,
+    result: &Value,
+) -> RedisResult<()> {
+    let sanitized = match sanitize_client_payload(result) {
+        Value::Object(object) if object.is_empty() => Value::Object(object),
+        other => other,
+    };
+    let mut payload = Map::new();
+    payload.insert("task_id".into(), json!(event.task_id));
+    payload.insert("subtask_id".into(), json!(event.subtask_id));
+    payload.insert("offset".into(), json!(event.offset));
+    payload.insert("result".into(), sanitized);
+    payload.insert(
+        "message_id".into(),
+        event.message_id.map_or(Value::Null, |value| json!(value)),
+    );
+    publish_emit(redis, "chat:done", event.task_id, Value::Object(payload)).await?;
+
+    let status = match event.event_type.as_str() {
+        "error" => "FAILED",
+        "cancelled" => "CANCELLED",
+        _ => "COMPLETED",
+    };
+    // `_emit_task_status` returns early when the task has no owner.
+    let Some(user_id) = user_id else {
+        return Ok(());
+    };
+    let mut payload = Map::new();
+    payload.insert("task_id".into(), json!(event.task_id));
+    payload.insert("status".into(), Value::String(status.to_string()));
+    payload.insert("progress".into(), Value::Null);
+    payload.insert(
+        "completed_at".into(),
+        Value::String(
+            chrono::Local::now()
+                .naive_local()
+                .format("%Y-%m-%dT%H:%M:%S%.6f")
+                .to_string(),
+        ),
+    );
+    publish_emit_in_room(
+        redis,
+        "task:status",
+        &format!("user:{user_id}"),
+        Value::Object(payload),
+    )
+    .await
+    .map(|_| ())
+}
+
+/// `app/utils/client_payload_sanitizer.py sanitize_client_payload`: drop the
+/// private workflow URL keys anywhere in the payload, preserving every other
+/// key and its order.
+fn sanitize_client_payload(payload: &Value) -> Value {
+    const PRIVATE_KEYS: [&str; 3] = ["polling_url", "query_url", "task_url"];
+    match payload {
+        Value::Object(object) => Value::Object(
+            object
+                .iter()
+                .filter(|(key, _)| !PRIVATE_KEYS.contains(&key.as_str()))
+                .map(|(key, value)| (key.clone(), sanitize_client_payload(value)))
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.iter().map(sanitize_client_payload).collect()),
+        other => other.clone(),
+    }
+}
+
 /// `emit_chat_chunk` payload: fixed keyword order with optional fields.
 fn chunk_payload(
     event: &ExecutionEvent,
@@ -531,4 +609,24 @@ pub(crate) fn chunk_payload_for_test(
         block_offset,
         result,
     )
+}
+
+#[cfg(test)]
+mod done_frame_tests {
+    use super::*;
+    use crate::internal_callback::py_json::python_dumps;
+
+    #[test]
+    fn sanitize_client_payload_drops_only_private_workflow_urls() {
+        let payload = json!({
+            "value": "x",
+            "polling_url": "https://a",
+            "nested": {"task_url": "https://b", "keep": 1},
+            "list": [{"query_url": "https://c"}, "v"],
+        });
+        assert_eq!(
+            python_dumps(&sanitize_client_payload(&payload)),
+            "{\"value\": \"x\", \"nested\": {\"keep\": 1}, \"list\": [{}, \"v\"]}"
+        );
+    }
 }

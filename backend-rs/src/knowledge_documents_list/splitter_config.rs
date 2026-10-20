@@ -41,6 +41,13 @@ pub enum StoredSplitterConfig {
         #[serde(default)]
         breakpoint_percentile_threshold: Option<i64>,
     },
+    /// An empty stored payload: `normalize_splitter_config`'s `raw == {}`
+    /// branch renders the flat default. A unit variant alone would only
+    /// match JSON `null`, so the empty map is captured explicitly.
+    Empty {
+        #[serde(default)]
+        _empty: std::marker::PhantomData<()>,
+    },
 }
 
 /// `FlatChunkConfig`.
@@ -153,6 +160,21 @@ pub fn normalize_splitter_config(raw: &StoredSplitterConfig) -> impl serde::Seri
             })
         }
         StoredSplitterConfig::Legacy { .. } => json!({
+            "chunk_strategy": "flat",
+            "format_enhancement": "none",
+            "flat_config": {
+                "chunk_size": 1024,
+                "chunk_overlap": 200,
+                "separator": "\n\n",
+            },
+            "hierarchical_config": null,
+            "semantic_config": null,
+            "markdown_enhancement": {"enabled": false},
+            "legacy_type": null,
+        }),
+        // `normalize_splitter_config`'s `raw is None or raw == {}` branch:
+        // the flat default with the `FlatChunkConfig` field defaults.
+        StoredSplitterConfig::Empty { .. } => json!({
             "chunk_strategy": "flat",
             "format_enhancement": "none",
             "flat_config": {

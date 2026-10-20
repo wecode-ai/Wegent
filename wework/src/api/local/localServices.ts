@@ -1271,6 +1271,26 @@ async function applyRuntimeModelOptions(
   return modelConfig
 }
 
+export async function materializeCodexTaskModelConfig(
+  selection: ModelSelectionConfig | null | undefined,
+  options: Pick<RuntimeWorkIpcOptions, 'cloudModelGateway' | 'resolveProxy'> = {},
+  requireCodexCatalog = true
+): Promise<Record<string, unknown> | undefined> {
+  if (!selection?.modelName) return undefined
+  return applyRuntimeModelOptions(
+    localRuntimeModelConfig(
+      'codex',
+      requireCodexCatalog,
+      selection.modelName,
+      selection.modelType,
+      selection.options,
+      options.cloudModelGateway
+    ),
+    selection.options,
+    options.resolveProxy
+  )
+}
+
 type LocalRuntimeAttachmentPayload = Record<string, unknown> & {
   id: number
   filename: string
@@ -2883,17 +2903,10 @@ export function createRuntimeWorkApiFromIpc(
         ) {
           throw modelCatalogSyncCancelled()
         }
-        modelConfig = await applyRuntimeModelOptions(
-          localRuntimeModelConfig(
-            'codex',
-            requireLocalCodexCatalog,
-            selection.modelName,
-            selection.modelType,
-            selection.options,
-            options.cloudModelGateway
-          ),
-          selection.options,
-          resolveProxy
+        modelConfig = await materializeCodexTaskModelConfig(
+          selection,
+          { ...options, resolveProxy },
+          requireLocalCodexCatalog
         )
       }
       return request(
@@ -3348,17 +3361,10 @@ export function createRuntimeWorkApiFromIpc(
         ) {
           throw modelCatalogSyncCancelled()
         }
-        modelConfig = await applyRuntimeModelOptions(
-          localRuntimeModelConfig(
-            'codex',
-            requireLocalCodexCatalog,
-            selection.modelName,
-            selection.modelType,
-            selection.options,
-            options.cloudModelGateway
-          ),
-          selection.options,
-          resolveProxy
+        modelConfig = await materializeCodexTaskModelConfig(
+          selection,
+          { ...options, resolveProxy },
+          requireLocalCodexCatalog
         )
       }
       return requestWithLocalDevice('runtime.tasks.fork_at_turn', {
@@ -4335,11 +4341,18 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       return { data }
     },
   }
-  const replyPredictionApi = createReplyPredictionApi(async (method, params, signal) => {
-    const normalized = normalizeLocalDeviceRecord(params, await getLocalDeviceId())
-    signal?.throwIfAborted()
-    return request(method, normalized)
-  })
+  const replyPredictionApi = createReplyPredictionApi(
+    async (method, params, signal) => {
+      const normalized = normalizeLocalDeviceRecord(params, await getLocalDeviceId())
+      signal?.throwIfAborted()
+      return request(method, normalized)
+    },
+    selection =>
+      materializeCodexTaskModelConfig(selection, {
+        cloudModelGateway: deps.cloudModelGateway,
+        resolveProxy,
+      })
+  )
   const textGenerationApi: NonNullable<WorkbenchServices['textGenerationApi']> = {
     async generateText(data) {
       return cancellableTextGeneration(data.signal, data.timeoutMs, async signal => {

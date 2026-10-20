@@ -14,7 +14,7 @@ use crate::protocol::{AgentKind, ExecutionRequest};
 
 #[path = "instance_session.rs"]
 mod session;
-pub(crate) use session::validate_session;
+pub(crate) use session::{claude_session_transcript, validate_session};
 
 pub(super) use crate::file_lease::FileLease as HomeLease;
 

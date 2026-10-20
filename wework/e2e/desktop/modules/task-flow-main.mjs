@@ -1085,7 +1085,7 @@ async function main() {
   await markDesktopE2EResultActive(resultDir, { ownerProcessId: process.pid })
   console.log(`[desktop-e2e] result directory: ${resultDir}`)
   const workspacePath = join(resultDir, 'workspace')
-  const secondaryProjectPath = join(resultDir, 'secondary-project-root')
+  const secondaryProjectPath = join(resultDir, 'Codex', 'secondary-project-root')
   const composerProjectPath = join(resultDir, 'composer-project')
   const homePath = join(resultDir, 'home')
   const executorHome = join(resultDir, 'executor-home')
@@ -1111,6 +1111,16 @@ async function main() {
   await writeFile(
     join(electronUserDataDirectory, 'app-preferences.json'),
     `${JSON.stringify({ telemetryConsentAsked: false, telemetryEnabled: false })}\n`,
+    { flag: 'wx', mode: 0o600 }
+  )
+  // Background update dialogs steal focus from unrelated keyboard scenarios.
+  // Update scenarios still exercise explicit checks and downloads.
+  await writeFile(
+    join(electronUserDataDirectory, 'renderer-local-storage.json'),
+    `${JSON.stringify({
+      version: 1,
+      entries: { 'wework:autoDownloadUpdates': 'false' },
+    })}\n`,
     { flag: 'wx', mode: 0o600 }
   )
   await writeFile(join(homePath, '.zshrc'), '# Wework desktop E2E shell\n')
@@ -2430,6 +2440,23 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     const secondaryProjectId = secondaryProjectMenuTestId.slice('project-menu-'.length)
     const secondaryProjectRowSelector = `[data-testid="project-row-${secondaryProjectId}"]`
     await control.command('waitFor', secondaryProjectRowSelector, {
+      text: 'secondary-project',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+
+    phase = 'codex-directory-project-reload'
+    const readyCountBeforeProjectReload = control.readyCount
+    await control.command('reloadMainWindow', 'body')
+    await withTimeout(
+      control.awaitReadyAfter(readyCountBeforeProjectReload),
+      WORKBENCH_READY_TIMEOUT_MS,
+      'The workbench did not reconnect after reloading the Codex-directory project'
+    )
+    await control.command('waitFor', secondaryProjectRowSelector, {
+      text: 'secondary-project',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('waitFor', '[data-testid="project-work-button"]', {
       text: 'secondary-project',
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
@@ -4615,10 +4642,10 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         teardownFailures.push({ error, label })
       }
     }
-    await runTeardownStep('cloud environment', async () => cloudEnvironment?.stop())
-    await runTeardownStep('blocking network proxy', async () => blockingNetworkProxy?.stop())
     await runTeardownStep('desktop application', async () => stopDesktopAppProcess(app))
     await runTeardownStep('desktop controller', async () => control.close())
+    await runTeardownStep('blocking network proxy', async () => blockingNetworkProxy?.stop())
+    await runTeardownStep('cloud environment', async () => cloudEnvironment?.stop())
     await runTeardownStep('desktop scenario', async () => desktopScenario?.cleanup?.())
     await runTeardownStep('Codex SQLite home', async () =>
       rm(codexSqliteHome, {

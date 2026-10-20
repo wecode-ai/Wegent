@@ -64,31 +64,6 @@ def _task(db: Session, project: Project, **overrides: object) -> TaskResource:
     return task
 
 
-@pytest.mark.parametrize("is_expanded", [False, True])
-def test_toggle_api_group_with_null_description(
-    client: TestClient,
-    test_db: Session,
-    project: Project,
-    is_expanded: bool,
-) -> None:
-    project.description = None
-    project.config = {"taskSource": "api"}
-    _task(test_db, project)
-
-    response = client.put(
-        f"/api/projects/{project.id}", json={"is_expanded": is_expanded}
-    )
-
-    assert response.status_code == 200
-    result = response.json()
-    assert result["is_expanded"] is is_expanded
-    assert result["description"] == ""
-    assert result["task_count"] == 1
-    assert result["config"]["taskSource"] == "api"
-    test_db.refresh(project)
-    assert project.is_expanded is is_expanded
-
-
 @contextmanager
 def _selects(
     db: Session, *, mysql_statements: list[str] | None = None

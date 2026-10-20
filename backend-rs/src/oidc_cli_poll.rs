@@ -38,6 +38,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::http_compat::FastApiError;
+use crate::json_compat::python_str;
 use crate::state::AppState;
 
 /// `CLI_SESSION_KEY_PREFIX` (`app.api.endpoints.oidc`).
@@ -189,72 +190,6 @@ fn missing_session_id_body() -> Value {
             },
         ],
     })
-}
-
-/// Python `str(value)` for a decoded JSON value, used for the `status`
-/// field. Source code only ever stores a string `status`; any other value
-/// reaches this through a corrupted session record.
-fn python_str(value: &Value) -> String {
-    match value {
-        Value::String(text) => text.clone(),
-        // `str()` of a container uses `repr()` for its elements.
-        Value::Array(_) | Value::Object(_) => python_repr(value),
-        // `str()` and `repr()` agree on the scalars.
-        other => scalar_repr(other),
-    }
-}
-
-/// Python `repr(value)` for a decoded JSON value.
-fn python_repr(value: &Value) -> String {
-    match value {
-        Value::String(text) => python_string_repr(text),
-        Value::Array(items) => {
-            let parts: Vec<String> = items.iter().map(python_repr).collect();
-            format!("[{}]", parts.join(", "))
-        }
-        Value::Object(map) => {
-            let parts: Vec<String> = map
-                .iter()
-                .map(|(key, value)| format!("{}: {}", python_string_repr(key), python_repr(value)))
-                .collect();
-            format!("{{{}}}", parts.join(", "))
-        }
-        other => scalar_repr(other),
-    }
-}
-
-/// Python `repr()` of the JSON scalars: `None`, `True`, `False`, and the
-/// decimal integers. Floats use Rust's shortest round-trip rendering, which
-/// matches Python's `repr()` for the common integral and fractional values
-/// (only the exponent spelling of extreme magnitudes can differ).
-fn scalar_repr(value: &Value) -> String {
-    match value {
-        Value::Null => "None".to_owned(),
-        Value::Bool(true) => "True".to_owned(),
-        Value::Bool(false) => "False".to_owned(),
-        Value::Number(number) => {
-            if let Some(signed) = number.as_i64() {
-                signed.to_string()
-            } else if let Some(unsigned) = number.as_u64() {
-                unsigned.to_string()
-            } else {
-                let float = number.as_f64().unwrap_or_default();
-                format!("{float:?}")
-            }
-        }
-        Value::String(text) => text.clone(),
-        Value::Array(_) | Value::Object(_) => python_repr(value),
-    }
-}
-
-/// Python's single-quoted string `repr()`: single quotes unless the text
-/// contains a single quote and no double quote.
-fn python_string_repr(text: &str) -> String {
-    if text.contains('\'') && !text.contains('"') {
-        format!("\"{text}\"")
-    } else {
-        format!("'{}'", text.replace('\\', "\\\\").replace('\'', "\\'"))
-    }
 }
 
 #[cfg(test)]

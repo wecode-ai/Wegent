@@ -4,6 +4,7 @@ import { readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import {
+  WORKBENCH_READY_TIMEOUT_MS,
   createSingleRootLocalProject,
   fetchJson,
   selectE2EModel,
@@ -320,15 +321,15 @@ export function createDesktopScenario({
         )
       }
       await captureConfigState('after-executor-restart')
-      await createSingleRootLocalProject(control, workspacePath, 'codex-invalid-launch-cwd')
-      // The restarted runtime must refresh the real catalog before interacting with its menu.
+      // Project creation refreshes Codex threads, so first await cold-start catalog readiness.
       const modelCatalogLogOffset = (await readFile(executorLogPath, 'utf8')).length
       await control.command('dispatchLocalModelSettingsChanged', '')
       await waitForLogPattern(
         executorLogPath,
         /app IPC request started request_id=(\S+) method=runtime\.codex\.models\.list[\s\S]*?app IPC request finished request_id=\1 method=runtime\.codex\.models\.list[^\n]*ok=true/,
-        { fromOffset: modelCatalogLogOffset, timeoutMs: uiTimeoutMs }
+        { fromOffset: modelCatalogLogOffset, timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
       )
+      await createSingleRootLocalProject(control, workspacePath, 'codex-invalid-launch-cwd')
       await selectE2EModel(control, BUILTIN_MODEL_ID, BUILTIN_MODEL_LABEL, '', 'openai')
       await captureConfigState('before-send')
       const origin = await control.command('getLocationOrigin', 'body')

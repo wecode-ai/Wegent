@@ -78,6 +78,36 @@ function editorElement(item: CloudLoopItem) {
 }
 
 describe('TodoEditor external item sync', () => {
+  it('saves the status of a human assignment without a submission form', async () => {
+    const user = userEvent.setup()
+    const item = { ...baseItem, assignee_agent_id: '', assignee_user_id: 1 }
+    const saved = { ...item, status: 'completed', version: 2 }
+    const updateLoopItem = vi.fn(async () => saved)
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={item}
+        project={project}
+        allItems={[item]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={{ ...api, updateLoopItem } as never}
+        currentUserId={1}
+      />
+    )
+    expect(screen.queryByTestId('human-issue-work-panel')).not.toBeInTheDocument()
+    await user.selectOptions(screen.getByTestId('cloud-todo-detail-status'), 'completed')
+    await user.click(screen.getByTestId('cloud-todo-save'))
+    await waitFor(() =>
+      expect(updateLoopItem).toHaveBeenCalledExactlyOnceWith(item.id, {
+        version: 1,
+        status: 'completed',
+      })
+    )
+    expect(screen.queryByTestId('human-issue-result')).not.toBeInTheDocument()
+  })
+
   it('persists a title edit when execution changes the Issue version during saving', async () => {
     const user = userEvent.setup()
     const latest = { ...baseItem, version: 2, status: 'in_review' } as CloudLoopItem
@@ -547,9 +577,57 @@ describe('TodoEditor external item sync', () => {
     expect(screen.getByTestId('cloud-todo-personal-task-action')).toHaveTextContent(
       '基于当前 Issue 创建任务，并在当前电脑上运行'
     )
-    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
+    await userEvent.click(screen.getByTestId('cloud-todo-personal-task-start'))
     expect(onCreateTask).toHaveBeenCalledOnce()
   })
+
+  it.each([
+    { binding_type: 'system', task_user_id: 1, continuation: false },
+    { binding_type: 'user', task_user_id: null, continuation: false },
+    { binding_type: 'user', task_user_id: 1, continuation: false },
+  ] as const)(
+    'keeps AI assist available with $binding_type binding and user $task_user_id',
+    async binding => {
+      const onCreateTask = vi.fn()
+      const onOpenTaskConversation = vi.fn()
+      const item = {
+        ...baseItem,
+        assignee_user_id: 1,
+        assignee_agent_id: null,
+        can_view_detail: true,
+      }
+      const taskBinding = {
+        id: 99,
+        ...binding,
+        device_id: 'local-device',
+        task_id: 'bound-task',
+        task_title: 'Bound task',
+        linked_at: '2026-10-14T08:00:00Z',
+        loop_item_id: item.id,
+      }
+      render(
+        <TodoEditor
+          mode="edit"
+          presentation="workspace-panel"
+          item={item}
+          project={project}
+          allItems={[item]}
+          api={api}
+          currentUserId={1}
+          onUpdated={vi.fn()}
+          onClose={vi.fn()}
+          onCreateTask={onCreateTask}
+          onOpenTaskConversation={onOpenTaskConversation}
+          initialTaskBindings={[taskBinding as unknown as LoopItemTaskBinding]}
+        />
+      )
+      await screen.findByTestId('cloud-todo-tasks')
+      await userEvent.click(screen.getByTestId('cloud-todo-personal-task-start'))
+      expect(onCreateTask).toHaveBeenCalledOnce()
+      expect(onOpenTaskConversation).not.toHaveBeenCalled()
+      expect(screen.getByTestId('cloud-todo-personal-task-start')).toHaveTextContent('创建任务')
+    }
+  )
 
   it('shows running and recent tasks directly and uses expand only for the remaining tasks', async () => {
     const onCreateTask = vi.fn()
@@ -611,7 +689,7 @@ describe('TodoEditor external item sync', () => {
     expect(await screen.findByText('仍在运行的任务')).toBeInTheDocument()
     expect(screen.getByText('最近完成的任务')).toBeInTheDocument()
     expect(screen.queryByText('较早完成的任务')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('cloud-todo-personal-task-action')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-personal-task-action')).toBeInTheDocument()
 
     const toggle = screen.getByTestId('cloud-todo-toggle-tasks')
     expect(toggle).toHaveTextContent('展开')

@@ -11,6 +11,8 @@
 //! caller's installed Skills when no filter narrows the scan, merge the system
 //! and published discovery queries, then project each page item.
 
+pub(crate) mod agent_bindings;
+mod agent_bindings_sync;
 mod handler;
 pub(crate) mod models;
 pub(crate) mod repository;

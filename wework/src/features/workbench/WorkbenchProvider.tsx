@@ -20,7 +20,11 @@ import { navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { localSkillReference } from '@/lib/local-skill-reference'
 import { createConversationMentionReference } from '@/lib/conversation-mentions'
 import { runtimeContextUsageMetrics } from '@/lib/runtime-context-usage'
-import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
+import {
+  normalizeRuntimeWorkspacePath,
+  runtimeProjectToProject,
+  runtimeProjectUiId,
+} from '@/lib/runtime-project'
 import {
   runtimeProjectSyncTargetKey,
   type RuntimeProjectSyncTarget,
@@ -105,6 +109,7 @@ import { useRuntimeTaskModelSelection } from './useRuntimeTaskModelSelection'
 import { useWorkbenchProjectActions } from './useWorkbenchProjectActions'
 import { useWorkbenchRuntimeMessaging } from './useWorkbenchRuntimeMessaging'
 import { useWorkbenchRuntimeTasks } from './useWorkbenchRuntimeTasks'
+import { logRuntimeQueueStage } from './runtimeQueueDiagnostics'
 import { useWorkbenchSkills } from './useWorkbenchSkills'
 import { useWorkbenchDataRefresh } from './useWorkbenchDataRefresh'
 import { useStableEvent } from './useStableEvent'
@@ -159,6 +164,7 @@ import {
   settleRuntimeConversationGuidance,
   syncRuntimeConversationDeviceAliases,
 } from './runtimeConversationCache'
+import { getRuntimeConversationQueueController } from './runtimeConversationQueueController'
 import {
   applyModelContextWindowOverride,
   findModelForSelection,
@@ -1505,10 +1511,23 @@ export function WorkbenchProvider({
           queueWorkbenchWorkspaceLaunch(response.deviceId, response.roots[0], launchOptions)
         }
         dispatch({
-          type: 'runtime_workspace_opened',
-          deviceId: response.deviceId,
-          workspacePath: response.roots[0],
-          label: response.name,
+          type: 'project_workspace_selected',
+          project: runtimeProjectToProject({
+            project: {
+              key: response.projectKey,
+              stateDeviceId: response.deviceId,
+              name: response.name,
+            },
+            deviceWorkspaces: [
+              {
+                deviceId: response.deviceId,
+                workspacePath: response.roots[0],
+                available: true,
+                tasks: [],
+              },
+            ],
+          }),
+          startFreshChat: true,
         })
         navigateTo('/')
         return
@@ -2269,12 +2288,26 @@ export function WorkbenchProvider({
   const stableRenameRuntimeTask = useStableEvent(runtimeTasks.renameRuntimeTask)
   const stableArchiveRuntimeTask = useStableEvent(runtimeTasks.archiveRuntimeTask)
   const stableCancelRuntimeTask = useStableEvent(async (address: RuntimeTaskAddress) => {
-    const response = await executorClient.runtime.cancelRuntimeTask(address)
-    if (!response.accepted) {
-      throw new Error(response.error || t('workbench.runtime_task_cancel_failed'))
+    logRuntimeQueueStage(address, 'queue-stop-requested', { source: 'execution-action' })
+    const restoreQueue = getRuntimeConversationQueueController(address).pauseForCancellation()
+    let accepted: boolean | null = null
+    try {
+      const response = await executorClient.runtime.cancelRuntimeTask(address)
+      accepted = response.accepted
+      if (!response.accepted) {
+        throw new Error(response.error || t('workbench.runtime_task_cancel_failed'))
+      }
+      await notifyMainRuntimeWorkChanged(address)
+      await refreshWorkLists()
+    } catch (error) {
+      if (accepted !== true) restoreQueue()
+      throw error
+    } finally {
+      logRuntimeQueueStage(address, 'queue-stop-result', {
+        source: 'execution-action',
+        accepted,
+      })
     }
-    await notifyMainRuntimeWorkChanged(address)
-    await refreshWorkLists()
   })
   const stableForceStartRuntimeTask = useStableEvent(async (address: RuntimeTaskAddress) => {
     const response = await executorClient.runtime.forceStartRuntimeTask(address)

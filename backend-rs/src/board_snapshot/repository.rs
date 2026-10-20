@@ -14,7 +14,7 @@ use chrono::NaiveDateTime;
 use serde::Deserialize;
 
 use crate::cloud_projects::{
-    LOOP_ITEMS_COLUMNS, ProjectAccessMode, project_access_statement, role_for_priority,
+    LOOP_ITEMS_COLUMNS, project_access_point_statement, role_for_priority,
 };
 
 /// Whether a datetime equals the unset sentinel or is NULL
@@ -644,9 +644,11 @@ impl<'a, M: Mysql> BoardSnapshotRepository<'a, M> {
         user_id: i32,
     ) -> MysqlResult<Option<ProjectAccess>> {
         // The source inlines the user and project ids into the statement, so it
-        // carries no bind parameters.
-        let statement =
-            project_access_statement(ProjectAccessMode::Point, user_id, Some(project_id));
+        // carries no bind parameters. This is the recorded
+        // `project_access_query` point form: the direct, workspace-inherited,
+        // public (`authenticated_users`) and owned grants reduced to
+        // `min(priority)` and joined to the active project row.
+        let statement = project_access_point_statement(user_id, project_id);
         let record: Option<ProjectAccessRecord> = self.mysql.fetch_optional(statement, ()).await?;
         match record {
             None => Ok(None),

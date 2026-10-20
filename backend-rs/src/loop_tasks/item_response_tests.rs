@@ -171,9 +171,8 @@ fn approval_view_sets_only_the_active_status_fields() {
     assert!(approval_view(&row).is_none());
 }
 
-#[test]
-fn response_serializes_all_fields_with_nulls() {
-    let response = LoopItemResponse {
+fn response_fixture() -> LoopItemResponse {
+    LoopItemResponse {
         id: "REMOTEHI2E7B57-2".to_string(),
         cloud_project_id: "4132140824159326414".to_string(),
         sequence_number: 2,
@@ -201,7 +200,7 @@ fn response_serializes_all_fields_with_nulls() {
         assignment_history: Vec::new(),
         status_history: Vec::new(),
         approval: None,
-        human_work: None,
+        human_task_binding: None,
         queued_at: None,
         execution_note: None,
         execution_error: None,
@@ -233,12 +232,18 @@ fn response_serializes_all_fields_with_nulls() {
         created_at: "2026-08-13T16:23:38".to_string(),
         updated_at: "2026-08-13T17:56:14".to_string(),
         completed_at: None,
-    };
-    let value = serde_json::to_value(&response).expect("serializes");
+    }
+}
+
+#[test]
+fn response_serializes_all_fields_with_nulls() {
+    let value = serde_json::to_value(response_fixture()).expect("serializes");
     assert_eq!(value["assignee_user_id"], 14);
     assert_eq!(value["assignee_name"], "xiaozhou5");
     assert_eq!(value["detail_loaded"], true);
     assert_eq!(value["permissions"]["assign"], true);
+    assert_eq!(value["human_task_binding"], Value::Null);
+    assert!(value.get("human_work").is_none());
     // 54 declared fields, matching the recorded source schema.
     assert_eq!(value.as_object().expect("object").len(), 54);
 }
@@ -307,4 +312,23 @@ fn workflow_view_preserves_alias_keys_and_stored_execution_error() {
         json!("d")
     );
     assert_eq!(view["nodes"][0]["execution_error"], json!("boom"));
+}
+
+#[test]
+fn response_exposes_the_new_binding_contract_in_every_issue_status() {
+    let identity = json!({
+        "humanAssignmentId": "0cc4f520-a9bf-560e-a89a-422ae4dc4b05",
+        "dispatchId": "direct-human:1000000000000000003",
+        "dispatchRoundId": "direct",
+        "assignmentId": "1000000000000000003",
+    });
+    for status in ["inbox", "pending", "in_progress", "in_review", "completed"] {
+        let mut response = response_fixture();
+        response.status = status.to_string();
+        response.human_task_binding = Some(identity.clone());
+        let value = serde_json::to_value(response).expect("serializes");
+        assert_eq!(value["human_task_binding"], identity);
+        assert_eq!(value["status"], status);
+        assert!(value.get("human_work").is_none());
+    }
 }

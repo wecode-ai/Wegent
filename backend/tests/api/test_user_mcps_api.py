@@ -114,20 +114,33 @@ class TestUserMcpsAPI:
             "oauth_account": None,
         }
 
-    def test_list_provider_services_returns_registry_and_config(
-        self, user_mcps_client: TestClient
+    @pytest.mark.parametrize(
+        ("service_id", "server_name"),
+        [
+            ("docs", "dingtalk_docs"),
+            ("ai_table", "dingtalk_ai_table"),
+            ("wikispace", "dingtalk_wikispace"),
+        ],
+    )
+    def test_user_configurable_dingtalk_services_accept_url_and_oauth_modes(
+        self,
+        user_mcps_client: TestClient,
+        service_id: str,
+        server_name: str,
     ):
-        response = user_mcps_client.get(
-            "/api/users/me/mcps/providers/dingtalk/services"
+        """Docs, AI Table, and Knowledge Base offer API-key and OAuth settings."""
+        response = user_mcps_client.put(
+            f"/api/users/me/mcps/providers/dingtalk/services/{service_id}",
+            json={
+                "enabled": True,
+                "url": f"https://example.com/{service_id}/oauth",
+                "auth_mode": "oauth",
+            },
         )
 
         assert response.status_code == 200
-        assert response.json() == [
-            _dingtalk_service("docs", "dingtalk_docs", 9629),
-            _dingtalk_service("table", "dingtalk_table", 9704),
-            _dingtalk_service("ai_table", "dingtalk_ai_table", 9555),
-            _dingtalk_service("wikispace", "dingtalk_wikispace", 9730),
-        ]
+        assert response.json()["auth_mode"] == "oauth"
+        assert response.json()["server_name"] == server_name
 
     def test_enable_provider_service_without_url_fails(
         self, user_mcps_client: TestClient

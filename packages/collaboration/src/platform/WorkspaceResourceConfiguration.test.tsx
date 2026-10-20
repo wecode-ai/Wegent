@@ -207,8 +207,10 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
 
     expect(commands.createCollaborationGroup).toHaveBeenCalledWith(
       expect.objectContaining({
-        leader: { kind: "human", id: "7", responsibility: "" },
-        members: [{ kind: "human", id: "7", responsibility: "" }],
+        leader: { kind: "human", id: "7", name: "Alice", responsibility: "" },
+        members: [
+          { kind: "human", id: "7", name: "Alice", responsibility: "" },
+        ],
       }),
     );
   });
@@ -281,8 +283,10 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     await click(byTestId("collaboration-group-create"));
     expect(commands.createCollaborationGroup).toHaveBeenCalledWith(
       expect.objectContaining({
-        leader: { kind: "agent", id: "1", responsibility: "" },
-        members: [{ kind: "agent", id: "1", responsibility: "" }],
+        leader: { kind: "agent", id: "1", name: "Codex", responsibility: "" },
+        members: [
+          { kind: "agent", id: "1", name: "Codex", responsibility: "" },
+        ],
       }),
     );
   });
@@ -439,10 +443,10 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     expect(commands.createCollaborationGroup).toHaveBeenCalledWith({
       name: "交付小组",
       description: "负责产品交付",
-      leader: { kind: "agent", id: "1", responsibility: "" },
+      leader: { kind: "agent", id: "1", name: "Codex", responsibility: "" },
       members: [
-        { kind: "agent", id: "1", responsibility: "" },
-        { kind: "human", id: "7", responsibility: "代码审查" },
+        { kind: "agent", id: "1", name: "Codex", responsibility: "" },
+        { kind: "human", id: "7", name: "Alice", responsibility: "代码审查" },
       ],
       coordinationMode: "manager",
       instructions: "",
@@ -451,6 +455,75 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
         requiredTags: [],
       },
     });
+  });
+
+  it("preserves stored leader and member names when candidates are unavailable", async () => {
+    const savedGroup: CollaborationGroup = {
+      ...group,
+      leader: { ...group.leader, name: "Stored leader" },
+      members: [
+        { ...group.members[0], name: "Stored leader" },
+        { ...group.members[1], name: "Stored reviewer" },
+        {
+          kind: "human",
+          id: "7",
+          name: "Stored human",
+          responsibility: "Review",
+        },
+      ],
+    };
+    await act(async () =>
+      root.render(
+        <WorkspaceCollaborationGroupsConfiguration
+          groups={[savedGroup]}
+          members={[]}
+          agents={[]}
+          locale="zh-CN"
+          commands={commands}
+          canManage
+        />,
+      ),
+    );
+    await click(byTestId("collaboration-group-manage-group-1"));
+    await click(byTestId("collaboration-group-detail-save"));
+
+    expect(commands.updateCollaborationGroup).toHaveBeenCalledWith(
+      group.id,
+      expect.objectContaining({
+        leader: expect.objectContaining({ name: "Stored leader" }),
+        members: expect.arrayContaining([
+          expect.objectContaining({ id: "2", name: "Stored reviewer" }),
+          expect.objectContaining({ id: "7", name: "Stored human" }),
+        ]),
+      }),
+    );
+  });
+
+  it.each(["Me", "我"])("preserves an agent's actual name %s", async (name) => {
+    await act(async () =>
+      root.render(
+        <WorkspaceCollaborationGroupsConfiguration
+          groups={[group]}
+          members={[]}
+          agents={[{ ...codexAgent, name }, claudeAgent]}
+          locale="zh-CN"
+          commands={commands}
+          canManage
+        />,
+      ),
+    );
+    await click(byTestId("collaboration-group-manage-group-1"));
+    await click(byTestId("collaboration-group-detail-save"));
+
+    expect(commands.updateCollaborationGroup).toHaveBeenCalledWith(
+      group.id,
+      expect.objectContaining({
+        leader: expect.objectContaining({ name }),
+        members: expect.arrayContaining([
+          expect.objectContaining({ id: "1", name }),
+        ]),
+      }),
+    );
   });
 
   it("edits member delegation rules, workflow stages, and environment requirements", async () => {
@@ -514,8 +587,10 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     expect(commands.updateCollaborationGroup).toHaveBeenCalledWith(
       group.id,
       expect.objectContaining({
-        leader: { kind: "agent", id: "1", responsibility: "" },
-        members: [{ kind: "agent", id: "1", responsibility: "" }],
+        leader: { kind: "agent", id: "1", name: "Codex", responsibility: "" },
+        members: [
+          { kind: "agent", id: "1", name: "Codex", responsibility: "" },
+        ],
         instructions: expect.stringContaining("@Claude Code"),
         stages: [
           expect.objectContaining({

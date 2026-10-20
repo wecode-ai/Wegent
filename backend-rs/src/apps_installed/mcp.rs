@@ -100,7 +100,7 @@ impl std::fmt::Display for McpError {
 /// per app and passes them to every request of the MCP client session.
 pub async fn list_tools_with_headers(
     url: &str,
-    headers: &[(&str, String)],
+    headers: &[(String, String)],
 ) -> Result<Vec<UpstreamTool>, McpError> {
     let client = HttpClient::builder()
         .connect_timeout(REQUEST_TIMEOUT)
@@ -202,14 +202,14 @@ pub async fn list_tools_with_headers(
 fn session_request(
     endpoint: &Endpoint,
     body: &impl serde::Serialize,
-    headers: &[(&str, String)],
+    headers: &[(String, String)],
 ) -> brz_http::RequestBuilder {
     let mut request = endpoint
         .post()
         .header("accept", "application/json, text/event-stream")
         .json(body);
     for (name, value) in headers {
-        request = request.header(*name, value);
+        request = request.header(name, value);
     }
     request
 }

@@ -40,8 +40,8 @@ SESSION_KEY_PREFIX = "user_mcp_oauth_session:"
 BROWSER_BINDING_COOKIE = "wegent_mcp_oauth_binding"
 POLL_INTERVAL_SECONDS = 2
 STATE_AUDIENCE = "wegent-mcp-oauth"
-# Refresh slightly before expiry so a long task never starts on a dead token.
-REFRESH_SKEW_SECONDS = 300
+# Refresh well before expiry so long tasks do not start on a near-dead token.
+REFRESH_SKEW_SECONDS = 1800
 DISCOVERY_TIMEOUT_SECONDS = 15
 # OAuth error code a provider returns when the stored grant is no longer usable.
 INVALID_GRANT_ERROR = "invalid_grant"

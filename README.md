@@ -293,17 +293,17 @@ Thanks to everyone who helps Wegent grow.
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/parabala">
-                    <img src="https://avatars.githubusercontent.com/u/115564000?v=4" width="80;" alt="parabala"/>
-                    <br />
-                    <sub><b>Parabala</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/sdadunderscoresdad">
                     <img src="https://avatars.githubusercontent.com/u/130071748?v=4" width="80;" alt="sdadunderscoresdad"/>
                     <br />
                     <sub><b>+7</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/parabala">
+                    <img src="https://avatars.githubusercontent.com/u/115564000?v=4" width="80;" alt="parabala"/>
+                    <br />
+                    <sub><b>Parabala</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -379,10 +379,10 @@ Thanks to everyone who helps Wegent grow.
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/maquan0927">
-                    <img src="https://avatars.githubusercontent.com/u/40860588?v=4" width="80;" alt="maquan0927"/>
+                <a href="https://github.com/sleetdrop">
+                    <img src="https://avatars.githubusercontent.com/u/88603?v=4" width="80;" alt="sleetdrop"/>
                     <br />
-                    <sub><b>Just Quan</b></sub>
+                    <sub><b>sleetdrop</b></sub>
                 </a>
             </td>
 		</tr>
@@ -392,6 +392,13 @@ Thanks to everyone who helps Wegent grow.
                     <img src="https://avatars.githubusercontent.com/u/48245733?v=4" width="80;" alt="Twelveeee"/>
                     <br />
                     <sub><b>Twelveeee</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/maquan0927">
+                    <img src="https://avatars.githubusercontent.com/u/40860588?v=4" width="80;" alt="maquan0927"/>
+                    <br />
+                    <sub><b>Just Quan</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -423,13 +430,6 @@ Thanks to everyone who helps Wegent grow.
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/sleetdrop">
-                    <img src="https://avatars.githubusercontent.com/u/88603?v=4" width="80;" alt="sleetdrop"/>
-                    <br />
-                    <sub><b>sleetdrop</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/fingki">
                     <img src="https://avatars.githubusercontent.com/u/11422037?v=4" width="80;" alt="fingki"/>
                     <br />
@@ -450,6 +450,13 @@ Thanks to everyone who helps Wegent grow.
                     <img src="https://avatars.githubusercontent.com/u/5112004?v=4" width="80;" alt="friendfei"/>
                     <br />
                     <sub><b>friendfei</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/Qinxl0921">
+                    <img src="https://avatars.githubusercontent.com/u/79916629?v=4" width="80;" alt="Qinxl0921"/>
+                    <br />
+                    <sub><b>qinxll</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -494,6 +501,8 @@ Thanks to everyone who helps Wegent grow.
                     <sub><b>Ray</b></sub>
                 </a>
             </td>
+		</tr>
+		<tr>
             <td align="center">
                 <a href="https://github.com/RichardoMrMu">
                     <img src="https://avatars.githubusercontent.com/u/44485717?v=4" width="80;" alt="RichardoMrMu"/>
@@ -501,8 +510,6 @@ Thanks to everyone who helps Wegent grow.
                     <sub><b>RichardoMu</b></sub>
                 </a>
             </td>
-		</tr>
-		<tr>
             <td align="center">
                 <a href="https://github.com/Ged0">
                     <img src="https://avatars.githubusercontent.com/u/4569451?v=4" width="80;" alt="Ged0"/>
@@ -539,19 +546,21 @@ Thanks to everyone who helps Wegent grow.
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/haohaitao">
+                    <img src="https://avatars.githubusercontent.com/u/26541344?v=4" width="80;" alt="haohaitao"/>
+                    <br />
+                    <sub><b>haohaitao</b></sub>
+                </a>
+            </td>
+            <td align="center">
                 <a href="https://github.com/qingchengliu">
                     <img src="https://avatars.githubusercontent.com/u/20255838?v=4" width="80;" alt="qingchengliu"/>
                     <br />
                     <sub><b>Qingcheng</b></sub>
                 </a>
             </td>
-            <td align="center">
-                <a href="https://github.com/Qinxl0921">
-                    <img src="https://avatars.githubusercontent.com/u/79916629?v=4" width="80;" alt="Qinxl0921"/>
-                    <br />
-                    <sub><b>qinxll</b></sub>
-                </a>
-            </td>
+		</tr>
+		<tr>
             <td align="center">
                 <a href="https://github.com/salt-hai">
                     <img src="https://avatars.githubusercontent.com/u/43851000?v=4" width="80;" alt="salt-hai"/>
@@ -559,8 +568,6 @@ Thanks to everyone who helps Wegent grow.
                     <sub><b>Salt-hai</b></sub>
                 </a>
             </td>
-		</tr>
-		<tr>
             <td align="center">
                 <a href="https://github.com/wxcfox">
                     <img src="https://avatars.githubusercontent.com/u/33141411?v=4" width="80;" alt="wxcfox"/>

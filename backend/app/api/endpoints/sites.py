@@ -21,7 +21,6 @@ from pydantic import ValidationError
 from app.core import security
 from app.models.user import User
 from app.schemas.site import (
-    ApplicationTypeListResponse,
     EnvironmentRevision,
     EnvironmentSnapshot,
     EnvironmentVariableDeleteRequest,

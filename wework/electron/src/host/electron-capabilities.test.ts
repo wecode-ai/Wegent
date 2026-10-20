@@ -251,6 +251,7 @@ describe('showElectronNotification', () => {
   test.each([
     'wework://tasks/device-1/task-1',
     'wework://boards/12/issues/gitlab%3A12%2Fissue%233',
+    'wework://boards/local/local-project-1/issues/OFF-1',
   ])('queues the same destination as an in-app notification on click: %s', url => {
     const navigation = { openRuntimeTask: vi.fn(), openScheme: vi.fn() }
     const listeners = new Map<string, () => void>()
@@ -865,6 +866,48 @@ describe('registerDesktopServiceCapabilities', () => {
     expect(cleanupStaleTemporaryImages).toHaveBeenCalledOnce()
     expect(developer.openLogDirectory).toHaveBeenCalledOnce()
     expect(developer.openDevTools).toHaveBeenCalledOnce()
+  })
+
+  test('forwards the application menu language reported by the renderer', async () => {
+    const handlers = new Map<HostCapability, HostCapabilityHandler>()
+    const router = {
+      register: vi.fn((capability: HostCapability, handler: HostCapabilityHandler) => {
+        handlers.set(capability, handler)
+      }),
+    } as unknown as HostCapabilityRouter
+    const updateApplicationMenuCapabilities = vi.fn()
+    const updateApplicationMenuLanguage = vi.fn()
+    registerDesktopServiceCapabilities(
+      router,
+      {
+        applicationMenu: () => null,
+        updateApplicationMenuCapabilities,
+        updateApplicationMenuLanguage,
+      } as unknown as ElectronDesktopServices,
+      { openDevTools: vi.fn(), openLogDirectory: vi.fn() }
+    )
+
+    await handlers.get('applicationMenu.setLanguage')?.(
+      { language: 'zh-CN' },
+      { principal: 'test' }
+    )
+    expect(updateApplicationMenuLanguage).toHaveBeenCalledWith('zh-CN')
+
+    await handlers.get('applicationMenu.setCapabilities')?.(
+      { windowLabel: 'main', capabilities: { taskSurface: true, canCloseTab: false } },
+      { principal: 'test' }
+    )
+    expect(updateApplicationMenuCapabilities).toHaveBeenCalledWith('main', {
+      taskSurface: true,
+      canCloseTab: false,
+    })
+
+    expect(() =>
+      handlers.get('applicationMenu.setCapabilities')?.(
+        { windowLabel: 'main', capabilities: { taskSurface: 'yes' } },
+        { principal: 'test' }
+      )
+    ).toThrow()
   })
 })
 

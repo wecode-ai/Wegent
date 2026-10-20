@@ -25,6 +25,7 @@ import { materializeBundledPluginResources } from '../../scripts/lib/bundled-plu
 import { resolveHarnessRuntimeCachePaths } from '../../scripts/lib/harness-runtime-cache.mjs'
 import { normalizeFileViewerAssetManifest } from '../../scripts/lib/harness-runtime-metadata.mjs'
 import { extractWeworkAppStaticResources } from '../../scripts/lib/wework-app-component-resources.mjs'
+import { packagedHarnessRuntimeCatalog } from '../../scripts/lib/packaged-harness-runtime.mjs'
 
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const weworkRoot = resolve(electronRoot, '..')
@@ -65,20 +66,16 @@ await mkdir(join(resourcesRoot, 'bin'), { recursive: true, mode: 0o700 })
 const runtimeCatalog = JSON.parse(
   await readFile(join(harnessRuntimeMaterializedRoot, 'runtimes.json'), 'utf8')
 )
-const packagedRuntimes = runtimeCatalog.runtimes.filter(runtime =>
-  ['core', 'workbench'].includes(runtime.role)
-)
+const packagedCatalog = packagedHarnessRuntimeCatalog(runtimeCatalog)
+const packagedRuntimes = packagedCatalog.runtimes
 const harnessResources = join(resourcesRoot, 'harness-runtime')
 await mkdir(harnessResources, { recursive: true, mode: 0o700 })
-for (const runtime of packagedRuntimes) {
-  await cp(
-    join(harnessRuntimeAssetDirectory, runtime.assetName),
-    join(harnessResources, runtime.assetName)
-  )
+for (const assetName of new Set(packagedRuntimes.map(runtime => runtime.assetName))) {
+  await cp(join(harnessRuntimeAssetDirectory, assetName), join(harnessResources, assetName))
 }
 await writeFile(
   join(harnessResources, 'runtimes.json'),
-  `${JSON.stringify({ runtimes: packagedRuntimes }, null, 2)}\n`,
+  `${JSON.stringify(packagedCatalog, null, 2)}\n`,
   { mode: 0o600 }
 )
 await materializeBundledPluginResources(weworkRoot, join(resourcesRoot, 'bundled-plugins'))

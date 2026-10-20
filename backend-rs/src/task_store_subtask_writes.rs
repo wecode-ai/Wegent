@@ -135,18 +135,23 @@ pub(super) async fn task_owner_matches<M: Mysql>(
 
 /// `_queue_bulk_status_metrics` plus `mark_task_subtasks_deleted`: the
 /// failed-assistant read, the `synchronize_session='fetch'` id read, then the
-/// bulk update.
+/// bulk update. The FAILED ASSISTANT rows and the queue-time clock feed the
+/// after-commit task-run metric publish.
 pub(super) async fn mark_subtasks_deleted<M: Mysql>(
     store: &DefaultTaskStore<M>,
     task_id: i64,
     owner_user_id: i64,
     updated_at: &str,
-) -> MysqlResult<u64> {
+) -> MysqlResult<crate::task_store::DeletedSubtasks> {
+    use crate::task_store::DeletedSubtasks;
     use crate::task_store_statements::{
         failed_assistant_subtasks_statement, mark_subtasks_deleted_statement,
         subtask_ids_for_update_statement,
     };
-    let _metrics: Vec<MysqlRow> = store
+    // `queue_bulk_subtask_status_metrics` reads its one `state_changed_at`
+    // clock before iterating the queued rows.
+    let queued_at = chrono::Local::now().naive_local();
+    let failed_assistant: Vec<MysqlRow> = store
         .mysql
         .fetch_all(
             failed_assistant_subtasks_statement(SUBTASKS_TABLE, true),
@@ -161,9 +166,14 @@ pub(super) async fn mark_subtasks_deleted<M: Mysql>(
         )
         .await?;
     let sql = mark_subtasks_deleted_statement(SUBTASKS_TABLE, true);
-    store
+    let rows_affected = store
         .mysql
         .execute(sql, (true, "DELETE", updated_at, task_id, owner_user_id))
         .await
-        .map(|outcome| outcome.rows_affected)
+        .map(|outcome| outcome.rows_affected)?;
+    Ok(DeletedSubtasks {
+        rows_affected,
+        failed_assistant,
+        queued_at,
+    })
 }

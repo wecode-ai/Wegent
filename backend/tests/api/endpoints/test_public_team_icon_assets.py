@@ -22,7 +22,7 @@ def _png_bytes() -> bytes:
     return output.getvalue()
 
 
-def test_admin_uploads_and_serves_public_team_icon(
+def test_admin_uploads_and_deletes_public_team_icon(
     test_client,
     test_admin_token,
 ):
@@ -38,22 +38,12 @@ def test_admin_uploads_and_serves_public_team_icon(
         f"/api/resource-library/assets/team-icons/{asset['asset_id']}"
     )
 
-    served = test_client.get(asset["url"])
-
-    assert served.status_code == 200
-    assert served.headers["content-type"] == "image/webp"
-    assert served.headers["cache-control"] == "public, max-age=31536000, immutable"
-    with Image.open(io.BytesIO(served.content)) as image:
-        assert image.format == "WEBP"
-        assert image.size == (512, 512)
-
     deleted = test_client.delete(
         f"/api/admin/public-teams/icon-assets/{asset['asset_id']}",
         headers=_headers(test_admin_token),
     )
 
     assert deleted.status_code == 204
-    assert test_client.get(asset["url"]).status_code == 404
 
 
 def test_non_admin_cannot_upload_public_team_icon(

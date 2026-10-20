@@ -20,7 +20,10 @@ const CHANNEL_KEY_PREFIXES: [&str; 2] = [
     "channel:task_callback:telegram:",
 ];
 
-#[cfg(test)]
+/// The registered channel key prefixes, in registry (import) order.
+///
+/// `status_updating.py`'s terminal handling forwards through
+/// `TaskCompletedEvent`, so the completion fan-out probes the same list.
 pub(crate) fn channel_key_prefixes() -> [&'static str; 2] {
     CHANNEL_KEY_PREFIXES
 }

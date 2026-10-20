@@ -78,6 +78,8 @@ runs:
           if [[ "$BUILD_RUNTIMES_FROM_SOURCE" == "true" ]]; then
             oras logout ghcr.io
             unset GITHUB_TOKEN
+            apt-get update
+            apt-get install -y --no-install-recommends cmake nasm
             cargo build --release --locked --manifest-path backend-rs/Cargo.toml --bin wegent-backend-rs
             install -m 0755 backend-rs/target/release/wegent-backend-rs .ci-artifacts/wegent-backend-rs.build
             mv .ci-artifacts/wegent-backend-rs.build .ci-artifacts/wegent-backend-rs

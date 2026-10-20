@@ -182,12 +182,25 @@ def project_collaboration_member_activity(
             message,
             require_current_assignment=False,
         )
-        bind_collaboration_activity_task(
+        binding = bind_collaboration_activity_task(
             db,
             dispatch=dispatch,
             activity=message,
             item=db.get(LoopItem, values.loop_item_id),
+            assignment=assignment,
         )
+        message.metadata_json = {
+            **message.metadata_json,
+            "task_binding_id": str(binding.id),
+        }
+        assignments[assignment_index] = {
+            **assignment,
+            "task_binding_id": str(binding.id),
+        }
+        manager_message.metadata_json = {
+            **manager_metadata,
+            "dispatch_assignments": assignments,
+        }
         db.commit()
         db.refresh(message)
     return message, changed

@@ -5,79 +5,56 @@
 //! `POST /api/plugins/installed/sync-device`.
 //!
 //! Source: `app/api/endpoints/installed_plugins.py::sync_installed_plugins_to_device`
-//! (line 208).
+//! (line 208) -> `plugin_marketplace_service.reconcile_stale_installed_catalog_refs`
+//! -> `plugin_device_installation_service.ensure_pending_for_device` ->
+//! `device_capability_sync_service.sync_current_device_capabilities` ->
+//! `plugin_device_installation_service.record_device_sync_result`.
+//!
+//! The source's `sio.call("device:sync_capabilities", payload, to=socket_id,
+//! namespace="/local-executor")` publishes an adapter `emit` with a callback
+//! identity and awaits the device's acknowledgement on the process-wide
+//! `socketio` Redis subscription. [`crate::socketio_rpc`] owns that
+//! subscription for the Rust process; this handler publishes and correlates
+//! the round trip.
 //!
 //! Unhandled failures use `FastApiError::unhandled()`, whose explicit CORS
 //! decision crosses the private loopback server through the trusted gateway
 //! origin. This preserves the source's outer `ServerErrorMiddleware` response:
-//! no CORS headers or `Vary: Origin`. Ordinary business errors keep CORS.
-//!
-//! Re-opened 2026-10-12 (round 6): after merging canonical d563d745f (which
-//! applied the download-token response_jwt rule), the sync-device
-//! handler was re-verified with no behavior change; this note only changes
-//! the target fingerprint for a fresh handoff.
-//!
-//! Re-opened 2026-10-12 (round 7): after merging canonical e1049f604 (which
-//! raised the traffic-e2e max_failed_cases_per_api cap to 40), the
-//! sync-device handler was re-verified with no behavior change; this note
-//! only refreshes the target fingerprint for a fresh handoff.
-//!
-//! Re-opened 2026-10-12 (round 8): after merging canonical c8e089819 (which
-//! applied the connector-runtime access_token response_jwt rule), the
-//! sync-device handler was re-verified with no behavior change; this note
-//! only refreshes the target fingerprint for a fresh handoff.
-//!
-//! Re-opened 2026-10-12 (round 9): after merging canonical 214c740f7, the
-//! catalog reconcile was corrected to re-read a `plugin_releases` row on
-//! every pass like the source's weak SQLAlchemy identity map; this note
-//! refreshes the target fingerprint so the fresh focused replay re-measures
-//! the route's MySQL dependency cleanliness.
-//!
-//! The endpoint has two query parameters, `device_id` (required) and
-//! `reconcile` (default `False`).
-//!
-//! Non-reconcile path, in the source's ordering:
-//! 1. `plugin_marketplace_service.reconcile_stale_installed_catalog_refs`
-//!    repairs catalog refs.
-//! 2. `plugin_device_installation_service.ensure_pending_for_device` converges
-//!    the device rows and commits.
-//! 3. `db.close()` ends the request-scoped session (SQLAlchemy emits ROLLBACK).
-//! 4. `sync_current_device_capabilities(user_id=current_user.id, ...)` is
-//!    awaited. `ensure_pending_for_device`'s commit expired `current_user`, and
-//!    `db.close()` detached it, so reading `current_user.id` raises
-//!    SQLAlchemy's `DetachedInstanceError`. The route does not convert it, so
-//!    the application's `Exception` handler renders the generic 500 body
-//!    `{"error_code":500,"detail":"Internal server error"}`. The recorded case
-//!    performs no query after the commit and ends in that body, which is why
-//!    this port performs the same catalog/device work and returns the same
-//!    unhandled-500 body.
-//! 5. The Socket.IO device dispatch that the source reaches only after step 4
-//!    is therefore unreachable in the source itself for this path.
-//!
-//! Reconcile path (`reconcile=true`): the source builds the desired plugin
-//! payload and dispatches it to the device over Socket.IO, then records the
-//! result. This listener has no device dispatch channel, so the source's
-//! dispatch-failure 502 is reported after the catalog reconcile.
+//! no CORS headers or `Vary: Origin`. Ordinary business results keep CORS.
 
 use brz_mysql::{Mysql, MysqlResult, MysqlTransaction};
+use brz_redis::Redis;
 use chrono::Local;
 use serde_json::Value;
 
 use crate::device_identity::{
-    PluginDeviceInstallationRow, plugin_device_id, reconcile_plugin_device_rows,
+    DeviceKindRow, PluginDeviceInstallationRow, plugin_device_id, reconcile_plugin_device_rows,
 };
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 
 use super::auth;
 use super::catalog_reconcile::reconcile_stale_installed_catalog_refs;
+use super::desired_capabilities::{
+    BuildError, build_desired_capabilities, build_desired_plugins, capability_snapshot,
+};
+use super::record_sync_result::{SyncResult, record_device_sync_result};
 use super::report::{DESIRED_INSTALLS_QUERY, DEVICE_ROW_QUERY, INSERT_INSTALLATION_QUERY};
 
 /// `PLUGIN_AUTO_UPDATE_FAILURE_LIMIT` (`app/core/constants.py`).
 const AUTO_UPDATE_FAILURE_LIMIT: i64 = 3;
 
-/// One active `InstalledPlugin` kinds row (`_desired_installs`),
-/// projected with SQLAlchemy's labeled aliases.
+/// `SYNC_EVENT` (`app/services/device/capability_sync_service.py`).
+const SYNC_EVENT: &str = "device:sync_capabilities";
+/// `SYNC_NAMESPACE`.
+const SYNC_NAMESPACE: &str = "/local-executor";
+/// `SYNC_TIMEOUT_SECONDS`.
+const SYNC_TIMEOUT_SECONDS: std::time::Duration = std::time::Duration::from_secs(180);
+/// `DESIRED_STATE_SYNC_ATTEMPTS`.
+const DESIRED_STATE_SYNC_ATTEMPTS: usize = 3;
+
+/// One active `InstalledPlugin` kinds row (`_desired_installs`), projected with
+/// SQLAlchemy's labeled aliases.
 #[derive(Debug, brz_mysql::FromMysqlRow)]
 struct DesiredInstalledKind {
     #[mysql(rename = "kinds_id")]
@@ -88,10 +65,6 @@ struct DesiredInstalledKind {
 
 /// POST /api/plugins/installed/sync-device: push the account's desired plugins
 /// to one device (source `sync_installed_plugins_to_device`).
-///
-/// The success type is never produced: every reachable path returns the
-/// source's unhandled-500 body (non-reconcile) or the dispatch-failure 502
-/// (reconcile).
 #[brz_http_server::post("/api/plugins/installed/sync-device")]
 async fn sync_installed_plugins_to_device(
     #[inject(state)] state: &AppState,
@@ -132,7 +105,7 @@ async fn sync_device(
         FastApiError::unhandled()
     })?;
 
-    state
+    let pending_count = state
         .mysql
         .with_transaction(async |transaction| {
             ensure_pending_for_device(transaction, &state.mysql, user_id, device_id).await
@@ -147,23 +120,319 @@ async fn sync_device(
     // back the idle transaction started after the commit.
     let _ = state.mysql.execute("ROLLBACK", ()).await;
 
-    // Source steps 4-5: `current_user.id` is read after the commit expired it
-    // and `db.close()` detached it, raising `DetachedInstanceError`.
-    Err(FastApiError::unhandled())
+    let result = sync_latest_device_capabilities(state, user_id, device_id).await?;
+    record_sync_result(state, user_id, &result).await?;
+
+    let mut response = serde_json::Map::new();
+    response.insert("reconciled".to_string(), Value::Bool(false));
+    response.insert("deviceId".to_string(), Value::String(device_id.to_string()));
+    response.insert("pendingCount".to_string(), Value::from(pending_count));
+    response.insert("sync".to_string(), result.response("replace"));
+    Ok(Value::Object(response))
 }
 
-/// Source `reconcile_device_plugins`: reconcile catalog refs, then dispatch the
-/// desired payload to the device. Without a device dispatch channel the source's
-/// dispatch-failure 502 is reported.
+/// Record the round trip in a fresh session, like the source's
+/// `with get_db_session() as record_db` block.
+async fn record_sync_result(
+    state: &AppState,
+    user_id: i64,
+    result: &SyncResult,
+) -> Result<(), FastApiError> {
+    state
+        .mysql
+        .with_transaction(async |transaction| {
+            record_device_sync_result(transaction, &state.mysql, user_id, result).await
+        })
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, user_id, "sync-device result persistence failed");
+            FastApiError::unhandled()
+        })?;
+    let _ = state.mysql.execute("ROLLBACK", ()).await;
+    Ok(())
+}
+
+/// Source `sync_current_device_capabilities` -> `sync_latest_device_capabilities`:
+/// dispatch the desired snapshot and re-load it after the acknowledgement.
+async fn sync_latest_device_capabilities(
+    state: &AppState,
+    user_id: i64,
+    device_id: &str,
+) -> Result<SyncResult, FastApiError> {
+    let mut payload = build_payload(state, user_id, device_id).await?;
+    let mut last: Option<SyncResult> = None;
+    for _attempt in 1..=DESIRED_STATE_SYNC_ATTEMPTS {
+        let result = sync_device_payload(state, user_id, device_id, &payload).await?;
+        if !result.acknowledged {
+            return Ok(result);
+        }
+        let latest = build_payload(state, user_id, device_id).await?;
+        if capability_snapshot(&latest) == capability_snapshot(&payload) {
+            return Ok(result);
+        }
+        tracing::warn!(
+            user_id,
+            device_id,
+            "capability desired state changed during sync; retrying latest snapshot"
+        );
+        payload = latest;
+        last = Some(result);
+    }
+    Ok(SyncResult::failure(
+        device_id,
+        last,
+        "Capability desired state kept changing during synchronization",
+    ))
+}
+
+/// One `build_desired_capabilities` load; any failure is the source's
+/// unhandled 500.
+async fn build_payload(
+    state: &AppState,
+    user_id: i64,
+    device_id: &str,
+) -> Result<Value, FastApiError> {
+    build_desired_capabilities(&state.mysql, user_id, device_id, "replace")
+        .await
+        .map_err(|error| {
+            log_build_error(user_id, &error);
+            FastApiError::unhandled()
+        })
+}
+
+fn log_build_error(user_id: i64, error: &BuildError) {
+    tracing::error!(%error, user_id, "sync-device desired-state build failed");
+}
+
+/// Source `sync_device_payload`: resolve the online Runtime route, publish the
+/// adapter `emit`, and map the acknowledgement.
+async fn sync_device_payload(
+    state: &AppState,
+    user_id: i64,
+    device_id: &str,
+    payload: &Value,
+) -> Result<SyncResult, FastApiError> {
+    let device =
+        crate::device_identity::resolve_owned_device_alias(&state.mysql, user_id, device_id)
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, user_id, "sync-device route identity read failed");
+                FastApiError::unhandled()
+            })?;
+    let Some(device) = device else {
+        return Ok(SyncResult::failure(
+            device_id,
+            None,
+            "device not found or access denied",
+        ));
+    };
+    let runtime_device_id = runtime_device_route_id(&device);
+    if runtime_device_id.is_empty() {
+        return Ok(SyncResult::failure(
+            device_id,
+            None,
+            "device not found or access denied",
+        ));
+    }
+    let online: Option<Value> = crate::devices::cache_manager_get(
+        state,
+        &format!("device:online:{user_id}:{runtime_device_id}"),
+    )
+    .await;
+    let Some(online) = online.filter(Value::is_object) else {
+        return Ok(SyncResult::failure(device_id, None, "device is offline"));
+    };
+    let Some(socket_id) = online
+        .get("socket_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|socket_id| !socket_id.is_empty())
+    else {
+        return Ok(SyncResult::failure(device_id, None, "device is offline"));
+    };
+    if !runtime_instance_matches(&device, &online) {
+        return Ok(SyncResult::failure(device_id, None, "device is offline"));
+    }
+    let mut dispatch = payload.clone();
+    if let Value::Object(object) = &mut dispatch {
+        object.insert(
+            "device_id".to_string(),
+            Value::String(runtime_device_id.clone()),
+        );
+    }
+    let Some(rpc) = state.socketio_rpc.as_ref() else {
+        return Ok(SyncResult::failure(
+            device_id,
+            None,
+            "Socket.IO Redis adapter is unavailable",
+        ));
+    };
+    let Some(redis) = state.redis.as_ref() else {
+        return Ok(SyncResult::failure(
+            device_id,
+            None,
+            "Socket.IO Redis adapter is unavailable",
+        ));
+    };
+    let call = rpc.begin(socket_id, SYNC_NAMESPACE).map_err(|error| {
+        tracing::error!(%error, user_id, "sync-device callback registration failed");
+        FastApiError::unhandled()
+    })?;
+    let data =
+        serde_json::to_string(&Value::Array(vec![dispatch])).expect("a JSON value serializes");
+    let message = crate::socketio_emit::emit_message_with_callback(
+        SYNC_EVENT,
+        &data,
+        SYNC_NAMESPACE,
+        socket_id,
+        Some((socket_id, call.id())),
+    );
+    if let Err(error) = redis
+        .publish(crate::socketio_emit::SOCKETIO_CHANNEL, message)
+        .await
+    {
+        tracing::error!(%error, user_id, "sync-device RPC publish failed");
+        return Ok(SyncResult::failure(
+            device_id,
+            None,
+            "Socket.IO Redis adapter is unavailable",
+        ));
+    }
+    match call.wait(SYNC_TIMEOUT_SECONDS).await {
+        Ok(args) => Ok(SyncResult::from_ack(device_id, ack_argument(&args))),
+        Err(error) => {
+            tracing::warn!(%error, user_id, device_id, "sync-device RPC failed");
+            Ok(SyncResult::failure(device_id, None, error_text(&error)))
+        }
+    }
+}
+
+/// `sio.call`'s return value: the single positional ack argument.
+fn ack_argument(args: &Value) -> &Value {
+    match args {
+        Value::Array(items) if items.len() == 1 => &items[0],
+        other => other,
+    }
+}
+
+/// Python `str(exc)` for the mapped dispatch failure.
+fn error_text(error: &crate::socketio_rpc::RpcError) -> &'static str {
+    match error {
+        crate::socketio_rpc::RpcError::Timeout => "",
+        crate::socketio_rpc::RpcError::Closed => "connection closed",
+        crate::socketio_rpc::RpcError::Unavailable(_) => "Socket.IO Redis adapter is unavailable",
+    }
+}
+
+/// Source `runtime_route.runtime_device_route_id`.
+fn runtime_device_route_id(device: &DeviceKindRow) -> String {
+    let spec = device.json.get("spec");
+    let device_type = spec
+        .and_then(|spec| spec.get("deviceType"))
+        .and_then(Value::as_str)
+        .unwrap_or("local");
+    if device_type == "app" {
+        return format!("app-record-{}", device.id);
+    }
+    spec.and_then(|spec| spec.get("deviceId"))
+        .and_then(Value::as_str)
+        .filter(|id| !id.trim().is_empty())
+        .map(str::trim)
+        .map(str::to_string)
+        .or_else(|| {
+            spec.and_then(|spec| spec.get("cloudConfig"))
+                .and_then(|cloud| cloud.get("deviceId"))
+                .and_then(Value::as_str)
+                .filter(|id| !id.trim().is_empty())
+                .map(str::trim)
+                .map(str::to_string)
+        })
+        .filter(|id| !id.is_empty())
+        .unwrap_or_else(|| device.name.trim().to_string())
+}
+
+/// `RuntimeRouteResolver.resolve`'s stale-instance guard.
+fn runtime_instance_matches(device: &DeviceKindRow, online: &Value) -> bool {
+    let expected = device
+        .json
+        .get("spec")
+        .and_then(|spec| spec.get("runtimeInstanceId"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty());
+    let Some(expected) = expected else {
+        return true;
+    };
+    let reported = online
+        .get("runtime_instance_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    !reported.is_empty() && reported == expected
+}
+
+/// Source `reconcile_device_plugins`: dispatch the plugins-only payload and
+/// require the executor's `scope="plugins"` acknowledgement.
 async fn reconcile_device_plugins(
     state: &AppState,
     user_id: i64,
     device_id: &str,
 ) -> Result<Value, FastApiError> {
-    // The source only reaches the dispatch after resolving the device's online
-    // Runtime route; the payload build reads the catalog for `device_id`, so keep
-    // the parameter in the signature to preserve the source call shape.
-    let _ = device_id;
+    let mut payload = desired_plugins(state, user_id, device_id).await?;
+    for _attempt in 0..DESIRED_STATE_SYNC_ATTEMPTS {
+        let result = sync_device_payload(state, user_id, device_id, &payload).await?;
+        if !result.success || !result.errors.is_empty() || result.plugins.iter().any(is_failed_item)
+        {
+            return Err(FastApiError::detail(
+                brz_http_server::StatusCode::BAD_GATEWAY,
+                reconciliation_failure_detail(&result),
+            ));
+        }
+        if result.scope.as_str() != Some("plugins") {
+            return Err(FastApiError::detail(
+                brz_http_server::StatusCode::CONFLICT,
+                "Update the desktop runtime to reconcile plugins",
+            ));
+        }
+        let latest = desired_plugins(state, user_id, device_id).await?;
+        if plugin_snapshot(&latest) != plugin_snapshot(&payload) {
+            payload = latest;
+            continue;
+        }
+        record_sync_result(state, user_id, &result).await?;
+        let mut sync = serde_json::Map::new();
+        sync.insert("success".to_string(), Value::Bool(true));
+        sync.insert(
+            "device_id".to_string(),
+            Value::String(device_id.to_string()),
+        );
+        sync.insert("mode".to_string(), Value::String("merge".to_string()));
+        sync.insert(
+            "plugins".to_string(),
+            Value::Array(result.plugins.iter().map(|item| item.to_value()).collect()),
+        );
+        sync.insert("results".to_string(), Value::Array(vec![result.to_value()]));
+        sync.insert("synced".to_string(), Value::from(1));
+        let mut response = serde_json::Map::new();
+        response.insert("reconciled".to_string(), Value::Bool(true));
+        response.insert("deviceId".to_string(), Value::String(device_id.to_string()));
+        response.insert("pendingCount".to_string(), Value::from(0));
+        response.insert("sync".to_string(), Value::Object(sync));
+        return Ok(Value::Object(response));
+    }
+    Err(FastApiError::detail(
+        brz_http_server::StatusCode::CONFLICT,
+        "Plugin installations changed during reconciliation; refresh again",
+    ))
+}
+
+/// Source `desired_plugins`: repair catalog refs, then the plugins-only merge
+/// payload.
+async fn desired_plugins(
+    state: &AppState,
+    user_id: i64,
+    device_id: &str,
+) -> Result<Value, FastApiError> {
     reconcile_stale_installed_catalog_refs(
         &state.mysql,
         state.redis.as_ref(),
@@ -175,10 +444,94 @@ async fn reconcile_device_plugins(
         tracing::error!(%error, user_id, "reconcile catalog refresh failed");
         FastApiError::unhandled()
     })?;
-    Err(FastApiError::detail(
-        brz_http_server::StatusCode::BAD_GATEWAY,
-        "Plugin reconciliation failed: device is offline",
-    ))
+    build_desired_plugins(&state.mysql, user_id, device_id)
+        .await
+        .map_err(|error| {
+            log_build_error(user_id, &error);
+            FastApiError::unhandled()
+        })
+}
+
+fn is_failed_item(item: &super::record_sync_result::SyncItem) -> bool {
+    item.status.as_str() == Some("failed")
+}
+
+/// Source `plugin_snapshot`: signed URLs and expirations are excluded, and
+/// plugins are ordered by installed id.
+fn plugin_snapshot(payload: &Value) -> Value {
+    let mut plugins: Vec<Value> = payload
+        .get("plugins")
+        .and_then(Value::as_array)
+        .map(|plugins| {
+            plugins
+                .iter()
+                .map(|plugin| {
+                    let mut object = serde_json::Map::new();
+                    if let Value::Object(source) = plugin {
+                        for (key, value) in source {
+                            if key == "download_path" || key == "download_url_expires_at" {
+                                continue;
+                            }
+                            object.insert(key.clone(), value.clone());
+                        }
+                    }
+                    Value::Object(object)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    plugins.sort_by_key(|plugin| {
+        plugin
+            .get("installed_plugin_id")
+            .map(python_text)
+            .unwrap_or_default()
+    });
+    Value::Array(plugins)
+}
+
+/// `str(value)` for the snapshot sort key.
+fn python_text(value: &Value) -> String {
+    match value {
+        Value::Null => String::new(),
+        Value::Bool(value) => (if *value { "True" } else { "False" }).to_string(),
+        Value::String(value) => value.clone(),
+        other => other.to_string(),
+    }
+}
+
+/// Source `reconciliation_failure_detail`.
+fn reconciliation_failure_detail(result: &SyncResult) -> String {
+    if let Some(failed) = result
+        .plugins
+        .iter()
+        .find(|item| item.status.as_str() == Some("failed"))
+    {
+        let identity = failed
+            .name
+            .as_str()
+            .filter(|name| !name.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                failed
+                    .id
+                    .as_str()
+                    .map(str::to_string)
+                    .or_else(|| failed.id.as_i64().map(|id| id.to_string()))
+            })
+            .unwrap_or_else(|| "plugin".to_string());
+        let reason = failed
+            .error_code
+            .as_str()
+            .filter(|code| !code.is_empty())
+            .or_else(|| failed.stage.as_str().filter(|stage| !stage.is_empty()))
+            .or_else(|| failed.error.as_str().filter(|error| !error.is_empty()))
+            .unwrap_or("device_sync_failed");
+        return format!("Plugin reconciliation failed for {identity}: {reason}");
+    }
+    match &result.error {
+        Some(error) if !error.is_empty() => format!("Plugin reconciliation failed: {error}"),
+        _ => "Plugin reconciliation failed on the current device".to_string(),
+    }
 }
 
 /// Source `plugin_device_installation_service.ensure_pending_for_device`.

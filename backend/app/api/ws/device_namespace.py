@@ -112,9 +112,9 @@ from app.services.device_service import (
     device_service,
     validate_persistent_runtime_instance_id,
 )
-from app.services.execution.dispatcher import ResponsesAPIEventParser
 from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 from app.services.execution.emitters.websocket import WebSocketResultEmitter
+from app.services.execution.response_parser import ResponsesAPIEventParser
 from app.services.im.notification_dispatcher import im_notification_dispatcher
 from app.services.im.runtime_notification_delivery import runtime_notification_id
 from app.services.loop_item_events import publish_loop_item_changed

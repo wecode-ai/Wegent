@@ -278,6 +278,7 @@ struct KbDocument {
 struct KbSpec {
     name: Option<String>,
     description: Option<String>,
+    #[serde(rename = "kbType")]
     kb_type: Option<String>,
     source: Option<OpaqueJson>,
     language: Option<String>,
@@ -675,6 +676,23 @@ mod tests {
         assert_eq!(response.retrieval_config, None);
         assert_eq!(response.retrieval_capabilities.retrieval_mode, None);
         assert!(!response.retrieval_capabilities.semantic_query);
+    }
+
+    /// The stored spec key is camelCase `kbType`; a snake_case `kb_type` key
+    /// is not the source's lookup and must fall back to the notebook default.
+    #[test]
+    fn snake_case_kb_type_key_is_not_the_source_lookup() {
+        let (kb, spec) = kb_from_json(r#"{"spec":{"name":"n","kb_type":"classic"}}"#);
+        let response = build_response(&kb, &spec, 0);
+        assert_eq!(response.kb_type, "notebook");
+    }
+
+    /// A camelCase `kbType` is echoed verbatim (`spec.get("kbType", ...)`).
+    #[test]
+    fn camel_case_kb_type_is_echoed() {
+        let (kb, spec) = kb_from_json(r#"{"spec":{"name":"n","kbType":"classic"}}"#);
+        let response = build_response(&kb, &spec, 0);
+        assert_eq!(response.kb_type, "classic");
     }
 
     #[test]

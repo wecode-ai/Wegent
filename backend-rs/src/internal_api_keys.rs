@@ -2,54 +2,61 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! `POST /api/internal/api-keys/lookup` — resolve the owner of a raw personal
-//! API key for other trusted internal services
+//! `POST /api/internal/api-keys/lookup` — resolve the identity of a raw API
+//! key for other trusted internal services
 //! (`app.api.endpoints.internal.api_keys.lookup_api_key`).
 //!
-//! Pipeline (mirrors `app.core.auth_utils.verify_api_key` with
-//! `update_last_used_at=False`):
+//! Pipeline:
 //! 1. the router-level `Depends(verify_internal_service_token)` bearer check
 //!    (`crate::internal_auth::InternalService`, no database access);
-//! 2. `is_api_key(api_key)` — the raw value must start with `wg-`, otherwise
-//!    the lookup answers `exists=false` without any statement;
-//! 3. `db.query(APIKey).filter(key_hash == sha256(api_key), is_active == True)
-//!    .first()` — the sha256 hex digest of the raw key;
-//! 4. the expiry (`expires_at < datetime.utcnow()`) and `key_type ==
-//!    'personal'` checks;
-//! 5. `db.query(User).filter(User.id == record.user_id).first()` and the
-//!    active-user check (`user.is_active`);
-//! 6. `APIKeyLookupResponse(exists, user_name)` — `user_name` is `null` when
-//!    the key is unknown, expired, non-personal, or its owner is inactive.
+//! 2. `APIKeyLookupRequest` body validation: `api_key` is a required
+//!    `min_length=1` string (`app.schemas.api_key`);
+//! 3. `find_valid_api_key(db, api_key, key_type="service")`: a valid service
+//!    key answers with its own `name` and `key_type="service"` — service key
+//!    identities do not depend on their creator, so no owner is read;
+//! 4. otherwise `verify_api_key(db, api_key, update_last_used_at=False)`: the
+//!    personal-key lookup, the owner `users` read, and the active-owner check
+//!    answer `key_type="personal"` or `exists=false`;
+//! 5. `APIKeyLookupResponse(exists, user_name, key_type)`.
 //!
-//! The lookup never writes: `last_used_at` is intentionally not bumped.
+//! Both key lookups share `find_valid_api_key` (`app.core.auth_utils`): the
+//! raw value must start with `wg-`, the sha256 hash must match an active row
+//! of the requested type, and the row must not be expired
+//! (`expires_at < datetime.utcnow()` drops it). Neither lookup writes:
+//! `last_used_at` is intentionally not bumped. The source driver renders the
+//! filter values as inline literals inside `COM_QUERY`, so the statements are
+//! built the same way instead of prepared-statement parameters. The recorded
+//! session's trailing `ROLLBACK`s are driver session cleanup that Replay
+//! classifies as optional, so no rollback statements are issued here.
 use brz_mysql::{FromMysqlRow, Mysql, MysqlResult};
-use chrono::Utc;
-use serde::{Deserialize, Serialize};
+use chrono::{NaiveDateTime, Utc};
+use serde::Serialize;
+use serde_json::Value;
 
 use crate::attachments::s3_signing::hex_sha256;
 use crate::auth::UserRow;
 use crate::http_compat::FastApiError;
+use crate::sql_support::quote_sql_literal;
 use crate::state::AppState;
 
-/// `app.models.api_key.KEY_TYPE_PERSONAL`: the only `key_type` accepted, the
-/// same rule executor authentication applies.
+/// `app.models.api_key.KEY_TYPE_SERVICE`: resolved first; the response reports
+/// the key's own name.
+const KEY_TYPE_SERVICE: &str = "service";
+
+/// `app.models.api_key.KEY_TYPE_PERSONAL`: the personal fallback whose owner
+/// must exist and be active.
 const KEY_TYPE_PERSONAL: &str = "personal";
 
 /// `app.core.auth_utils.API_KEY_PREFIX`: raw keys carry this prefix.
 const API_KEY_PREFIX: &str = "wg-";
 
-/// `APIKeyLookupRequest` (`app.schemas.api_key`): a required raw key.
-#[derive(Debug, Deserialize)]
-pub struct APIKeyLookupRequest {
-    pub api_key: String,
-}
-
 /// `APIKeyLookupResponse` (`app.schemas.api_key`): `exists` precedes the
-/// optional `user_name`.
+/// optional `user_name` and `key_type`.
 #[derive(Debug, Serialize)]
 pub struct APIKeyLookupResponse {
     pub exists: bool,
     pub user_name: Option<String>,
+    pub key_type: Option<&'static str>,
 }
 
 /// POST /api/internal/api-keys/lookup: the internal lookup free function,
@@ -59,13 +66,81 @@ pub struct APIKeyLookupResponse {
 async fn lookup_api_key(
     #[inject(state)] state: &AppState,
     #[auth] _service: crate::internal_auth::InternalService,
-    request: APIKeyLookupRequest,
+    body: Value,
 ) -> Result<APIKeyLookupResponse, FastApiError> {
-    lookup_api_key_value(&state.mysql, &request.api_key).await
+    let api_key = parse_request(&body)?;
+    lookup_api_key_value(&state.mysql, api_key).await
 }
 
-/// Handler body for `POST /api/internal/api-keys/lookup`. `api_key` is the raw
-/// request value.
+/// `APIKeyLookupRequest` body validation (`app.schemas.api_key`): a required
+/// `min_length=1` string. FastAPI validates the body before the endpoint runs,
+/// so a failure renders a 422 without dependency traffic.
+fn parse_request(body: &Value) -> Result<&str, FastApiError> {
+    let Value::Object(object) = body else {
+        return Err(body_error(
+            "model_attributes_type",
+            "Input should be a valid dictionary or object to extract fields from",
+            None,
+            body,
+            None,
+        ));
+    };
+    let Some(value) = object.get("api_key") else {
+        return Err(body_error(
+            "missing",
+            "Field required",
+            Some("api_key"),
+            body,
+            None,
+        ));
+    };
+    let Value::String(api_key) = value else {
+        return Err(body_error(
+            "string_type",
+            "Input should be a valid string",
+            Some("api_key"),
+            value,
+            None,
+        ));
+    };
+    if api_key.is_empty() {
+        return Err(body_error(
+            "string_too_short",
+            "String should have at least 1 character",
+            Some("api_key"),
+            value,
+            Some(serde_json::json!({"min_length": 1})),
+        ));
+    }
+    Ok(api_key)
+}
+
+/// One FastAPI body-validation error entry; `field` selects between a whole
+/// body `loc` (non-object input) and a named field `loc`.
+fn body_error(
+    kind: &str,
+    message: &str,
+    field: Option<&str>,
+    input: &Value,
+    ctx: Option<Value>,
+) -> FastApiError {
+    let mut entry = serde_json::json!({
+        "type": kind,
+        "loc": match field {
+            Some(field) => serde_json::json!(["body", field]),
+            None => serde_json::json!(["body"]),
+        },
+        "msg": message,
+        "input": input,
+    });
+    if let Some(ctx) = ctx {
+        entry["ctx"] = ctx;
+    }
+    FastApiError::validation(serde_json::Value::Array(vec![entry]))
+}
+
+/// Handler body for `POST /api/internal/api-keys/lookup`. `api_key` is the
+/// raw request value.
 async fn lookup_api_key_value<M>(
     mysql: &M,
     api_key: &str,
@@ -73,21 +148,40 @@ async fn lookup_api_key_value<M>(
 where
     M: Mysql,
 {
-    // `if not api_key or not is_api_key(api_key)`: a non-`wg-` value is never
-    // hashed or looked up.
+    // `if not is_api_key(api_key)`: a non-`wg-` value is never hashed or
+    // looked up, in either the service or the personal pass.
     if !is_api_key(api_key) {
-        tracing::warn!("[auth_utils] Invalid API key format");
         return Ok(not_exists());
     }
 
     let key_hash = hex_sha256(api_key.as_bytes());
-    let record = fetch_api_key(mysql, &key_hash).await.map_err(internal)?;
-    let user_id = match key_check(record.as_ref(), Utc::now().naive_utc()) {
-        Some(user_id) => user_id,
-        None => return Ok(not_exists()),
+    let now = Utc::now().naive_utc();
+
+    // Service keys resolve first: the identity is the key's own name and no
+    // owner is read (`find_valid_api_key(..., key_type=KEY_TYPE_SERVICE)`).
+    let service = fetch_api_key(mysql, &key_hash, KEY_TYPE_SERVICE)
+        .await
+        .map_err(internal)?;
+    if let Some(record) = valid_key(service.as_ref(), now) {
+        return Ok(APIKeyLookupResponse {
+            exists: true,
+            user_name: Some(record.name.clone()),
+            key_type: Some(KEY_TYPE_SERVICE),
+        });
+    }
+
+    // `verify_api_key(..., update_last_used_at=False)`: the personal-key
+    // lookup, then the owner read.
+    let personal = fetch_api_key(mysql, &key_hash, KEY_TYPE_PERSONAL)
+        .await
+        .map_err(internal)?;
+    let Some(record) = valid_key(personal.as_ref(), now) else {
+        return Ok(not_exists());
     };
 
-    let user = fetch_user_by_id(mysql, user_id).await.map_err(internal)?;
+    let user = fetch_user_by_id(mysql, record.user_id)
+        .await
+        .map_err(internal)?;
     // `user is None` and `not user.is_active` both answer `exists=false`.
     let Some(user) = user.filter(|user| user.is_active != 0) else {
         return Ok(not_exists());
@@ -96,15 +190,17 @@ where
     Ok(APIKeyLookupResponse {
         exists: true,
         user_name: Some(user.user_name),
+        key_type: Some(KEY_TYPE_PERSONAL),
     })
 }
 
-/// The `exists=false` response (`APIKeyLookupResponse(exists=False)`): the
-/// optional field renders as JSON `null`.
+/// The `exists=false` response (`APIKeyLookupResponse(exists=False)`): both
+/// optional fields render as JSON `null`.
 fn not_exists() -> APIKeyLookupResponse {
     APIKeyLookupResponse {
         exists: false,
         user_name: None,
+        key_type: None,
     }
 }
 
@@ -113,67 +209,75 @@ fn is_api_key(api_key: &str) -> bool {
     api_key.starts_with(API_KEY_PREFIX)
 }
 
-/// The `verify_api_key` record decision after the key hash lookup: the owner
-/// `user_id` when the row is present, unexpired, and a personal key, else
-/// `None`.
-fn key_check(record: Option<&ApiKeyLookupRow>, now: chrono::NaiveDateTime) -> Option<i32> {
-    let record = record?;
-    if record.expires_at < now {
-        return None;
-    }
-    if record.key_type != KEY_TYPE_PERSONAL {
-        return None;
-    }
-    Some(record.user_id)
+/// `find_valid_api_key`'s post-query decision: the record when present and
+/// unexpired (`expires_at < datetime.utcnow()` drops it).
+fn valid_key(record: Option<&ApiKeyLookupRow>, now: NaiveDateTime) -> Option<&ApiKeyLookupRow> {
+    record.filter(|record| record.expires_at >= now)
 }
 
-/// `db.query(APIKey).filter(APIKey.key_hash == key_hash, APIKey.is_active ==
-/// True).first()`: every mapped column, aliased `api_keys_<column>` like
-/// SQLAlchemy's labeled rendering. Only `user_id`, `key_type`, and `expires_at`
-/// are decoded; the other columns are selected to keep the statement identical
-/// to the recorded exchange.
-const API_KEY_BY_HASH_QUERY: &str = "SELECT api_keys.id AS api_keys_id, \
+/// The source `db.query(APIKey).filter(APIKey.key_hash == key_hash,
+/// APIKey.key_type == key_type, APIKey.is_active == True).first()` rendering:
+/// every mapped column, aliased `api_keys_<column>` like SQLAlchemy's labeled
+/// rendering, with the driver's inline literals. Only `name`, `user_id`, and
+/// `expires_at` are decoded; the other columns are selected to keep the
+/// statement identical to the recorded exchange.
+const API_KEY_COLUMNS: &str = "SELECT api_keys.id AS api_keys_id, \
      api_keys.user_id AS api_keys_user_id, api_keys.key_hash AS api_keys_key_hash, \
      api_keys.key_prefix AS api_keys_key_prefix, api_keys.name AS api_keys_name, \
      api_keys.key_type AS api_keys_key_type, api_keys.description AS api_keys_description, \
      api_keys.expires_at AS api_keys_expires_at, api_keys.last_used_at AS api_keys_last_used_at, \
      api_keys.is_active AS api_keys_is_active, api_keys.created_at AS api_keys_created_at, \
-     api_keys.updated_at AS api_keys_updated_at \
-     FROM api_keys \
-     WHERE api_keys.key_hash = ? AND api_keys.is_active = true \
-     LIMIT 1";
+     api_keys.updated_at AS api_keys_updated_at";
 
 /// The source `db.query(User).filter(User.id == api_key_record.user_id)
-/// .first()` statement: every mapped column, aliased `users_<column>` like
+/// .first()` rendering: every mapped column, aliased `users_<column>` like
 /// SQLAlchemy's labeled rendering.
-const USER_BY_ID_QUERY: &str = "SELECT users.id AS users_id, users.user_name AS users_user_name, \
+const USER_COLUMNS: &str = "SELECT users.id AS users_id, users.user_name AS users_user_name, \
      users.password_hash AS users_password_hash, users.email AS users_email, \
      users.git_info AS users_git_info, users.is_active AS users_is_active, \
      users.`role` AS users_role, users.auth_source AS users_auth_source, \
      users.preferences AS users_preferences, users.created_at AS users_created_at, \
-     users.updated_at AS users_updated_at \
-     FROM users \
-     WHERE users.id = ? \
-     LIMIT 1";
+     users.updated_at AS users_updated_at";
+
+/// Render the key-hash lookup for one key type with the driver's inline
+/// literals (the source sends `COM_QUERY`, not a prepared statement).
+fn api_key_by_hash_sql(key_hash: &str, key_type: &str) -> String {
+    format!(
+        "{API_KEY_COLUMNS} \nFROM api_keys \nWHERE api_keys.key_hash = {} \
+         AND api_keys.key_type = {} AND api_keys.is_active = true \n LIMIT 1",
+        quote_sql_literal(key_hash),
+        quote_sql_literal(key_type),
+    )
+}
+
+/// Render the owner lookup with the driver's inline integer literal.
+fn user_by_id_sql(user_id: i32) -> String {
+    format!("{USER_COLUMNS} \nFROM users \nWHERE users.id = {user_id} \n LIMIT 1")
+}
 
 /// One `api_keys` row, projected to the columns the lookup reads.
 #[derive(Debug, FromMysqlRow)]
+#[cfg_attr(test, derive(PartialEq))]
 struct ApiKeyLookupRow {
     #[mysql(rename = "api_keys_user_id")]
     user_id: i32,
-    #[mysql(rename = "api_keys_key_type")]
-    key_type: String,
+    #[mysql(rename = "api_keys_name")]
+    name: String,
     #[mysql(rename = "api_keys_expires_at")]
     expires_at: chrono::NaiveDateTime,
 }
 
-/// Run the key-hash lookup.
-async fn fetch_api_key<M>(mysql: &M, key_hash: &str) -> MysqlResult<Option<ApiKeyLookupRow>>
+/// Run the key-hash lookup for one key type.
+async fn fetch_api_key<M>(
+    mysql: &M,
+    key_hash: &str,
+    key_type: &str,
+) -> MysqlResult<Option<ApiKeyLookupRow>>
 where
     M: Mysql,
 {
     mysql
-        .fetch_optional(API_KEY_BY_HASH_QUERY, (key_hash,))
+        .fetch_optional(api_key_by_hash_sql(key_hash, key_type).as_str(), ())
         .await
 }
 
@@ -182,7 +286,9 @@ async fn fetch_user_by_id<M>(mysql: &M, user_id: i32) -> MysqlResult<Option<User
 where
     M: Mysql,
 {
-    mysql.fetch_optional(USER_BY_ID_QUERY, (user_id,)).await
+    mysql
+        .fetch_optional(user_by_id_sql(user_id).as_str(), ())
+        .await
 }
 
 /// A dependency failure renders the framework's 500 handler body, matching the
@@ -199,6 +305,7 @@ fn internal(error: impl std::fmt::Debug) -> FastApiError {
 mod tests {
     use super::*;
     use chrono::NaiveDate;
+    use serde_json::json;
 
     fn naive(month: u32, day: u32, hour: u32, minute: u32, second: u32) -> chrono::NaiveDateTime {
         NaiveDate::from_ymd_opt(2026, month, day)
@@ -207,10 +314,10 @@ mod tests {
             .unwrap()
     }
 
-    fn row(key_type: &str, expires_at: chrono::NaiveDateTime) -> ApiKeyLookupRow {
+    fn row(name: &str, expires_at: chrono::NaiveDateTime) -> ApiKeyLookupRow {
         ApiKeyLookupRow {
-            user_id: 3145,
-            key_type: key_type.to_string(),
+            user_id: 2,
+            name: name.to_string(),
             expires_at,
         }
     }
@@ -226,57 +333,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_record_reports_not_exists() {
-        assert_eq!(key_check(None, naive(10, 10, 6, 10, 43)), None);
-    }
-
-    #[test]
-    fn expired_key_reports_not_exists() {
-        let expired = row(KEY_TYPE_PERSONAL, naive(10, 9, 6, 10, 43));
-        assert_eq!(key_check(Some(&expired), naive(10, 10, 6, 10, 43)), None);
-        // Exactly-now expiry is not `< now`, so the row survives.
-        let boundary = row(KEY_TYPE_PERSONAL, naive(10, 10, 6, 10, 43));
-        assert_eq!(
-            key_check(Some(&boundary), naive(10, 10, 6, 10, 43)),
-            Some(3145)
-        );
-    }
-
-    #[test]
-    fn service_key_reports_not_exists() {
-        let service = row("service", naive(11, 1, 0, 0, 0));
-        assert_eq!(key_check(Some(&service), naive(10, 10, 6, 10, 43)), None);
-    }
-
-    #[test]
-    fn valid_personal_key_returns_owner_id() {
-        let valid = row(KEY_TYPE_PERSONAL, naive(11, 1, 0, 0, 0));
-        assert_eq!(
-            key_check(Some(&valid), naive(10, 10, 6, 10, 43)),
-            Some(3145)
-        );
-    }
-
-    #[test]
-    fn response_body_matches_the_pydantic_model() {
-        // The recorded success body is `{"exists":true,"user_name":"qixiang"}`.
-        let found = APIKeyLookupResponse {
-            exists: true,
-            user_name: Some("qixiang".to_string()),
-        };
-        assert_eq!(
-            serde_json::to_string(&found).unwrap(),
-            r#"{"exists":true,"user_name":"qixiang"}"#
-        );
-        // The unknown/invalid key renders the optional field as JSON null.
-        assert_eq!(
-            serde_json::to_string(&not_exists()).unwrap(),
-            r#"{"exists":false,"user_name":null}"#
-        );
-    }
-
-    #[test]
-    fn api_key_query_matches_recorded_statement() {
+    fn service_query_renders_the_recorded_statement() {
         let recorded = "SELECT api_keys.id AS api_keys_id, api_keys.user_id AS api_keys_user_id, \
              api_keys.key_hash AS api_keys_key_hash, api_keys.key_prefix AS api_keys_key_prefix, \
              api_keys.name AS api_keys_name, api_keys.key_type AS api_keys_key_type, \
@@ -284,39 +341,135 @@ mod tests {
              api_keys.expires_at AS api_keys_expires_at, \
              api_keys.last_used_at AS api_keys_last_used_at, \
              api_keys.is_active AS api_keys_is_active, api_keys.created_at AS api_keys_created_at, \
-             api_keys.updated_at AS api_keys_updated_at \nFROM api_keys \nWHERE \
-             api_keys.key_hash = '080a12a1c95a4d091dd8eb8f79e1e82db09615967770c863364032396ac1c65f' \
-             AND api_keys.is_active = true \n LIMIT 1";
-        fn tokens(sql: &str) -> Vec<String> {
-            sql.split_whitespace()
-                .map(|token| match token {
-                    "'080a12a1c95a4d091dd8eb8f79e1e82db09615967770c863364032396ac1c65f'" => {
-                        "?".to_string()
-                    }
-                    other => other.to_string(),
-                })
-                .collect()
-        }
-        assert_eq!(tokens(API_KEY_BY_HASH_QUERY), tokens(recorded));
+             api_keys.updated_at AS api_keys_updated_at \n\
+             FROM api_keys \n\
+             WHERE api_keys.key_hash = \
+             'dbe3206526dc7a1fa6ce46a95129f1e336822ddf95bb33a575bb3fa7607fd33c' \
+             AND api_keys.key_type = 'service' AND api_keys.is_active = true \n LIMIT 1";
+        assert_eq!(
+            api_key_by_hash_sql(
+                "dbe3206526dc7a1fa6ce46a95129f1e336822ddf95bb33a575bb3fa7607fd33c",
+                KEY_TYPE_SERVICE
+            ),
+            recorded
+        );
     }
 
     #[test]
-    fn user_query_matches_recorded_statement() {
+    fn personal_query_renders_the_recorded_statement() {
+        let recorded = "SELECT api_keys.id AS api_keys_id, api_keys.user_id AS api_keys_user_id, \
+             api_keys.key_hash AS api_keys_key_hash, api_keys.key_prefix AS api_keys_key_prefix, \
+             api_keys.name AS api_keys_name, api_keys.key_type AS api_keys_key_type, \
+             api_keys.description AS api_keys_description, \
+             api_keys.expires_at AS api_keys_expires_at, \
+             api_keys.last_used_at AS api_keys_last_used_at, \
+             api_keys.is_active AS api_keys_is_active, api_keys.created_at AS api_keys_created_at, \
+             api_keys.updated_at AS api_keys_updated_at \n\
+             FROM api_keys \n\
+             WHERE api_keys.key_hash = \
+             'dbe3206526dc7a1fa6ce46a95129f1e336822ddf95bb33a575bb3fa7607fd33c' \
+             AND api_keys.key_type = 'personal' AND api_keys.is_active = true \n LIMIT 1";
+        assert_eq!(
+            api_key_by_hash_sql(
+                "dbe3206526dc7a1fa6ce46a95129f1e336822ddf95bb33a575bb3fa7607fd33c",
+                KEY_TYPE_PERSONAL
+            ),
+            recorded
+        );
+    }
+
+    #[test]
+    fn user_query_renders_the_recorded_statement() {
         let recorded = "SELECT users.id AS users_id, users.user_name AS users_user_name, \
              users.password_hash AS users_password_hash, users.email AS users_email, \
              users.git_info AS users_git_info, users.is_active AS users_is_active, \
              users.`role` AS users_role, users.auth_source AS users_auth_source, \
              users.preferences AS users_preferences, users.created_at AS users_created_at, \
-             users.updated_at AS users_updated_at \nFROM users \nWHERE users.id = 3145 \n LIMIT 1";
-        fn tokens(sql: &str) -> Vec<String> {
-            sql.split_whitespace()
-                .map(|token| match token {
-                    "3145" => "?".to_string(),
-                    other => other.to_string(),
-                })
-                .collect()
-        }
-        assert_eq!(tokens(USER_BY_ID_QUERY), tokens(recorded));
+             users.updated_at AS users_updated_at \n\
+             FROM users \n\
+             WHERE users.id = 2 \n LIMIT 1";
+        assert_eq!(user_by_id_sql(2), recorded);
+    }
+
+    #[test]
+    fn missing_record_reports_not_exists() {
+        assert_eq!(valid_key(None, naive(10, 10, 6, 10, 43)), None);
+    }
+
+    #[test]
+    fn expired_record_reports_not_exists() {
+        let expired = row("example-user", naive(10, 9, 6, 10, 43));
+        assert_eq!(valid_key(Some(&expired), naive(10, 10, 6, 10, 43)), None);
+        // Exactly-now expiry is not `< now`, so the row survives.
+        let boundary = row("example-user", naive(10, 10, 6, 10, 43));
+        assert_eq!(
+            valid_key(Some(&boundary), naive(10, 10, 6, 10, 43)),
+            Some(&boundary)
+        );
+    }
+
+    #[test]
+    fn response_bodies_match_the_pydantic_model() {
+        // The recorded success body renders every model field in order.
+        let personal = APIKeyLookupResponse {
+            exists: true,
+            user_name: Some("example-user".to_string()),
+            key_type: Some(KEY_TYPE_PERSONAL),
+        };
+        assert_eq!(
+            serde_json::to_string(&personal).unwrap(),
+            r#"{"exists":true,"user_name":"example-user","key_type":"personal"}"#
+        );
+        // A service key answers with the key's own name.
+        let service = APIKeyLookupResponse {
+            exists: true,
+            user_name: Some("example-service".to_string()),
+            key_type: Some(KEY_TYPE_SERVICE),
+        };
+        assert_eq!(
+            serde_json::to_string(&service).unwrap(),
+            r#"{"exists":true,"user_name":"example-service","key_type":"service"}"#
+        );
+        // The unknown/invalid key renders the optional fields as JSON null.
+        assert_eq!(
+            serde_json::to_string(&not_exists()).unwrap(),
+            r#"{"exists":false,"user_name":null,"key_type":null}"#
+        );
+    }
+
+    #[test]
+    fn body_validation_matches_fastapi() {
+        // A non-object body fails before any field is read.
+        let error = parse_request(&json!([1, 2])).unwrap_err();
+        assert_eq!(
+            error.status(),
+            brz_http_server::StatusCode::UNPROCESSABLE_ENTITY
+        );
+        assert_eq!(
+            error.validation_detail(),
+            r#"[{"type":"model_attributes_type","loc":["body"],"msg":"Input should be a valid dictionary or object to extract fields from","input":[1,2]}]"#
+        );
+
+        let missing = parse_request(&json!({})).unwrap_err().validation_detail();
+        assert!(missing.contains(r#""type":"missing""#));
+        assert!(missing.contains(r#""loc":["body","api_key"]"#));
+        assert!(missing.contains(r#""msg":"Field required""#));
+
+        let null = parse_request(&json!({"api_key": null}))
+            .unwrap_err()
+            .validation_detail();
+        assert!(null.contains(r#""type":"string_type""#));
+
+        let empty = parse_request(&json!({"api_key": ""}))
+            .unwrap_err()
+            .validation_detail();
+        assert!(empty.contains(r#""type":"string_too_short""#));
+        assert!(empty.contains(r#""ctx":{"min_length":1}"#));
+
+        assert_eq!(
+            parse_request(&json!({"api_key": "wg-abc"})).unwrap(),
+            "wg-abc"
+        );
     }
 
     #[tokio::test]
@@ -327,24 +480,34 @@ mod tests {
             .unwrap();
         assert!(!response.exists);
         assert!(response.user_name.is_none());
+        assert!(response.key_type.is_none());
         assert!(mysql.queries().is_empty());
     }
 
     #[tokio::test]
-    async fn valid_format_key_binds_the_sha256_hash() {
+    async fn valid_format_key_queries_service_before_personal() {
         let mysql = crate::sql_test_support::KindQueryCapture::default();
         let response =
             lookup_api_key_value(&mysql, "wg-yMbd40_N7GJnRpF4Uhw_RaJPLbUIfRwpEjgVV1FFCBA")
                 .await
                 .unwrap();
-        // The capture returns no rows, so the lookup answers not-exists.
+        // The capture returns no rows, so the lookup answers not-exists after
+        // both passes.
         assert!(!response.exists);
         let queries = mysql.queries();
-        assert_eq!(queries.len(), 1);
-        assert_eq!(queries[0].args, 1);
-        fn tokens(sql: &str) -> String {
-            sql.split_whitespace().collect::<Vec<_>>().join(" ")
+        assert_eq!(queries.len(), 2);
+        assert_eq!(queries[0].args, 0);
+        assert!(queries[0].sql.contains("key_type = 'service'"));
+        assert!(queries[1].sql.contains("key_type = 'personal'"));
+        for query in &queries {
+            assert!(
+                query.sql.contains(
+                    quote_sql_literal(&hex_sha256(
+                        b"wg-yMbd40_N7GJnRpF4Uhw_RaJPLbUIfRwpEjgVV1FFCBA"
+                    ))
+                    .as_str()
+                )
+            );
         }
-        assert_eq!(tokens(&queries[0].sql), tokens(API_KEY_BY_HASH_QUERY));
     }
 }

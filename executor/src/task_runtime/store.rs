@@ -2703,6 +2703,7 @@ impl LocalTaskStore {
         item_id: Option<&str>,
         external_item_id: Option<&str>,
         input: RuntimeTaskAddress,
+        dispatch: Option<&Value>,
     ) -> Result<TaskBinding, TaskRuntimeError> {
         validate_name(&input.device_id, "device id")?;
         validate_name(&input.task_id, "task id")?;
@@ -2752,6 +2753,46 @@ impl LocalTaskStore {
             "workflow_node_id": input.workflow_node_id,
             "workflow_stage_input": workflow_stage_input,
         });
+        // A member's own task carries the collaboration dispatch it was started
+        // from so a delivery can settle the exact round assignment. Absent
+        // fields are omitted: the rebind below merges with a JSON patch where
+        // null values would delete the stored identity.
+        if let Some(dispatch) = dispatch {
+            for (metadata_key, value) in [
+                (
+                    "human_assignment_id",
+                    dispatch
+                        .get("humanAssignmentId")
+                        .or_else(|| dispatch.get("human_assignment_id")),
+                ),
+                (
+                    "dispatch_id",
+                    dispatch
+                        .get("dispatchId")
+                        .or_else(|| dispatch.get("dispatch_id")),
+                ),
+                (
+                    "dispatch_round_id",
+                    dispatch
+                        .get("dispatchRoundId")
+                        .or_else(|| dispatch.get("dispatch_round_id")),
+                ),
+                (
+                    "assignment_id",
+                    dispatch
+                        .get("assignmentId")
+                        .or_else(|| dispatch.get("assignment_id")),
+                ),
+            ] {
+                if let Some(value) = value
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
+                    metadata[metadata_key] = json!(value);
+                }
+            }
+        }
         if let Some(model_selection) = input.model_selection.as_ref() {
             metadata["model_selection"] = model_selection.clone();
         }
@@ -3018,21 +3059,7 @@ impl LocalTaskStore {
             .join(", ");
         let connection = self.connection()?;
         let mut statement = connection.prepare(&format!(
-            "SELECT id, COALESCE(cloud_project_id, json_extract(metadata, '$.project_id')),
-                    COALESCE(loop_item_id, json_extract(metadata, '$.external_item_id')),
-                    task_user_id, device_id,
-                    task_id, task_title, backend_task_id,
-                    json_extract(metadata, '$.workflow_node_id'),
-                    json_extract(metadata, '$.workflow_stage_input'),
-                    CASE
-                        WHEN COALESCE(cloud_project_id, json_extract(metadata, '$.project_id'))
-                             = 'default-work-items'
-                        THEN 'system'
-                        ELSE 'user'
-                    END,
-                    linked_at,
-                    json_extract(metadata, '$.model_selection'),
-                    json_extract(metadata, '$.execution_context')
+            "SELECT {TASK_BINDING_COLUMNS}
              FROM loop_items
              WHERE resource_type = 'execution' AND unlinked_at IS NULL
                AND (
@@ -3115,22 +3142,10 @@ impl LocalTaskStore {
         let connection = self.connection()?;
         connection
             .query_row(
-                "SELECT id, COALESCE(cloud_project_id, json_extract(metadata, '$.project_id')),
-                        COALESCE(loop_item_id, json_extract(metadata, '$.external_item_id')),
-                        task_user_id, device_id,
-                        task_id, task_title, backend_task_id,
-                        json_extract(metadata, '$.workflow_node_id'),
-                        json_extract(metadata, '$.workflow_stage_input'),
-                        CASE
-                            WHEN COALESCE(cloud_project_id, json_extract(metadata, '$.project_id'))
-                                 = 'default-work-items'
-                            THEN 'system'
-                            ELSE 'user'
-                        END,
-                        linked_at,
-                        json_extract(metadata, '$.model_selection'),
-                        json_extract(metadata, '$.execution_context')
+                &format!(
+                    "SELECT {TASK_BINDING_COLUMNS}
                  FROM loop_items WHERE id = ?1 AND resource_type = 'execution'",
+                ),
                 [id],
                 map_task_binding,
             )
@@ -3262,21 +3277,8 @@ fn get_effective_binding(
 ) -> Result<Option<TaskBinding>, TaskRuntimeError> {
     connection
         .query_row(
-            "SELECT id, COALESCE(cloud_project_id, json_extract(metadata, '$.project_id')),
-                    COALESCE(loop_item_id, json_extract(metadata, '$.external_item_id')),
-                    task_user_id, device_id,
-                    task_id, task_title, backend_task_id,
-                    json_extract(metadata, '$.workflow_node_id'),
-                    json_extract(metadata, '$.workflow_stage_input'),
-                    CASE
-                        WHEN COALESCE(cloud_project_id, json_extract(metadata, '$.project_id'))
-                             = 'default-work-items'
-                        THEN 'system'
-                        ELSE 'user'
-                    END,
-                    linked_at,
-                    json_extract(metadata, '$.model_selection'),
-                    json_extract(metadata, '$.execution_context')
+            &format!(
+                "SELECT {TASK_BINDING_COLUMNS}
              FROM loop_items
              WHERE resource_type = 'execution' AND device_id = ?1 AND task_id = ?2
                AND unlinked_at IS NULL
@@ -3289,6 +3291,7 @@ fn get_effective_binding(
                  END,
                  linked_at DESC
              LIMIT 1",
+            ),
             params![device_id, task_id],
             map_task_binding,
         )
@@ -3304,21 +3307,8 @@ fn get_binding_by_kind(
 ) -> Result<Option<TaskBinding>, TaskRuntimeError> {
     connection
         .query_row(
-            "SELECT id, COALESCE(cloud_project_id, json_extract(metadata, '$.project_id')),
-                    COALESCE(loop_item_id, json_extract(metadata, '$.external_item_id')),
-                    task_user_id, device_id,
-                    task_id, task_title, backend_task_id,
-                    json_extract(metadata, '$.workflow_node_id'),
-                    json_extract(metadata, '$.workflow_stage_input'),
-                    CASE
-                        WHEN COALESCE(cloud_project_id, json_extract(metadata, '$.project_id'))
-                             = 'default-work-items'
-                        THEN 'system'
-                        ELSE 'user'
-                    END,
-                    linked_at,
-                    json_extract(metadata, '$.model_selection'),
-                    json_extract(metadata, '$.execution_context')
+            &format!(
+                "SELECT {TASK_BINDING_COLUMNS}
              FROM loop_items
              WHERE resource_type = 'execution' AND device_id = ?1 AND task_id = ?2
                AND unlinked_at IS NULL
@@ -3328,6 +3318,7 @@ fn get_binding_by_kind(
                ) = ?3
              ORDER BY linked_at DESC
              LIMIT 1",
+            ),
             params![device_id, task_id, system],
             map_task_binding,
         )
@@ -3382,6 +3373,31 @@ fn validate_local_workflow_task_binding(
     Ok(())
 }
 
+/// Columns shared by every query that materializes a [`TaskBinding`]. The
+/// dispatch columns keep the personal task linked to the collaboration round
+/// assignment a manager created for it.
+const TASK_BINDING_COLUMNS: &str = "
+            id, COALESCE(cloud_project_id, json_extract(metadata, '$.project_id')),
+            COALESCE(loop_item_id, json_extract(metadata, '$.external_item_id')),
+            task_user_id, device_id,
+            task_id, task_title, backend_task_id,
+            json_extract(metadata, '$.workflow_node_id'),
+            json_extract(metadata, '$.workflow_stage_input'),
+            CASE
+                WHEN COALESCE(cloud_project_id, json_extract(metadata, '$.project_id'))
+                     = 'default-work-items'
+                THEN 'system'
+                ELSE 'user'
+            END,
+            linked_at,
+            json_extract(metadata, '$.model_selection'),
+            json_extract(metadata, '$.execution_context'),
+            json_extract(metadata, '$.human_assignment_id'),
+            json_extract(metadata, '$.dispatch_id'),
+            json_extract(metadata, '$.dispatch_round_id'),
+            json_extract(metadata, '$.assignment_id')
+";
+
 fn map_task_binding(row: &Row<'_>) -> rusqlite::Result<TaskBinding> {
     Ok(TaskBinding {
         id: row.get(0)?,
@@ -3404,6 +3420,10 @@ fn map_task_binding(row: &Row<'_>) -> rusqlite::Result<TaskBinding> {
         execution_context: row
             .get::<_, Option<String>>(13)?
             .and_then(|value| serde_json::from_str(&value).ok()),
+        human_assignment_id: row.get(14)?,
+        dispatch_id: row.get(15)?,
+        dispatch_round_id: row.get(16)?,
+        assignment_id: row.get(17)?,
     })
 }
 
@@ -5440,7 +5460,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::task_runtime::{BinaryInput, DeliveryCreate};
+    use crate::task_runtime::{BinaryInput, DeliveryCreate, DeliveryFinalize};
 
     #[test]
     fn schedule_validation_checks_each_supplied_date() {
@@ -6612,6 +6632,29 @@ mod tests {
 
     #[test]
     fn collaboration_group_round_runs_members_through_executor_then_restarts_manager() {
+        assert_collaboration_round_completion(true, false, false);
+    }
+
+    #[test]
+    fn agent_only_collaboration_round_restarts_manager_for_review() {
+        assert_collaboration_round_completion(false, false, false);
+    }
+
+    #[test]
+    fn agent_only_collaboration_round_accepts_successful_member_retry() {
+        assert_collaboration_round_completion(false, true, false);
+    }
+
+    #[test]
+    fn collaboration_round_uses_canonical_robot_identity_for_team_alias() {
+        assert_collaboration_round_completion(false, false, true);
+    }
+
+    fn assert_collaboration_round_completion(
+        has_human: bool,
+        retry_member: bool,
+        team_alias: bool,
+    ) {
         let (directory, store, project) = chat_agent_store();
         let _ = directory;
         let leader = make_local_agent(&store, DEFAULT_WORK_ITEM_PROJECT_ID, "auto");
@@ -6651,6 +6694,15 @@ mod tests {
                 },
             )
             .unwrap();
+        let member_assignment_id = if team_alias {
+            store.connection().unwrap().execute(
+                "UPDATE loop_items SET metadata = json_set(metadata, '$.wegent_team_id', 42) WHERE id = ?1",
+                [&member.id],
+            ).unwrap();
+            "42".to_owned()
+        } else {
+            member.id.clone()
+        };
         let reviewer = store
             .create_chat_agent(
                 DEFAULT_WORK_ITEM_PROJECT_ID,
@@ -6705,7 +6757,7 @@ mod tests {
                         },
                         "members": [{
                             "kind": "agent",
-                            "id": member.id,
+                            "id": member_assignment_id,
                             "responsibility": "Collect CPU evidence."
                         }, {
                             "kind": "agent",
@@ -6810,7 +6862,7 @@ mod tests {
                                 }
                             }
                         }, {
-                            "memberIds": [member.id],
+                            "memberIds": [member.id, member_assignment_id],
                             "runtimePayload": {
                                 "taskId": "member-template",
                                 "runtime": "codex",
@@ -6926,52 +6978,55 @@ mod tests {
         assert!(leader_assignment_error.to_string().contains(
             "collaboration group leader coordinates work and cannot be an assignment target"
         ));
+        let mut plan = json!({
+            "round_id": "round-1",
+            "items": [{
+                "assignment_id": "collect",
+                "title": "采集运行证据",
+                "instructions": "Collect verifiable evidence.",
+                "assignee_type": "agent",
+                "assignee_id": member_assignment_id,
+                "workflow_stage_id": "diagnosis",
+            }, {
+                "assignment_id": "review-agent",
+                "title": "独立复核证据",
+                "instructions": "Review the evidence independently.",
+                "assignee_type": "agent",
+                "assignee_id": reviewer.id,
+                "workflow_stage_id": "diagnosis",
+            }, {
+                "assignment_id": "review-human",
+                "title": "人工确认诊断",
+                "instructions": "Deliver a human review of the evidence.",
+                "assignee_type": "human",
+                "assignee_id": "42",
+                "workflow_stage_id": "diagnosis",
+            }],
+        });
+        if !has_human {
+            plan["items"].as_array_mut().unwrap().truncate(2);
+        }
         let round = store
-            .submit_collaboration_round(
-                runtime_task_id,
-                &json!({
-                    "round_id": "round-1",
-                    "items": [{
-                        "assignment_id": "collect",
-                        "title": "采集运行证据",
-                        "instructions": "Collect verifiable evidence.",
-                        "assignee_type": "agent",
-                        "assignee_id": member.id,
-                        "workflow_stage_id": "diagnosis",
-                    }, {
-                        "assignment_id": "review-agent",
-                        "title": "独立复核证据",
-                        "instructions": "Review the evidence independently.",
-                        "assignee_type": "agent",
-                        "assignee_id": reviewer.id,
-                        "workflow_stage_id": "diagnosis",
-                    }, {
-                        "assignment_id": "review-human",
-                        "title": "人工确认诊断",
-                        "instructions": "Deliver a human review of the evidence.",
-                        "assignee_type": "human",
-                        "assignee_id": "42",
-                        "workflow_stage_id": "diagnosis",
-                    }],
-                }),
-            )
+            .submit_collaboration_round(runtime_task_id, &plan)
             .unwrap();
         assert_eq!(round["state"], "dispatched");
         assert_eq!(round["assignments"][0]["agent_name"], "Evidence Bot");
         assert_eq!(round["assignments"][1]["agent_name"], "Review Bot");
-        assert_eq!(round["assignments"][2]["assignee_name"], "Human reviewer");
         let human_task_id = round["assignments"][2]["human_assignment_id"]
             .as_str()
-            .unwrap()
-            .to_owned();
-        let human_task = store.get_task(&project.id, &human_task_id).unwrap();
-        assert_eq!(human_task.parent_id.as_deref(), Some(issue.id.as_str()));
-        assert_eq!(human_task.assignee_user_id, Some(42));
-        assert_eq!(human_task.title.as_deref(), Some("人工确认诊断"));
-        assert_eq!(
-            human_task.metadata["collaboration_assignment"]["round_id"],
-            "round-1"
-        );
+            .map(ToOwned::to_owned);
+        if let Some(human_task_id) = human_task_id.as_deref() {
+            assert_eq!(round["assignments"][2]["human_user_name"], "Human reviewer");
+            assert_eq!(round["assignments"][2]["human_user_id"], "42");
+            let human_task = store.get_task(&project.id, human_task_id).unwrap();
+            assert_eq!(human_task.parent_id.as_deref(), Some(issue.id.as_str()));
+            assert_eq!(human_task.assignee_user_id, Some(42));
+            assert_eq!(human_task.title.as_deref(), Some("人工确认诊断"));
+            assert_eq!(
+                human_task.metadata["collaboration_assignment"]["round_id"],
+                "round-1"
+            );
+        }
         let comments = store.list_comments(&project.id, &issue.id, 0).unwrap();
         let manager = comments
             .iter()
@@ -6984,6 +7039,23 @@ mod tests {
         assert_eq!(
             manager.metadata["dispatch_assignments"][0]["agent_name"],
             "Evidence Bot"
+        );
+        assert_eq!(manager.metadata["dispatch_id"], issue.id);
+        assert_eq!(manager.metadata["activity_type"], "manager_assignment");
+        if has_human {
+            assert_eq!(
+                manager.metadata["dispatch_assignments"][2]["human_user_id"],
+                "42"
+            );
+        }
+        let issue_after_dispatch = store.get_task(&project.id, &issue.id).unwrap();
+        assert_eq!(
+            issue_after_dispatch.assignee_user_id,
+            has_human.then_some(42)
+        );
+        assert_eq!(
+            issue_after_dispatch.assignee_agent_id,
+            (!has_human).then_some(member.id.clone())
         );
         let member_activity = comments
             .iter()
@@ -7067,8 +7139,35 @@ mod tests {
         );
         assert_eq!(second_member_execution.execution_scope, "");
 
+        let completed_member_id = if retry_member {
+            accept_and_start(&store, &first_member_execution);
+            let retry = store
+                .fail_execution(first_member_execution.id, "Runtime interrupted", true)
+                .unwrap()
+                .unwrap();
+            assert_eq!(retry.previous_execution_id, Some(first_member_execution.id));
+            let claimed_retry = store
+                .claim_next_local_execution(&LocalExecutionClaim {
+                    execution_device_id: Some("local-device".to_owned()),
+                    runtime_instance_id: "runtime-1".to_owned(),
+                    device_capacity: 2,
+                    runtime_active: 1,
+                    runtime_active_task_ids: vec![second_member_execution
+                        .runtime_task_id
+                        .clone()
+                        .unwrap()],
+                    lease_seconds: 300,
+                })
+                .unwrap()
+                .expect("retry must be claimable");
+            assert_eq!(claimed_retry.id, retry.id);
+            accept_and_start(&store, &claimed_retry);
+            retry.id
+        } else {
+            first_member_execution.id
+        };
         store
-            .complete_execution(first_member_execution.id, Some("Evidence collected."))
+            .complete_execution(completed_member_id, Some("Evidence collected."))
             .unwrap();
         assert!(store
             .claim_next_local_execution(&LocalExecutionClaim {
@@ -7090,48 +7189,54 @@ mod tests {
                 Some("Evidence independently reviewed."),
             )
             .unwrap();
-        assert!(store
-            .claim_next_local_execution(&LocalExecutionClaim {
-                execution_device_id: Some("local-device".to_owned()),
-                runtime_instance_id: "runtime-1".to_owned(),
-                device_capacity: 1,
-                runtime_active: 0,
-                runtime_active_task_ids: Vec::new(),
-                lease_seconds: 300,
-            })
-            .unwrap()
-            .is_none());
+        if has_human {
+            assert!(store
+                .claim_next_local_execution(&LocalExecutionClaim {
+                    execution_device_id: Some("local-device".to_owned()),
+                    runtime_instance_id: "runtime-1".to_owned(),
+                    device_capacity: 1,
+                    runtime_active: 0,
+                    runtime_active_task_ids: Vec::new(),
+                    lease_seconds: 300,
+                })
+                .unwrap()
+                .is_none());
 
-        let delivery = store
-            .create_delivery(
-                &project.id,
-                &human_task_id,
-                true,
-                DeliveryCreate {
-                    markdown: "Human review confirms the evidence.".to_owned(),
-                    chat: None,
-                    source_task: None,
-                },
-            )
-            .unwrap();
-        store
-            .finalize_delivery(
-                &human_task_id,
-                &delivery.id,
-                crate::task_runtime::DeliveryFinalize::default(),
-            )
-            .unwrap();
-        let delivered_human_task = store.get_task(&project.id, &human_task_id).unwrap();
-        assert_eq!(delivered_human_task.status.as_deref(), Some("completed"));
-        assert_eq!(
-            delivered_human_task.current_delivery_id.as_deref(),
-            Some(delivery.id.as_str())
-        );
+            let human_task_id = human_task_id.unwrap();
+            let delivery = store
+                .create_delivery(
+                    &project.id,
+                    &human_task_id,
+                    true,
+                    DeliveryCreate {
+                        markdown: "Human review confirms the evidence.".to_owned(),
+                        chat: None,
+                        source_task: None,
+                    },
+                )
+                .unwrap();
+            store
+                .finalize_delivery(
+                    &human_task_id,
+                    &delivery.id,
+                    crate::task_runtime::DeliveryFinalize::default(),
+                )
+                .unwrap();
+            let delivered_human_task = store.get_task(&project.id, &human_task_id).unwrap();
+            assert_eq!(delivered_human_task.status.as_deref(), Some("completed"));
+            assert_eq!(
+                delivered_human_task.current_delivery_id.as_deref(),
+                Some(delivery.id.as_str())
+            );
+        }
 
         let comments = store.list_comments(&project.id, &issue.id, 0).unwrap();
         let member_activity = comments
             .iter()
-            .find(|comment| comment.metadata["dispatch_role"] == "member")
+            .find(|comment| {
+                comment.metadata["dispatch_role"] == "member"
+                    && comment.content == "Evidence collected."
+            })
             .expect("member activity must remain present");
         assert_eq!(member_activity.status, "completed");
         assert_eq!(member_activity.content, "Evidence collected.");
@@ -7162,12 +7267,14 @@ mod tests {
                 .unwrap()
                 .contains("Evidence collected.")
         );
-        assert!(
-            resumed_manager.execution_payload.as_ref().unwrap()["message"]
-                .as_str()
-                .unwrap()
-                .contains("Human review confirms the evidence.")
-        );
+        if has_human {
+            assert!(
+                resumed_manager.execution_payload.as_ref().unwrap()["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Human review confirms the evidence.")
+            );
+        }
         assert!(
             resumed_manager.execution_payload.as_ref().unwrap()["message"]
                 .as_str()
@@ -7187,6 +7294,219 @@ mod tests {
                 .status
                 .as_deref(),
             Some("in_progress")
+        );
+    }
+
+    #[test]
+    fn human_assignment_delivery_from_the_issue_settles_the_round() {
+        let (directory, store, project) = chat_agent_store();
+        let _ = directory;
+        let leader = make_local_agent(&store, DEFAULT_WORK_ITEM_PROJECT_ID, "auto");
+        let project = store
+            .update_project(
+                &project.id,
+                ProjectUpdate {
+                    version: project.version,
+                    collaboration_groups: Some(json!([{
+                        "id": "squad-human",
+                        "name": "开发",
+                        "instructions": "不管什么事都找 @admin",
+                        "leader": {
+                            "kind": "agent",
+                            "id": leader.id,
+                            "responsibility": "Plan and review."
+                        },
+                        "members": [{
+                            "kind": "human",
+                            "id": "42",
+                            "name": "admin",
+                            "responsibility": "Confirm the observed behavior."
+                        }],
+                        "stages": []
+                    }])),
+                    ..ProjectUpdate::default()
+                },
+            )
+            .unwrap();
+        let issue = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "看下cpu占用".to_owned(),
+                    description: String::new(),
+                    status: "inbox".to_owned(),
+                    priority: "none".to_owned(),
+                    parent_id: None,
+                    tags: Vec::new(),
+                    assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        let dispatched = store
+            .update_task(
+                &project.id,
+                &issue.id,
+                TaskUpdate {
+                    version: issue.version,
+                    assignee_group_id: Some(Some("squad-human".to_owned())),
+                    execution_payload: Some(json!({
+                        "managerRuntimeRequest": {
+                            "taskId": "manager-template",
+                            "runtime": "codex",
+                            "executionRequest": {
+                                "task_id": "manager-template",
+                                "subtask_id": "manager-template-initial",
+                                "bot": [{
+                                    "id": leader.id,
+                                    "name": "Manager",
+                                    "shell_type": "Codex"
+                                }],
+                                "model_config": {
+                                    "model": "openai",
+                                    "model_id": "gpt-6-sol"
+                                }
+                            }
+                        },
+                        "memberRuntimeProfiles": []
+                    })),
+                    ..TaskUpdate::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(dispatched.status.as_deref(), Some("in_progress"));
+        let claimed = store
+            .claim_next_local_execution(&LocalExecutionClaim {
+                execution_device_id: Some("local-device".to_owned()),
+                runtime_instance_id: "runtime-1".to_owned(),
+                device_capacity: 1,
+                runtime_active: 0,
+                runtime_active_task_ids: Vec::new(),
+                lease_seconds: 300,
+            })
+            .unwrap()
+            .expect("manager execution must be queued");
+        accept_and_start(&store, &claimed);
+        let runtime_task_id = claimed
+            .runtime_task_id
+            .as_deref()
+            .expect("manager execution must have a Runtime task id")
+            .to_owned();
+        let round = store
+            .submit_collaboration_round(
+                &runtime_task_id,
+                &json!({
+                    "round_id": "cpu-review-round-1",
+                    "items": [{
+                        "assignment_id": "cpu-review-admin",
+                        "title": "请 @admin 检查 CPU 占用",
+                        "instructions": "Check the CPU load and deliver evidence.",
+                        "assignee_type": "human",
+                        "assignee_id": "42",
+                    }],
+                }),
+            )
+            .unwrap();
+        assert_eq!(round["state"], "dispatched");
+        assert_eq!(round["assignments"][0]["human_user_id"], "42");
+        assert_eq!(round["assignments"][0]["human_user_name"], "admin");
+        assert_eq!(
+            round["assignments"][0]["instructions"],
+            "Check the CPU load and deliver evidence."
+        );
+        let human_task_id = round["assignments"][0]["human_assignment_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let issue_after_dispatch = store.get_task(&project.id, &issue.id).unwrap();
+        assert_eq!(issue_after_dispatch.assignee_user_id, Some(42));
+        assert_eq!(
+            issue_after_dispatch.metadata["assignee_label"],
+            json!("admin")
+        );
+        assert!(issue_after_dispatch.metadata["collaboration_group"].is_null());
+        let human_task = store.get_task(&project.id, &human_task_id).unwrap();
+        assert_eq!(
+            human_task.metadata["collaboration_assignment"]["dispatch_id"],
+            json!(issue.id)
+        );
+
+        let address = RuntimeTaskAddress {
+            device_id: "local-device".to_owned(),
+            task_id: "runtime-human-1".to_owned(),
+            task_title: Some("请 @admin 检查 CPU 占用".to_owned()),
+            backend_task_id: None,
+            model_selection: None,
+            execution_context: None,
+            workflow_node_id: None,
+        };
+        let binding = store
+            .bind_task(
+                &project.id,
+                Some(&issue.id),
+                None,
+                address.clone(),
+                Some(&json!({
+                    "humanAssignmentId": human_task_id,
+                    "dispatchId": issue.id,
+                    "dispatchRoundId": "cpu-review-round-1",
+                    "assignmentId": "cpu-review-admin",
+                })),
+            )
+            .unwrap();
+        assert_eq!(
+            binding.human_assignment_id.as_deref(),
+            Some(human_task_id.as_str())
+        );
+        assert_eq!(
+            binding.dispatch_round_id.as_deref(),
+            Some("cpu-review-round-1")
+        );
+
+        let delivery = store
+            .create_delivery(
+                &project.id,
+                &issue.id,
+                true,
+                DeliveryCreate {
+                    markdown: "CPU load confirmed at 42%.".to_owned(),
+                    chat: None,
+                    source_task: Some(address),
+                },
+            )
+            .unwrap();
+        store
+            .finalize_delivery(&issue.id, &delivery.id, DeliveryFinalize::default())
+            .unwrap();
+        let settled_human_task = store.get_task(&project.id, &human_task_id).unwrap();
+        assert_eq!(settled_human_task.status.as_deref(), Some("completed"));
+        assert_eq!(
+            settled_human_task.current_delivery_id.as_deref(),
+            Some(delivery.id.as_str())
+        );
+        let resumed_manager = store
+            .claim_next_local_execution(&LocalExecutionClaim {
+                execution_device_id: Some("local-device".to_owned()),
+                runtime_instance_id: "runtime-1".to_owned(),
+                device_capacity: 1,
+                runtime_active: 0,
+                runtime_active_task_ids: Vec::new(),
+                lease_seconds: 300,
+            })
+            .unwrap()
+            .expect("manager must restart after the human delivery");
+        assert_eq!(resumed_manager.agent_id, leader.id);
+        assert_eq!(
+            resumed_manager.execution_payload.as_ref().unwrap()["origin"]["dispatchRole"],
+            "manager"
+        );
+        assert!(
+            resumed_manager.execution_payload.as_ref().unwrap()["message"]
+                .as_str()
+                .unwrap()
+                .contains("CPU load confirmed at 42%.")
         );
     }
 
@@ -9715,6 +10035,7 @@ mod tests {
                     })),
                     workflow_node_id: None,
                 },
+                None,
             )
             .unwrap();
 
@@ -9787,6 +10108,7 @@ mod tests {
                     execution_context: None,
                     workflow_node_id: None,
                 },
+                None,
             )
             .unwrap();
 
@@ -10123,6 +10445,7 @@ mod tests {
                         execution_context: None,
                         workflow_node_id: None,
                     },
+                    None,
                 )
                 .unwrap();
         }
@@ -10199,10 +10522,11 @@ mod tests {
                 Some(&system_task.id),
                 None,
                 address.clone(),
+                None,
             )
             .unwrap();
         let user_binding = store
-            .bind_task(&user_project.id, Some(&user_task.id), None, address)
+            .bind_task(&user_project.id, Some(&user_task.id), None, address, None)
             .unwrap();
 
         assert_eq!(system_binding.binding_type, "system");
@@ -10467,7 +10791,7 @@ mod tests {
             workflow_node_id: Some("develop".to_owned()),
         };
         store
-            .bind_task(&project.id, Some(&task.id), None, address.clone())
+            .bind_task(&project.id, Some(&task.id), None, address.clone(), None)
             .unwrap();
         let delivery = store
             .create_delivery(

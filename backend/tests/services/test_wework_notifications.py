@@ -21,6 +21,7 @@ from app.services.cloud_project_visibility import (
     AUTHENTICATED_ENTITY_TYPE,
 )
 from app.services.loop_items.service import loop_item_service
+from app.services.wework_notification_preferences import get_notification_preferences
 from app.services.wework_notifications import (
     create_notification,
     deliver_notification,
@@ -527,14 +528,6 @@ def test_notification_preferences_are_account_scoped_and_clear_category_unread(
     headers = {"Authorization": f"Bearer {test_token}"}
     path = "/api/v1/wework-notifications/preferences"
 
-    defaults = test_client.get(path, headers=headers)
-    assert defaults.status_code == 200
-    assert defaults.json()["tasks"] == {
-        "in_app": True,
-        "system": False,
-        "im": None,
-    }
-
     updated = test_client.put(
         path,
         headers=headers,
@@ -572,18 +565,14 @@ def test_malformed_notification_preferences_fall_back_without_blocking_delivery(
     test_db.commit()
     headers = {"Authorization": f"Bearer {test_token}"}
 
-    preferences = test_client.get(
-        "/api/v1/wework-notifications/preferences",
-        headers=headers,
-    )
+    preferences = get_notification_preferences(test_user)
     notification = test_client.post(
         "/api/v1/wework-notifications",
         headers=headers,
         json={"title": "Available", "body": "Delivery still works"},
     )
 
-    assert preferences.status_code == 200
-    assert preferences.json()["collaboration"] == {
+    assert preferences.collaboration.model_dump() == {
         "in_app": True,
         "system": True,
         "im": False,

@@ -232,8 +232,7 @@ def test_list_sites_accepts_legacy_site_app_type_and_defaults_invalid_network(
     httpx_mock.add_response(
         method="GET",
         url=(
-            f"{SITES_API_BASE_URL}/api/v1/projects/search"
-            "?username=testuser&limit=100"
+            f"{SITES_API_BASE_URL}/api/v1/projects/search?username=testuser&limit=100"
         ),
         json={"items": [project], "next_cursor": None},
     )
@@ -349,8 +348,7 @@ def test_list_sites_fetches_until_offset_page_is_resolved(
     httpx_mock.add_response(
         method="GET",
         url=(
-            f"{SITES_API_BASE_URL}/api/v1/projects/search"
-            "?username=testuser&limit=100"
+            f"{SITES_API_BASE_URL}/api/v1/projects/search?username=testuser&limit=100"
         ),
         json={"items": [], "next_cursor": "page-1"},
     )
@@ -398,8 +396,7 @@ def test_list_sites_next_cursor_uses_next_offset(
     httpx_mock.add_response(
         method="GET",
         url=(
-            f"{SITES_API_BASE_URL}/api/v1/projects/search"
-            "?username=testuser&limit=100"
+            f"{SITES_API_BASE_URL}/api/v1/projects/search?username=testuser&limit=100"
         ),
         json={
             "items": [

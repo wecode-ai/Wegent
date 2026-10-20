@@ -70,10 +70,27 @@ async fn refresh_access_token(
     state: &AppState,
     body: &WeworkTokenRefreshRequest,
 ) -> Result<WeworkTokenRefreshResponse, FastApiError> {
-    // `_decode_refresh_token`: active-key HS decode, then the `token_use` gate.
-    let claims = decode_refresh_token(&state.auth, &body.refresh_token)?;
+    let claims = verify_refresh_request(&state.auth, body, chrono::Utc::now().timestamp())?;
+    let username = claims["sub"].as_str().expect("validated refresh subject");
 
-    // `cnf.jkt`: a non-empty string thumbprint, else the invalid-token 401.
+    // Keep the full source projection and prepared statement unchanged.
+    let user: Option<UserRow> = state
+        .mysql
+        .fetch_optional(USER_BY_NAME_QUERY, (username,))
+        .await
+        .map_err(|error| {
+            tracing::warn!(%error, "wework refresh user lookup failed");
+            FastApiError::unhandled()
+        })?;
+    issue_refreshed_token(&state.auth, &claims, user.as_ref())
+}
+
+fn verify_refresh_request(
+    auth: &AuthConfig,
+    body: &WeworkTokenRefreshRequest,
+    now: i64,
+) -> Result<serde_json::Value, FastApiError> {
+    let claims = decode_refresh_token_at(auth, &body.refresh_token, now)?;
     let Some(expected_thumbprint) = claims
         .get("cnf")
         .and_then(serde_json::Value::as_object)
@@ -85,42 +102,46 @@ async fn refresh_access_token(
     };
 
     // `_verify_device_proof`: proof signature plus the request binding claims.
-    verify_device_proof(
+    verify_device_proof_at(
         &body.proof,
         &body.refresh_token,
         expected_thumbprint,
         REFRESH_PATH,
+        now,
     )?;
 
-    // `payload.get("sub")` must be a string; `payload.get("user_id")` only
-    // constrains when it is an integer.
-    let Some(username) = claims.get("sub").and_then(serde_json::Value::as_str) else {
+    if !claims.get("sub").is_some_and(serde_json::Value::is_string) {
         return Err(invalid_refresh_token());
-    };
-    let claim_user_id = claims.get("user_id").and_then(serde_json::Value::as_i64);
+    }
+    Ok(claims)
+}
 
-    // `db.query(User).filter(User.user_name == username).first()` — the source
-    // full-column `users` projection so the prepared statement matches.
-    let user: Option<UserRow> = state
-        .mysql
-        .fetch_optional(USER_BY_NAME_QUERY, (username,))
-        .await
-        .map_err(|error| {
-            tracing::warn!(%error, "wework refresh user lookup failed");
-            FastApiError::unhandled()
-        })?;
+fn issue_refreshed_token(
+    auth: &AuthConfig,
+    claims: &serde_json::Value,
+    user: Option<&UserRow>,
+) -> Result<WeworkTokenRefreshResponse, FastApiError> {
     let Some(user) = user else {
         return Err(desktop_login_no_longer_valid());
     };
-    // `not user.is_active or (isinstance(user_id, int) and user.id != user_id)`.
-    if user.is_active == 0 || claim_user_id.is_some_and(|id| i64::from(user.id) != id) {
+    // Python bool is also int; other non-integer IDs do not constrain the user.
+    let mismatched = claims.get("user_id").is_some_and(|id| {
+        if let Some(value) = id.as_bool() {
+            i64::from(user.id) != i64::from(value)
+        } else if id.is_i64() || id.is_u64() {
+            id.as_i64() != Some(i64::from(user.id))
+        } else {
+            false
+        }
+    });
+    if user.is_active == 0 || mismatched {
         return Err(desktop_login_no_longer_valid());
     }
 
     // `_create_wework_access_token` + `expires_in = minutes * 60`.
     let access_token = create_token(
-        &state.auth.jwt_key,
-        &state.auth.algorithm,
+        &auth.jwt_key,
+        &auth.algorithm,
         access_claims(&user.user_name, user.id, true)?,
     )?;
     Ok(WeworkTokenRefreshResponse {
@@ -132,9 +153,18 @@ async fn refresh_access_token(
 
 /// `_decode_refresh_token`: verify the refresh token with the active signing
 /// key and the configured algorithm, then require `token_use=wework_refresh`.
+#[cfg(test)]
 fn decode_refresh_token(
     config: &AuthConfig,
     token: &str,
+) -> Result<serde_json::Value, FastApiError> {
+    decode_refresh_token_at(config, token, chrono::Utc::now().timestamp())
+}
+
+fn decode_refresh_token_at(
+    config: &AuthConfig,
+    token: &str,
+    now: i64,
 ) -> Result<serde_json::Value, FastApiError> {
     let key = DecodingKey::from_secret(config.jwt_key.as_bytes());
     let decoded = jsonwebtoken::decode::<serde_json::Value>(
@@ -144,6 +174,9 @@ fn decode_refresh_token(
     )
     .map_err(|_| desktop_login_expired())?;
     let claims = decoded.claims;
+    if !jose_claims_valid(&claims, now) {
+        return Err(desktop_login_expired());
+    }
     if claims.get("token_use").and_then(serde_json::Value::as_str) != Some(WEWORK_REFRESH_TOKEN_USE)
     {
         return Err(invalid_refresh_token());
@@ -154,11 +187,28 @@ fn decode_refresh_token(
 /// `_verify_device_proof`: validate the embedded EC P-256 key, bind it to the
 /// expected thumbprint, verify the ES256 signature, then enforce the
 /// `iat`/`htm`/`htu`/`ath`/`jti` proof-of-possession claims.
+#[cfg(test)]
 fn verify_device_proof(
     proof: &str,
     refresh_token: &str,
     expected_thumbprint: &str,
     expected_path: &str,
+) -> Result<(), FastApiError> {
+    verify_device_proof_at(
+        proof,
+        refresh_token,
+        expected_thumbprint,
+        expected_path,
+        chrono::Utc::now().timestamp(),
+    )
+}
+
+fn verify_device_proof_at(
+    proof: &str,
+    refresh_token: &str,
+    expected_thumbprint: &str,
+    expected_path: &str,
+    now: i64,
 ) -> Result<(), FastApiError> {
     // `jwt.get_unverified_header(proof)`: a malformed token is an invalid proof.
     let header = unverified_header(proof)?;
@@ -178,14 +228,9 @@ fn verify_device_proof(
         return Err(proof_does_not_match());
     }
 
-    let payload = decode_device_proof(proof, &public_key)?;
+    let payload = decode_device_proof_at(proof, &public_key, now)?;
 
-    if !proof_binding_valid(
-        &payload,
-        refresh_token,
-        expected_path,
-        chrono::Utc::now().timestamp(),
-    ) {
+    if !proof_binding_valid(&payload, refresh_token, expected_path, now) {
         return Err(invalid_device_proof());
     }
     Ok(())
@@ -204,8 +249,9 @@ fn proof_binding_valid(
         .get("iat")
         .and_then(serde_json::Value::as_i64)
         .is_some_and(|issued_at| {
-            issued_at <= now + DEVICE_PROOF_FUTURE_SKEW_SECONDS
-                && now - issued_at <= DEVICE_PROOF_MAX_AGE_SECONDS
+            i128::from(issued_at) <= i128::from(now) + i128::from(DEVICE_PROOF_FUTURE_SKEW_SECONDS)
+                && i128::from(now) - i128::from(issued_at)
+                    <= i128::from(DEVICE_PROOF_MAX_AGE_SECONDS)
         })
         && payload.get("htm").and_then(serde_json::Value::as_str) == Some("POST")
         && payload.get("htu").and_then(serde_json::Value::as_str) == Some(expected_path)
@@ -289,16 +335,31 @@ fn device_key_thumbprint(key: &DevicePublicKey) -> String {
 }
 
 /// `jwt.decode(proof, public_key, algorithms=["ES256"])`.
+#[cfg(test)]
 fn decode_device_proof(
     proof: &str,
     key: &DevicePublicKey,
+) -> Result<serde_json::Value, FastApiError> {
+    decode_device_proof_at(proof, key, chrono::Utc::now().timestamp())
+}
+
+fn decode_device_proof_at(
+    proof: &str,
+    key: &DevicePublicKey,
+    now: i64,
 ) -> Result<serde_json::Value, FastApiError> {
     let x = base64url_nopad(&key.x_bytes);
     let y = base64url_nopad(&key.y_bytes);
     let decoding = DecodingKey::from_ec_components(&x, &y).map_err(|_| invalid_device_proof())?;
     jsonwebtoken::decode::<serde_json::Value>(proof, &decoding, &jose_validation(Algorithm::ES256))
-        .map(|data| data.claims)
         .map_err(|_| invalid_device_proof())
+        .and_then(|data| {
+            if jose_claims_valid(&data.claims, now) {
+                Ok(data.claims)
+            } else {
+                Err(invalid_device_proof())
+            }
+        })
 }
 
 /// `jwt.get_unverified_header(proof)`: base64url-decode the header segment and
@@ -314,17 +375,60 @@ fn unverified_header(proof: &str) -> Result<serde_json::Value, FastApiError> {
     Ok(header)
 }
 
-/// A python-jose-equivalent decoder setup: no audience, no required claims,
-/// zero leeway, and `exp`/`nbf` verified only when present (matching
-/// `python-jose`'s default `jwt.decode` options).
+/// Verify signatures here. Endpoint-local claim checks below match python-jose
+/// numeric coercion and reject malformed claims jsonwebtoken silently ignores.
 fn jose_validation(algorithm: Algorithm) -> Validation {
     let mut validation = Validation::new(algorithm);
     validation.validate_aud = false;
-    validation.validate_exp = true;
-    validation.validate_nbf = true;
+    validation.validate_exp = false;
+    validation.validate_nbf = false;
     validation.leeway = 0;
     validation.required_spec_claims.clear();
     validation
+}
+
+/// python-jose defaults for this API, which supplies no audience or access_token.
+fn jose_claims_valid(claims: &serde_json::Value, now: i64) -> bool {
+    if !claims.is_object() || claims.get("aud").is_some() || claims.get("at_hash").is_some() {
+        return false;
+    }
+    for field in ["sub", "jti"] {
+        if claims.get(field).is_some_and(|value| !value.is_string()) {
+            return false;
+        }
+    }
+    for field in ["iat", "exp", "nbf"] {
+        if let Some(value) = claims.get(field) {
+            let Some(value) = jose_integer(value) else {
+                return false;
+            };
+            if (field == "exp" && value < i128::from(now))
+                || (field == "nbf" && value > i128::from(now))
+            {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Common Python int() inputs used by JWT NumericDate claims.
+fn jose_integer(value: &serde_json::Value) -> Option<i128> {
+    match value {
+        serde_json::Value::Bool(value) => Some(i128::from(*value)),
+        serde_json::Value::String(value) => value.trim().parse().ok(),
+        serde_json::Value::Number(value) => value
+            .as_i64()
+            .map(i128::from)
+            .or_else(|| value.as_u64().map(i128::from))
+            .or_else(|| {
+                value
+                    .as_f64()
+                    .filter(|value| value.is_finite())
+                    .map(|value| value.trunc() as i128)
+            }),
+        _ => None,
+    }
 }
 
 /// `_token_hash`: base64url(SHA-256(token)) without padding.
@@ -689,3 +793,7 @@ mod tests {
         assert!(!proof_binding_valid(&good, "other", REFRESH_PATH, now));
     }
 }
+
+#[cfg(test)]
+#[path = "wework_auth_refresh/compat_tests.rs"]
+mod compat_tests;

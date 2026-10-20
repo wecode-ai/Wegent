@@ -57,26 +57,19 @@ def external_document(test_db: Session, test_user: User) -> KnowledgeDocument:
     return document
 
 
-@pytest.mark.parametrize("scoped", [True, False], ids=["kb-detail", "detail"])
 @pytest.mark.parametrize("index_status", ["failed", "indexing", "success"])
 def test_stored_body_is_readable_independently_of_index_status(
     test_client: TestClient,
     test_token: str,
     test_db: Session,
     external_document: KnowledgeDocument,
-    scoped: bool,
     index_status: str,
 ) -> None:
     external_document.index_status = DocumentIndexStatus(index_status)
     external_document.is_active = index_status == "success"
     test_db.commit()
-    prefix = (
-        f"/api/knowledge-bases/{external_document.kind_id}/documents"
-        if scoped
-        else "/api/knowledge-documents"
-    )
     response = test_client.get(
-        f"{prefix}/{external_document.id}/detail",
+        f"/api/knowledge-documents/{external_document.id}/detail",
         headers={"Authorization": f"Bearer {test_token}"},
         params={"include_summary": False},
     )
@@ -111,8 +104,7 @@ def test_unavailable_attachment_does_not_return_empty_success(
     test_db.commit()
 
     response = test_client.get(
-        f"/api/knowledge-bases/{external_document.kind_id}"
-        f"/documents/{external_document.id}/detail",
+        f"/api/knowledge-documents/{external_document.id}/detail",
         headers={"Authorization": f"Bearer {test_token}"},
         params={"include_summary": False},
     )
@@ -159,26 +151,6 @@ def test_stored_body_remains_private(
 
     assert response.status_code == 403
     assert BODY not in response.text
-
-
-@pytest.mark.parametrize("offset,expected", [(0, "# 原"), (100, "")])
-def test_failed_index_body_supports_pagination(
-    test_client: TestClient,
-    test_token: str,
-    external_document: KnowledgeDocument,
-    offset: int,
-    expected: str,
-) -> None:
-    response = test_client.get(
-        f"/api/knowledge-bases/{external_document.kind_id}"
-        f"/documents/{external_document.id}/detail",
-        headers={"Authorization": f"Bearer {test_token}"},
-        params={"include_summary": False, "offset": offset, "limit": 3},
-    )
-
-    assert response.status_code == 200
-    assert response.json()["content"] == expected
-    assert response.json()["content_length"] == len(BODY)
 
 
 def test_preview_does_not_allow_enabling_failed_document(

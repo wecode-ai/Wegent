@@ -8,6 +8,7 @@ import uuid
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -23,10 +24,10 @@ from app.models.loop_item_execution import LoopItemExecution
 from app.models.resource_member import ResourceMember
 from app.models.user import User
 from app.models.wework_notification import WeworkNotification
+from app.services.cloud_projects.service import cloud_project_service
 from app.services.workspaces.execution_environments import (
     WorkspaceExecutionEnvironmentService,
 )
-from tests.utils.agent_resources import create_runnable_wegent_team
 from tests.utils.collaboration import authorize_project_agent
 
 
@@ -233,7 +234,7 @@ def test_workspace_execution_environment_initialize_preserves_namespace(
     )
 
     initialize_response = test_client.post(
-        (f"/api/v1/workspaces/{workspace['id']}" "/execution-environment/initialize"),
+        (f"/api/v1/workspaces/{workspace['id']}/execution-environment/initialize"),
         headers=_auth(test_token),
         json={"device_id": device.id, "version": workspace["version"]},
     )
@@ -532,17 +533,20 @@ def test_workspace_collaboration_group_supports_human_or_agent_leader(
     assert group["leader"] == {
         "kind": "human",
         "id": str(test_user.id),
+        "name": "",
         "responsibility": "确认目标并验收",
     }
     assert group["members"] == [
         {
             "kind": "human",
             "id": str(test_user.id),
+            "name": "",
             "responsibility": "确认目标并验收",
         },
         {
             "kind": "agent",
             "id": str(team.id),
+            "name": "",
             "responsibility": "实现并提交结果",
         },
     ]
@@ -553,10 +557,7 @@ def test_workspace_collaboration_group_supports_human_or_agent_leader(
     }
 
     enable_response = test_client.post(
-        (
-            f"/api/v1/cloud-projects/{project['id']}/collaboration-groups/"
-            f"{group['id']}"
-        ),
+        (f"/api/v1/cloud-projects/{project['id']}/collaboration-groups/{group['id']}"),
         headers=_auth(test_token),
     )
     assert enable_response.status_code == 201
@@ -591,6 +592,32 @@ def test_workspace_collaboration_group_supports_human_or_agent_leader(
     assert project_group["owner_type"] == "project"
     assert project_group["owner_id"] == str(project["id"])
 
+    from app.services.auth.task_token import create_task_token
+
+    task_token = create_task_token(
+        task_id=1, subtask_id=1, user_id=test_user.id, user_name=test_user.user_name
+    )
+    task_groups = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/collaboration-groups",
+        headers=_auth(task_token),
+    )
+    assert task_groups.status_code == 200
+    assert any(
+        entry["id"] == project_group["id"] for entry in task_groups.json()["items"]
+    )
+    round_statuses = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/executions/statuses",
+        headers=_auth(task_token),
+        json={"loop_item_id": "ISSUE-1", "human_assignment_ids": ["human-pending"]},
+    )
+    assert round_statuses.status_code == 200
+    assert round_statuses.json()["items"][0]["status"] == "queued"
+    invalid_groups = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/collaboration-groups",
+        headers=_auth("invalid-task-token"),
+    )
+    assert invalid_groups.status_code == 401
+
     codex_agent = ProjectChatAgent(
         id=str(9_000_000_000_000_000_000 + int(uuid.uuid4().hex[:12], 16)),
         cloud_project_id=str(project["id"]),
@@ -621,10 +648,11 @@ def test_workspace_collaboration_group_supports_human_or_agent_leader(
     assert project_codex_group["leader"] == {
         "kind": "agent",
         "id": codex_agent.id,
+        "name": "",
         "responsibility": "",
     }
     assert project_codex_group["members"] == [
-        {"kind": "agent", "id": codex_agent.id, "responsibility": ""}
+        {"kind": "agent", "id": codex_agent.id, "name": "", "responsibility": ""}
     ]
     assert not any(
         isinstance(rule.metadata_json, dict)
@@ -638,10 +666,7 @@ def test_workspace_collaboration_group_supports_human_or_agent_leader(
     ).json()["items"] == [group, project_codex_group, project_group]
 
     update_response = test_client.patch(
-        (
-            f"/api/v1/workspaces/{workspace['id']}/collaboration-groups/"
-            f"{group['id']}"
-        ),
+        (f"/api/v1/workspaces/{workspace['id']}/collaboration-groups/{group['id']}"),
         headers=_auth(test_token),
         json={
             "version": group["version"],
@@ -659,6 +684,7 @@ def test_workspace_collaboration_group_supports_human_or_agent_leader(
     assert updated["leader"] == {
         "kind": "agent",
         "id": str(team.id),
+        "name": "",
         "responsibility": "负责拆解和收敛",
     }
     assert updated["coordination_mode"] == "manager"
@@ -699,10 +725,7 @@ def test_workspace_collaboration_group_supports_human_or_agent_leader(
     assert list_response.json()["items"] == [updated]
 
     disable_response = test_client.delete(
-        (
-            f"/api/v1/cloud-projects/{project['id']}/collaboration-groups/"
-            f"{group['id']}"
-        ),
+        (f"/api/v1/cloud-projects/{project['id']}/collaboration-groups/{group['id']}"),
         headers=_auth(test_token),
     )
     assert disable_response.status_code == 204
@@ -726,10 +749,7 @@ def test_workspace_collaboration_group_supports_human_or_agent_leader(
     assert delete_project_codex_group_response.status_code == 204
 
     delete_response = test_client.delete(
-        (
-            f"/api/v1/workspaces/{workspace['id']}/collaboration-groups/"
-            f"{group['id']}"
-        ),
+        (f"/api/v1/workspaces/{workspace['id']}/collaboration-groups/{group['id']}"),
         headers=_auth(test_token),
     )
     assert delete_response.status_code == 204
@@ -835,266 +855,6 @@ def _project_agent(
     test_db.commit()
     test_db.refresh(agent)
     return agent
-
-
-# MIGRATION-CANDIDATE: retired Python HTTP test; this API is owned by Rust.
-# def test_workspace_resources_and_project_scope_are_separate(
-#     device_online_infos: dict[str, object],
-#     test_client: TestClient,
-#     test_db: Session,
-#     test_user: User,
-#     test_token: str,
-# ) -> None:
-#     workspace_response = test_client.post(
-#         "/api/v1/workspaces",
-#         headers=_auth(test_token),
-#         json={"name": "研发空间", "description": "共享研发资源"},
-#     )
-#     assert workspace_response.status_code == 201
-#     workspace = workspace_response.json()
-#
-#     team = create_runnable_wegent_team(
-#         test_db,
-#         user_id=test_user.id,
-#         name_prefix="workspace",
-#     )
-#     device = Kind(
-#         kind="Device",
-#         name=f"workspace-device-{uuid.uuid4().hex[:8]}",
-#         namespace="default",
-#         user_id=test_user.id,
-#         is_active=True,
-#         json={
-#             "spec": {
-#                 "displayName": "我的 Mac",
-#                 "deviceType": "local",
-#                 "status": "online",
-#             },
-#         },
-#     )
-#     unavailable_team = create_runnable_wegent_team(
-#         test_db,
-#         user_id=test_user.id,
-#         name_prefix="workspace-stale-model",
-#     )
-#     unavailable_team.json = {
-#         **unavailable_team.json,
-#         "status": {"state": "Available"},
-#     }
-#     bot_name = unavailable_team.json["spec"]["members"][0]["botRef"]["name"]
-#     bot = (
-#         test_db.query(Kind)
-#         .filter(
-#             Kind.kind == "Bot",
-#             Kind.user_id == test_user.id,
-#             Kind.name == bot_name,
-#         )
-#         .one()
-#     )
-#     model_name = bot.json["spec"]["modelRef"]["name"]
-#     model = (
-#         test_db.query(Kind)
-#         .filter(
-#             Kind.kind == "Model",
-#             Kind.user_id == test_user.id,
-#             Kind.name == model_name,
-#         )
-#         .one()
-#     )
-#     model.is_active = False
-#     offline_cloud_device = Kind(
-#         kind="Device",
-#         name=f"workspace-cloud-device-{uuid.uuid4().hex[:8]}",
-#         namespace="default",
-#         user_id=test_user.id,
-#         is_active=True,
-#         json={
-#             "spec": {
-#                 "displayName": "离线云主机",
-#                 "deviceType": "cloud",
-#             },
-#         },
-#     )
-#     test_db.add_all([device, offline_cloud_device])
-#     test_db.commit()
-#     test_db.refresh(team)
-#     test_db.refresh(unavailable_team)
-#     test_db.refresh(device)
-#     test_db.refresh(offline_cloud_device)
-#     device_online_infos[f"device:online:{test_user.id}:{device.name}"] = {
-#         "status": "online"
-#     }
-#
-#     resources = test_client.get(
-#         "/api/v1/resources",
-#         headers=_auth(test_token),
-#     )
-#     assert resources.status_code == 200
-#     resource_body = resources.json()
-#     personal_agent = next(
-#         row for row in resource_body["agents"] if row["team_id"] == team.id
-#     )
-#     assert {
-#         key: value
-#         for key, value in personal_agent.items()
-#         if key != "execution_environment_ids"
-#     } == {
-#         "id": str(team.id),
-#         "name": team.name,
-#         "team_id": team.id,
-#         "owner_type": "user",
-#         "owner_id": str(test_user.id),
-#         "owner_name": test_user.user_name,
-#         "status": "available",
-#         "workspace_ids": [],
-#     }
-#     assert set(personal_agent["execution_environment_ids"]) == {
-#         str(device.id),
-#         str(offline_cloud_device.id),
-#     }
-#     unavailable_agent = next(
-#         row for row in resource_body["agents"] if row["team_id"] == unavailable_team.id
-#     )
-#     assert unavailable_agent["status"] == "unavailable"
-#     personal_environment = next(
-#         row
-#         for row in resource_body["execution_environments"]
-#         if row["id"] == str(device.id)
-#     )
-#     assert personal_environment["device_id"] == device.id
-#     assert personal_environment["device_key"]
-#     assert personal_environment["coding_tools"] == ["claude_code", "codex"]
-#     assert personal_environment["kind"] == "local_device"
-#     assert personal_environment["owner_type"] == "user"
-#     assert personal_environment["owner_id"] == str(test_user.id)
-#     assert personal_environment["owner_name"] == test_user.user_name
-#     assert personal_environment["status"] == "online"
-#     assert personal_environment["workspace_ids"] == []
-#     assert personal_environment["updated_at"]
-#     offline_environment = next(
-#         row
-#         for row in resource_body["execution_environments"]
-#         if row["id"] == str(offline_cloud_device.id)
-#     )
-#     assert offline_environment["kind"] == "cloud_host"
-#     assert offline_environment["status"] == "offline"
-#
-#     agent_binding = test_client.post(
-#         f"/api/v1/workspaces/{workspace['id']}/agents",
-#         headers=_auth(test_token),
-#         json={"team_id": team.id},
-#     )
-#     assert agent_binding.status_code == 201
-#     environment_binding = test_client.post(
-#         f"/api/v1/workspaces/{workspace['id']}/execution-environments",
-#         headers=_auth(test_token),
-#         json={"device_id": device.id},
-#     )
-#     assert environment_binding.status_code == 201
-#     workspace_agents = test_client.get(
-#         f"/api/v1/workspaces/{workspace['id']}/agents",
-#         headers=_auth(test_token),
-#     ).json()["items"]
-#     assert len(workspace_agents) == 1
-#     workspace_agent = workspace_agents[0]
-#     assert workspace_agent["id"] == str(team.id)
-#     assert workspace_agent["team_id"] == team.id
-#     assert workspace_agent["owner_type"] == "user"
-#     assert workspace_agent["owner_id"] == str(test_user.id)
-#     assert workspace_agent["owner_name"] == test_user.user_name
-#     assert workspace_agent["status"] == "available"
-#     assert workspace_agent["execution_environment_ids"] == [
-#         environment_binding.json()["id"]
-#     ]
-#
-#     workspace_environments = test_client.get(
-#         f"/api/v1/workspaces/{workspace['id']}/execution-environments",
-#         headers=_auth(test_token),
-#     ).json()["items"]
-#     assert len(workspace_environments) == 1
-#     workspace_environment = workspace_environments[0]
-#     assert workspace_environment["id"] == str(device.id)
-#     assert workspace_environment["device_id"] == device.id
-#     assert workspace_environment["coding_tools"] == ["claude_code", "codex"]
-#     assert workspace_environment["kind"] == "local_device"
-#     assert workspace_environment["owner_type"] == "user"
-#     assert workspace_environment["owner_id"] == str(test_user.id)
-#     assert workspace_environment["owner_name"] == test_user.user_name
-#     assert workspace_environment["status"] == "online"
-#     assert workspace_environment["updated_at"]
-#
-#     project_ids: list[str] = []
-#     for name in ("项目 A", "项目 B"):
-#         response = test_client.post(
-#             f"/api/v1/workspaces/{workspace['id']}/projects",
-#             headers=_auth(test_token),
-#             json={"name": name},
-#         )
-#         assert response.status_code == 201
-#         assert response.json()["workspace_id"] == workspace["id"]
-#         project_ids.append(response.json()["id"])
-#
-#     project_environment = test_client.post(
-#         f"/api/v1/cloud-projects/{project_ids[0]}/execution-environments",
-#         headers=_auth(test_token),
-#         json={"device_id": device.id},
-#     )
-#     assert project_environment.status_code == 201
-#     assert project_environment.json()["workspace_id"] == workspace["id"]
-#     assert project_environment.json()["device_id"] == device.id
-#
-#     first_project_environments = test_client.get(
-#         f"/api/v1/cloud-projects/{project_ids[0]}/execution-environments",
-#         headers=_auth(test_token),
-#     )
-#     assert first_project_environments.status_code == 200
-#     assert [
-#         item["device_id"] for item in first_project_environments.json()["items"]
-#     ] == [device.id]
-#
-#     second_project_environments = test_client.get(
-#         f"/api/v1/cloud-projects/{project_ids[1]}/execution-environments",
-#         headers=_auth(test_token),
-#     )
-#     assert second_project_environments.status_code == 200
-#     assert second_project_environments.json()["items"] == []
-#
-#     direct_project_environment = test_client.post(
-#         f"/api/v1/cloud-projects/{project_ids[1]}/execution-environments",
-#         headers=_auth(test_token),
-#         json={"device_id": offline_cloud_device.id},
-#     )
-#     assert direct_project_environment.status_code == 403
-#     assert "Share the environment" in direct_project_environment.json()["detail"]
-#
-#     removed_environment = test_client.delete(
-#         f"/api/v1/cloud-projects/{project_ids[0]}/execution-environments/{device.id}",
-#         headers=_auth(test_token),
-#     )
-#     assert removed_environment.status_code == 204
-#
-#     for project_id in project_ids:
-#         test_db.add(
-#             ProjectChatAgent(
-#                 id=f"A{uuid.uuid4().hex[:12]}",
-#                 cloud_project_id=project_id,
-#                 title="共享 Team",
-#                 name="共享 Team",
-#                 status="active",
-#                 created_by_user_id=test_user.id,
-#                 metadata_json={"runtime": "wegent", "wegent_team_id": team.id},
-#             )
-#         )
-#     test_db.commit()
-#     project_agents = (
-#         test_db.query(ProjectChatAgent)
-#         .filter(ProjectChatAgent.cloud_project_id.in_(project_ids))
-#         .all()
-#     )
-#     assert len(project_agents) == 2
-#     assert {int(agent.metadata_json["wegent_team_id"]) for agent in project_agents} == {
-#         team.id
-#     }
 
 
 def test_issue_actions_are_authorized_independently(
@@ -1352,16 +1112,14 @@ def test_invalid_project_member_role_cannot_read_project_or_navigation_context(
     membership.role = "CorruptedRole"
     test_db.commit()
 
-    project_response = test_client.get(
-        f"/api/v1/cloud-projects/{project['id']}",
-        headers=_auth(target_token),
-    )
+    with pytest.raises(HTTPException) as project_error:
+        cloud_project_service.get(test_db, project["id"], target.id)
     navigation_response = test_client.get(
         f"/api/v1/workspaces/{workspace['id']}/navigation-context",
         headers=_auth(target_token),
     )
 
-    assert project_response.status_code == 404
+    assert project_error.value.status_code == 404
     assert navigation_response.status_code == 404
 
 

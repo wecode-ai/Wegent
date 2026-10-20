@@ -66,6 +66,7 @@ struct SpaceMcpHttpState {
     sessions: std::sync::Arc<Mutex<HashMap<String, SpaceMcpRequestContext>>>,
     contexts: std::sync::Arc<StdMutex<HashMap<String, RegisteredContext>>>,
     collaboration_dispatcher: std::sync::Arc<StdMutex<Option<CloudCollaborationRoundDispatcher>>>,
+    event_sender: std::sync::Arc<StdMutex<Option<tokio::sync::broadcast::Sender<Value>>>>,
 }
 
 static SPACE_MCP_START_LOCK: Mutex<()> = Mutex::const_new(());
@@ -104,6 +105,14 @@ fn collaboration_dispatcher_registry(
         std::sync::Arc<StdMutex<Option<CloudCollaborationRoundDispatcher>>>,
     > = OnceLock::new();
     DISPATCHER.get_or_init(|| std::sync::Arc::new(StdMutex::new(None)))
+}
+
+fn event_sender_registry(
+) -> &'static std::sync::Arc<StdMutex<Option<tokio::sync::broadcast::Sender<Value>>>> {
+    static SENDER: OnceLock<
+        std::sync::Arc<StdMutex<Option<tokio::sync::broadcast::Sender<Value>>>>,
+    > = OnceLock::new();
+    SENDER.get_or_init(|| std::sync::Arc::new(StdMutex::new(None)))
 }
 
 fn local_mcp_token() -> &'static str {
@@ -146,6 +155,7 @@ pub(crate) async fn ensure_space_mcp_http_endpoint() -> Result<SpaceMcpEndpoint,
         sessions: std::sync::Arc::new(Mutex::new(HashMap::new())),
         contexts: contexts.clone(),
         collaboration_dispatcher: collaboration_dispatcher_registry().clone(),
+        event_sender: event_sender_registry().clone(),
     };
     let app = Router::new()
         .route("/health", get(health))
@@ -314,6 +324,12 @@ pub(crate) fn register_cloud_collaboration_dispatcher(
     Ok(())
 }
 
+pub(crate) fn register_runtime_event_sender(sender: tokio::sync::broadcast::Sender<Value>) {
+    *event_sender_registry()
+        .lock()
+        .expect("Executor event sender registry should not be poisoned") = Some(sender);
+}
+
 #[cfg(test)]
 fn unstarted_test_endpoint() -> SpaceMcpEndpoint {
     SpaceMcpEndpoint {
@@ -419,6 +435,13 @@ async fn handle_mcp_for_surface(
             .lock()
             .ok()
             .and_then(|dispatcher| dispatcher.clone()),
+    );
+    context.set_event_sender(
+        state
+            .event_sender
+            .lock()
+            .ok()
+            .and_then(|sender| sender.clone()),
     );
     match handle_request_with_context(&state.runtime, &request, &context).await {
         Some(response) => json_rpc_response(response, &session_id),

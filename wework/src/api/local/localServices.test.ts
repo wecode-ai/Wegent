@@ -993,6 +993,34 @@ describe('createLocalAppServices', () => {
     expect(request.mock.calls.some(([method]) => method === 'runtime.text.generate')).toBe(false)
   })
 
+  test('materializes the session cloud model with current credentials for predictions', async () => {
+    const request = vi.fn().mockResolvedValue({ suggestion: '请继续' })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(async () => vi.fn()),
+      cloudModelGateway: { baseUrl: 'https://cloud.example.com/proxy', apiKey: 'current-token' },
+    })
+    await services.replyPredictionApi!.predict({
+      address: { deviceId: 'device-uuid', taskId: 'task-1' },
+      modelSelection: {
+        modelName: 'shared-model',
+        modelType: 'user',
+        options: { weworkCloudModelNamespace: 'default', weworkCloudModelResourceUserId: '42' },
+      },
+    })
+    expect(request).toHaveBeenCalledWith(
+      'runtime.text.predict_reply',
+      expect.objectContaining({
+        modelConfig: expect.objectContaining({
+          model_id: 'shared-model',
+          api_key: 'current-token',
+          default_headers: expect.objectContaining({ 'X-Wegent-Model-Namespace': 'default' }),
+        }),
+      })
+    )
+  })
+
   test('cancels a prediction using its request identity on the owning device', async () => {
     const controller = new AbortController()
     const request = vi.fn<(method: string, payload?: Record<string, unknown>) => Promise<object>>(

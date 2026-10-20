@@ -17,6 +17,7 @@ import { RuntimeTaskLifecycleContext } from '@/features/workbench/runtimeTaskLif
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import type { RuntimeTaskAddress } from '@/types/api'
 import {
+  replyPredictionKey,
   replyPredictionService,
   type ReplyPredictionSource,
   type ReplyPredictionResult,
@@ -55,26 +56,38 @@ export function ReplyPredictionProvider({
   const workspacePath = address?.workspacePath
   const latestTurnId = lifecycle?.turn.latestId ?? undefined
   const runtimeRevision = latestTurnId ?? ''
+  const modelSelection = lifecycle?.task?.modelSelection
   const runtimeSource = useMemo<ReplyPredictionSource | null>(() => {
-    if (!deviceId || !taskId || !latestTurnId) return null
+    const workspaceBacked = address?.workspaceKind !== 'chat' && !address?.projectSession
+    if (!address || !deviceId || !taskId || !latestTurnId || (workspaceBacked && !workspacePath))
+      return null
     return {
-      scope: JSON.stringify([deviceId, taskId, workspacePath]),
+      scope: JSON.stringify([deviceId, taskId, workspaceBacked ? workspacePath : null]),
       revision: runtimeRevision,
       busy: Boolean(runtimeBusy),
-      address: { deviceId, taskId, workspacePath },
+      address,
+      modelSelection,
       latestTurnId,
     }
-  }, [deviceId, taskId, workspacePath, runtimeRevision, runtimeBusy, latestTurnId])
+  }, [
+    address,
+    deviceId,
+    taskId,
+    workspacePath,
+    runtimeRevision,
+    runtimeBusy,
+    latestTurnId,
+    modelSelection,
+  ])
   const target = runtimeSource
   const scope = target?.scope
-  const revision = target?.revision ?? ''
   const busy = target?.busy ?? false
   const currentSource = useEffectEvent(() => target!)
   const [result, setResult] = useState<{
     key: string
     prediction: ReplyPredictionResult | null
   } | null>(null)
-  const resultKey = JSON.stringify([target?.scope, target?.latestTurnId || revision])
+  const resultKey = target ? replyPredictionKey(target) : ''
   useEffect(() => {
     if (!service || !scope) return
     if (busy) {
@@ -127,6 +140,15 @@ export function ReplyPredictionProvider({
         }
       >
         {children}
+        {!blocked && !busy && enabled && scope && service?.hasError(scope) && (
+          <p
+            role="status"
+            className="mt-1 text-xs text-text-secondary"
+            data-testid="reply-prediction-error"
+          >
+            {t('workbench.reply_prediction_failed')}
+          </p>
+        )}
       </ComposerPredictionPendingContext.Provider>
     </ComposerPredictionContext.Provider>
   )

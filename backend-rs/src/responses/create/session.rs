@@ -20,6 +20,8 @@ use crate::task_store::{
     CreateSubtasksRequest, CreateTaskShellRequest, NewSubtaskRow, TaskStore, WorkspacePayload,
 };
 
+use super::continuation;
+
 /// The ids `setup_chat_session` returns to the caller.
 pub struct ChatSessionSetup {
     pub task_id: i64,
@@ -33,6 +35,11 @@ pub struct ChatSessionSetup {
 /// `setup_chat_session` inputs after resolution.
 pub struct SetupChatSessionInput<'a> {
     pub user_id: i64,
+    /// The authenticated principal id (`user.id`), as the task lookups bind it.
+    pub owner_user_id: i32,
+    /// `request_body.previous_response_id`: a `resp_{task_id}` follow-up reuses
+    /// that Task instead of creating one.
+    pub previous_response_id: Option<&'a str>,
     pub team_id: i64,
     pub bot_ids: &'a [i64],
     pub input_text: &'a str,
@@ -155,6 +162,35 @@ pub async fn setup_chat_session(
         pending_name: &pending_name,
         workspace: &workspace,
     };
+
+    // `previous_response_id` follow-up: the recorded conversation's Task is
+    // reused, marked `PENDING`, and only gains the paired subtasks
+    // (`prepare_execution_session`'s `task_id` branch).
+    if let Some(previous) = input.previous_response_id
+        && let Some(mut continuation) =
+            continuation::resolve(store, previous, input.owner_user_id, input.crd.updated_at)
+                .await?
+    {
+        continuation::apply_request_labels(
+            &mut continuation.task_json,
+            input.crd.model_id,
+            input.crd.force_override_bot_model,
+            input.crd.auto_delete_executor,
+        );
+        store
+            .update_task_json(
+                continuation.task_id,
+                input.user_id,
+                &python_json_value(&continuation.task_json),
+                input.updated_at,
+            )
+            .await
+            .map_err(internal)?;
+        // A resumed Task skips the task-creation savepoint, so the subtask
+        // insert is the session's first nested transaction.
+        return append_subtasks(store, input, continuation.task_id, 0, "sa_savepoint_1").await;
+    }
+
     let (task_id, workspace_id) = store
         .create_task_shell_with_workspace(&shell)
         .await
@@ -178,7 +214,18 @@ pub async fn setup_chat_session(
         .await
         .map_err(internal)?;
 
-    // `max(subtasks.message_id)` for the fresh task, then the paired insert.
+    append_subtasks(store, input, task_id, workspace_id, "sa_savepoint_2").await
+}
+
+/// `max(subtasks.message_id)` then the paired user/assistant subtask insert for
+/// `task_id`, shared by the new-task and `previous_response_id` paths.
+async fn append_subtasks(
+    store: &dyn TaskStore,
+    input: &SetupChatSessionInput<'_>,
+    task_id: i64,
+    workspace_id: i64,
+    savepoint: &str,
+) -> Result<ChatSessionSetup, FastApiError> {
     let existing_max = store
         .max_subtask_message_id(task_id)
         .await
@@ -196,10 +243,13 @@ pub async fn setup_chat_session(
         ids,
     );
     let (user_subtask_id, assistant_subtask_id) = store
-        .create_user_and_assistant_subtasks(&CreateSubtasksRequest {
-            user_subtask,
-            assistant_subtask,
-        })
+        .create_user_and_assistant_subtasks(
+            savepoint,
+            &CreateSubtasksRequest {
+                user_subtask,
+                assistant_subtask,
+            },
+        )
         .await
         .map_err(internal)?;
 

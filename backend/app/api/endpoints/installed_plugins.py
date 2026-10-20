@@ -41,7 +41,6 @@ from app.schemas.installed_plugin import (
     InstalledPluginUpdateRequest,
     PluginAccessResponse,
     PluginAccessUpdateRequest,
-    PluginAutoUpdateBatchResponse,
     PluginCopyResponse,
     PluginDeleteImpactResponse,
     PluginDeleteRequest,
@@ -51,7 +50,6 @@ from app.schemas.installed_plugin import (
     PluginDeviceSyncResponse,
     PluginMarketplaceInstallResponse,
     PluginMarketplaceItem,
-    PluginMarketplaceListResponse,
     PluginReleaseListResponse,
     PluginSubmissionCompleteResponse,
     PluginSubmissionInitRequest,
@@ -173,41 +171,6 @@ def _ensure_submission_matches_task_token(
         submission_id=submission_id,
         task_id=auth.task_token.task_id,
         subtask_id=auth.task_token.subtask_id,
-    )
-
-
-# Migrated to Rust; cutover is configured in backend-rs/config/routes.toml.
-# @router.get("/installed", response_model=InstalledPluginListResponse)
-# def list_installed_plugins(
-#     device_id: str | None = None,
-#     db: Session = Depends(get_db),
-#     current_user: User = Depends(security.get_current_user),
-# ) -> InstalledPluginListResponse:
-#     """List Claude Code plugins installed by the current user."""
-#     # Keep list read-only. Catalog repair runs on install/sync paths instead of
-#     # every marketplace open.
-#     return plugin_marketplace_service.enrich_installed_list(
-#         db,
-#         installed_plugin_service.list_installed_plugins(
-#             db=db,
-#             user_id=current_user.id,
-#         ),
-#         device_id=device_id,
-#     )
-
-
-@router.post(
-    "/installed/auto-update-batch",
-    response_model=PluginAutoUpdateBatchResponse,
-)
-def auto_update_installed_plugins(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-) -> PluginAutoUpdateBatchResponse:
-    """Advance one bounded batch of cloud marketplace plugin installations."""
-    return plugin_marketplace_service.auto_update_batch(
-        db,
-        user_id=current_user.id,
     )
 
 
@@ -365,8 +328,7 @@ async def upload_plugin(
         raise HTTPException(
             status_code=410,
             detail=(
-                "Direct cloud upload is retired; create locally or publish a "
-                "submission"
+                "Direct cloud upload is retired; create locally or publish a submission"
             ),
         )
     logger.info(
@@ -385,32 +347,6 @@ async def upload_plugin(
     )
     await _sync_global_capabilities(db, current_user.id)
     return installed
-
-
-# MIGRATION-CANDIDATE(api="GET /api/plugins/marketplace"): remove after final confirmation.
-# @router.get("/marketplace", response_model=PluginMarketplaceListResponse)
-def list_marketplace_plugins(
-    q: str | None = None,
-    source: str | None = None,
-    listing_type: str | None = None,
-    device_id: str | None = None,
-    db: Session = Depends(get_db),
-    current_user: User | None = Depends(security.get_current_user_optional),
-) -> PluginMarketplaceListResponse:
-    """List Codex-compatible plugins published to the Wegent marketplace.
-
-    This endpoint supports both authenticated and unauthenticated access:
-    - Authenticated users see installation status and device-specific info
-    - Unauthenticated users see all available plugins without installation status
-    """
-    return plugin_marketplace_service.list_plugins(
-        db,
-        user_id=current_user.id if current_user else None,
-        query=q,
-        source=source,
-        listing_type=listing_type,
-        device_id=device_id,
-    )
 
 
 @router.get("/marketplace/{plugin_id}", response_model=PluginMarketplaceItem)

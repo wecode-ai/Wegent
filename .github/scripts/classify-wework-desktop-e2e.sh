@@ -20,7 +20,9 @@ core_segments=(
   collaboration-human-round-resume
   collaboration-local-group-cancellation
   collaboration-issue-comment-mention
+  collaboration-issue-comment-attachments
   collaboration-issue-comment-notification
+  collaboration-issue-mcp-comments
   cloud-space-mention
   priority-filter
   external-content-import
@@ -66,10 +68,12 @@ core_segments=(
   native-window-startup
   native-window-chrome
   renderer-storage
+  application-menu
   tray-lifecycle
   conversation-state
   send-key-preference
   reply-predictions
+  reply-prediction-auth
   model-settings
   codex-native-catalog
   system-proxy
@@ -80,6 +84,7 @@ core_segments=(
   rendering-extensions
   background-terminals
   change-request-status
+  git-commit-generation
   claude-runtime
   local-file-preview
   local-harness
@@ -166,19 +171,19 @@ cloud_shards=(
 core_shards=(
   harness-apps,browser-annotation-design
   supervisor-lifecycle,remote-device-onboarding,core-task-flow
-  temporary-chat,local-file-preview,conversation-state,reply-predictions,model-settings,codex-native-catalog
-  goal-lifecycle,goal-state-sync,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
+  temporary-chat,local-file-preview,conversation-state,reply-predictions,reply-prediction-auth,model-settings,codex-native-catalog
+  goal-lifecycle,goal-state-sync,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,application-menu,dsh-owner-capture
   send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
   claude-runtime,workspace-tabs,task-attachments
-  task-status-sync,task-board-association,task-board-bulk-actions,change-request-status,context-compaction
+  task-status-sync,task-board-association,task-board-bulk-actions,change-request-status,git-commit-generation,context-compaction
   window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
   project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,collaboration-local-group-coordinate,collaboration-human-round-resume
   resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-task-discovery,collaboration-app-queue-identity,collaboration-issue-archive,collaboration-local-group-cancellation
   workspace-attachments,automation-lifecycle,drawing-attachment
-  project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention
+  project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention,collaboration-issue-comment-attachments
   rendering-extensions,transcript-sync,background-terminals
   runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
-  local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification
+  local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification,collaboration-issue-mcp-comments
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,model-overload-recovery
   model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy
   collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details
@@ -618,6 +623,17 @@ classify_wework_path() {
       return
       ;;
 
+    # The native application menu spans the Electron host declaration and the
+    # renderer bridge that reports capability state and runs its actions.
+    wework/electron/src/host/application-menu* | \
+      wework/src/desktop/applicationMenu* | \
+      wework/src/desktop/ApplicationMenuWorkspaceBridge* | \
+      wework/src/components/topnav/ApplicationMenuButton* | \
+      wework/e2e/desktop/scenarios/application-menu.scenario.mjs)
+      select_target "core:application-menu"
+      return
+      ;;
+
     wework/e2e/desktop/scenarios/goal-state-sync.scenario.mjs | \
       wework/src/features/workbench/runtimeTaskLifecycle/goalSynchronization*)
       select_target "core:goal-state-sync"
@@ -716,6 +732,10 @@ classify_wework_path() {
     # the Wework collaboration render path.
     wework/e2e/desktop/scenarios/collaboration-issue-comment-mention.scenario.mjs)
       select_target "core:collaboration-issue-comment-mention"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-issue-comment-attachments.scenario.mjs)
+      select_target "core:collaboration-issue-comment-attachments"
       return
       ;;
     wework/e2e/desktop/scenarios/collaboration-issue-comment-notification.scenario.mjs)
@@ -1019,6 +1039,12 @@ classify_wework_path() {
       return
       ;;
 
+    wework/src/api/commitMessage* | \
+      wework/e2e/desktop/scenarios/git-commit-generation.scenario.mjs)
+      select_target "core:git-commit-generation"
+      return
+      ;;
+
     # Git hosting preferences and explicit device synchronization share one
     # independently bootstrapped desktop checkpoint.
     wework/src/api/devices* | \
@@ -1269,6 +1295,7 @@ classify_path() {
       select_target "core:collaboration-group-onboarding"
       select_collaboration_dispatch_checkpoints
       select_target "core:collaboration-issue-comment-mention"
+      select_target "core:collaboration-issue-comment-attachments"
       select_target "core:collaboration-issue-comment-notification"
       ;;
     executor/src/server/codex_model_catalog*.rs)

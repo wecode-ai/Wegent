@@ -2,8 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! `GET /api/subtasks` — the task's message list
-//! (`app/api/endpoints/subtasks.py:list_subtasks`).
+//! The subtask endpoints of `app/api/endpoints/subtasks.py`.
+//!
+//! `GET /api/subtasks` — the task's message list (`list_subtasks`):
 //!
 //! Source pipeline:
 //! 1. `security.get_current_user` — the JWT session plus the `users` row;
@@ -17,6 +18,10 @@
 //!    `count(*)` over the full subtask projection;
 //! 4. the `SubtaskListResponse` `{"total", "items"}` envelope, whose items are
 //!    the `SubtaskInDB` projection.
+//!
+//! `POST /api/subtasks/{subtask_id}/edit` — delete an edited user message and
+//! everything after it (`edit_user_message`); see [`edit`].
 
+pub mod edit;
 pub mod handler;
 pub mod item;

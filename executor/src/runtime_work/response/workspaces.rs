@@ -165,9 +165,16 @@ pub(crate) fn workspace_response(
                 .as_ref()
                 .map(|workspace| workspace.project_key.clone())
                 .filter(|value| !value.is_empty());
+            let workspace_kind = match workspace
+                .as_ref()
+                .map(|workspace| workspace.project_source.as_str())
+            {
+                Some("local_project" | "remote_project") => "workspace",
+                _ => infer_workspace_kind(&workspace_path),
+            };
             let mut workspace_json = json!({
                 "workspacePath": workspace_path,
-                "workspaceKind": infer_workspace_kind(&workspace_path),
+                "workspaceKind": workspace_kind,
                 "label": label,
                 "workspaceSource": workspace_source,
                 "tasks": tasks
@@ -300,6 +307,24 @@ mod tests {
         assert_eq!(rows[1]["tasks"].as_array().unwrap().len(), 1);
         assert_eq!(rows[0]["tasks"][0]["taskId"], "task-a");
         assert_eq!(rows[1]["tasks"][0]["taskId"], "task-b");
+    }
+
+    #[test]
+    fn workspace_response_preserves_explicit_projects_inside_codex_directories() {
+        for host in [None, Some("host-a")] {
+            let mut registered = project("project", host);
+            registered.workspace_path = "/srv/Documents/Codex/2026-10-16/repo".to_owned();
+            registered.project_roots = vec![registered.workspace_path.clone()];
+            let mut assigned = task("assigned", Some("project"));
+            assigned.workspace_path = registered.workspace_path.clone();
+
+            let rows = workspace_response(vec![assigned], vec![registered]);
+
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0]["projectKey"], "project");
+            assert_eq!(rows[0]["workspaceKind"], "workspace");
+            assert_eq!(rows[0]["tasks"][0]["taskId"], "assigned");
+        }
     }
 
     #[test]

@@ -24,15 +24,17 @@ The `collaboration-local-agent-dispatch` desktop regression checks that the owne
 
 ## Work on an Issue assigned to me
 
-When a native cloud project Issue is assigned directly to one member, they can open it from **Collaboration → Inbox** or the project board. Wework sends a desktop notification when another member assigns it. This workflow does not apply to external task sources or Issues owned by robots or collaboration groups.
+Open an assigned native cloud Issue from Inbox or its project board. Wework sends a desktop notification when another member assigns it.
 
-1. Select **Start work** to move the Issue to **In progress**. The only required input is **Work result**; comments and attachments remain optional.
-2. If useful, select **Ask AI for help** to create a linked task. AI produces a draft but never submits the Issue for you. Select **Use draft**, then check and edit the result.
-3. Select **Submit for review** and confirm. The Issue moves to **Pending review**, and the result is saved in the project conversation. You can also fill in the result directly without using AI.
-4. The original assigner can find the Issue under **Inbox** and choose **Accept work** or **Request changes**. A reason is needed only when requesting changes. If the original assigner cannot review, a project Owner or Maintainer can do so.
-5. Acceptance moves the Issue to **Completed**. Requested changes return it to **In progress** so the assignee can revise the existing result and submit again.
+Users with editing permission can start, complete, or restart an Issue directly through the detail status selector or board dragging. Status changes require no additional information or submission form. Communicate progress, results, and feedback through comments, replies, and attachments. Status history records each change.
 
-These actions record status history and project activity and notify the relevant members. Reassignment clears the previous review result. Use these actions to advance the status of human-owned work. **Human processing** in Project settings explains the workflow, reviewer, and AI draft behavior; it does not introduce another set of rules to fill in.
+For AI assistance, use **New task** in Issue details to create a linked task. The task retains its assignment binding. View its Delivery from the linked task; AI does not change the Issue status on the person's behalf.
+
+## Start a collaboration-group task from the activity timeline
+
+A collaboration-group assignment changes the Issue owner to the member taking the work. For an assignment to you, select **Let AI help me → Create task**, or choose **Reply and create a new task** under your assignment activity. The reply is saved as a comment before a new personal task panel opens. Its instructions contain the Issue reference and assignment, without acknowledgement replies such as “Received.” Sending after selecting the device, model, and workspace starts execution. The task retains its assignment binding so Delivery reports back to the round coordinator.
+
+An AI-only handoff retains the worker as owner and does not start a coordinator summary.
 
 ## Archive completed Issues
 
@@ -57,6 +59,8 @@ Archiving a parent Issue also archives its child Issues so the active task tree 
 Cloud fixtures are archived by the checkpoint cleanup. Local fixtures live only in the test Executor home. Failures retain runner logs; tests do not skip or retry to hide failures.
 
 `pnpm --filter wework e2e:desktop --segment collaboration-issue-archive` uses a real local project to verify that incomplete Issues cannot be archived, along with single archive and restore, batch archive, and archive-drawer updates.
+
+`pnpm --filter wework e2e:desktop --segment collaboration-human-round-resume` covers concurrent human and AI assignment, Delivery returning to the coordinator, replies to the current human assignment opening a new task without acknowledgement text in its prompt.
 
 ## Web project views
 

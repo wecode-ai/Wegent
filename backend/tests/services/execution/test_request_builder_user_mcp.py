@@ -397,6 +397,8 @@ class TestUserScopedMcpInjection:
         )
 
         assert "mcpServers" not in skill_data
+        assert skill_data["configuration_required"] is True
+        assert "Use DingTalk docs MCP." not in skill_data["prompt"]
         assert "Configuration Required" in skill_data["prompt"]
         assert "wegent://modal/mcp-provider-config?provider=dingtalk&service=docs" in (
             skill_data["prompt"]
@@ -897,7 +899,7 @@ class TestUserMcpOAuthHeaderInjection:
 
     RESOURCE_URL = "https://mcp-gw.dingtalk.com/oauth/server/aitable"
 
-    def _skill(self) -> SimpleNamespace:
+    def _skill(self, server_name: str = "dingtalk_ai_table") -> SimpleNamespace:
         return SimpleNamespace(
             id=201,
             user_id=0,
@@ -909,7 +911,7 @@ class TestUserMcpOAuthHeaderInjection:
                     "prompt": "Use DingTalk AI tables.",
                     "bindShells": ["Chat"],
                     "mcpServers": {
-                        "dingtalk_ai_table": {
+                        server_name: {
                             "type": "streamable-http",
                             "url": (
                                 "${{task_data.user_mcps.dingtalk.services.ai_table"
@@ -947,6 +949,26 @@ class TestUserMcpOAuthHeaderInjection:
         )
 
         assert skill_data["mcpServers"]["dingtalk_ai_table"]["headers"] == {
+            "Authorization": "Bearer dingtalk-access"
+        }
+
+    def test_oauth_mode_supports_legacy_hyphenated_server_name(
+        self, test_db, monkeypatch
+    ):
+        """Deployed Skill assets may still use hyphenated server names."""
+        builder = TaskRequestBuilder(test_db)
+        monkeypatch.setattr(
+            user_mcp_oauth_service,
+            "ensure_access_token_sync",
+            lambda *args, **kwargs: "dingtalk-access",
+        )
+
+        skill_data = builder._build_skill_data(
+            self._skill("dingtalk-ai-table"),
+            user=self._user(MCP_AUTH_MODE_OAUTH),
+        )
+
+        assert skill_data["mcpServers"]["dingtalk-ai-table"]["headers"] == {
             "Authorization": "Bearer dingtalk-access"
         }
 
