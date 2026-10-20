@@ -71,30 +71,39 @@ def test_local_logout_commits_while_an_unrelated_transaction_holds_the_user_row(
         )
 
     def logout():
-        with context.sessions() as db:
-            original = db.scalar(text("SELECT @@session.innodb_lock_wait_timeout"))
-            db.execute(text("SET SESSION innodb_lock_wait_timeout = 1"))
-            db.commit()
+        with context.sessions.kw["bind"].connect() as connection:
+            original = connection.scalar(
+                text("SELECT @@SESSION.innodb_lock_wait_timeout")
+            )
+            connection.commit()
             try:
-                result = PluginAuthLocalLifecycleService(context.accounts).exchange(
-                    db,
-                    user_id=context.user_id,
-                    device_id=context.device_id,
-                    request=PluginNativeLocalLifecycle(
-                        installed_plugin_id=context.plugin_id,
-                        connector_slug="test",
-                        action="logout",
-                    ),
-                )
-                db.commit()
-                return result
+                connection.execute(text("SET SESSION innodb_lock_wait_timeout = 1"))
+                connection.commit()
+                with context.sessions(bind=connection) as db:
+                    result = PluginAuthLocalLifecycleService(context.accounts).exchange(
+                        db,
+                        user_id=context.user_id,
+                        device_id=context.device_id,
+                        request=PluginNativeLocalLifecycle(
+                            installed_plugin_id=context.plugin_id,
+                            connector_slug="test",
+                            action="logout",
+                        ),
+                    )
+                    db.commit()
+                    return result
             finally:
-                db.rollback()
-                db.execute(
+                connection.rollback()
+                connection.execute(
                     text("SET SESSION innodb_lock_wait_timeout = :timeout"),
                     {"timeout": original},
                 )
-                db.commit()
+                connection.commit()
+                assert (
+                    connection.scalar(text("SELECT @@SESSION.innodb_lock_wait_timeout"))
+                    == original
+                )
+                connection.commit()
 
     with context.sessions() as blocker:
         blocker.execute(
