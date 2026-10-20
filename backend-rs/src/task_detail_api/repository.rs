@@ -89,8 +89,8 @@ pub(crate) fn json_status_is_delete(payload: &Value) -> bool {
 /// `is_member`'s approved member-row check (only reached when the requesting
 /// user is not the task owner).
 ///
-/// Only row presence matters here. Keeping the driver row intact also avoids
-/// coupling this probe to SQLAlchemy's labeled projection name.
+/// Only row presence matters here, so the query selects a positional scalar
+/// instead of coupling the probe to SQLAlchemy's labeled projection name.
 pub(crate) async fn is_approved_member<M>(
     mysql: &M,
     task_id: i64,
@@ -99,9 +99,9 @@ pub(crate) async fn is_approved_member<M>(
 where
     M: brz_mysql::Mysql,
 {
-    let row: Option<MysqlRow> = mysql
+    let row: Option<i64> = mysql
         .fetch_optional(
-            "SELECT resource_members.id AS resource_members_id \nFROM resource_members \n\
+            "SELECT 1 \nFROM resource_members \n\
              WHERE resource_members.resource_type = 'Task' AND resource_members.resource_id = ? \
              AND resource_members.entity_type = 'user' AND resource_members.entity_id = ? \
              AND resource_members.status = 'approved' AND resource_members.copied_resource_id = 0 \n\
@@ -109,7 +109,11 @@ where
             (task_id, user_id.to_string()),
         )
         .await?;
-    Ok(row.is_some())
+    Ok(approved_member_row_exists(row))
+}
+
+fn approved_member_row_exists(row: Option<i64>) -> bool {
+    row.is_some()
 }
 
 /// One `list_by_task_ordered` listing, decoded: the subtasks and the contexts
@@ -313,7 +317,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn approved_member_probe_checks_the_labeled_projection_by_presence() {
+    async fn approved_member_probe_uses_a_positional_presence_scalar() {
         let mysql = crate::sql_test_support::KindQueryCapture::default();
 
         let is_member = is_approved_member(&mysql, 42, 7).await.unwrap();
@@ -323,10 +327,12 @@ mod tests {
         assert_eq!(queries.len(), 1);
         assert_eq!(queries[0].args, 2);
         assert_eq!(queries[0].first_integer, Some(42));
-        assert!(
-            queries[0]
-                .sql
-                .starts_with("SELECT resource_members.id AS resource_members_id")
-        );
+        assert!(queries[0].sql.starts_with("SELECT 1 FROM resource_members"));
+    }
+
+    #[test]
+    fn approved_member_probe_accepts_a_present_row() {
+        assert!(approved_member_row_exists(Some(1)));
+        assert!(!approved_member_row_exists(None));
     }
 }

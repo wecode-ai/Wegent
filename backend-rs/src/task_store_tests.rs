@@ -90,21 +90,54 @@ fn ownerless_active_task_statement_covers_both_active_states() {
 }
 
 /// Large native JSON values can cross MySQL's 16 MiB protocol-packet boundary.
-/// The detail endpoints read the payload through a text projection so the
-/// driver receives one complete textual JSON value, while predicates still
-/// operate on the native JSON column.
+/// The detail endpoints read the payload through a shared text projection on
+/// both the initial active-task load and the later owner-scoped re-read. This
+/// keeps the full request path away from the native JSON representation while
+/// predicates still operate on the native JSON column.
 #[test]
-fn active_task_detail_statement_projects_json_as_utf8mb4_text() {
-    let sql = active_task_by_id_statement(TASKS_TABLE, true, false);
+fn task_detail_statements_project_json_as_utf8mb4_text() {
+    let active_sql = active_task_by_id_statement(TASKS_TABLE, true, false);
+    let owned_sql = task_by_id_owned_statement(TASKS_TABLE);
 
     assert!(
-        sql.contains("CAST(json AS CHAR CHARACTER SET utf8mb4) AS json"),
-        "{sql}"
+        active_sql.contains("CAST(json AS CHAR CHARACTER SET utf8mb4) AS json"),
+        "{active_sql}"
     );
     assert!(
-        sql.contains("JSON_EXTRACT(json, '$.status.status')"),
-        "{sql}"
+        owned_sql.contains("CAST(json AS CHAR CHARACTER SET utf8mb4) AS json"),
+        "{owned_sql}"
     );
+    assert!(
+        active_sql.contains("JSON_EXTRACT(json, '$.status.status')"),
+        "{active_sql}"
+    );
+}
+
+#[tokio::test]
+async fn task_detail_store_sequence_uses_the_text_projection_for_both_reads() {
+    let mysql = crate::sql_test_support::KindQueryCapture::default();
+    let store = DefaultTaskStore::new(mysql.clone());
+
+    assert!(
+        store
+            .get_active_task_by_id(42, None)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(store.get_task_owned(42, 7).await.unwrap().is_none());
+
+    let queries = mysql.queries();
+    assert_eq!(queries.len(), 2, "{queries:?}");
+    for query in queries {
+        assert!(
+            query
+                .sql
+                .contains("CAST(json AS CHAR CHARACTER SET utf8mb4) AS json"),
+            "{}",
+            query.sql
+        );
+    }
 }
 
 /// The update clears the project link and rewrites the JSON, ordered the way

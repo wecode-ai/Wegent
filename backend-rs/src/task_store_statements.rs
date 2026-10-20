@@ -8,6 +8,13 @@
 /// The `tasks` table the single-table store reads.
 pub const TASKS_TABLE: &str = "tasks";
 
+/// Full task projection used by detail reads that decode the document in
+/// Rust. Keeping the JSON column textual avoids the driver's native-JSON
+/// packet boundary while preserving the `json` label expected by decoders.
+const TASK_DETAIL_PROJECTION: &str = "id, user_id, kind, name, namespace, \
+CAST(json AS CHAR CHARACTER SET utf8mb4) AS json, is_active, \
+created_at, updated_at, project_id, client_origin, is_group_chat";
+
 /// `task_store.list_by_ids` (`db.query(TaskResource).filter(TaskResource.id.in_(task_ids))`):
 /// the 12-column `tasks` projection read from `table`, with one `?` per id in
 /// the source's textual order. The caller issues no statement at all for an
@@ -397,9 +404,8 @@ pub fn subtasks_by_task_statement(table: &str) -> String {
 /// task projection of that owner's task.
 pub fn task_by_id_owned_statement(table: &str) -> String {
     format!(
-        "SELECT id, user_id, kind, name, namespace, json, is_active, \
-                       created_at, updated_at, project_id, client_origin, is_group_chat \
-                       \nFROM {table} \nWHERE id = ? AND user_id = ? \n LIMIT 1"
+        "SELECT {TASK_DETAIL_PROJECTION} \
+         \nFROM {table} \nWHERE id = ? AND user_id = ? \n LIMIT 1"
     )
 }
 
@@ -417,9 +423,7 @@ pub fn active_task_by_id_statement(
     client_origin: bool,
 ) -> String {
     let mut sql = format!(
-        "SELECT id, user_id, kind, name, namespace,
-                CAST(json AS CHAR CHARACTER SET utf8mb4) AS json, is_active,
-                created_at, updated_at, project_id, client_origin, is_group_chat
+        "SELECT {TASK_DETAIL_PROJECTION}
          FROM {table}
          WHERE id = ? AND kind = 'Task' AND is_active IN (1, 2)"
     );
