@@ -215,17 +215,35 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
         page,
         `/api/v1/cloud-projects/${projectId}`
       )
-      const create = (title: string, extra: object = {}) =>
-        webApi<Resource>(page, `/api/v1/cloud-projects/${projectId}/loop-items`, {
-          method: 'POST',
-          body: {
-            title,
-            priority: 'high',
-            status: 'pending',
-            tags: ['backend', 'shared'],
-            ...extra,
-          },
+      const create = async (
+        title: string,
+        extra: {
+          status?: string
+          priority?: string
+          tags?: string[]
+          assignee_user_id?: number
+        } = {}
+      ) => {
+        const created = await webApi<Resource>(
+          page,
+          `/api/v1/cloud-projects/${projectId}/loop-items`,
+          {
+            method: 'POST',
+            body: {
+              title,
+              priority: 'high',
+              status: 'pending',
+              tags: ['backend', 'shared'],
+              ...extra,
+            },
+          }
+        )
+        // Creation assigns the creator by default; initialize the intended lane explicitly.
+        return webApi<Resource>(page, `/api/v1/loop-items/${created.id}`, {
+          method: 'PATCH',
+          body: { version: created.version, assignee_user_id: extra.assignee_user_id ?? null },
         })
+      }
       const first = await create('First')
       const second = await create('Second', { status: 'completed' })
       const outside = await create('Outside', {
@@ -268,7 +286,6 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
             ? `assignee-${project.current_user_id}`
             : 'tag-other'
       const sort = page.getByTestId(`cloud-board-sort-by-${lane}`)
-      const prefix = groupBy === 'assignee' ? [issueId] : []
       const assertOrder = async (ids: string[]) => {
         const cards = page
           .getByTestId(`cloud-todo-column-${lane}`)
@@ -280,7 +297,7 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
       await expect(sort).toHaveAttribute('data-sort-rules', 'priority-desc')
       const before = await snapshot()
       await dragBefore(page, lane, second.id, lane, first.id)
-      await assertOrder([first.id, second.id, ...prefix])
+      await assertOrder([first.id, second.id])
       expect(
         (await snapshot()).items.map(({ id, version, sort_order }) => ({ id, version, sort_order }))
       ).toEqual(before.items.map(({ id, version, sort_order }) => ({ id, version, sort_order })))
@@ -293,19 +310,19 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
       )
       await dragBefore(page, lane, second.id, lane, first.id)
       expect((await reorder).ok()).toBe(true)
-      await assertOrder([...prefix, second.id, first.id])
+      await assertOrder([second.id, first.id])
       await page.reload()
       await expect(sort).toHaveAttribute('data-sort-rules', 'manual')
-      await assertOrder([...prefix, second.id, first.id])
+      await assertOrder([second.id, first.id])
       const crossReorder = page.waitForResponse(
         response =>
           response.request().method() === 'POST' && response.url().endsWith('/loop-items/reorder')
       )
       await dragBefore(page, sourceLane, outside.id, lane, first.id)
       expect((await crossReorder).ok()).toBe(true)
-      await assertOrder([...prefix, second.id, outside.id, first.id])
+      await assertOrder([second.id, outside.id, first.id])
       await page.reload()
-      await assertOrder([...prefix, second.id, outside.id, first.id])
+      await assertOrder([second.id, outside.id, first.id])
       const saved = (await snapshot()).items
       expect(saved.find(item => item.id === second.id)).toMatchObject({
         status: 'completed',
