@@ -314,12 +314,13 @@ export function createDesktopScenario({
       }
       await control.command('click', '[data-testid="settings-button"]')
       await control.command('click', '[data-testid="settings-menu-button"]')
-      await control.command('waitFor', '[data-testid="general-max-concurrent-tasks-select"]', {
-        timeoutMs: uiTimeoutMs,
-      })
+      const readyConcurrencySelect =
+        '[data-testid="general-max-concurrent-tasks-select"]:not([disabled])'
+      await control.command('waitFor', readyConcurrencySelect, { timeoutMs: uiTimeoutMs })
       await control.command('select', '[data-testid="general-max-concurrent-tasks-select"]', {
         value: '2',
       })
+      await control.command('waitFor', readyConcurrencySelect, { timeoutMs: uiTimeoutMs })
       assert.equal(
         await control.command('getValue', '[data-testid="general-max-concurrent-tasks-select"]'),
         '2',
