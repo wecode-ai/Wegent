@@ -243,6 +243,9 @@ export function createDesktopScenario({
           [device.device_id, device.app_device_id].includes(currentDevice)
         )
         assert.ok(desktop, 'The current desktop must be a registered device')
+        await request(`/v1/workspaces/${workspace.id}/execution-environments`, {
+          device_id: desktop.id,
+        })
         await request(`/v1/cloud-projects/${project.id}/execution-environments`, {
           device_id: desktop.id,
         })
