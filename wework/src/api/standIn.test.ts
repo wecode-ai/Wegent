@@ -108,3 +108,14 @@ it('explicitly runs a saved disabled stand-in through its selected device', asyn
     'cloud-device'
   )
 })
+
+it('reads list items from the object envelope required by remote Runtime RPC', async () => {
+  const request = vi.fn().mockResolvedValue({ items: [{ ...settings, id: 'default' }] })
+  const transport = createStandInExecutorApi(request)
+  await expect(transport.list(7, 'mac', true)).resolves.toEqual([{ ...settings, id: 'default' }])
+  expect(request).toHaveBeenCalledWith(
+    'runtime.stand_in.list',
+    { userId: 7, includeDisabled: true },
+    'mac'
+  )
+})

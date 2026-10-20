@@ -311,10 +311,10 @@ impl RuntimeWorkRpcHandler {
             store.enabled_stand_in_settings()
         }
         .map_err(settings_error)?;
-        Ok(json!(rows
+        Ok(json!({"items": rows
             .into_iter()
             .filter(|row| row["userId"] == user_id)
-            .collect::<Vec<_>>()))
+            .collect::<Vec<_>>() }))
     }
 
     pub(super) fn start_stand_in_scheduler(&self) {

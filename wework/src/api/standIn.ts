@@ -51,12 +51,14 @@ export function createStandInExecutorApi(request: Request): StandInExecutorApi {
         { projectId, issueId, userId, projectStore, standInId },
         deviceId
       ),
-    list: (userId, deviceId, includeDisabled) =>
-      request(
-        'runtime.stand_in.list',
-        { userId, ...(includeDisabled ? { includeDisabled: true } : {}) },
-        deviceId
-      ),
+    list: async (userId, deviceId, includeDisabled) =>
+      (
+        await request<{ items: StandInProjectSettings[] }>(
+          'runtime.stand_in.list',
+          { userId, ...(includeDisabled ? { includeDisabled: true } : {}) },
+          deviceId
+        )
+      ).items,
     get: (projectId, userId, projectStore, deviceId, standInId = 'default') =>
       request('runtime.stand_in.get', { projectId, userId, projectStore, standInId }, deviceId),
     save: (projectId, userId, projectStore, settings) =>
