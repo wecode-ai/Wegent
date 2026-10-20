@@ -77,6 +77,7 @@ import {
 import { ProjectSettingsShell } from '@wegent/collaboration/project-manage'
 import {
   createStandardCloudBoardColumns,
+  createProjectBoardSortLabels,
   executeStandardCloudBoardMutation,
   ProjectBoardBody,
   ProjectBoardGroupPicker,
@@ -1945,6 +1946,9 @@ export function CloudTodoWorkspace({
       await performStandardBoardMove(item, column, beforeItemId, mutation)
     },
     personalGroupStorageKey: personalGroupKey,
+    personalSortStorageKey: selectedProjectKey
+      ? `wework-board-column-sort:v2:${user.id}:${selectedProjectKey}`
+      : null,
   })
   const {
     activeDragItemId,
@@ -4756,6 +4760,7 @@ export function CloudTodoWorkspace({
                         exit: t('todo.exit_focus_view_description', '退出执行阶段专注视图'),
                         title: t('todo.focus_view', '专注视图'),
                       }}
+                      sortLabels={createProjectBoardSortLabels(t)}
                       getColumnDragHint={column =>
                         activeDragItemId && nativeGroupBy === 'status'
                           ? columnDragHints[column.status as CloudLoopItem['status']]

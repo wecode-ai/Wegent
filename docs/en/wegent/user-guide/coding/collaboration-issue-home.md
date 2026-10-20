@@ -70,6 +70,8 @@ Cloud fixtures are archived by the checkpoint cleanup. Local fixtures live only 
 
 Projects support Board, Calendar, Gantt, Table, Files, and Project settings. Calendar and Gantt selections persist in the URL across reloads and opening or closing Issue details. Project board cards and their drag previews display no unread dot or unread highlight.
 
+Each lane on a native project board has a **Sort by** control in its header. Lanes default to highest priority first. Combine ascending or descending rules for priority, creation time, and update time, then move rules up or down or remove them. Rules apply from top to bottom: each subsequent rule breaks ties, and manual order breaks any remaining ties. Choose **Manual order** to reorder cards by dragging within a lane. Preferences are saved in the current browser by project, grouping, and lane, survive reloads, and do not affect other members.
+
 The collaboration sidebar no longer includes My Work or Run Center. Their former URLs return to collaboration home. Open Issues that need action or review from Inbox or the project board.
 
 Web regression: `pnpm --dir frontend exec playwright test collaboration/collaboration-project-views.spec.ts --project=chromium`. The existing Chromium CI suite includes this file. It uses real workspaces, projects, and unread Issues created by another member, then archives its fixtures.

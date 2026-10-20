@@ -5098,6 +5098,26 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     expect(await screen.findByTestId('cloud-todo-card-WEG-1')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-board-sort-by-in_progress')).toHaveAccessibleName(
+      '进行中 · 排序方式'
+    )
+    expect(screen.getByTestId('cloud-board-sort-by-in_progress')).toHaveAttribute(
+      'data-sort-rules',
+      'priority-desc'
+    )
+    await userEvent.click(screen.getByTestId('cloud-board-sort-by-in_progress'))
+    await userEvent.click(screen.getByTestId('cloud-board-sort-by-in_progress-add'))
+    expect(screen.getByTestId('cloud-board-sort-by-in_progress')).toHaveAttribute(
+      'data-sort-rules',
+      'priority-desc,created-desc'
+    )
+    await userEvent.click(screen.getByTestId('cloud-board-sort-by-in_progress-manual'))
+    expect(screen.getByTestId('cloud-board-sort-by-in_progress')).toHaveAttribute(
+      'data-sort-rules',
+      'manual'
+    )
+    await userEvent.click(screen.getByTestId('cloud-board-sort-by-in_progress'))
+    expect(workbenchServices.deliveryApi!.updateCloudProject).not.toHaveBeenCalled()
     expect(screen.getByTestId('cloud-todo-column-in_progress')).toHaveTextContent(
       'Implement cloud MCP'
     )

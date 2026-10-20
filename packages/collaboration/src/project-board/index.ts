@@ -4,6 +4,7 @@
 
 export * from "./ProjectBoardBody";
 export * from "./useProjectBoardState";
+export * from "./projectBoardSorting";
 export * from "./useStandardCloudBoardController";
 
 export * from "./ProjectBoardGroupPicker";

@@ -5,6 +5,10 @@
 import { useCallback, useMemo, useState } from "react";
 
 import { reorderLaneItems } from "../board";
+import {
+  boardPriorities,
+  compareProjectBoardItems,
+} from "./projectBoardSorting";
 import type {
   ProjectBoardColumn,
   ProjectBoardStatePort,
@@ -26,6 +30,8 @@ export interface StandardCloudBoardItem {
   assignee_team_name?: string | null;
   priority: string;
   sort_order: number;
+  created_at: string;
+  updated_at: string;
   status: string;
   tags: string[];
   version?: number;
@@ -65,8 +71,6 @@ export interface StandardCloudBoardColumnOptions<
   statuses: StandardCloudBoardStatus[];
   tags?: string[];
 }
-
-const standardPriorities = ["none", "low", "medium", "high", "urgent"];
 
 function itemAssignee(
   item: StandardCloudBoardItem,
@@ -124,7 +128,7 @@ export function createStandardCloudBoardColumns<
     }));
   }
   if (groupBy === "priority") {
-    return standardPriorities.map((priority) => ({
+    return boardPriorities.map((priority) => ({
       dotClass: getDotClass(groupBy, priority),
       groupValue: priority,
       key: `priority-${priority}`,
@@ -201,7 +205,10 @@ export interface StandardCloudBoardFilterInput<
   currentParentId: string | null;
   extensions: StandardCloudBoardHostExtensions<T>;
   items: T[];
-  state: Pick<ProjectBoardStatePort, "groupBy" | "groupFilter" | "query">;
+  state: Pick<
+    ProjectBoardStatePort,
+    "groupBy" | "groupFilter" | "query" | "getColumnSort"
+  >;
 }
 
 export function matchesStandardCloudBoardColumn<
@@ -236,6 +243,7 @@ export function filterStandardCloudBoardItems<
   state,
 }: StandardCloudBoardFilterInput<T>): T[] {
   const query = state.query.trim().toLocaleLowerCase();
+  const sortBy = state.getColumnSort(column.key);
   return items
     .filter(
       (item) =>
@@ -250,7 +258,7 @@ export function filterStandardCloudBoardItems<
         (!query ||
           extensions.getSearchText(item).toLocaleLowerCase().includes(query)),
     )
-    .sort((left, right) => left.sort_order - right.sort_order);
+    .sort((left, right) => compareProjectBoardItems(left, right, sortBy));
 }
 
 export function buildStandardCloudBoardBreadcrumb<
@@ -591,16 +599,28 @@ export function useStandardCloudBoardController<
     ) => {
       const item = items.find((candidate) => candidate.id === itemId);
       if (!item) return;
+      const manualSort = boardState.getColumnSort(column.key).length === 0;
+      if (
+        !manualSort &&
+        matchesStandardCloudBoardColumn(
+          item,
+          column,
+          boardState.groupBy,
+          extensions,
+        )
+      )
+        return;
+      const targetBeforeItemId = manualSort ? beforeItemId : null;
       const mutation = resolveStandardCloudBoardMutation({
-        beforeItemId,
+        beforeItemId: targetBeforeItemId,
         column,
         groupBy: boardState.groupBy,
         item,
         items,
       });
-      if (mutation) void onMove(item, column, beforeItemId, mutation);
+      if (mutation) void onMove(item, column, targetBeforeItemId, mutation);
     },
-    [boardState.groupBy, items, onMove],
+    [boardState.groupBy, boardState.getColumnSort, extensions, items, onMove],
   );
 
   const moveDroppedItem = useCallback(

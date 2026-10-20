@@ -24,6 +24,8 @@ interface Item extends StandardCloudBoardItem {
 const items: Item[] = [
   {
     id: "parent",
+    created_at: "2026-09-10T00:00:00Z",
+    updated_at: "2026-09-10T00:00:00Z",
     parent_id: null,
     priority: "high",
     sort_order: 0,
@@ -34,6 +36,8 @@ const items: Item[] = [
   },
   {
     id: "child-a",
+    created_at: "2026-09-10T00:00:00Z",
+    updated_at: "2026-09-10T00:00:00Z",
     parent_id: "parent",
     priority: "high",
     sort_order: 2,
@@ -46,6 +50,8 @@ const items: Item[] = [
   },
   {
     id: "child-b",
+    created_at: "2026-09-10T00:00:00Z",
+    updated_at: "2026-09-10T00:00:00Z",
     parent_id: "parent",
     priority: "low",
     sort_order: 1,
@@ -73,6 +79,61 @@ function column(groupValue: string): ProjectBoardColumn {
 }
 
 describe("standard cloud board controller", () => {
+  it.each(["status", "assignee", "tag"] as const)(
+    "sorts %s columns by priority and keeps manual order for ties",
+    (groupBy) => {
+      const priorities = ["none", "low", "high", "urgent", "medium", "high"];
+      const unordered = priorities.map((priority, sort_order) => ({
+        ...items[0],
+        id: String(sort_order),
+        priority,
+        sort_order,
+        assignee_user_id: 1,
+        tags: ["frontend"],
+      }));
+      const input = {
+        column: column(
+          { status: "pending", assignee: "1", tag: "frontend" }[groupBy],
+        ),
+        currentParentId: null,
+        extensions,
+        items: unordered,
+        state: {
+          groupBy,
+          groupFilter: "",
+          query: "",
+          getColumnSort: () => ["priority-desc"] as const,
+        },
+      };
+      expect(
+        filterStandardCloudBoardItems(input).map((item) => item.id),
+      ).toEqual(["3", "2", "5", "4", "1", "0"]);
+      expect(
+        filterStandardCloudBoardItems({
+          ...input,
+          state: { ...input.state, getColumnSort: () => [] },
+        }).map((item) => item.id),
+      ).toEqual(["0", "1", "2", "3", "4", "5"]);
+      expect(unordered.map((item) => item.id)).toEqual([
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+      ]);
+      expect(
+        filterStandardCloudBoardItems({
+          ...input,
+          state: { ...input.state, query: "missing" },
+        }),
+      ).toEqual([]);
+      expect(
+        filterStandardCloudBoardItems({ ...input, currentParentId: "other" }),
+      ).toEqual([]);
+    },
+  );
+
   it("keeps the local user with ID zero in the assigned board column", () => {
     const localItem = {
       ...items[0],
@@ -83,16 +144,28 @@ describe("standard cloud board controller", () => {
       filterStandardCloudBoardItems({
         column: column("0"),
         currentParentId: null,
+        extensions,
         items: [localItem],
-        state: { groupBy: "assignee", groupFilter: "", query: "" },
+        state: {
+          groupBy: "assignee",
+          groupFilter: "",
+          query: "",
+          getColumnSort: () => ["priority-desc"],
+        },
       }).map((item) => item.id),
     ).toEqual([localItem.id]);
     expect(
       filterStandardCloudBoardItems({
         column: column(""),
         currentParentId: null,
+        extensions,
         items: [localItem],
-        state: { groupBy: "assignee", groupFilter: "", query: "" },
+        state: {
+          groupBy: "assignee",
+          groupFilter: "",
+          query: "",
+          getColumnSort: () => ["priority-desc"],
+        },
       }),
     ).toEqual([]);
   });
@@ -115,6 +188,7 @@ describe("standard cloud board controller", () => {
           groupBy: "status",
           groupFilter: "",
           query: "searchable",
+          getColumnSort: () => ["priority-desc"],
         },
       }).map((item) => item.id),
     ).toEqual(["child-a"]);
@@ -194,11 +268,11 @@ describe("standard cloud board controller", () => {
         groupBy: "priority",
       }).map(({ groupValue, label }) => [groupValue, label]),
     ).toEqual([
-      ["none", "Normal"],
-      ["low", "Low"],
-      ["medium", "Medium"],
-      ["high", "High"],
       ["urgent", "Urgent"],
+      ["high", "High"],
+      ["medium", "Medium"],
+      ["low", "Low"],
+      ["none", "Normal"],
     ]);
     expect(
       createStandardCloudBoardColumns({

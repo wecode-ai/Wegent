@@ -88,6 +88,69 @@ const projectTest = test.extend<{ scheduledProject: ScheduledProject }>({
   },
 })
 
+projectTest(
+  'sorts lanes independently with compound rules and restores choices after reload',
+  async ({ page, scheduledProject: { path, issueId } }) => {
+    const projectId = path.split('/').at(-1)!
+    const createIssue = (priority: 'high' | 'urgent', status = 'pending') =>
+      webApi<Resource>(page, `/api/v1/cloud-projects/${projectId}/loop-items`, {
+        method: 'POST',
+        body: { title: `Sort ${priority}`, status, priority },
+      })
+    const high = await createIssue('high')
+    const urgent = await createIssue('urgent')
+    const completedHigh = await createIssue('high', 'completed')
+    const completedUrgent = await createIssue('urgent', 'completed')
+    await webApi(page, `/api/v1/cloud-projects/${projectId}/loop-items/reorder`, {
+      method: 'POST',
+      body: { parent_id: null, status: 'pending', item_ids: [issueId, high.id, urgent.id] },
+    })
+
+    await page.goto(path)
+    const sort = page.getByTestId('cloud-board-sort-by-pending')
+    const completedSort = page.getByTestId('cloud-board-sort-by-completed')
+    const assertOrder = async (lane: string, ids: string[]) => {
+      const cards = page
+        .getByTestId(`cloud-todo-column-${lane}`)
+        .locator('article[data-testid^="collaboration-issue-"]')
+      await expect(cards).toHaveCount(ids.length)
+      for (const [index, id] of ids.entries()) {
+        await expect(cards.nth(index)).toHaveAttribute('data-testid', `collaboration-issue-${id}`)
+      }
+    }
+
+    await expect(sort).toHaveAttribute('data-sort-rules', 'priority-desc')
+    await assertOrder('pending', [urgent.id, high.id, issueId])
+    await assertOrder('completed', [completedUrgent.id, completedHigh.id])
+    await sort.click()
+    await page.getByTestId('cloud-board-sort-by-pending-manual').click()
+    await sort.click()
+    await completedSort.click()
+    await page.getByTestId('cloud-board-sort-by-completed-rule-0-mode').click()
+    await page.getByTestId('cloud-board-sort-by-completed-rule-0-mode-created-asc').click()
+    await completedSort.click()
+    await assertOrder('pending', [issueId, high.id, urgent.id])
+    await assertOrder('completed', [completedHigh.id, completedUrgent.id])
+    await page.reload()
+    await expect(sort).toHaveAttribute('data-sort-rules', 'manual')
+    await expect(completedSort).toHaveAttribute('data-sort-rules', 'created-asc')
+    await assertOrder('pending', [issueId, high.id, urgent.id])
+    await assertOrder('completed', [completedHigh.id, completedUrgent.id])
+    await sort.click()
+    await page.getByTestId('cloud-board-sort-by-pending-add').click()
+    await page.getByTestId('cloud-board-sort-by-pending-add').click()
+    await page.getByTestId('cloud-board-sort-by-pending-rule-1-mode').click()
+    await page.getByTestId('cloud-board-sort-by-pending-rule-1-mode-created-asc').click()
+    await sort.click()
+    await expect(sort).toHaveAttribute('data-sort-rules', 'priority-desc,created-asc')
+    await assertOrder('pending', [urgent.id, high.id, issueId])
+    await page.reload()
+    await expect(sort).toHaveAttribute('data-sort-rules', 'priority-desc,created-asc')
+    await assertOrder('pending', [urgent.id, high.id, issueId])
+    await expect(completedSort).toHaveAttribute('data-sort-rules', 'created-asc')
+  }
+)
+
 for (const view of ['calendar', 'gantt'] as const) {
   projectTest(
     `preserves ${view} through navigation, reload and Issue detail`,

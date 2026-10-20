@@ -22,6 +22,7 @@ import {
 } from "../issue-card";
 import {
   createStandardCloudBoardColumns,
+  createProjectBoardSortLabels,
   ProjectBoardBody,
   ProjectBoardGroupPicker,
   useStandardCloudBoardController,
@@ -226,6 +227,7 @@ export function ProjectBoardAdapter({
     onMove: (issue, _column, _beforeItemId, mutation) =>
       onMove(issue, mutation),
     personalGroupStorageKey: null,
+    personalSortStorageKey: `collaboration-board-column-sort:v2:${project.id}`,
   });
   const display = project.card_display ?? {
     show_assignee: true,
@@ -281,6 +283,7 @@ export function ProjectBoardAdapter({
           exit: "退出执行阶段专注视图",
           title: "专注视图",
         }}
+        sortLabels={createProjectBoardSortLabels(translate)}
         getColumnDragHint={(column) =>
           controller.activeDragItemId ? `移到这里：${column.label}` : undefined
         }

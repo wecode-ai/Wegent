@@ -127,6 +127,8 @@ async function dragCardTo(card: HTMLElement, target: HTMLElement) {
 }
 
 describe('CollaborationApp shared project board', () => {
+  beforeEach(() => localStorage.clear())
+
   it.each([false, true])(
     'renders the shared board without unread indicators (runtime=%s)',
     async withRuntime => {
@@ -147,7 +149,11 @@ describe('CollaborationApp shared project board', () => {
         },
         issues: {
           getBoardSnapshot: jest.fn().mockResolvedValue({
-            items: [issue()],
+            items: [
+              { ...issue(), id: 'normal', title: '普通任务', priority: 'none', sort_order: -1 },
+              issue(),
+              { ...issue(), id: 'urgent', title: '紧急任务', priority: 'urgent', sort_order: 1 },
+            ],
             members: [],
             taskBindings: [],
           }),
@@ -190,6 +196,43 @@ describe('CollaborationApp shared project board', () => {
         'flex-col'
       )
       expect(screen.getByTestId('cloud-board-toolbar')).toBeInTheDocument()
+      const sort = screen.getByTestId('cloud-board-sort-by-pending')
+      const cardOrder = () =>
+        Array.from(
+          screen
+            .getByTestId('cloud-todo-column-pending')
+            .querySelectorAll('article[data-testid^="collaboration-issue-"]')
+        ).map(card => card.getAttribute('data-testid'))
+      expect(sort).toHaveAccessibleName('待开始 · 排序方式')
+      expect(sort).toHaveAttribute('data-sort-rules', 'priority-desc')
+      expect(cardOrder()).toEqual([
+        'collaboration-issue-urgent',
+        'collaboration-issue-issue-1',
+        'collaboration-issue-normal',
+      ])
+      fireEvent.click(sort)
+      fireEvent.click(screen.getByTestId('cloud-board-sort-by-pending-manual'))
+      fireEvent.click(sort)
+      expect(cardOrder()).toEqual([
+        'collaboration-issue-normal',
+        'collaboration-issue-issue-1',
+        'collaboration-issue-urgent',
+      ])
+      expect(
+        JSON.parse(localStorage.getItem('collaboration-board-column-sort:v2:project-1')!)
+      ).toEqual({ '["status","pending"]': [] })
+      const completedSort = screen.getByTestId('cloud-board-sort-by-completed')
+      expect(completedSort).toHaveAttribute('data-sort-rules', 'priority-desc')
+      fireEvent.click(completedSort)
+      fireEvent.click(screen.getByTestId('cloud-board-sort-by-completed-add'))
+      fireEvent.click(completedSort)
+      expect(completedSort).toHaveAttribute('data-sort-rules', 'priority-desc,created-desc')
+      expect(sort).toHaveAttribute('data-sort-rules', 'manual')
+      fireEvent.click(sort)
+      fireEvent.click(screen.getByTestId('cloud-board-sort-by-pending-add'))
+      fireEvent.click(sort)
+      expect(updateProject).not.toHaveBeenCalled()
+      expect(updateIssue).not.toHaveBeenCalled()
       expect(screen.getByTestId('collaboration-board-settings')).toHaveTextContent('看板设置')
       for (const status of statuses) {
         expect(screen.getByTestId(`cloud-todo-column-${status.id}`)).toBeInTheDocument()
