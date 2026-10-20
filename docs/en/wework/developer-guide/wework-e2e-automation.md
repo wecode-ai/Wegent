@@ -159,6 +159,11 @@ suite-level parallelism across runners. Shards are balanced from observed CI
 durations and capped to bound the complete suite's critical path; a new or
 materially slower checkpoint requires rebalancing instead of
 removing coverage or rerunning failures.
+Parallel CI measurements place account authentication and the 24-plugin composer
+list on separate Cloud runners, with device lifecycle and uninstall recovery in
+another shard. Core rendering also runs apart from terminals and transcript sync.
+These shards reuse the same build artifact while reducing CPU contention between
+heavy workflows on one runner.
 Linux Core/Cloud tests emit `[runner-resources]` JSON records at startup, completion,
 and every 15 seconds, also saved as `runner-resources.jsonl` in the diagnostic
 artifact. Records include CPU utilization, load average, memory, available disk
@@ -714,7 +719,7 @@ pnpm --filter wework e2e:desktop:memory
 
 The repository includes a basic workflow at `.github/workflows/wework-e2e.yml`. It runs when Wework, `packages/chat-core`, the pnpm lockfile, or the workflow itself changes.
 Linux and Windows Desktop Core E2E consume the same shard matrix produced by
-the classifier; a complete classification runs all 17 Core shards on both
+the classifier; a complete classification runs every declared Core shard on both
 platforms. The Windows job builds native `WeWork.exe`,
 `wegent-executor.exe`, and `codex.exe` artifacts on `windows-latest` before
 running checkpoints. A cross-platform package or a single Windows smoke test is

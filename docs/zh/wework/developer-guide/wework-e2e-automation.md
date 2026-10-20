@@ -151,6 +151,9 @@ macOS 中需要争用原生桌面前台的 checkpoint 仍通过资源锁保持�
 各 Core/Cloud matrix job 还提供跨 runner 的套件级并行。分片按 CI 实测耗时平衡并设定
 上限，以控制完整套件的关键路径；新增或明显变慢的 checkpoint
 必须重新校准分片，不能靠删覆盖或重跑失败用例来缩短关键路径。
+按并行运行的实测记录，账号认证与 24 插件长列表各使用独立 Cloud 分片，
+设备生命周期与卸载恢复组成另一分片；Core 渲染流程也与终端、转录同步拆开。
+这些分片复用同一份构建产物，减少重型流程在同一 runner 上的 CPU 争抢。
 Linux Core/Cloud 测试在开始、结束和每 15 秒输出 `[runner-resources]` JSON 记录，
 并保存到诊断产物中的 `runner-resources.jsonl`。记录包含 CPU 使用率、load average、
 内存、磁盘可用空间、Linux CPU/内存/I/O 压力及 cgroup CPU 限额、内存峰值和 OOM 计数；
@@ -622,7 +625,7 @@ pnpm --filter wework e2e:desktop:memory
 
 仓库内的基础 workflow 是 `.github/workflows/wework-e2e.yml`，会在 Wework、`packages/chat-core`、pnpm lockfile 或 workflow 自身变化时运行。
 Linux 与 Windows Desktop Core E2E 共享分类器输出的同一份分片矩阵；完整分类会在
-两个平台分别运行全部 17 个 Core 分片。Windows job 使用 `windows-latest` 构建
+两个平台分别运行分类器定义的全部 Core 分片。Windows job 使用 `windows-latest` 构建
 原生 `WeWork.exe`、`wegent-executor.exe` 和 `codex.exe` 后再执行 checkpoint，
 不能用跨平台构建产物或单个 Windows smoke test 替代。
 

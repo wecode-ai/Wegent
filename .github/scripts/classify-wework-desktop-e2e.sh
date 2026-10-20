@@ -146,9 +146,8 @@ cloud_segments=(
   plugin-composer-long-list
   plugin-workspace-publication
 )
-# Group checkpoints by observed Cloud CI duration so every serial shard stays
-# below the desktop suite's critical-path budget. Keep 15 Cloud shards so the
-# 17 Core shards and Plugins job fit the observed 33-runner Linux capacity.
+# Group checkpoints by observed parallel CI duration. Keep account auth and
+# the 24-plugin composer fixture on separate runners to avoid CPU contention.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 cloud_shards=(
   core-task-flow
@@ -163,13 +162,14 @@ cloud_shards=(
   workspace-tabs,cloud-worktree-capability
   supervisor-lifecycle,conversation-state
   model-routing,cloud-model-recovery,cloud-model-presets,task-model-deletion
-  plugin-account-auth,cloud-device-lifecycle,plugin-uninstall-resilience,plugin-composer-long-list
+  plugin-account-auth
   cloud-worktree-queued-cancel
   plugin-auto-update,plugin-workspace-publication,workspace-attachments
+  cloud-device-lifecycle,plugin-uninstall-resilience
+  plugin-composer-long-list
 )
-# Group checkpoints by observed Core CI duration so every serial shard stays
-# below the desktop suite's critical-path budget while reusing the same
-# prebuilt application.
+# Group checkpoints by observed parallel CI duration while reusing the same
+# prebuilt application. Rendering runs apart from terminal/transcript workloads.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
   harness-apps,browser-annotation-design
@@ -184,12 +184,13 @@ core_shards=(
   resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-task-discovery,collaboration-app-queue-identity,collaboration-issue-archive,collaboration-local-group-cancellation
   workspace-attachments,automation-lifecycle,drawing-attachment
   project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention,collaboration-issue-comment-attachments
-  rendering-extensions,transcript-sync,background-terminals
+  transcript-sync,background-terminals
   runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification,collaboration-issue-mcp-comments,latest-conversation-history
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,model-overload-recovery
   model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy
   collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details,stand-in-cloud
+  rendering-extensions
 )
 
 validate_core_shards() {
