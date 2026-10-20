@@ -4,7 +4,8 @@
 
 'use client'
 
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState, useMemo } from 'react'
+import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import { MessageSquareText } from 'lucide-react'
 import { taskApis } from '@/apis/tasks'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -21,6 +22,17 @@ interface MentionableAgent {
 
 type MentionRow = { kind: 'task'; task: Task } | { kind: 'agent'; agent: MentionableAgent }
 
+export interface MentionMenuAnchor {
+  /** Viewport-space top edge of the composer cursor. */
+  top: number
+  /** Viewport-space bottom edge of the composer cursor. */
+  bottom: number
+  /** Viewport-space left edge of the composer cursor. */
+  left: number
+  /** Preferred side; the menu still flips when that side lacks room. */
+  direction?: 'above' | 'below'
+}
+
 interface MentionAutocompleteProps {
   team: Team | null
   query?: string
@@ -31,7 +43,18 @@ interface MentionAutocompleteProps {
   onSelect: (mention: string) => void
   onSelectTask?: (task: Task) => void
   onClose: () => void
-  position: { top: number; left: number }
+  position: MentionMenuAnchor
+}
+
+const MENU_GAP = 8
+const MENU_MARGIN = 8
+const MENU_MAX_WIDTH = 380
+const MENU_MIN_WIDTH = 200
+const MENU_MAX_HEIGHT = 480
+const MENU_MIN_HEIGHT = 160
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max)
 }
 
 export function buildTaskMentionCandidates(
@@ -83,12 +106,23 @@ export default function MentionAutocomplete({
   const { t } = useTranslation()
   const menuRef = useRef<HTMLDivElement>(null)
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const selectedIndexRef = useRef(selectedIndex)
+  selectedIndexRef.current = selectedIndex
   const [remoteTasks, setRemoteTasks] = useState<Task[]>([])
   const [isSearchingTasks, setIsSearchingTasks] = useState(false)
-  // Viewport clamping: the menu grows above the cursor, so a composer near the
-  // bottom of a short window can push the newest (top) rows off-screen.
-  const [menuMaxHeight, setMenuMaxHeight] = useState<number | null>(null)
-  const [menuTranslateY, setMenuTranslateY] = useState(0)
+  const [viewport, setViewport] = useState(() =>
+    typeof window === 'undefined'
+      ? { width: 0, height: 0 }
+      : { width: window.innerWidth, height: window.innerHeight }
+  )
+
+  useEffect(() => {
+    const updateViewport = () =>
+      setViewport({ width: window.innerWidth, height: window.innerHeight })
+    updateViewport()
+    window.addEventListener('resize', updateViewport)
+    return () => window.removeEventListener('resize', updateViewport)
+  }, [])
 
   useEffect(() => {
     const normalizedQuery = query.trim()
@@ -145,35 +179,16 @@ export default function MentionAutocomplete({
     return nextRows
   }, [filteredAgents, showTeamMention, taskCandidates])
 
-  useLayoutEffect(() => {
-    const menu = menuRef.current
-    if (!menu) return
-    // Measure the untransformed position so the correction converges instead of
-    // oscillating with the currently applied offset.
-    const appliedTransform = menu.style.transform
-    if (appliedTransform) menu.style.transform = ''
-    const rect = menu.getBoundingClientRect()
-    if (appliedTransform) menu.style.transform = appliedTransform
-    if (rect.height === 0) return
-    // Available space between the viewport top edge and the menu bottom (the
-    // cursor position). Keep the whole menu inside the viewport and let it use
-    // as much of that space as possible.
-    const viewportMargin = 8
-    const untransformedTop = rect.top
-    const availableAbove = Math.floor(rect.bottom - viewportMargin)
-    const nextMaxHeight = Math.max(160, Math.min(480, availableAbove))
-    const nextTranslateY = untransformedTop < viewportMargin ? viewportMargin - untransformedTop : 0
-    if (menuMaxHeight === null || Math.abs(menuMaxHeight - nextMaxHeight) > 1) {
-      setMenuMaxHeight(nextMaxHeight)
-    }
-    if (Math.abs(menuTranslateY - nextTranslateY) > 1) {
-      setMenuTranslateY(nextTranslateY)
-    }
-  }, [rows, menuMaxHeight, menuTranslateY])
-
   useEffect(() => {
     setSelectedIndex(0)
   }, [rows])
+
+  useEffect(() => {
+    const selected = menuRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')
+    if (typeof selected?.scrollIntoView === 'function') {
+      selected.scrollIntoView({ block: 'nearest' })
+    }
+  }, [selectedIndex])
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -218,8 +233,9 @@ export default function MentionAutocomplete({
       } else if (event.key === 'Enter') {
         event.preventDefault()
         event.stopPropagation()
-        if (rows[selectedIndex]) {
-          handleSelect(rows[selectedIndex])
+        const selected = rows[selectedIndexRef.current]
+        if (selected) {
+          handleSelect(selected)
         }
       }
     }
@@ -228,23 +244,62 @@ export default function MentionAutocomplete({
     return () => {
       document.removeEventListener('keydown', handleKeyDown, true)
     }
-  }, [handleSelect, onClose, rows, selectedIndex])
+  }, [handleSelect, onClose, rows])
 
   if (!team && !enableTaskMentions && taskCandidates.length === 0) {
     return null
   }
 
+  const availableBelow = viewport.height - position.bottom - MENU_GAP - MENU_MARGIN
+  const availableAbove = position.top - MENU_GAP - MENU_MARGIN
+  let direction = position.direction ?? (availableBelow >= availableAbove ? 'below' : 'above')
+  if (
+    direction === 'below' &&
+    availableBelow < MENU_MIN_HEIGHT &&
+    availableAbove > availableBelow
+  ) {
+    direction = 'above'
+  } else if (
+    direction === 'above' &&
+    availableAbove < MENU_MIN_HEIGHT &&
+    availableBelow > availableAbove
+  ) {
+    direction = 'below'
+  }
+  const available = direction === 'below' ? availableBelow : availableAbove
+  const maxViewportHeight = Math.max(80, viewport.height - MENU_MARGIN * 2)
+  const maxHeight = clamp(available, Math.min(MENU_MIN_HEIGHT, maxViewportHeight), MENU_MAX_HEIGHT)
+  const menuTop =
+    direction === 'below' ? position.bottom + MENU_GAP : position.top - MENU_GAP - maxHeight
+  const clampedTop = clamp(
+    menuTop,
+    MENU_MARGIN,
+    Math.max(MENU_MARGIN, viewport.height - maxHeight - MENU_MARGIN)
+  )
+  const menuWidth = Math.min(
+    MENU_MAX_WIDTH,
+    Math.max(MENU_MIN_WIDTH, viewport.width - MENU_MARGIN * 2)
+  )
+  const menuLeft = clamp(
+    position.left,
+    MENU_MARGIN,
+    Math.max(MENU_MARGIN, viewport.width - menuWidth - MENU_MARGIN)
+  )
+
   let previousKind: MentionRow['kind'] | null = null
-  return (
+  const menu = (
     <div
       ref={menuRef}
       data-testid="mention-autocomplete"
-      className="absolute z-50 min-w-[240px] max-w-[calc(100vw-24px)] overflow-y-auto rounded-lg border border-border bg-surface py-1 shadow-lg sm:w-[380px]"
+      data-direction={direction}
+      role="listbox"
+      className="z-50 overflow-y-auto rounded-lg border border-border bg-surface py-1 shadow-lg"
       style={{
-        bottom: `calc(100% - ${position.top}px)`,
-        left: `${position.left}px`,
-        maxHeight: menuMaxHeight ?? 320,
-        transform: menuTranslateY ? `translateY(${menuTranslateY}px)` : undefined,
+        position: 'fixed',
+        top: `${clampedTop}px`,
+        left: `${menuLeft}px`,
+        width: `${menuWidth}px`,
+        maxHeight,
       }}
     >
       {rows.map((row, index) => {
@@ -262,18 +317,31 @@ export default function MentionAutocomplete({
               )}
               <button
                 type="button"
+                role="option"
                 data-testid={`mention-task-option-${row.task.id}`}
+                aria-selected={isSelected}
                 className={`flex min-h-11 w-full items-center gap-2 px-3 py-2 text-left transition-colors md:min-h-0 ${
-                  isSelected ? 'bg-muted' : 'hover:bg-muted'
+                  isSelected
+                    ? 'bg-primary/10 text-primary ring-1 ring-inset ring-primary/30'
+                    : 'hover:bg-muted'
                 }`}
                 onClick={() => handleSelect(row)}
+                onMouseEnter={() => setSelectedIndex(index)}
               >
                 <MessageSquareText className="h-4 w-4 flex-shrink-0 text-text-secondary" />
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium text-text-primary">
+                  <span
+                    className={`block truncate text-sm font-medium ${
+                      isSelected ? 'text-primary' : 'text-text-primary'
+                    }`}
+                  >
                     {row.task.title || row.task.prompt}
                   </span>
-                  <span className="block truncate text-xs text-text-muted">
+                  <span
+                    className={`block truncate text-xs ${
+                      isSelected ? 'text-primary/70' : 'text-text-muted'
+                    }`}
+                  >
                     {t('chat:mention.taskHint')}
                     {updatedAt ? ` · ${updatedAt}` : ''}
                   </span>
@@ -292,18 +360,27 @@ export default function MentionAutocomplete({
             )}
             <button
               type="button"
+              role="option"
               data-testid={`mention-agent-option-${row.agent.id}`}
+              aria-selected={isSelected}
               className={`flex min-h-11 w-full items-center gap-2 px-3 py-2 text-left transition-colors md:min-h-0 ${
-                isSelected ? 'bg-muted' : 'hover:bg-muted'
+                isSelected
+                  ? 'bg-primary/10 text-primary ring-1 ring-inset ring-primary/30'
+                  : 'hover:bg-muted'
               }`}
               onClick={() => handleSelect(row)}
+              onMouseEnter={() => setSelectedIndex(index)}
             >
               <TeamIconDisplay
                 iconId={row.agent.iconId}
                 size="sm"
                 className="flex-shrink-0 text-text-secondary"
               />
-              <span className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary">
+              <span
+                className={`min-w-0 flex-1 truncate text-sm font-medium ${
+                  isSelected ? 'text-primary' : 'text-text-primary'
+                }`}
+              >
                 {row.agent.name}
               </span>
             </button>
@@ -320,4 +397,7 @@ export default function MentionAutocomplete({
       </div>
     </div>
   )
+
+  if (typeof document === 'undefined') return menu
+  return createPortal(menu, document.body)
 }

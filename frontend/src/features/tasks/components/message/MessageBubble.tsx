@@ -7,6 +7,7 @@
 import React, { memo, useState } from 'react'
 import type {
   TaskDetail,
+  Task,
   Team,
   GitRepoInfo,
   GitBranch,
@@ -39,7 +40,7 @@ import ClarificationAnswerSummary from '../clarification/ClarificationAnswerSumm
 import ContextBadgeList from './ContextBadgeList'
 import StreamingWaitIndicator from './StreamingWaitIndicator'
 import BubbleTools, { CopyButton, EditButton } from './BubbleTools'
-import InlineMessageEdit from './InlineMessageEdit'
+import InlineMessageEdit, { type InlineConversationRef } from './InlineMessageEdit'
 import { SourceReferences } from '../chat/SourceReferences'
 import { GeminiAnnotations } from '../chat/GeminiAnnotations'
 import CollapsibleMessage from './CollapsibleMessage'
@@ -199,7 +200,13 @@ export interface MessageBubbleProps {
   /** Callback when user clicks the edit button */
   onEdit?: (msg: Message) => void
   /** Callback when user saves edited message */
-  onEditSave?: (content: string) => Promise<void>
+  onEditSave?: (content: string, refs?: InlineConversationRef[]) => Promise<void>
+  /** Previous tasks available from the @ menu for context handoff while editing. */
+  mentionTasks?: Task[]
+  /** Current task ID, excluded from the @ menu. */
+  currentTaskId?: number | null
+  /** Whether editing supports @ references to previous tasks. */
+  enableTaskMentions?: boolean
   /** Callback when user cancels editing */
   onEditCancel?: () => void
   /** Whether this is the last AI message */
@@ -419,6 +426,9 @@ const MessageBubble = memo(
     onEdit,
     onEditSave,
     onEditCancel,
+    mentionTasks,
+    currentTaskId,
+    enableTaskMentions,
     isLastAiMessage,
     onRegenerate,
     isRegenerating,
@@ -1210,6 +1220,20 @@ const MessageBubble = memo(
                   initialContent={msg.content}
                   onSave={onEditSave}
                   onCancel={onEditCancel}
+                  mentionTasks={mentionTasks}
+                  currentTaskId={currentTaskId}
+                  enableTaskMentions={enableTaskMentions}
+                  initialConversationRefs={msg.contexts?.flatMap(ctx =>
+                    ctx.context_type === 'conversation' && ctx.task_id
+                      ? [
+                          {
+                            task_id: ctx.task_id,
+                            name: ctx.name,
+                            task_updated_at: ctx.task_updated_at ?? undefined,
+                          },
+                        ]
+                      : []
+                  )}
                 />
               ) : (
                 <>

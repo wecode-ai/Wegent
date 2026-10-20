@@ -2652,6 +2652,13 @@ function ChatAreaContent({
               onReEdit={handleReEdit}
               waitingMessage={compactingWaitMessage}
               defaultSaveKnowledgeBaseId={taskType === 'knowledge' ? knowledgeBaseId : undefined}
+              mentionTasks={tasks}
+              currentTaskId={selectedTaskDetail?.id ?? selectedTask?.id}
+              enableTaskMentions={
+                effectiveTaskType === 'chat' ||
+                effectiveTaskType === 'code' ||
+                effectiveTaskType === 'task'
+              }
             />
           </div>
         </div>

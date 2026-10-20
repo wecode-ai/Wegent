@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from html import escape
+from secrets import token_hex
 from typing import Any, Iterable
 
 from fastapi import HTTPException, status
@@ -21,6 +22,7 @@ from app.utils.prompt_utils import extract_display_prompt
 
 MAX_REFERENCE_MESSAGES = 100
 MAX_REFERENCE_CHARS = 100_000
+MAX_TOTAL_REFERENCE_CHARS = 200_000
 
 _UNTRUSTED_CONTEXT_PREAMBLE = "\n".join(
     [
@@ -56,6 +58,7 @@ def build_conversation_reference_context(
     *,
     task_id: int,
     user_id: int,
+    max_chars: int = MAX_REFERENCE_CHARS,
 ) -> str:
     """Render one accessible task as explicit, untrusted model context."""
     task, title = resolve_conversation_reference(db, task_id=task_id, user_id=user_id)
@@ -77,22 +80,22 @@ def build_conversation_reference_context(
             detail="Referenced task has no conversation content",
         )
 
-    rendered, character_omitted = _bounded_transcript(
-        blocks, max_chars=MAX_REFERENCE_CHARS
-    )
+    rendered, character_omitted = _bounded_transcript(blocks, max_chars=max_chars)
     omitted_count = window_omitted + character_omitted
     omitted_note = (
         f"\n[Earlier messages omitted: {omitted_count}]" if omitted_count else ""
     )
+    # A random boundary prevents transcript text from closing the untrusted block.
+    boundary = token_hex(8)
     return "\n".join(
         [
             _UNTRUSTED_CONTEXT_PREAMBLE,
             (
-                f'<referenced_conversation task_id="{task.id}" '
+                f'<referenced_conversation id="{boundary}" task_id="{task.id}" '
                 f'title="{escape(title, quote=True)}">'
             ),
             f"{omitted_note}{rendered}".strip(),
-            "</referenced_conversation>",
+            f'</referenced_conversation id="{boundary}">',
         ]
     )
 
@@ -106,6 +109,8 @@ def build_conversation_references_prompt(
     """Build all conversation reference blocks for a user message."""
     references: list[str] = []
     seen_task_ids: set[int] = set()
+    remaining_chars = MAX_TOTAL_REFERENCE_CHARS
+    omitted_references = 0
     for context in contexts:
         if context.context_type != ContextType.CONVERSATION.value:
             continue
@@ -119,12 +124,22 @@ def build_conversation_references_prompt(
         if task_id in seen_task_ids:
             continue
         seen_task_ids.add(task_id)
+        if remaining_chars <= 0:
+            omitted_references += 1
+            continue
         references.append(
             build_conversation_reference_context(
                 db,
                 task_id=task_id,
                 user_id=user_id,
+                max_chars=min(MAX_REFERENCE_CHARS, remaining_chars),
             )
+        )
+        remaining_chars -= len(references[-1])
+    if omitted_references:
+        references.append(
+            "[Additional referenced conversations omitted because the context budget "
+            f"was exhausted: {omitted_references}]"
         )
     return "\n\n".join(references)
 

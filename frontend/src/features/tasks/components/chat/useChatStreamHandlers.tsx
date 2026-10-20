@@ -53,6 +53,12 @@ import {
 export interface SendMessageOptions {
   interactiveFormAnswer?: InteractiveFormAnswerPayload
   artifactContext?: ArtifactNodeContext
+  /** Previous tasks referenced as background context for this message. */
+  conversationRefs?: Array<{
+    task_id: number
+    name: string
+    task_updated_at?: string
+  }>
 }
 
 function isVirtualKnowledgeBasePath(path: string): boolean {
@@ -464,7 +470,22 @@ export function useChatStreamHandlers({
     ): PreparedChatSend => {
       const isArtifactQuestion = Boolean(sendOptions?.artifactContext)
       const snapshotAttachments = isArtifactQuestion ? [] : [...attachments]
-      const snapshotContexts = isArtifactQuestion ? [] : [...selectedContextsRef.current]
+      const baseContexts = isArtifactQuestion ? [] : [...selectedContextsRef.current]
+      const snapshotContexts = [...baseContexts]
+      sendOptions?.conversationRefs?.forEach(ref => {
+        const exists = snapshotContexts.some(
+          ctx => ctx.type === 'conversation' && ctx.task_id === ref.task_id
+        )
+        if (!exists) {
+          snapshotContexts.push({
+            id: `conversation:${ref.task_id}`,
+            name: ref.name,
+            type: 'conversation',
+            task_id: ref.task_id,
+            task_updated_at: ref.task_updated_at,
+          })
+        }
+      })
       const snapshotAdditionalSkills =
         !isArtifactQuestion && additionalSkills ? [...additionalSkills] : undefined
       const modelId = selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name

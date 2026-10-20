@@ -115,7 +115,7 @@ describe('task conversation mentions', () => {
         onSelect={jest.fn()}
         onSelectTask={jest.fn()}
         onClose={jest.fn()}
-        position={{ top: 0, left: 0 }}
+        position={{ top: 100, bottom: 126, left: 0 }}
       />
     )
 
@@ -138,12 +138,45 @@ describe('task conversation mentions', () => {
         onSelect={jest.fn()}
         onSelectTask={jest.fn()}
         onClose={jest.fn()}
-        position={{ top: 0, left: 0 }}
+        position={{ top: 100, bottom: 126, left: 0 }}
       />
     )
 
     const rows = screen.getAllByTestId(/^mention-(agent|task)-option-/)
     expect(rows[0]).toHaveAttribute('data-testid', 'mention-agent-option-12')
+  })
+
+  it('moves the highlighted option with arrow keys and selects it with Enter', () => {
+    const newer = makeTask(2, 'Newer task', '2026-04-02T00:00:00Z')
+    const older = makeTask(1, 'Older task', '2026-04-01T00:00:00Z')
+    const onSelectTask = jest.fn()
+
+    render(
+      <MentionAutocomplete
+        team={null}
+        tasks={[older, newer]}
+        enableTaskMentions
+        onSelect={jest.fn()}
+        onSelectTask={onSelectTask}
+        onClose={jest.fn()}
+        position={{ top: 100, bottom: 126, left: 0 }}
+      />
+    )
+
+    const newerRow = screen.getByTestId('mention-task-option-2')
+    const olderRow = screen.getByTestId('mention-task-option-1')
+    expect(newerRow).toHaveAttribute('aria-selected', 'true')
+
+    fireEvent.keyDown(document, { key: 'ArrowDown' })
+    expect(olderRow).toHaveAttribute('aria-selected', 'true')
+    expect(olderRow.className).toContain('bg-primary/10')
+
+    fireEvent.keyDown(document, { key: 'ArrowUp' })
+    expect(newerRow).toHaveAttribute('aria-selected', 'true')
+
+    fireEvent.keyDown(document, { key: 'ArrowDown' })
+    fireEvent.keyDown(document, { key: 'Enter' })
+    expect(onSelectTask).toHaveBeenCalledWith(older)
   })
 
   it('searches older tasks outside the loaded task list', async () => {
@@ -159,7 +192,7 @@ describe('task conversation mentions', () => {
         onSelect={jest.fn()}
         onSelectTask={jest.fn()}
         onClose={jest.fn()}
-        position={{ top: 0, left: 0 }}
+        position={{ top: 100, bottom: 126, left: 0 }}
       />
     )
 
@@ -167,38 +200,41 @@ describe('task conversation mentions', () => {
     expect(searchTasks).toHaveBeenCalledWith('historical', { limit: 20 })
   })
 
-  it('clamps the menu height and shifts it down when it would overflow the viewport top', () => {
-    const rectSpy = jest.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
-      x: 0,
-      y: -200,
-      width: 320,
-      height: 320,
-      top: -200,
-      right: 320,
-      bottom: 120,
-      left: 0,
-      toJSON: () => ({}),
-    })
+  it('opens below the cursor when the composer is in the upper half of the viewport', () => {
+    render(
+      <MentionAutocomplete
+        team={null}
+        tasks={[makeTask(1, 'Previous task', '2026-04-01T00:00:00Z')]}
+        enableTaskMentions
+        onSelect={jest.fn()}
+        onSelectTask={jest.fn()}
+        onClose={jest.fn()}
+        position={{ top: 100, bottom: 126, left: 20, direction: 'below' }}
+      />
+    )
 
-    try {
-      render(
-        <MentionAutocomplete
-          team={null}
-          tasks={[makeTask(1, 'Previous task', '2026-04-01T00:00:00Z')]}
-          enableTaskMentions
-          onSelect={jest.fn()}
-          onSelectTask={jest.fn()}
-          onClose={jest.fn()}
-          position={{ top: 0, left: 0 }}
-        />
-      )
+    const menu = screen.getByTestId('mention-autocomplete')
+    expect(menu).toHaveAttribute('data-direction', 'below')
+    expect(menu.style.top).toBe('134px')
+    expect(menu.style.maxHeight).toBe('480px')
+  })
 
-      const menu = screen.getByTestId('mention-autocomplete')
-      expect(menu.style.maxHeight).toBe('160px')
-      expect(menu.style.transform).toBe('translateY(208px)')
-    } finally {
-      rectSpy.mockRestore()
-    }
+  it('flips above the cursor when there is not enough room below', () => {
+    render(
+      <MentionAutocomplete
+        team={null}
+        tasks={[makeTask(1, 'Previous task', '2026-04-01T00:00:00Z')]}
+        enableTaskMentions
+        onSelect={jest.fn()}
+        onSelectTask={jest.fn()}
+        onClose={jest.fn()}
+        position={{ top: 600, bottom: 626, left: 20, direction: 'below' }}
+      />
+    )
+
+    const menu = screen.getByTestId('mention-autocomplete')
+    expect(menu).toHaveAttribute('data-direction', 'above')
+    expect(menu.style.top).toBe('112px')
   })
 
   it('removes the @ query and selects a task from the composer', async () => {

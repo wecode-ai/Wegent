@@ -220,6 +220,7 @@ Selecting a task adds a "Previous task" badge to the composer. When you send the
 - You can reference only tasks you can access. The current task is excluded from the menu.
 - Each referenced task contributes at most its latest 100 messages and about 100,000 characters. Older or longer content is omitted.
 - A message can reference multiple previous tasks. Remove a badge before sending to leave that task out of the request.
+- While editing an earlier message, you can also type `@` to reference a previous task; existing references appear as removable badges.
 
 ### Skill Selection
 
