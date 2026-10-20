@@ -167,6 +167,40 @@ describe('task conversation mentions', () => {
     expect(searchTasks).toHaveBeenCalledWith('historical', { limit: 20 })
   })
 
+  it('clamps the menu height and shifts it down when it would overflow the viewport top', () => {
+    const rectSpy = jest.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: -200,
+      width: 320,
+      height: 320,
+      top: -200,
+      right: 320,
+      bottom: 120,
+      left: 0,
+      toJSON: () => ({}),
+    })
+
+    try {
+      render(
+        <MentionAutocomplete
+          team={null}
+          tasks={[makeTask(1, 'Previous task', '2026-04-01T00:00:00Z')]}
+          enableTaskMentions
+          onSelect={jest.fn()}
+          onSelectTask={jest.fn()}
+          onClose={jest.fn()}
+          position={{ top: 0, left: 0 }}
+        />
+      )
+
+      const menu = screen.getByTestId('mention-autocomplete')
+      expect(menu.style.maxHeight).toBe('160px')
+      expect(menu.style.transform).toBe('translateY(208px)')
+    } finally {
+      rectSpy.mockRestore()
+    }
+  })
+
   it('removes the @ query and selects a task from the composer', async () => {
     const task = makeTask(7, 'Old handoff task', '2026-04-01T00:00:00Z')
     const setMessage = jest.fn()

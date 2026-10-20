@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState, useMemo } from 'react'
 import { MessageSquareText } from 'lucide-react'
 import { taskApis } from '@/apis/tasks'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -85,6 +85,10 @@ export default function MentionAutocomplete({
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [remoteTasks, setRemoteTasks] = useState<Task[]>([])
   const [isSearchingTasks, setIsSearchingTasks] = useState(false)
+  // Viewport clamping: the menu grows above the cursor, so a composer near the
+  // bottom of a short window can push the newest (top) rows off-screen.
+  const [menuMaxHeight, setMenuMaxHeight] = useState<number | null>(null)
+  const [menuTranslateY, setMenuTranslateY] = useState(0)
 
   useEffect(() => {
     const normalizedQuery = query.trim()
@@ -140,6 +144,32 @@ export default function MentionAutocomplete({
     nextRows.push(...taskCandidates.map(task => ({ kind: 'task' as const, task })))
     return nextRows
   }, [filteredAgents, showTeamMention, taskCandidates])
+
+  useLayoutEffect(() => {
+    const menu = menuRef.current
+    if (!menu) return
+    // Measure the untransformed position so the correction converges instead of
+    // oscillating with the currently applied offset.
+    const appliedTransform = menu.style.transform
+    if (appliedTransform) menu.style.transform = ''
+    const rect = menu.getBoundingClientRect()
+    if (appliedTransform) menu.style.transform = appliedTransform
+    if (rect.height === 0) return
+    // Available space between the viewport top edge and the menu bottom (the
+    // cursor position). Keep the whole menu inside the viewport and let it use
+    // as much of that space as possible.
+    const viewportMargin = 8
+    const untransformedTop = rect.top
+    const availableAbove = Math.floor(rect.bottom - viewportMargin)
+    const nextMaxHeight = Math.max(160, Math.min(480, availableAbove))
+    const nextTranslateY = untransformedTop < viewportMargin ? viewportMargin - untransformedTop : 0
+    if (menuMaxHeight === null || Math.abs(menuMaxHeight - nextMaxHeight) > 1) {
+      setMenuMaxHeight(nextMaxHeight)
+    }
+    if (Math.abs(menuTranslateY - nextTranslateY) > 1) {
+      setMenuTranslateY(nextTranslateY)
+    }
+  }, [rows, menuMaxHeight, menuTranslateY])
 
   useEffect(() => {
     setSelectedIndex(0)
@@ -209,10 +239,12 @@ export default function MentionAutocomplete({
     <div
       ref={menuRef}
       data-testid="mention-autocomplete"
-      className="absolute z-50 max-h-[320px] min-w-[240px] max-w-[calc(100vw-24px)] overflow-y-auto rounded-lg border border-border bg-surface py-1 shadow-lg sm:w-[380px]"
+      className="absolute z-50 min-w-[240px] max-w-[calc(100vw-24px)] overflow-y-auto rounded-lg border border-border bg-surface py-1 shadow-lg sm:w-[380px]"
       style={{
         bottom: `calc(100% - ${position.top}px)`,
         left: `${position.left}px`,
+        maxHeight: menuMaxHeight ?? 320,
+        transform: menuTranslateY ? `translateY(${menuTranslateY}px)` : undefined,
       }}
     >
       {rows.map((row, index) => {
