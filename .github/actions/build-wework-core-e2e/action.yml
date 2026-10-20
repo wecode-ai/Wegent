@@ -42,10 +42,12 @@ runs:
         BUILD_RUNTIMES_FROM_SOURCE: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
         EXECUTOR_ARTIFACT: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
         EXECUTOR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        OCI_RUNTIME_WAIT_SECONDS: "420"
+        # Allow the producer's 25-minute deadline plus runner queue time.
+        # The 35-minute consumer deadline leaves time for setup and archiving.
+        OCI_RUNTIME_WAIT_SECONDS: "1800"
         CI: true
         WEWORK_E2E_PREBUILT_EXECUTOR_PATH: ${{ github.workspace }}/.ci-artifacts/wegent-executor
-        WEWORK_E2E_PREBUILT_EXECUTOR_WAIT_SECONDS: "420"
+        WEWORK_E2E_PREBUILT_EXECUTOR_WAIT_SECONDS: "1800"
         WEWORK_ELECTRON_DEPENDENCIES_READY: "true"
       run: |
         mkdir -p .ci-artifacts
