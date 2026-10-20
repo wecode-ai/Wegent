@@ -58,7 +58,7 @@ export function ReplyPredictionProvider({
   const runtimeRevision = latestTurnId ?? ''
   const modelSelection = lifecycle?.task?.modelSelection
   const runtimeSource = useMemo<ReplyPredictionSource | null>(() => {
-    if (!deviceId || !taskId || !latestTurnId) return null
+    if (!deviceId || !taskId || !workspacePath || !latestTurnId) return null
     return {
       scope: JSON.stringify([deviceId, taskId, workspacePath]),
       revision: runtimeRevision,
