@@ -76,6 +76,7 @@ export const DESKTOP_CHECKPOINTS = [
   'model-overload-recovery',
   'transcript-sync',
   'running-conversation-history',
+  'latest-conversation-history',
   'running-plan-history',
   'running-sidebar-state',
   'codex-notification-isolation',
