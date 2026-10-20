@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useReducer, useRef } from "react";
 
 import { collectIssueSubtreeIds, removeIssueSubtree } from "../board";
+import { isIssueVersionConflict } from "../issue-detail/issueVersionConflict";
 import type {
   SharedWorkspaceApi,
   WorkspaceBoardSnapshot,
@@ -1429,10 +1430,11 @@ export function createCollaborationWorkspaceControllerCommands({
           issues: reorderedItems,
         });
       } catch (error) {
-        if (isVersionConflict(error)) {
+        if (isIssueVersionConflict(error)) {
           await loadProject(issue.cloud_project_id, false);
           reportError(messages.conflict, "conflict");
         } else {
+          await loadProject(issue.cloud_project_id, false);
           reportError(messages.saveFailed);
         }
       }

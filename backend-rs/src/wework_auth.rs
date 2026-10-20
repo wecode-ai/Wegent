@@ -523,10 +523,10 @@ async fn poll_wework_auth_session(
     // failures.
     let session = read_session(state, &session_id).await?;
     // `_require_poll_token` runs after the read.
-    if !session
+    if session
         .get("poll_token")
         .and_then(Value::as_str)
-        .is_some_and(|stored| stored == poll_token)
+        .is_none_or(|stored| stored != poll_token)
     {
         return Err(invalid_poll_token());
     }
