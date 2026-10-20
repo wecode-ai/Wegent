@@ -14,6 +14,12 @@ Menu items follow the current workbench state: when an action is not available o
 
 The Developer tools submenu also offers a **Process Explorer**. It opens a separate window that shows a collapsible tree grouped by the object that owns each process: the application, its windows (including embedded browser views), local runtimes (core runtime, executor, workbench runtimes, plugin development, and their children), and Chromium helpers. Each row shows the process name, process ID, CPU, memory, and uptime; selecting a row shows its launch details in the footer. Column widths can be adjusted by dragging a header edge and reset by double-clicking it. A filter matches names, PIDs, and launch details. The selected row detail is shown in full in the footer, can be scrolled when long, and can be copied with a small icon; there is no diagnostics export. The window follows the current WeWork language and theme, and can be pinned on top. The explorer is read-only and never terminates a process; a full WeWork restart remains the reliable recovery path.
 
+Process attribution and collection have the following limits:
+
+- Tabs in the main window share a renderer process, so its memory cannot be split by tab. Independent workbench runtimes can be attributed to their tabs.
+- Executor children are grouped under the executor, without mapping them to individual tasks. Orphaned processes from a previous launch that have left the current process tree are outside the collection scope.
+- The explorer does not start periodic process collection until its window opens, although the application still loads the related modules and initializes the collection service. The open window refreshes every two seconds, including while minimized. Closing it stops periodic refreshes; an outstanding collection may still finish.
+
 ## Use top-level tabs
 
 The Wework desktop app uses top-level tabs for tasks, project spaces, agents, and other product pages. Sidebar links navigate within the active tab. A new tab is created only when you select the top-bar **+** or another explicit new-tab action from a tab menu.

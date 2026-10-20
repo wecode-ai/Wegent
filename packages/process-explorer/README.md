@@ -60,3 +60,34 @@ await service.snapshot()
 
 The application owns its view. It reads `ProcessSnapshot` and groups records by
 its own product objects. There is no termination API.
+
+## Collection lifecycle
+
+Constructing the service does not start collection or a polling timer. Call
+`snapshot()` to collect data; the embedding application owns refresh scheduling.
+The default minimum sample interval is 1000 ms, and concurrent calls share an
+in-flight collection. External process-table reads time out after 10 seconds
+by default. A timed-out read remains shared until it settles, preventing later
+refreshes from accumulating collectors. Collection gaps are reported through
+structured `degraded` entries.
+
+Host descriptors supply explicit owners; descendants of roots marked with
+`includeDescendants` inherit those owners. The package does not infer task
+ownership or discover orphaned processes outside the application and injected
+root process trees.
+
+## Wework integration
+
+Wework's renderer imports the contract types through its TypeScript path
+mapping. Its Electron host uses a separate pnpm project:
+`wework/electron/scripts/stage-process-explorer.mjs` copies the contract, core,
+and host sources into the ignored `electron/src/vendor/process-explorer`
+directory before compilation. The compiled files are packaged under
+`dist/vendor`; edit the package sources rather than the staged copies.
+
+The existing Performance Diagnostics collector remains separate. It uses the
+macOS `ps` RSS and `physical_footprint_kib` contract for memory E2E baselines,
+while this explorer uses Electron `workingSetSize` for Electron-owned processes
+and system-table RSS for other processes. These measurements are not
+interchangeable; see the
+[performance diagnostics guide](../../docs/en/wework/developer-guide/wework-performance-diagnostics.md).
