@@ -214,6 +214,22 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       assert.ok(cached, 'The completed task did not persist its prediction result')
       await control.command('hover', `[data-testid="runtime-local-task-row-${task.taskId}"]`)
       await control.command('click', `[data-testid="runtime-local-task-archive-${task.taskId}"]`)
+      await control.command(
+        'waitFor',
+        `[data-testid="runtime-local-task-archive-toast-${task.taskId}"]`
+      )
+      const archiveDeadline = Date.now() + 10000
+      while (
+        Number(
+          await control.command(
+            'getElementCount',
+            `[data-testid="runtime-local-task-row-${task.taskId}"]`
+          )
+        )
+      ) {
+        assert.ok(Date.now() < archiveDeadline, 'The task did not finish archiving')
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
       await control.command('navigate', 'body', { value: '/settings/archived-conversations' })
       const taskSuffix = `${task.deviceId}-${task.taskId}`.replace(/[^a-zA-Z0-9_-]/g, '-')
       const deleteButton = `[data-testid="archived-delete-button-${taskSuffix}"]`
