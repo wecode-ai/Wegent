@@ -1,29 +1,26 @@
 import * as Popover from '@radix-ui/react-popover'
 import { Ellipsis } from 'lucide-react'
-import { useId, useRef, useState, type ReactNode } from 'react'
+import { useId, useState, type ReactNode } from 'react'
 import { useCollaborationPortalTheme } from '../theme/CollaborationTheme'
 import './IssuePropertiesPopover.css'
 
 export function IssuePropertiesPopover({
   label,
   children,
+  onClose,
 }: {
   label: string
   children: ReactNode
+  onClose?: () => void
 }) {
   const [open, setOpen] = useState(false)
-  const contentRef = useRef<HTMLDivElement>(null)
   const portalTheme = useCollaborationPortalTheme()
   const titleId = useId()
 
   function changeOpen(nextOpen: boolean) {
     if (!nextOpen) {
-      // Commit focused field drafts before dismissing and unmounting the content.
-      const content = contentRef.current
-      const activeElement = content?.ownerDocument.activeElement
-      if (activeElement instanceof HTMLElement && content?.contains(activeElement)) {
-        activeElement.blur()
-      }
+      // Commit drafts explicitly: inactive desktop windows may not emit blur.
+      onClose?.()
     }
     setOpen(nextOpen)
   }
@@ -43,7 +40,6 @@ export function IssuePropertiesPopover({
       <Popover.Portal>
         <Popover.Content
           {...portalTheme}
-          ref={contentRef}
           className={`${portalTheme.className} task-detail-more-menu-popover z-system-popover`}
           aria-labelledby={titleId}
           data-testid="cloud-todo-more-properties-popover"

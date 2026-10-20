@@ -10,7 +10,7 @@ Supports Team, Task, and KnowledgeBase resource types.
 """
 
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -25,21 +25,17 @@ from app.schemas.share import (
     JoinByLinkResponse,
     KBShareInfoResponse,
     MemberListResponse,
-    MyKBPermissionResponse,
     MyPermissionSourcesResponse,
     PendingRequestListResponse,
     PublicKnowledgeBaseResponse,
     ResourceMemberCreate,
     ResourceMemberResponse,
     ResourceMemberUpdate,
-    ResourceType,
     ReviewRequestBody,
     ReviewRequestResponse,
     ShareInfoResponse,
-    ShareLinkConfig,
     ShareLinkCreate,
     ShareLinkResponse,
-    ShareLinkUpdate,
 )
 from app.services.share import (
     knowledge_share_service,
@@ -529,31 +525,6 @@ def review_request(
 # =============================================================================
 # KnowledgeBase Specific Endpoints
 # =============================================================================
-
-
-# MIGRATION-CANDIDATE(api="GET /api/share/KnowledgeBase/:resource_id/my-permission"): remove after final confirmation.
-# @router.get(
-#     "/KnowledgeBase/{resource_id}/my-permission",
-#     response_model=MyKBPermissionResponse,
-#     summary="Get my KnowledgeBase permission",
-# )
-def get_my_kb_permission(
-    resource_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-) -> MyKBPermissionResponse:
-    """
-    Get current user's permission for a knowledge base.
-
-    Returns permission level, creator status, and pending request info.
-
-    - **resource_id**: Knowledge base ID
-    """
-    return knowledge_share_service.get_my_permission(
-        db=db,
-        knowledge_base_id=resource_id,
-        user_id=current_user.id,
-    )
 
 
 @router.get(

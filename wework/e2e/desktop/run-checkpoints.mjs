@@ -48,6 +48,7 @@ const CHECKPOINT_RESOURCES = new Map([
     ['collaboration-runtime', 'desktop-runtime-intensive'],
   ],
   ['collaboration-issue-comment-notification', ['collaboration-runtime']],
+  ['collaboration-issue-comment-attachments', ['collaboration-runtime']],
   ['collaboration-issue-mcp-comments', ['collaboration-runtime']],
   ['collaboration-issue-archive', ['collaboration-runtime', 'desktop-runtime-intensive']],
 ])
@@ -83,6 +84,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'model-overload-recovery': './scenarios/model-overload-recovery.scenario.mjs',
   'transcript-sync': './scenarios/transcript-sync.scenario.mjs',
   'running-conversation-history': './scenarios/running-conversation-history.scenario.mjs',
+  'latest-conversation-history': './scenarios/latest-conversation-history.scenario.mjs',
   'running-plan-history': './scenarios/running-plan-history.scenario.mjs',
   'running-sidebar-state': './scenarios/running-sidebar-state.scenario.mjs',
   'codex-notification-isolation': './scenarios/codex-notification-isolation.scenario.mjs',
@@ -124,6 +126,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
     './scenarios/collaboration-local-group-cancellation.scenario.mjs',
   'collaboration-issue-comment-mention':
     './scenarios/collaboration-issue-comment-mention.scenario.mjs',
+  'collaboration-issue-comment-attachments':
+    './scenarios/collaboration-issue-comment-attachments.scenario.mjs',
   'collaboration-issue-comment-notification':
     './scenarios/collaboration-issue-comment-notification.scenario.mjs',
   'collaboration-issue-mcp-comments': './scenarios/collaboration-issue-mcp-comments.scenario.mjs',
@@ -180,6 +184,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-human-round-resume',
   'collaboration-local-group-cancellation',
   'collaboration-issue-comment-mention',
+  'collaboration-issue-comment-attachments',
   'collaboration-issue-comment-notification',
   'collaboration-issue-mcp-comments',
   'collaboration-issue-archive',
@@ -193,6 +198,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'model-overload-recovery',
   'transcript-sync',
   'running-conversation-history',
+  'latest-conversation-history',
   'running-plan-history',
   'running-sidebar-state',
   'codex-notification-isolation',

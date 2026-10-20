@@ -16,7 +16,8 @@ from app.services.collaboration_revocation import (
     sweep_revoked_work,
 )
 from app.services.loop_item_executions.service import loop_item_execution_service
-from tests.api.test_collaboration_permission_contract import invite, scope
+from tests.api.test_collaboration_permission_contract import invite
+from tests.api.test_collaboration_permission_contract import scope as scope
 from tests.api.test_workspace_shared_agents import _native_team
 from tests.utils.collaboration import authorize_project_agent, authorize_resource
 
@@ -109,7 +110,7 @@ def test_cp01_cp05_archived_parent_denies_direct_and_public_access(
     for headers in (scope["owner"], scope["member"]):
         assert (
             test_client.get(
-                f"/api/v1/cloud-projects/{project.id}", headers=headers
+                f"/api/v1/projects/{project.id}", headers=headers
             ).status_code
             == 404
         )
@@ -123,7 +124,7 @@ def test_cp05_public_read_does_not_create_participants(test_client, scope):
         json={"version": scope["project"]["version"], "visibility": "public"},
     )
     assert result.status_code == 200, result.text
-    detail = test_client.get(f"/api/v1/cloud-projects/{pid}", headers=scope["member"])
+    detail = test_client.get(f"/api/v1/projects/{pid}", headers=scope["member"])
     assert detail.status_code == 200
     assert detail.json()["access_role"] == "Viewer"
     assert detail.json()["permission_sources"] == [{"type": "public", "role": "Viewer"}]
@@ -643,7 +644,7 @@ def test_cp04_project_guest_reads_bindings_without_space_catalog_permission(
         json={"name": "Visible binding"},
     )
     assert created.status_code == 201
-    detail = test_client.get(f"/api/v1/cloud-projects/{pid}", headers=scope["member"])
+    detail = test_client.get(f"/api/v1/projects/{pid}", headers=scope["member"])
     assert detail.status_code == 200
     assert detail.json()["workspace_access_role"] is None
     visible = test_client.get(
