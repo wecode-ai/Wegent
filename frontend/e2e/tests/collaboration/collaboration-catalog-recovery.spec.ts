@@ -63,7 +63,12 @@ test('settings skip the board snapshot, retry the real candidate catalog, and re
 }) => {
   const issue = await webApi<Resource>(page, `/api/v1/cloud-projects/${project.id}/loop-items`, {
     method: 'POST',
-    body: { title: 'Visible after settings', status: 'pending', priority: 'none', tags: [] },
+    body: {
+      title: 'Visible after settings',
+      status: 'pending',
+      priority: 'none',
+      tags: ['task-only-tag'],
+    },
   })
   const snapshots: string[] = []
   page.on('request', request => {
@@ -103,6 +108,16 @@ test('settings skip the board snapshot, retry the real candidate catalog, and re
       'Visible after settings'
     )
     expect(snapshots.length).toBeGreaterThan(0)
+    await selectCollaborationProjectView(page, 'manage')
+    await page.getByTestId('collaboration-project-settings-project').click()
+    const tagCatalogLoaded = page.waitForResponse(
+      response =>
+        new URL(response.url()).pathname.endsWith(`/cloud-projects/${project.id}/board-snapshot`) &&
+        response.ok()
+    )
+    await page.getByTestId('cloud-project-manage-tags-toggle').click()
+    await tagCatalogLoaded
+    await expect(page.getByTestId('cloud-project-tag-task-only-tag')).toBeVisible()
   } finally {
     await page.unroute(resourceUrl, loseRealResponse)
   }
@@ -139,7 +154,7 @@ test('member transport failure preserves groups, allows persisted edits, and rec
     await expect(page.getByTestId(`collaboration-group-${group.id}`)).toContainText(
       'Group before failure'
     )
-    await page.getByTestId(`collaboration-group-${group.id}`).click()
+    await page.getByTestId(`collaboration-group-manage-${group.id}`).click()
     await page
       .getByTestId('collaboration-group-detail-name')
       .fill('Group saved during member failure')
@@ -150,6 +165,7 @@ test('member transport failure preserves groups, allows persisted edits, and rec
     )
     await page.getByTestId('collaboration-group-detail-save').click()
     expect((await saved).ok()).toBe(true)
+    await expect(page.getByTestId('collaboration-group-detail-save')).toBeEnabled()
     await expect
       .poll(async () => {
         const result = await webApi<{ items: Array<Resource & { name: string }> }>(page, groupsPath)

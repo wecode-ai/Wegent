@@ -96,6 +96,10 @@ while device-native model discovery fails or remains pending. Collaboration grou
 load their member list independently. A member loading failure offers a retry;
 loaded groups, Agents, and group saves remain available.
 
+Basic project settings initially show project properties. Expand **Tags** to load
+task tags, with retry on failure. Once loaded, tags used by tasks remain manageable;
+renaming or deleting a tag also updates the affected tasks.
+
 ### Set cloud board access
 
 Cloud projects have two access modes: **Private** and **Public**. A public project grants every signed-in user the Viewer (read-only) or Developer (create and edit issues) role. A private project is available only through existing grants. Project roles are Owner, Maintainer, Developer, and Viewer. Owners manage the project and members; Maintainers can also manage issue security. Developers and above can assign the issue owner, and the issue creator can always assign their own issue.

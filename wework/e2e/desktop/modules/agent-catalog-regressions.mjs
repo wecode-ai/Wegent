@@ -29,7 +29,10 @@ export async function assertSavedCloudRouting(request, agent, model, executionPo
   const team = await request(`/api/teams/${agent.wegentTeamId}`)
   const bot = team.bots.find(entry => entry.role === 'leader')?.bot ?? team.bots[0]?.bot
   assert.ok(bot, 'The saved Team has no Bot')
-  assert.deepEqual(bot.execution_policy, executionPolicy)
+  assert.deepEqual(bot.execution_policy, {
+    mode: executionPolicy.mode,
+    environment_id: executionPolicy.mode === 'fixed' ? executionPolicy.environment_id : null,
+  })
   assert.equal(bot.model_policy.mode, 'fixed')
   assert.equal(bot.model_policy.model.source, 'cloud')
   assert.equal(bot.model_policy.model.cloud_model.name, model.name)

@@ -324,6 +324,7 @@ const sharedMessages: Record<
     "common.delete": "删除",
     "common.remove": "移除",
     "common.retry": "重试",
+    "common.loading": "正在加载…",
     "common.save": "保存",
     "todo.codex_environment_hint":
       "任务会在所选执行环境的独立工作目录中运行，并关联当前协作项目。",
@@ -815,6 +816,7 @@ const sharedMessages: Record<
     "common.delete": "Delete",
     "common.remove": "Remove",
     "common.retry": "Retry",
+    "common.loading": "Loading…",
     "common.save": "Save",
     "todo.codex_environment_hint":
       "Tasks run in their own working directories on the selected execution environment and remain linked to this collaboration project.",

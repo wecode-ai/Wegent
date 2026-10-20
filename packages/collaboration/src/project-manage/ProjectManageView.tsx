@@ -124,6 +124,13 @@ export function ProjectManageView<
   const [renamingTag, setRenamingTag] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const [tagBusy, setTagBusy] = useState(false)
+  const [tagCatalogProjectId, setTagCatalogProjectId] = useState<string | null>(null)
+  const [tagLoadRevision, setTagLoadRevision] = useState(0)
+  const [tagLoadState, setTagLoadState] = useState<{
+    projectId: string
+    error: string | null
+    loading: boolean
+  } | null>(null)
   const [displayBusy, setDisplayBusy] = useState(false)
   const [statusBusy, setStatusBusy] = useState(false)
   const [visibilityBusy, setVisibilityBusy] = useState(false)
@@ -252,20 +259,30 @@ export function ProjectManageView<
     onOpenMembersRequestConsumed,
   })
 
+  const tagLoadFailed = host.translate('todo.load_project_failed', '加载项目失败')
   useEffect(() => {
-    if (section !== 'all' && section !== 'overview') return
+    if (tagCatalogProjectId !== project.id || (section !== 'all' && section !== 'overview')) return
     let active = true
+    setTagLoadState({ projectId: project.id, loading: true, error: null })
     void api.listItems(project.id).then(
       response => {
-        if (active) setItems(response.items)
+        if (!active) return
+        setItems(response.items)
+        setTagLoadState({ projectId: project.id, loading: false, error: null })
       },
-      cause =>
-        active && reportError(cause, host.translate('todo.load_project_failed', '加载项目失败'))
+      cause => {
+        if (!active) return
+        setTagLoadState({
+          projectId: project.id,
+          loading: false,
+          error: cause instanceof Error ? cause.message : tagLoadFailed,
+        })
+      }
     )
     return () => {
       active = false
     }
-  }, [api, host, project.id, reportError, section, setItems])
+  }, [api, project.id, section, setItems, tagCatalogProjectId, tagLoadFailed, tagLoadRevision])
 
   const allTags = useMemo(
     () => Array.from(new Set([...tags, ...items.flatMap(item => item.tags ?? [])])),
@@ -710,25 +727,67 @@ export function ProjectManageView<
           }
         />
 
-        <ProjectTagsSection
-          host={host}
+        <details
+          key={project.id}
           className={
             section === 'all' || section === 'overview' ? 'border-t border-border py-6' : 'hidden'
           }
-          allTags={allTags}
-          renamingTag={renamingTag}
-          renameValue={renameValue}
-          tagComposerOpen={tagComposerOpen}
-          newTag={newTag}
-          tagBusy={tagBusy}
-          setTagComposerOpen={setTagComposerOpen}
-          setNewTag={setNewTag}
-          setRenamingTag={setRenamingTag}
-          setRenameValue={setRenameValue}
-          createTag={createTag}
-          renameTag={renameTag}
-          deleteTag={deleteTag}
-        />
+          data-testid="cloud-project-manage-tags"
+          onToggle={event => {
+            if (event.currentTarget.open) setTagCatalogProjectId(project.id)
+          }}
+        >
+          <summary
+            className="cursor-pointer text-heading-md font-semibold"
+            data-testid="cloud-project-manage-tags-toggle"
+          >
+            {host.translate('todo.project_tags', '标签')}
+          </summary>
+          {tagCatalogProjectId === project.id &&
+            (tagLoadState?.projectId !== project.id || tagLoadState.loading ? (
+              <p
+                role="status"
+                data-testid="cloud-project-manage-tags-loading"
+                className="mt-3 text-sm text-text-muted"
+              >
+                {host.translate('common.loading', '正在加载…')}
+              </p>
+            ) : tagLoadState.error ? (
+              <div
+                role="alert"
+                data-testid="cloud-project-manage-tags-error"
+                className="mt-3 text-sm text-text-primary"
+              >
+                {tagLoadState.error}
+                <button
+                  type="button"
+                  className="ml-2 underline"
+                  data-testid="cloud-project-manage-tags-retry"
+                  onClick={() => setTagLoadRevision(revision => revision + 1)}
+                >
+                  {host.translate('common.retry', '重试')}
+                </button>
+              </div>
+            ) : (
+              <ProjectTagsSection
+                host={host}
+                className="mt-3"
+                allTags={allTags}
+                renamingTag={renamingTag}
+                renameValue={renameValue}
+                tagComposerOpen={tagComposerOpen}
+                newTag={newTag}
+                tagBusy={tagBusy}
+                setTagComposerOpen={setTagComposerOpen}
+                setNewTag={setNewTag}
+                setRenamingTag={setRenamingTag}
+                setRenameValue={setRenameValue}
+                createTag={createTag}
+                renameTag={renameTag}
+                deleteTag={deleteTag}
+              />
+            ))}
+        </details>
 
         {(section === 'all' || section === providerSettingsSection) && (
           <ProjectProviderSection

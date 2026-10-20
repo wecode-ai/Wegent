@@ -46,9 +46,6 @@ export function ProjectTagsSection({
     <section className={className}>
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-heading-md font-semibold">
-            {host.translate('todo.project_tags', '标签')}
-          </h2>
           <p className="mt-1 text-sm text-text-muted">
             {host.translate('todo.project_tags_description', '用于区分任务类型并筛选看板。')}
           </p>

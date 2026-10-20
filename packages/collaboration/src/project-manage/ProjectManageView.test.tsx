@@ -579,6 +579,62 @@ it('loads only resources needed by the selected settings section', async () => {
   expect(api.listItems).not.toHaveBeenCalled()
   renderView(api, host, current, vi.fn(), undefined, 'overview')
   await flushPromises()
+  expect(api.listItems).not.toHaveBeenCalled()
+  const tree = renderView(api, host, current, vi.fn(), undefined, 'overview')
+  findByTestId(tree, 'cloud-project-manage-tags').props.onToggle({ currentTarget: { open: true } })
+  renderView(api, host, current, vi.fn(), undefined, 'overview')
+  await flushPromises()
   expect(api.listItems).toHaveBeenCalledOnce()
   expect(api.listMembers).toHaveBeenCalledOnce()
+})
+
+it('retries tag discovery without exposing mutations before task tags are available', async () => {
+  const api = createApi()
+  const host = createHost()
+  const current = project('project-a', 'private')
+  vi.mocked(api.listItems)
+    .mockRejectedValueOnce(new Error('Tag catalog unavailable'))
+    .mockResolvedValueOnce({ items: [{ id: 'item-1', version: 1, tags: ['task-only-tag'] }] })
+  let tree = renderView(api, host, current, vi.fn(), undefined, 'overview')
+  findByTestId(tree, 'cloud-project-manage-tags').props.onToggle({ currentTarget: { open: true } })
+  renderView(api, host, current, vi.fn(), undefined, 'overview')
+  await flushPromises()
+  tree = renderView(api, host, current, vi.fn(), undefined, 'overview')
+  expect(findByTestId(tree, 'cloud-project-manage-tags-error').props.children[0]).toBe(
+    'Tag catalog unavailable'
+  )
+  expect(findByTestId(tree, 'cloud-project-tag-task-only-tag')).toBeNull()
+  findByTestId(tree, 'cloud-project-manage-tags-retry').props.onClick()
+  renderView(api, host, current, vi.fn(), undefined, 'overview')
+  await flushPromises()
+  tree = renderView(api, host, current, vi.fn(), undefined, 'overview')
+  expect(findByTestId(tree, 'cloud-project-tag-task-only-tag')).not.toBeNull()
+  expect(findByTestId(tree, 'cloud-project-manage-tags-error')).toBeNull()
+  expect(api.listItems).toHaveBeenCalledTimes(2)
+  renderView(api, { ...host }, current, vi.fn(), undefined, 'overview')
+  await flushPromises()
+  expect(api.listItems).toHaveBeenCalledTimes(2)
+})
+
+it('discards late tag discovery after switching projects and leaves the next overview metadata-only', async () => {
+  const api = createApi()
+  const host = createHost()
+  const first = project('project-a', 'private')
+  const second = project('project-b', 'private')
+  let resolveTags!: (result: { items: ProjectManageItem[] }) => void
+  vi.mocked(api.listItems).mockImplementationOnce(
+    () =>
+      new Promise(resolve => {
+        resolveTags = resolve
+      })
+  )
+  let tree = renderView(api, host, first, vi.fn(), undefined, 'overview')
+  findByTestId(tree, 'cloud-project-manage-tags').props.onToggle({ currentTarget: { open: true } })
+  renderView(api, host, first, vi.fn(), undefined, 'overview')
+  renderView(api, host, second, vi.fn(), undefined, 'overview')
+  resolveTags({ items: [{ id: 'item-1', version: 1, tags: ['old-task-tag'] }] })
+  await flushPromises()
+  tree = renderView(api, host, second, vi.fn(), undefined, 'overview')
+  expect(findByTestId(tree, 'cloud-project-tag-old-task-tag')).toBeNull()
+  expect(api.listItems).toHaveBeenCalledOnce()
 })

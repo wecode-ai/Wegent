@@ -923,6 +923,7 @@ test.describe('Collaboration cloud capabilities', () => {
         })
         .toBe('public')
 
+      await page.getByTestId('cloud-project-manage-tags-toggle').click()
       await page.getByRole('button', { name: /新建标签|New tag/ }).click()
       await page.getByTestId('cloud-project-tag-create-input').fill(tagName)
       await page.getByTestId('cloud-project-tag-create-confirm').click()
