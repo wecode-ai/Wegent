@@ -82,6 +82,16 @@ describe("persistIssueDetailFields", () => {
     expect(port.update).toHaveBeenCalledOnce();
   });
 
+  it("does not classify a business denial as a version conflict", async () => {
+    const error = { status: 409, detail: "This action is unavailable" };
+    const port = portFor(issue, error);
+    await expect(
+      persistIssueDetailFields(issue, { status: "completed" }, port),
+    ).rejects.toBe(error);
+    expect(port.get).not.toHaveBeenCalled();
+    expect(port.update).toHaveBeenCalledOnce();
+  });
+
   it("stops if another version conflict arrives after rebasing", async () => {
     const port = portFor({ ...issue, version: 2 });
     const conflict = { code: "version_conflict" };

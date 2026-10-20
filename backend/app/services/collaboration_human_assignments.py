@@ -16,12 +16,89 @@ from app.models.delivery import (
     LoopItemTaskBinding,
     loop_datetime_is_unset,
 )
+from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
 from app.models.wework_notification import WeworkNotification
 from app.services.delivery.service import delivery_service
 from app.services.wework_notifications import create_notification
 
 DIRECT_HUMAN_ROUND_ID = "direct"
+
+
+def human_task_binding(db: Session, item: LoopItem, user_id: int) -> dict | None:
+    """Expose the current assignee's task identity independently of status actions."""
+    if item.assignee_user_id != user_id or item.status != "in_progress":
+        return None
+    project = db.get(CloudProject, item.cloud_project_id)
+    metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
+    if (
+        project is None
+        or project.task_provider != "local"
+        or any(
+            metadata.get(key)
+            for key in ("workflow", "external_index", "external_shadow")
+        )
+    ):
+        return None
+    from app.services.issue_assignments import issue_assignment_service
+
+    active = issue_assignment_service.active_for_issue(db, item.id)
+    if len(active) != 1:
+        return None
+    assignment = active[0]
+    if (
+        assignment.member_type != "human"
+        or assignment.metadata.get("trigger") == "default"
+        or assignment.workflow_step
+        or assignment.member_id != str(item.assignee_user_id)
+    ):
+        return None
+    if assignment.metadata.get("trigger") == "collaboration_round":
+        return _round_human_task_binding(db, item)
+    return {
+        "humanAssignmentId": direct_human_assignment_id(
+            issue_id=item.id, assignment_id=assignment.id
+        ),
+        "dispatchId": f"direct-human:{assignment.id}",
+        "dispatchRoundId": DIRECT_HUMAN_ROUND_ID,
+        "assignmentId": assignment.id,
+    }
+
+
+def _round_human_task_binding(db: Session, item: LoopItem) -> dict | None:
+    activities = (
+        db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.project_id == str(item.cloud_project_id),
+            ProjectChatMessage.task_id == item.id,
+        )
+        .order_by(ProjectChatMessage.created_at.desc(), ProjectChatMessage.id.desc())
+        .all()
+    )
+    for activity in activities:
+        metadata = activity.metadata_json
+        if not isinstance(metadata, dict):
+            continue
+        if metadata.get("activity_type") != "manager_assignment":
+            continue
+        members = metadata.get("dispatch_assignments")
+        if not isinstance(members, list):
+            return None
+        for member in members:
+            if not isinstance(member, dict):
+                continue
+            if member.get("assignee_type") == "human" and str(
+                member.get("human_user_id")
+            ) == str(item.assignee_user_id):
+                binding = {
+                    "humanAssignmentId": member.get("human_assignment_id"),
+                    "dispatchId": metadata.get("dispatch_id"),
+                    "dispatchRoundId": metadata.get("coordination_round_id"),
+                    "assignmentId": member.get("assignment_id"),
+                }
+                return binding if all(binding.values()) else None
+        return None
+    return None
 
 
 def collaboration_human_assignment_id(

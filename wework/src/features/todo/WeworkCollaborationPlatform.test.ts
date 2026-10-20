@@ -1744,14 +1744,11 @@ describe('Wework collaboration workspace API', () => {
         sequence_number: 1,
         ...(humanWork
           ? {
-              human_work: {
-                can_submit: true,
-                ai_task_binding: {
-                  humanAssignmentId: 'human-assignment',
-                  dispatchId: 'direct-human:assignment',
-                  dispatchRoundId: 'direct',
-                  assignmentId: 'assignment',
-                },
+              human_task_binding: {
+                humanAssignmentId: 'human-assignment',
+                dispatchId: 'direct-human:assignment',
+                dispatchRoundId: 'direct',
+                assignmentId: 'assignment',
               },
             }
           : {}),
@@ -1799,11 +1796,6 @@ describe('Wework collaboration workspace API', () => {
       expect(detail.props.conversation?.props.initialTaskInput).toContain(
         '[$#1 · Use the prepared environment](wework-issue://local-environment-project/ISSUE-ENV)'
       )
-      if (humanWork) {
-        expect(detail.props.conversation?.props.initialTaskInput).toContain(
-          '不要替人提交或验收 Issue'
-        )
-      }
     }
   )
 

@@ -37,8 +37,6 @@ const MANUAL_ISSUE = `人工复核项目周报-${process.pid}`
 const MARKER = `DIRECT_HUMAN_DISPATCH_${process.pid}`
 const COMPLETION = `${MARKER}_DELIVERED`
 const MANUAL_RESULT = `${MARKER}：已人工核对周报。`
-const REVISED_RESULT = `${MANUAL_RESULT} 已补充验收证据。`
-const RETURN_REASON = '请补充验收证据'
 const CALLS = {
   createSearch: `${MARKER}-create-search`,
   create: `${MARKER}-create`,
@@ -260,8 +258,8 @@ async function createIssue(control, projectId, request, owner, uiTimeoutMs, titl
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
     value:
       title === ISSUE
-        ? `${MARKER}。处理人可请 AI 起草周报，检查后亲自提交处理结果。`
-        : `${MARKER}。处理人亲自核对周报并提交处理结果。`,
+        ? `${MARKER}。可创建关联任务整理周报，处理进展通过评论沟通。`
+        : `${MARKER}。人工核对周报，通过评论沟通结果并直接变更状态。`,
   })
   await control.command('click', scoped('[data-testid="cloud-todo-create-assignee"]'))
   await control.command(
@@ -344,7 +342,20 @@ async function verifyIssueTags(control, request, issue, uiTimeoutMs) {
   return updated
 }
 
-async function verifyManualReviewCycle(control, request, projectId, owner, uiTimeoutMs, capture) {
+async function changeIssueStatus(control, request, issueId, status, uiTimeoutMs) {
+  await control.command('select', scoped('[data-testid="cloud-todo-detail-status"]'), {
+    value: status,
+  })
+  await control.command('click', scoped('[data-testid="cloud-todo-save"]'))
+  return waitForValue(
+    () => request(`/api/v1/loop-items/${issueId}`),
+    value => value.status === status,
+    `Issue 未能直接变更为 ${status}`,
+    uiTimeoutMs
+  )
+}
+
+async function verifyManualCommentFlow(control, request, projectId, owner, uiTimeoutMs, capture) {
   await control.command('click', '[data-testid="cloud-todo-detail-close"]')
   const manualIssue = await createIssue(
     control,
@@ -354,112 +365,33 @@ async function verifyManualReviewCycle(control, request, projectId, owner, uiTim
     uiTimeoutMs,
     MANUAL_ISSUE
   )
-  const notification = await waitForValue(
-    () => request('/api/v1/wework-notifications?category=collaboration'),
-    value =>
-      value.items?.find(
-        item =>
-          item.kind === 'issue_dispatch_assignment' &&
-          item.payload?.itemId === manualIssue.id &&
-          item.payload?.action === 'open_issue'
-      ),
-    '纯人工 Issue 没有创建协作通知',
-    uiTimeoutMs
-  )
-  await control.command('click', '[data-testid="wework-notifications-button"]')
-  await control.command('click', '[data-testid="wework-notifications-refresh"]')
-  await control.command('click', '[data-testid="wework-notifications-category-collaboration"]')
-  await control.command('click', `[data-testid="wework-notification-${notification.id}"]`)
-  await control.command('clickElementWithText', '[data-testid="human-issue-start"]', {
-    text: '接手处理',
-    timeoutMs: uiTimeoutMs,
-    visible: true,
-  })
-  const resultSelector = scoped('[data-testid="human-issue-result"]')
-  await control.command('waitFor', resultSelector, { timeoutMs: uiTimeoutMs, visible: true })
-  assert.equal(Number(await control.command('getElementCount', '[data-testid="ai-chat-modal"]')), 0)
-  await control.command('fill', resultSelector, { value: MANUAL_RESULT })
-  await control.command('click', '[data-testid="human-issue-submit"]', { visible: true })
-  await control.command('click', '[data-testid="human-issue-work-cancel"]', { visible: true })
-  assert.equal((await request(`/api/v1/loop-items/${manualIssue.id}`)).status, 'in_progress')
-  assert.equal(await control.command('getValue', resultSelector), MANUAL_RESULT)
-  await control.command('click', '[data-testid="human-issue-submit"]', { visible: true })
-  await control.command('click', '[data-testid="human-issue-work-confirm"]', { visible: true })
-  await waitForValue(
-    () => request(`/api/v1/loop-items/${manualIssue.id}`),
-    value => value.status === 'in_review' && value.human_work?.state === 'submitted',
-    '纯人工结果没有进入待确认',
-    uiTimeoutMs
-  )
-  await control.command('waitFor', '[data-testid="human-issue-request-changes"]', {
-    visible: true,
-    timeoutMs: uiTimeoutMs,
-  })
-  await control.command('click', '[data-testid="human-issue-request-changes"]', {
-    visible: true,
-  })
-  await control.command('waitFor', '[data-testid="human-issue-work-dialog"]', {
-    visible: true,
-    timeoutMs: uiTimeoutMs,
-  })
+  await changeIssueStatus(control, request, manualIssue.id, 'in_progress', uiTimeoutMs)
   assert.equal(
-    await control.command('getAttribute', '[data-testid="human-issue-work-confirm"]', {
-      value: 'disabled',
-    }),
-    ''
+    Number(await control.command('getElementCount', '[data-testid="human-issue-work-panel"]')),
+    0
   )
-  await control.command('fill', '[data-testid="human-issue-return-reason-input"]', {
-    value: RETURN_REASON,
-  })
-  await control.command('click', '[data-testid="human-issue-work-confirm"]', { visible: true })
-  await waitForValue(
-    () => request(`/api/v1/loop-items/${manualIssue.id}`),
-    value =>
-      value.status === 'in_progress' &&
-      value.human_work?.state === 'changes_requested' &&
-      value.human_work?.return_reason === RETURN_REASON,
-    '验收退回没有恢复到人工处理中',
-    uiTimeoutMs
+  const comment = scoped('[data-testid="cloud-task-activity-composer"]')
+  await control.command('waitFor', comment, { visible: true, timeoutMs: uiTimeoutMs })
+  await control.command('fill', comment, { value: MANUAL_RESULT })
+  await control.command(
+    'clickWhenEnabled',
+    scoped('[data-testid="task-comment-form"] [data-testid="send-message-button"]')
   )
-  await control.command('waitFor', '[data-testid="human-issue-return-reason"]', {
-    text: RETURN_REASON,
-    timeoutMs: uiTimeoutMs,
-  })
-  assert.equal(await control.command('getValue', resultSelector), MANUAL_RESULT)
-  await capture('assignment-06-manual-changes-requested.png', CONTENT)
-  await control.command('fill', resultSelector, { value: REVISED_RESULT })
-  await control.command('click', '[data-testid="human-issue-submit"]', { visible: true })
-  await control.command('click', '[data-testid="human-issue-work-confirm"]', { visible: true })
-  await waitForValue(
-    () => request(`/api/v1/loop-items/${manualIssue.id}`),
-    value =>
-      value.status === 'in_review' &&
-      value.human_work?.state === 'submitted' &&
-      value.human_work?.result === REVISED_RESULT,
-    '修改后的纯人工结果没有重新提交',
-    uiTimeoutMs
-  )
-  await control.command('waitFor', '[data-testid="human-issue-accept"]', {
+  await control.command('waitFor', scoped('[data-testid="cloud-task-activity-list"]'), {
+    text: MANUAL_RESULT,
     visible: true,
     timeoutMs: uiTimeoutMs,
   })
-  await control.command('click', '[data-testid="human-issue-accept"]', { visible: true })
-  await waitForValue(
-    () => request(`/api/v1/loop-items/${manualIssue.id}`),
-    value => value.status === 'completed' && value.human_work?.state === 'accepted',
-    '退回重提后的人工 Issue 未完成验收',
-    uiTimeoutMs
-  )
+  await changeIssueStatus(control, request, manualIssue.id, 'in_review', uiTimeoutMs)
+  await changeIssueStatus(control, request, manualIssue.id, 'completed', uiTimeoutMs)
   assert.deepEqual(await request(`/api/v1/loop-items/${manualIssue.id}/tasks`), [])
-  await capture('assignment-07-manual-resubmitted-accepted.png', CONTENT)
+  await capture('assignment-06-manual-comment-completed.png', CONTENT)
 
-  // Establish a new assignment without changing the completed Issue's status.
-  const acceptedIssue = await request(`/api/v1/loop-items/${manualIssue.id}`)
+  const completed = await request(`/api/v1/loop-items/${manualIssue.id}`)
   const unassigned = await request(`/api/v1/loop-items/${manualIssue.id}`, {
     method: 'PATCH',
-    body: JSON.stringify({ version: acceptedIssue.version, assignee_user_id: null }),
+    body: JSON.stringify({ version: completed.version, assignee_user_id: null }),
   })
-  assert.equal(unassigned.status, 'completed')
   const reassigned = await request(
     `/api/v1/cloud-projects/${projectId}/loop-items/${manualIssue.id}/assign`,
     {
@@ -472,21 +404,40 @@ async function verifyManualReviewCycle(control, request, projectId, owner, uiTim
     }
   )
   assert.equal(reassigned.status, 'completed')
-  assert.equal(reassigned.human_work?.state, 'none')
-  assert.equal(reassigned.human_work?.can_start, true)
-  await control.command('waitFor', '[data-testid="human-issue-start"]', {
+  await changeIssueStatus(control, request, manualIssue.id, 'in_progress', uiTimeoutMs)
+  await control.command('click', '[data-testid="cloud-todo-detail-close"]')
+  const card = scoped(`[data-testid="cloud-todo-card-${manualIssue.id}"]`)
+  await control.command('waitFor', card, { visible: true })
+  await control.command('drag', card, {
+    target: scoped('[data-testid="cloud-todo-column-dropzone-completed"]'),
+  })
+  await waitForValue(
+    () => request(`/api/v1/loop-items/${manualIssue.id}`),
+    value => value.status === 'completed',
+    '看板拖拽未能直接完成 Issue',
+    uiTimeoutMs
+  )
+  await control.command(
+    'waitFor',
+    scoped(
+      `[data-testid="cloud-todo-column-completed"] [data-testid="cloud-todo-card-${manualIssue.id}"]`
+    ),
+    { visible: true }
+  )
+  await control.command('click', card)
+  await control.command('waitFor', scoped('[data-testid="cloud-task-activity-list"]'), {
+    text: MANUAL_RESULT,
     visible: true,
     timeoutMs: uiTimeoutMs,
   })
-  await control.command('click', '[data-testid="human-issue-start"]', { visible: true })
-  await waitForValue(
-    () => request(`/api/v1/loop-items/${manualIssue.id}`),
-    value => value.status === 'in_progress',
-    '重新指派后的显式接手没有进入进行中',
+  const restarted = await changeIssueStatus(
+    control,
+    request,
+    manualIssue.id,
+    'in_progress',
     uiTimeoutMs
   )
-  assert.deepEqual(await request(`/api/v1/loop-items/${manualIssue.id}/tasks`), [])
-  await capture('assignment-08-reassigned-human-work-started.png', CONTENT)
+  assert.equal(restarted.completed_at, null)
 }
 
 export function createDesktopScenario({
@@ -686,21 +637,9 @@ export function createDesktopScenario({
         '[data-testid="workspace-tab-select-fixed-board"][aria-selected="true"]',
         { timeoutMs: uiTimeoutMs }
       )
-      await control.command('clickElementWithText', '[data-testid="human-issue-start"]', {
-        text: '接手处理',
-        timeoutMs: uiTimeoutMs,
-        visible: true,
-      })
-      await control.command('waitFor', '[data-testid="human-issue-result"]', {
-        timeoutMs: uiTimeoutMs,
-        visible: true,
-      })
+      await changeIssueStatus(control, ownerRequest, issue.id, 'in_progress', uiTimeoutMs)
       await captureScreenshot(control, 'assignment-02-human-work-started.png', CONTENT)
-      await control.command('clickElementWithText', '[data-testid="human-issue-ai-assist"]', {
-        text: 'AI 辅助',
-        timeoutMs: uiTimeoutMs,
-        visible: true,
-      })
+      await control.command('click', '[data-testid="cloud-todo-create-task"]', { visible: true })
       await control.command('waitFor', '[data-testid="ai-chat-modal"]', {
         timeoutMs: uiTimeoutMs,
         visible: true,
@@ -708,7 +647,11 @@ export function createDesktopScenario({
       const taskPanel = '[data-testid="work-item-new-task-chat-panel"]'
       const composer = `${taskPanel} [data-testid="chat-message-input"]`
       await control.command('waitFor', composer, { timeoutMs: uiTimeoutMs, visible: true })
-      assert.match(await control.command('getValue', composer), new RegExp(MARKER))
+      const reference = await control.command('getValue', composer)
+      assert.match(reference, new RegExp(issue.id))
+      await control.command('fill', composer, {
+        value: `${reference}\n\n请整理项目周报并创建交付，标记为 ${MARKER}。`,
+      })
       await captureScreenshot(control, 'assignment-03-ai-panel-open.png', CONTENT)
       await control.command('waitFor', `${taskPanel} [data-testid="model-selector-button"]`, {
         timeoutMs: uiTimeoutMs,
@@ -745,8 +688,7 @@ export function createDesktopScenario({
       )
       await waitForValue(
         () => ownerRequest(`/api/v1/loop-items/${issue.id}`),
-        value =>
-          value.status === 'in_progress' && value.human_work?.ai_draft_delivery_id === delivery.id,
+        value => value.status === 'in_progress' && value.current_delivery_id === delivery.id,
         'AI 草稿不应替处理人提交原 Issue',
         modelResponseTimeoutMs
       )
@@ -802,38 +744,8 @@ export function createDesktopScenario({
       await captureScreenshot(control, 'assignment-04-bound-task-model-preserved.png', CONTENT)
       await control.command('click', '[data-testid="ai-chat-modal-close"]', { visible: true })
       await setExecutionDetailsExpanded(control, false)
-      await control.command('scrollIntoView', scoped('[data-testid="human-issue-use-ai-draft"]'))
-      await control.command('waitFor', '[data-testid="human-issue-use-ai-draft"]', {
-        timeoutMs: uiTimeoutMs,
-        visible: true,
-      })
-      await control.command('click', '[data-testid="human-issue-use-ai-draft"]', { visible: true })
-      await waitForValue(
-        () => control.command('getValue', scoped('[data-testid="human-issue-result"]')),
-        value => value.includes(MARKER),
-        'AI 草稿没有填入处理结果',
-        uiTimeoutMs
-      )
-      await control.command('click', '[data-testid="human-issue-submit"]', { visible: true })
-      await control.command('click', '[data-testid="human-issue-work-confirm"]', { visible: true })
-      await waitForValue(
-        () => ownerRequest(`/api/v1/loop-items/${issue.id}`),
-        value => value.status === 'in_review' && value.human_work?.state === 'submitted',
-        '处理人没有亲自提交结果进入待确认',
-        uiTimeoutMs
-      )
-      await control.command('waitFor', '[data-testid="human-issue-accept"]', {
-        timeoutMs: uiTimeoutMs,
-        visible: true,
-      })
-      await control.command('click', '[data-testid="human-issue-accept"]', { visible: true })
-      await waitForValue(
-        () => ownerRequest(`/api/v1/loop-items/${issue.id}`),
-        value => value.status === 'completed' && value.human_work?.state === 'accepted',
-        '验收通过没有完成原 Issue',
-        uiTimeoutMs
-      )
-      await captureScreenshot(control, 'assignment-05-human-accepted.png', CONTENT)
+      await changeIssueStatus(control, ownerRequest, issue.id, 'completed', uiTimeoutMs)
+      await captureScreenshot(control, 'assignment-05-human-completed.png', CONTENT)
       await control.command('click', '[data-testid="wework-notifications-button"]')
       await control.command('click', '[data-testid="wework-notifications-refresh"]')
       await control.command('click', '[data-testid="wework-notifications-category-collaboration"]')
@@ -849,7 +761,7 @@ export function createDesktopScenario({
       const bindingsAfterReopen = await ownerRequest(`/api/v1/loop-items/${issue.id}/tasks`)
       assert.equal(bindingsAfterReopen.length, bindingsAfterDelivery.length)
       const modelRequestsBeforeManualWork = modelRequestCount
-      await verifyManualReviewCycle(
+      await verifyManualCommentFlow(
         control,
         ownerRequest,
         project.id,
