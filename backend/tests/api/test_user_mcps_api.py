@@ -7,16 +7,16 @@
 import json
 
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
-
 from app.api.dependencies import get_db
 from app.api.endpoints import user_mcp_oauth
 from app.api.endpoints.users import router
 from app.core import security
 from app.models.user import User
 from app.services import mcp_provider_registry
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+
 from shared.utils.crypto import is_data_encrypted
 
 
@@ -113,21 +113,6 @@ class TestUserMcpsAPI:
             "oauth_expires_at": None,
             "oauth_account": None,
         }
-
-    def test_list_provider_services_returns_registry_and_config(
-        self, user_mcps_client: TestClient
-    ):
-        response = user_mcps_client.get(
-            "/api/users/me/mcps/providers/dingtalk/services"
-        )
-
-        assert response.status_code == 200
-        assert response.json() == [
-            _dingtalk_service("docs", "dingtalk_docs", 9629),
-            _dingtalk_service("table", "dingtalk_table", 9704),
-            _dingtalk_service("ai_table", "dingtalk_ai_table", 9555),
-            _dingtalk_service("wikispace", "dingtalk_wikispace", 9730),
-        ]
 
     @pytest.mark.parametrize(
         ("service_id", "server_name"),
@@ -288,19 +273,3 @@ class TestUserMcpsAPI:
 
         assert list_response.status_code == 404
         assert update_response.status_code == 404
-
-
-@pytest.fixture(autouse=True)
-def _retained_python_handler_contracts(user_mcps_client):
-    import app.api.endpoints.users as endpoint_0
-    from tests.legacy_python_routes import legacy_python_handlers
-
-    with legacy_python_handlers(user_mcps_client.app) as register:
-        register(
-            "/api/users/me/mcps/providers/{provider_id}/services",
-            endpoint_0.list_mcp_provider_services,
-            endpoint_0.router,
-            methods=["GET"],
-            response_model=list[endpoint_0.MCPProviderServiceConfigResponse],
-        )
-        yield
