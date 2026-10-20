@@ -124,12 +124,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     appEnvironment,
 
     async prepareCloud(cloud) {
-      cloudEnvironment = cloud
       backendUrl = cloud.backendUrl
       authToken = cloud.authToken
       await request('/api/admin/setup-complete', { method: 'POST' })
       proxy = await new PluginFaultProxy(backendUrl).start()
       appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL = proxy.url
+    },
+
+    setCloudEnvironment(value) {
+      cloudEnvironment = value
     },
 
     async verify(control) {
