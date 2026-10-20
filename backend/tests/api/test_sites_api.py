@@ -6,10 +6,9 @@ import json
 from typing import Any
 
 import pytest
+from app.core.config import settings
 from fastapi.testclient import TestClient
 from pytest_httpx import HTTPXMock
-
-from app.core.config import settings
 
 SITES_API_BASE_URL = "https://sites.example.test"
 
@@ -109,49 +108,6 @@ def test_list_sites_requires_authentication(
     assert response.status_code == 401
 
 
-def test_list_site_app_types_returns_ordered_capabilities(
-    test_client: TestClient,
-    test_token: str,
-) -> None:
-    response = test_client.get(
-        "/api/sites/app-types",
-        headers=_authorization(test_token),
-    )
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "items": [
-            {
-                "app_type": "web",
-                "enabled": True,
-                "order": 10,
-                "capabilities": [
-                    "create",
-                    "publish",
-                    "edit",
-                    "delete",
-                    "configure_environment",
-                    "manage_access",
-                ],
-                "create": {
-                    "plugin_name": "wegent-sites",
-                    "marketplace_name": "wegent",
-                },
-            },
-            {
-                "app_type": "miniapp",
-                "enabled": True,
-                "order": 20,
-                "capabilities": ["create", "open_experience"],
-                "create": {
-                    "plugin_name": "weibo-miniapp-h5-develop-agent",
-                    "marketplace_name": "wegent",
-                },
-            },
-        ]
-    }
-
-
 def test_list_sites_returns_not_available_when_upstream_is_not_configured(
     test_client: TestClient,
     test_token: str,
@@ -231,8 +187,7 @@ def test_list_sites_accepts_legacy_site_app_type_and_defaults_invalid_network(
     httpx_mock.add_response(
         method="GET",
         url=(
-            f"{SITES_API_BASE_URL}/api/v1/projects/search"
-            "?username=testuser&limit=100"
+            f"{SITES_API_BASE_URL}/api/v1/projects/search?username=testuser&limit=100"
         ),
         json={"items": [project], "next_cursor": None},
     )
@@ -348,8 +303,7 @@ def test_list_sites_fetches_until_offset_page_is_resolved(
     httpx_mock.add_response(
         method="GET",
         url=(
-            f"{SITES_API_BASE_URL}/api/v1/projects/search"
-            "?username=testuser&limit=100"
+            f"{SITES_API_BASE_URL}/api/v1/projects/search?username=testuser&limit=100"
         ),
         json={"items": [], "next_cursor": "page-1"},
     )
@@ -397,8 +351,7 @@ def test_list_sites_next_cursor_uses_next_offset(
     httpx_mock.add_response(
         method="GET",
         url=(
-            f"{SITES_API_BASE_URL}/api/v1/projects/search"
-            "?username=testuser&limit=100"
+            f"{SITES_API_BASE_URL}/api/v1/projects/search?username=testuser&limit=100"
         ),
         json={
             "items": [
@@ -935,19 +888,3 @@ def test_delete_site_removes_owned_platform_project(
         "username": "testuser",
         "project_id": "prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
     }
-
-
-@pytest.fixture(autouse=True)
-def _retained_python_handler_contracts(test_client):
-    import app.api.endpoints.sites as endpoint_0
-    from tests.legacy_python_routes import legacy_python_handlers
-
-    with legacy_python_handlers(test_client.app) as register:
-        register(
-            "/api/sites/app-types",
-            endpoint_0.list_site_app_types,
-            endpoint_0.router,
-            methods=["GET"],
-            response_model=endpoint_0.ApplicationTypeListResponse,
-        )
-        yield

@@ -14,9 +14,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
-
 from app.api.endpoints.openapi_responses import (
     _build_result_block_streaming_chunks,
     _create_non_streaming_response_unified,
@@ -35,6 +32,8 @@ from app.models.share_link import ResourceType
 from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
 
 
 @pytest.mark.asyncio
@@ -1552,12 +1551,11 @@ class TestOpenAPIResponsesCreate:
         test_team: Kind,
     ):
         """Video generation is asynchronous and rejects stream=true."""
-        from fastapi import HTTPException
-
         from app.api.endpoints.openapi_responses import (
             _create_streaming_response_unified,
         )
         from app.schemas.openapi_response import ResponseCreateInput
+        from fastapi import HTTPException
 
         setup = SimpleNamespace(
             task=SimpleNamespace(id=101, json={"metadata": {"labels": {}}}),
@@ -1720,9 +1718,7 @@ class TestOpenAPIResponsesCreate:
         )
         execution_request = SimpleNamespace(task_id=101, subtask_id=654)
         query_db = MagicMock()
-        query_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = (
-            []
-        )
+        query_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = []
 
         with (
             patch(
@@ -1790,9 +1786,7 @@ class TestOpenAPIResponsesCreate:
             model_config={"modelType": "image"},
         )
         query_db = MagicMock()
-        query_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = (
-            []
-        )
+        query_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = []
 
         with (
             patch(
@@ -1851,12 +1845,11 @@ class TestOpenAPIResponsesCreate:
         test_team: Kind,
     ):
         """Dispatch failures before terminal events should still persist FAILED."""
-        from fastapi import HTTPException
-
         from app.api.endpoints.openapi_responses import (
             _create_non_streaming_response_unified,
         )
         from app.schemas.openapi_response import ResponseCreateInput
+        from fastapi import HTTPException
 
         setup = SimpleNamespace(
             task=SimpleNamespace(id=101, json={"metadata": {"labels": {}}}),
@@ -2371,155 +2364,6 @@ class TestOpenAPIResponsesCancel:
 
 
 @pytest.mark.api
-class TestOpenAPIResponsesDelete:
-    """Test DELETE /api/v1/responses/{response_id} endpoint."""
-
-    def test_delete_response_invalid_format(
-        self, test_client: TestClient, test_api_key
-    ):
-        """Test delete response fails with invalid response_id format."""
-        response = test_client.delete(
-            "/api/v1/responses/invalid_id",
-            headers={"X-API-Key": test_api_key[0]},
-        )
-
-        assert response.status_code == 400
-        assert "Invalid response_id format" in response.json()["detail"]
-
-    def test_delete_response_invalid_number(
-        self, test_client: TestClient, test_api_key
-    ):
-        """Test delete response fails with invalid response_id number."""
-        response = test_client.delete(
-            "/api/v1/responses/resp_abc",
-            headers={"X-API-Key": test_api_key[0]},
-        )
-
-        assert response.status_code == 400
-        assert "Invalid response_id format" in response.json()["detail"]
-
-    def test_delete_response_not_found(self, test_client: TestClient, test_api_key):
-        """Test delete response fails when response not found."""
-        response = test_client.delete(
-            "/api/v1/responses/resp_99999",
-            headers={"X-API-Key": test_api_key[0]},
-        )
-
-        assert response.status_code == 404
-        assert "not found" in response.json()["detail"]
-
-    def test_delete_response_without_auth(self, test_client: TestClient):
-        """Test delete response fails without authentication."""
-        response = test_client.delete("/api/v1/responses/resp_1")
-
-        assert response.status_code == 401
-
-    def test_delete_response_cleans_runtime_by_task_id_when_binding_missing(
-        self,
-        test_client: TestClient,
-        test_api_key,
-        test_db: Session,
-        test_user: User,
-        test_team: Kind,
-    ):
-        """Deleting an executor response should clean runtime even before executor binding is persisted."""
-        task_json = {
-            "apiVersion": "agent.wecode.io/v1",
-            "kind": "Task",
-            "metadata": {
-                "name": "task-runtime-binding-missing",
-                "namespace": "default",
-                "labels": {"source": "api"},
-            },
-            "spec": {
-                "title": "Running task",
-                "prompt": "Hello",
-                "teamRef": {"name": "test-team", "namespace": "default"},
-                "workspaceRef": {"name": "workspace-1", "namespace": "default"},
-            },
-            "status": {
-                "status": "RUNNING",
-                "progress": 10,
-                "result": None,
-                "errorMessage": "",
-                "createdAt": datetime.now().isoformat(),
-                "updatedAt": datetime.now().isoformat(),
-            },
-        }
-        task = TaskResource(
-            user_id=test_user.id,
-            kind="Task",
-            name="task-runtime-binding-missing",
-            namespace="default",
-            json=task_json,
-            is_active=True,
-        )
-        test_db.add(task)
-        test_db.flush()
-
-        running_subtask = Subtask(
-            user_id=test_user.id,
-            task_id=task.id,
-            team_id=test_team.id,
-            title="Assistant response",
-            bot_ids=[1],
-            role=SubtaskRole.ASSISTANT,
-            executor_namespace="",
-            executor_name="",
-            prompt="",
-            status=SubtaskStatus.RUNNING,
-            progress=10,
-            message_id=1,
-            parent_id=0,
-            error_message="",
-            completed_at=datetime(1970, 1, 1, 0, 0, 0),
-            result=None,
-            sender_type=SenderType.TEAM,
-            sender_user_id=0,
-        )
-        test_db.add(running_subtask)
-        test_db.commit()
-        test_db.refresh(task)
-
-        runtime_client = MagicMock()
-        runtime_client.get_sandbox = AsyncMock(return_value=(None, None))
-        runtime_client.delete_sandbox = AsyncMock(return_value=(True, None))
-        runtime_client.cleanup_sandbox_by_task_id = AsyncMock(
-            return_value={"deleted": True}
-        )
-
-        with patch(
-            "app.services.execution.get_executor_runtime_client",
-            return_value=runtime_client,
-        ):
-            response = test_client.delete(
-                f"/api/v1/responses/resp_{task.id}",
-                headers={"X-API-Key": test_api_key[0]},
-            )
-
-        assert response.status_code == 200
-        assert response.json()["deleted"] is True
-        runtime_client.cleanup_sandbox_by_task_id.assert_awaited_once_with(
-            task_id=task.id,
-            archive_before_delete=False,
-        )
-
-    def test_delete_response_user_isolation(
-        self,
-        test_client: TestClient,
-        test_admin_api_key,
-        test_task: TaskResource,
-    ):
-        """Test users cannot delete other users' responses."""
-        response = test_client.delete(
-            f"/api/v1/responses/resp_{test_task.id}",
-            headers={"X-API-Key": test_admin_api_key[0]},
-        )
-
-        assert response.status_code == 404
-
-
-@pytest.mark.api
 class TestOpenAPIResponsesHelpers:
     """Test helper functions used in openapi_responses."""
 
@@ -2674,19 +2518,3 @@ class TestOpenAPIResponsesHelpers:
         assert subtask_status_to_message_status("RUNNING") == "in_progress"
         assert subtask_status_to_message_status("COMPLETED") == "completed"
         assert subtask_status_to_message_status("FAILED") == "incomplete"
-
-
-@pytest.fixture(autouse=True)
-def _retained_python_handler_contracts(test_client):
-    import app.api.endpoints.openapi_responses as endpoint_0
-    from tests.legacy_python_routes import legacy_python_handlers
-
-    with legacy_python_handlers(test_client.app) as register:
-        register(
-            "/api/v1/responses/{response_id}",
-            endpoint_0.delete_response,
-            endpoint_0.router,
-            methods=["DELETE"],
-            response_model=endpoint_0.ResponseDeletedObject,
-        )
-        yield
