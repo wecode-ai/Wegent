@@ -3,12 +3,14 @@
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.models.cloud_project import CloudProject
 from app.models.resource_member import ResourceMember
 from app.models.user import User
-from app.schemas.base_role import ROLE_HIERARCHY, BaseRole, has_permission
+from app.schemas.base_role import BaseRole, has_permission
 from app.schemas.cloud_project import CloudProjectMemberCreate, CloudProjectMemberUpdate
-from app.services.cloud_project_visibility import project_participant_ids
+from app.services.cloud_project_visibility import (
+    effective_project_role,
+    project_participant_ids,
+)
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.collaboration_permissions import collaboration_permission_service
 
@@ -38,9 +40,7 @@ class CloudProjectMemberService:
             (source["role"] for source in sources if source["type"] == "workspace"),
             None,
         )
-        role = min(
-            (source["role"] for source in sources), key=ROLE_HIERARCHY.__getitem__
-        )
+        role = effective_project_role(direct, inherited)
         grant = CloudProjectMemberService._direct_member(db, int(project.id), member.id)
         return {
             "id": grant.id if grant else member.id,
@@ -70,18 +70,7 @@ class CloudProjectMemberService:
         target = db.get(User, values.user_id)
         if not target or not target.is_active:
             raise HTTPException(404, "User not found")
-        grant = self._direct_member(db, cloud_project_id, target.id)
-        if grant is None:
-            grant = ResourceMember.create(
-                resource_type="CloudProject",
-                resource_id=cloud_project_id,
-                entity_id=str(target.id),
-                role=values.role.value,
-                status="approved",
-            )
-            db.add(grant)
-        else:
-            grant.role, grant.status = values.role.value, "approved"
+        self._set_direct_role(db, cloud_project_id, target.id, values.role)
         self._set_member_capability(project, target.id, values.capability_description)
         from app.services.collaboration_revocation import (
             revoke_unauthorized_project_work,
@@ -108,16 +97,11 @@ class CloudProjectMemberService:
     ):
         require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Maintainer)
         project = self._lock_project(db, cloud_project_id)
-        grant = self._direct_member(db, cloud_project_id, member_user_id)
-        if values.role is not None and grant is None:
-            raise HTTPException(
-                409, "Inherited roles must be changed in the parent Workspace"
-            )
         target = db.get(User, member_user_id)
         if not target or member_user_id not in project_participant_ids(db, project):
             raise HTTPException(404, "Project member not found")
         if values.role is not None:
-            grant.role = values.role.value
+            self._set_direct_role(db, cloud_project_id, member_user_id, values.role)
         if values.capability_description is not None:
             self._set_member_capability(
                 project, target.id, values.capability_description
@@ -162,6 +146,24 @@ class CloudProjectMemberService:
         )
 
         request_execution_cancellations(pending)
+
+    @staticmethod
+    def _set_direct_role(
+        db: Session, project_id: int, user_id: int, role: BaseRole
+    ) -> None:
+        grant = CloudProjectMemberService._direct_member(db, project_id, user_id)
+        if grant is None:
+            db.add(
+                ResourceMember.create(
+                    resource_type="CloudProject",
+                    resource_id=project_id,
+                    entity_id=str(user_id),
+                    role=role.value,
+                    status="approved",
+                )
+            )
+        else:
+            grant.role, grant.status = role.value, "approved"
 
     @staticmethod
     def _direct_member(db: Session, project_id: int, user_id: int):

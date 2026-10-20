@@ -108,6 +108,7 @@ export interface ProjectManageApi<
   Item extends ProjectManageItem,
   User extends ProjectManageUser,
 > {
+  getProject(projectId: string): Promise<Project>
   listMembers(projectId: string): Promise<Member[]>
   listItems(projectId: string): Promise<{ items: Item[] }>
   searchUsers(query: string): Promise<{ users: User[] }>

@@ -40,6 +40,15 @@ def collaboration_role(role: str) -> str:
     return LEGACY_COLLABORATION_ROLES.get(role, role)
 
 
+def effective_project_role(
+    direct_role: str | None, inherited_role: str | None
+) -> str | None:
+    """Space administration is protected; direct roles override ordinary inheritance."""
+    if inherited_role == BaseRole.Maintainer.value:
+        return inherited_role
+    return direct_role or inherited_role
+
+
 def collaboration_role_expression():
     return case(
         LEGACY_COLLABORATION_ROLES, value=ResourceMember.role, else_=ResourceMember.role
@@ -131,10 +140,29 @@ def project_access_query(
         direct = direct.where(ResourceMember.resource_id == int(project_id))
         inherited = inherited.where(CloudProject.id == str(project_id))
         public = public.where(ResourceMember.resource_id == int(project_id))
-    grants = union_all(direct, inherited, public).subquery()
+    grants = union_all(
+        direct.add_columns(literal(1).label("authority")),
+        inherited.add_columns(
+            case(
+                (
+                    inherited.selected_columns.priority
+                    == ROLE_HIERARCHY[BaseRole.Maintainer.value],
+                    0,
+                ),
+                else_=2,
+            ).label("authority")
+        ),
+        public.add_columns(literal(3).label("authority")),
+    ).subquery()
     parents = project_parent_relationships().subquery()
+    priority = func.coalesce(
+        *(
+            func.min(case((grants.c.authority == authority, grants.c.priority)))
+            for authority in range(4)
+        )
+    )
     roles = (
-        select(grants.c.project_id, func.min(grants.c.priority).label("priority"))
+        select(grants.c.project_id, priority.label("priority"))
         .group_by(grants.c.project_id)
         .subquery()
     )
@@ -158,40 +186,35 @@ def accessible_cloud_projects(db: Session, user_id: int) -> Query[CloudProject]:
     return project_access_query(db, user_id).with_entities(CloudProject)
 
 
-def explicit_project_member_ids(
-    db: Session, project: CloudProject, *, required_role: BaseRole = BaseRole.Viewer
-) -> set[int]:
-    """Direct members only; historical creators and public grants grant nothing."""
-    rows = db.query(ResourceMember.entity_id).filter(
+def _direct_project_member_roles(db: Session, project: CloudProject) -> dict[int, str]:
+    rows = db.query(ResourceMember.entity_id, ResourceMember.role).filter(
         ResourceMember.resource_type == ResourceType.CLOUD_PROJECT.value,
         ResourceMember.resource_id == int(project.id),
         ResourceMember.entity_type == "user",
         ResourceMember.status == MemberStatus.APPROVED.value,
-        ResourceMember.role.in_(
-            tuple(
-                role
-                for role in VALID_CLOUD_PROJECT_MEMBER_ROLES
-                if ROLE_HIERARCHY[collaboration_role(role)]
-                <= ROLE_HIERARCHY[required_role.value]
-            )
-        ),
+        ResourceMember.role.in_(VALID_CLOUD_PROJECT_MEMBER_ROLES),
     )
-    return {int(entity_id) for (entity_id,) in rows if entity_id.isdecimal()}
+    return {
+        int(entity_id): collaboration_role(role)
+        for entity_id, role in rows
+        if entity_id.isdecimal()
+    }
 
 
 def project_participant_ids(
     db: Session, project: CloudProject, *, required_role: BaseRole = BaseRole.Viewer
 ) -> set[int]:
     """Effective humans for rosters and assignments, excluding public visitors."""
-    ids = explicit_project_member_ids(db, project, required_role=required_role)
     workspace = db.get(Kind, project.workspace_id) if project.workspace_id else None
     if (
-        workspace is None
+        project.status != "active"
+        or workspace is None
         or workspace.kind != "CollaborationWorkspace"
         or not workspace.is_active
     ):
         return set()
-    ids.add(int(workspace.user_id))
+    roles = _direct_project_member_roles(db, project)
+    roles[int(workspace.user_id)] = BaseRole.Maintainer.value
     rows = db.query(ResourceMember.entity_id, ResourceMember.role).filter(
         ResourceMember.resource_type == ResourceType.WORKSPACE.value,
         ResourceMember.resource_id == project.workspace_id,
@@ -199,17 +222,22 @@ def project_participant_ids(
         ResourceMember.status == MemberStatus.APPROVED.value,
         ResourceMember.role.in_(VALID_CLOUD_PROJECT_MEMBER_ROLES),
     )
-    ids.update(
-        int(entity_id)
-        for entity_id, role in rows
-        if entity_id.isdecimal()
-        and ROLE_HIERARCHY[collaboration_role(role)]
-        <= ROLE_HIERARCHY[required_role.value]
-        and (
+    for entity_id, role in rows:
+        if not entity_id.isdecimal() or int(entity_id) == workspace.user_id:
+            continue
+        inherited_role = collaboration_role(role)
+        if (
             project.membership_mode == "inherit"
-            or collaboration_role(role) == BaseRole.Maintainer.value
-        )
-    )
+            or inherited_role == BaseRole.Maintainer.value
+        ):
+            user_id = int(entity_id)
+            roles[user_id] = effective_project_role(roles.get(user_id), inherited_role)
+    ids = {
+        user_id
+        for user_id, role in roles.items()
+        if ROLE_HIERARCHY[role]
+        <= ROLE_HIERARCHY[collaboration_role(required_role.value)]
+    }
     return {
         user_id
         for (user_id,) in db.query(User.id).filter(

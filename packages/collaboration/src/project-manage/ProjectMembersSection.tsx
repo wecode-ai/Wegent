@@ -53,7 +53,7 @@ export function ProjectMembersSection<
 }: {
   project: ProjectManageProject
   host: ProjectManageHost
-  controller: ReturnType<typeof useProjectMembers<Member, User>>
+  controller: ReturnType<typeof useProjectMembers<ProjectManageProject, Member, User>>
   canManage: boolean
   membershipModeBusy: boolean
   onMembershipModeChange(mode: 'inherit' | 'restricted'): void
@@ -261,7 +261,15 @@ export function ProjectMembersSection<
           <div role="rowgroup" className="divide-y divide-border/70">
             {members.map(member => {
               const inheritedOnly = Boolean(member.inherited_role && !member.direct_role)
-              const roleReadOnly = member.role === 'Owner' || inheritedOnly || !canManage
+              const inheritedAdminOnly = inheritedOnly && member.inherited_role === 'Maintainer'
+              const roleReadOnly = member.role === 'Owner' || inheritedAdminOnly || !canManage
+              const removeLabel = member.inherited_role
+                ? host.translate('todo.reset_member_role', '恢复 {{name}} 的空间角色', {
+                    name: member.user_name,
+                  })
+                : host.translate('todo.remove_member', '移除 {{name}}', {
+                    name: member.user_name,
+                  })
               return (
                 <div
                   key={member.user_id}
@@ -296,7 +304,7 @@ export function ProjectMembersSection<
                         {host.translate('todo.project_member_capability', '职责与能力')}
                       </span>
                       <input
-                        key={`${project.id}-${member.capability_description ?? ''}`}
+                        key={`${project.id}-${member.direct_role ?? ''}-${member.capability_description ?? ''}`}
                         data-testid={`cloud-project-member-capability-${member.user_id}`}
                         defaultValue={member.capability_description ?? ''}
                         disabled={busy || !canManage}
@@ -320,7 +328,7 @@ export function ProjectMembersSection<
                         className="inline-flex items-center gap-1.5 rounded-md bg-muted px-2 py-1 text-xs font-medium text-text-secondary"
                         data-testid={`cloud-project-member-effective-role-${member.user_id}`}
                       >
-                        {inheritedOnly && <LockKeyhole className="h-3 w-3" />}
+                        {inheritedAdminOnly && <LockKeyhole className="h-3 w-3" />}
                         {roleLabel(member.role, host)}
                       </span>
                     ) : null}
@@ -331,13 +339,15 @@ export function ProjectMembersSection<
                         title={inheritedSource(member, project, host)}
                       >
                         {inheritedSource(member, project, host)}
+                        {' · '}
+                        {roleLabel(member.inherited_role, host)}
                       </p>
                     )}
                     {!roleReadOnly && (
                       <label className="flex items-center gap-2">
                         {member.inherited_role && (
                           <span className="shrink-0 text-xs text-text-muted">
-                            {host.translate('todo.project_member_direct', '直接邀请')}
+                            {host.translate('todo.project_member_project_role', '项目角色')}
                           </span>
                         )}
                         <select
@@ -378,10 +388,9 @@ export function ProjectMembersSection<
                   </div>
                   <div role="cell" className="flex justify-end">
                     {!roleReadOnly &&
+                      !inheritedOnly &&
                       host.renderTooltip({
-                        label: host.translate('todo.remove_member', '移除 {{name}}', {
-                          name: member.user_name,
-                        }),
+                        label: removeLabel,
                         align: 'end',
                         children: (
                           <button
@@ -390,9 +399,7 @@ export function ProjectMembersSection<
                             disabled={busy}
                             onClick={() => void removeMember(member)}
                             className={`flex h-11 w-11 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-red-600 disabled:opacity-40 md:h-8 md:w-8 ${focus}`}
-                            aria-label={host.translate('todo.remove_member', '移除 {{name}}', {
-                              name: member.user_name,
-                            })}
+                            aria-label={removeLabel}
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>
@@ -427,7 +434,7 @@ export function ProjectMembersSection<
               <p data-testid="cloud-project-members-inheritance-note">
                 {host.translate(
                   'todo.project_member_inherited_hint',
-                  '继承角色由空间管理，项目内不能修改或移除。'
+                  '项目角色可覆盖空间成员或只读成员的继承角色，移除项目角色后恢复继承。空间管理员始终可管理项目。'
                 )}
               </p>
             )}

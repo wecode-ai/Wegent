@@ -4,7 +4,7 @@
 
 //! Cloud-project reads and migration candidates.
 //!
-//! The selected project-list API and project execution-environment API use
+//! The selected project list, detail and execution-environment APIs use
 //! `collaboration_access` to enforce the approved CP contract. A single query
 //! resolves explicit and inherited grants, a unique active parent, provenance,
 //! and read-only public discovery. Historical creators receive no implicit grant.
@@ -300,7 +300,7 @@ async fn get_cloud_project(
     #[inject(state)] state: &AppState,
     project_id: &str,
     #[auth] current_user: SessionUser,
-) -> Result<CloudProjectBody, FastApiError> {
+) -> Result<collaboration_access::CollaborativeProject, FastApiError> {
     cloud_project(state, project_id, &current_user).await
 }
 
@@ -325,51 +325,25 @@ fn cloud_project_not_found() -> FastApiError {
 
 /// Handler body for `GET /api/v1/cloud-projects/{project_id}`.
 ///
-/// Mirrors `app.api.endpoints.cloud_projects.get_cloud_project`:
-/// `cloud_project_service.get(db, project_id, current_user.id)` resolves the
-/// project through one `require_cloud_project_role` read, then
-/// `_project_response(db, project, current_user)` =
-/// `responses.project_response` re-runs `require_cloud_project_role` for the
-/// effective role and adds the `_parent_contexts` and `_all_user_grant_roles`
-/// reads before rendering `CloudProjectResponse`.
+/// Use the same policy and provenance projection as the migrated catalog.
 async fn cloud_project(
     state: &AppState,
     project_id: &str,
     current_user: &SessionUser,
-) -> Result<CloudProjectBody, FastApiError> {
+) -> Result<collaboration_access::CollaborativeProject, FastApiError> {
     let project_number = parse_project_id(project_id)?;
-    // `cloud_project_service.get` -> `require_cloud_project_role(...).project`.
-    let (project, _) = project_access(&state.mysql, project_number, current_user.0.id)
-        .await
-        .map_err(internal_error)?
-        .ok_or_else(cloud_project_not_found)?;
-
-    // `_project_response` re-runs `require_cloud_project_role(db,
-    // int(project.id), current_user.id, Viewer)` for the resolved role.
-    let project_number: i64 = project.id.parse().map_err(|_| cloud_project_not_found())?;
-    let (_, role_priority) = project_access(&state.mysql, project_number, current_user.0.id)
-        .await
-        .map_err(internal_error)?
-        .ok_or_else(cloud_project_not_found)?;
-
-    let project_ids = [project.id.clone()];
-    let contexts = parent_contexts(&state.mysql, &project_ids)
-        .await
-        .map_err(internal_error)?;
-    let all_user_roles = all_user_grant_roles(&state.mysql, &project_ids)
-        .await
-        .map_err(internal_error)?;
-
-    Ok(response::project_response(
-        &project,
+    let project = collaboration_access::authorized_projects(
+        &state.mysql,
         current_user.0.id,
-        &current_user.0.user_name,
-        // The point union only emits priorities 0..=4, all of which satisfy the
-        // Viewer requirement; the source indexes `ROLES_BY_PRIORITY` plainly.
-        role_for_priority(role_priority).unwrap_or("RestrictedAnalyst"),
-        all_user_roles.get(&project.id).map(String::as_str),
-        contexts.get(&project.id),
-    ))
+        Some(project_number),
+        None,
+    )
+    .await
+    .map_err(internal_error)?
+    .into_iter()
+    .next()
+    .ok_or_else(cloud_project_not_found)?;
+    Ok(project.response(current_user.0.id, &current_user.0.user_name))
 }
 
 pub(crate) fn internal_error(error: brz_mysql::MysqlError) -> FastApiError {

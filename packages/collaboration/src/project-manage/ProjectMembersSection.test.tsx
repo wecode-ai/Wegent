@@ -131,7 +131,7 @@ describe('Project member settings presentation', () => {
       row.querySelectorAll(':scope > [role="cell"], :scope > [role="rowheader"]')
     ).toHaveLength(4)
     expect(find('cloud-project-member-effective-role-1').textContent).toContain('管理员')
-    expect(find('cloud-project-member-source-1').textContent).toBe('继承自 研发空间')
+    expect(find('cloud-project-member-source-1').textContent).toBe('继承自 研发空间 · 管理员')
     expect(row.textContent).not.toContain('Maintainer')
     expect(row.textContent).not.toContain('165')
     expect(find('cloud-project-member-role-1')).toBeNull()
@@ -141,7 +141,7 @@ describe('Project member settings presentation', () => {
 
   it('uses the parent-space label when its name is unavailable, without showing an ID', async () => {
     await render({ project: { ...project, workspace_context: undefined } })
-    expect(find('cloud-project-member-source-1').textContent).toBe('继承自父空间')
+    expect(find('cloud-project-member-source-1').textContent).toBe('继承自父空间 · 管理员')
   })
 
   it('preserves the effective inherited role while editing a lower direct role', async () => {
@@ -159,8 +159,39 @@ describe('Project member settings presentation', () => {
       expect.objectContaining({ user_id: 1 }),
       'Developer'
     )
-    expect(find('cloud-project-member-source-1').textContent).toBe('继承自 研发空间')
+    expect(find('cloud-project-member-source-1').textContent).toBe('继承自 研发空间 · 管理员')
     expect(find('cloud-project-member-remove-1')).not.toBeNull()
+  })
+
+  it.each(['Developer', 'Viewer'] as const)(
+    'allows a project override for an inherited %s without exposing removal',
+    async role => {
+      const member = { ...inherited, role, inherited_role: role }
+      const { controller } = await render({ members: [member] })
+      const select = find<HTMLSelectElement>('cloud-project-member-role-1')
+      expect(select.value).toBe(role)
+      expect(select.disabled).toBe(false)
+      expect(find('cloud-project-member-remove-1')).toBeNull()
+      await act(async () => {
+        select.value = 'Maintainer'
+        select.dispatchEvent(new Event('change', { bubbles: true }))
+      })
+      expect(controller.updateMember).toHaveBeenCalledWith(member, 'Maintainer')
+    }
+  )
+
+  it('distinguishes a lower project override from the inherited member role', async () => {
+    await render({
+      members: [
+        { ...inherited, role: 'Viewer', inherited_role: 'Developer', direct_role: 'Viewer' },
+      ],
+    })
+    expect(find('cloud-project-member-effective-role-1').textContent).toBe('只读成员')
+    expect(find('cloud-project-member-source-1').textContent).toBe('继承自 研发空间 · 成员')
+    expect(find<HTMLSelectElement>('cloud-project-member-role-1').value).toBe('Viewer')
+    expect(find('cloud-project-member-remove-1').getAttribute('aria-label')).toBe(
+      '恢复 admin 的空间角色'
+    )
   })
 
   it('allows a manager to edit inherited members’ project responsibilities without editing their role', async () => {
@@ -218,9 +249,11 @@ describe('Project member settings presentation', () => {
   it('localizes role names and permission guidance in English', async () => {
     await render({ locale: 'en' })
     expect(find('cloud-project-member-effective-role-1').textContent).toContain('Administrator')
-    expect(find('cloud-project-member-source-1').textContent).toBe('Inherited from 研发空间')
+    expect(find('cloud-project-member-source-1').textContent).toBe(
+      'Inherited from 研发空间 · Administrator'
+    )
     expect(find('cloud-project-members-inheritance-note').textContent).toContain(
-      'managed in the space'
+      'Space administrators always manage the project'
     )
   })
 })

@@ -19,13 +19,10 @@ from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
-from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.cloud_project import (
     CloudProjectBoardConfig,
     CloudProjectCreate,
-    CloudProjectMemberCreate,
-    CloudProjectMemberUpdate,
     CloudProjectUpdate,
     normalize_provider_config,
 )
@@ -33,7 +30,6 @@ from app.services.cloud_project_visibility import (
     AUTHENTICATED_ENTITY_ID,
     AUTHENTICATED_ENTITY_TYPE,
     accessible_cloud_projects,
-    explicit_project_member_ids,
     workspace_project_ids,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
