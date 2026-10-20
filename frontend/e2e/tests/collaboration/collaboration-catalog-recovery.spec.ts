@@ -3,6 +3,7 @@
 
 import { expect, test as base, type Route } from '@playwright/test'
 import { selectCollaborationProjectView, webApi } from '../../utils/collaboration-test-support'
+import { PROVIDER_NATIVE_MOCK_URL } from '../../utils/provider-native-test-support'
 
 interface Resource {
   id: string
@@ -14,7 +15,15 @@ interface ProjectFixture {
   path: string
 }
 
-const test = base.extend<{ projectFixture: ProjectFixture }>({
+interface CandidateFixture {
+  id: number
+  name: string
+}
+
+const test = base.extend<{
+  projectFixture: ProjectFixture
+  candidateFixture: CandidateFixture
+}>({
   projectFixture: async ({ page }, use) => {
     await page.goto('/collaboration')
     await expect(page.getByTestId('collaboration-platform-root')).toBeVisible()
@@ -47,6 +56,60 @@ const test = base.extend<{ projectFixture: ProjectFixture }>({
       }
     }
   },
+  candidateFixture: async ({ page, projectFixture }, use) => {
+    const name = `e2e-catalog-${projectFixture.project.id}-${crypto.randomUUID()}`
+    const modelName = `${name}-model`
+    const cleanupPaths: string[] = []
+    try {
+      await webApi(page, '/api/v1/namespaces/default/models', {
+        method: 'POST',
+        body: {
+          apiVersion: 'agent.wecode.io/v1',
+          kind: 'Model',
+          metadata: { name: modelName, namespace: 'default' },
+          spec: {
+            modelConfig: {
+              env: {
+                model: 'openai',
+                model_id: 'catalog-recovery',
+                api_key: 'e2e-catalog-key',
+                base_url: `${PROVIDER_NATIVE_MOCK_URL}/v1`,
+              },
+            },
+          },
+        },
+      })
+      cleanupPaths.unshift(`/api/v1/namespaces/default/models/${modelName}`)
+      const bot = await webApi<{ id: number }>(page, '/api/bots', {
+        method: 'POST',
+        body: {
+          name: `${name}-bot`,
+          shell_name: 'Chat',
+          agent_config: { bind_model: modelName, bind_model_type: 'user' },
+          system_prompt: 'Catalog recovery test assistant.',
+          namespace: 'default',
+          is_active: true,
+        },
+      })
+      cleanupPaths.unshift(`/api/bots/${bot.id}`)
+      const team = await webApi<CandidateFixture>(page, '/api/teams', {
+        method: 'POST',
+        body: {
+          name,
+          bots: [{ bot_id: bot.id, bot_prompt: '', role: 'worker' }],
+          bind_mode: ['chat'],
+          namespace: 'default',
+          is_active: true,
+        },
+      })
+      cleanupPaths.unshift(`/api/teams/${team.id}`)
+      await use(team)
+    } finally {
+      for (const path of cleanupPaths) {
+        await webApi(page, path, { method: 'DELETE' })
+      }
+    }
+  },
 })
 
 // Cut the response only after the actual Backend has served it. No non-model
@@ -60,6 +123,7 @@ async function loseRealResponse(route: Route) {
 test('settings skip the board snapshot, retry the real candidate catalog, and restore the board', async ({
   page,
   projectFixture: { project, path },
+  candidateFixture: candidate,
 }) => {
   const issue = await webApi<Resource>(page, `/api/v1/cloud-projects/${project.id}/loop-items`, {
     method: 'POST',
@@ -91,10 +155,21 @@ test('settings skip the board snapshot, retry the real candidate catalog, and re
       response => resourceUrl(new URL(response.url())) && response.request().method() === 'GET'
     )
     await page.getByTestId('project-agent-candidates-retry').click()
-    expect((await recovered).ok()).toBe(true)
+    const catalogResponse = await recovered
+    expect(catalogResponse.ok()).toBe(true)
+    expect((await catalogResponse.json()).agents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          team_id: candidate.id,
+          name: candidate.name,
+          status: 'available',
+        }),
+      ])
+    )
     await expect(page.getByTestId('project-agent-candidates-error')).toHaveCount(0)
     await expect(page.getByTestId('project-agent-candidates-loading')).toHaveCount(0)
-    await expect(page.getByTestId('project-agent-wegent-team')).toBeVisible()
+    await expect(page.getByTestId(`project-agent-option-${candidate.id}`)).toBeEnabled()
+    await expect(page.getByTestId('project-agent-wegent-team')).toContainText(candidate.name)
     await page.getByTestId('project-agent-dialog-close').click()
     expect(snapshots).toHaveLength(0)
     const boardLoaded = page.waitForResponse(
