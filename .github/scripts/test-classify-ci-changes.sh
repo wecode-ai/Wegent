@@ -301,14 +301,16 @@ assert_case "Chinese permission contract runs backend guards" "$permission_contr
 assert_case "English permission contract runs backend guards" "$permission_contract_expected" \
   "docs/en/wegent/developer-guide/collaboration-permissions.md"
 
-rust_permission_expected="${permission_contract_expected/platform_e2e=false/platform_e2e=true}"
+rust_permission_expected="${permission_contract_expected/backend_rs=false/backend_rs=true}"
+rust_permission_expected="${rust_permission_expected/platform_e2e=false/platform_e2e=true}"
 rust_permission_expected="${rust_permission_expected/wework_e2e=false/wework_e2e=true}"
 for path in backend-rs/src/cloud_projects.rs \
   backend-rs/src/cloud_projects/collaboration_access.sql \
   backend-rs/src/cloud_projects/environment_authorization.rs \
+  backend-rs/src/cloud_projects/normalization.rs \
   backend-rs/src/loop_item_executions/device.rs \
   backend-rs/config/routes.toml; do
-  assert_case "Rust permission changes run backend and MySQL guards: $path" \
+  assert_case "Rust permission changes run Rust, backend, and E2E guards: $path" \
     "$rust_permission_expected" "$path"
 done
 
