@@ -8,17 +8,30 @@ use brz_mysql::Json;
 use brz_mysql::{FromMysqlRow, MysqlArgs, MysqlExecution};
 
 #[derive(Default)]
-struct TransactionOnlyReads {
+struct BatchTransaction {
     reads: Vec<String>,
+    writes: Vec<String>,
+    payloads: Vec<Value>,
+    rows_affected: Option<u64>,
 }
 
-impl MysqlTransaction for TransactionOnlyReads {
-    async fn execute<S, A>(&mut self, _: S, _: A) -> MysqlResult<MysqlExecution>
+impl MysqlTransaction for BatchTransaction {
+    async fn execute<S, A>(&mut self, sql: S, args: A) -> MysqlResult<MysqlExecution>
     where
         S: AsRef<str> + Send,
         A: MysqlArgs + Send,
     {
-        panic!("an empty batch has no installation writes")
+        let rows_affected = self
+            .rows_affected
+            .expect("an empty batch has no installation writes");
+        assert_eq!(args.len(), 5);
+        self.writes.push(sql.as_ref().to_string());
+        let payload = args.first_route_value().unwrap().as_str().unwrap();
+        self.payloads.push(serde_json::from_str(payload).unwrap());
+        Ok(MysqlExecution {
+            rows_affected,
+            last_insert_id: 0,
+        })
     }
 
     async fn fetch_optional<S, A, T>(&mut self, _: S, _: A) -> MysqlResult<Option<T>>
@@ -67,7 +80,7 @@ impl MysqlTransaction for TransactionOnlyReads {
 async fn batch_apply_uses_only_its_pinned_transaction_and_preloaded_catalog() {
     // The apply interface receives no pool or resolver. It cannot acquire a
     // second connection while holding the pinned write transaction.
-    let mut transaction = TransactionOnlyReads::default();
+    let mut transaction = BatchTransaction::default();
     let response = apply_auto_update_batch(&mut transaction, None, 2095)
         .await
         .unwrap();
@@ -76,6 +89,73 @@ async fn batch_apply_uses_only_its_pinned_transaction_and_preloaded_catalog() {
     assert_eq!(transaction.reads.len(), 1);
     assert!(transaction.reads[0].contains("kinds.user_id = ?"));
     assert!(!transaction.reads[0].contains("FOR UPDATE"));
+}
+
+fn installed_with_revision(revision: Option<Value>) -> InstalledKindRow {
+    let mut spec = serde_json::json!({"enabled": false});
+    if let Some(revision) = revision {
+        spec["revision"] = revision;
+    }
+    InstalledKindRow {
+        id: 42,
+        user_id: 2095,
+        kind: "InstalledPlugin".to_string(),
+        name: "demo".to_string(),
+        namespace: "default".to_string(),
+        json: Json(OpaqueJson::from_serializable(
+            serde_json::json!({"spec": spec}),
+        )),
+        is_active: true,
+        created_at: chrono::Utc::now().naive_utc(),
+        updated_at: chrono::Utc::now().naive_utc(),
+    }
+}
+
+#[tokio::test]
+async fn installation_cas_rejects_a_concurrent_change() {
+    let mut transaction = BatchTransaction {
+        rows_affected: Some(0),
+        ..Default::default()
+    };
+    let error = advance_installation(
+        &mut transaction,
+        &installed_with_revision(Some(Value::from(6))),
+        serde_json::json!({"spec": {"releaseId": 2, "enabled": false}}),
+        2095,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        http_error(error).detail_message(),
+        Some("plugin_write_conflict")
+    );
+    assert_eq!(transaction.payloads[0]["spec"]["revision"], 7);
+    assert!(
+        transaction.writes[0].contains("COALESCE(JSON_EXTRACT(json, '$.spec.revision'), 0) = ?")
+    );
+    assert!(!transaction.writes[0].contains("FOR UPDATE"));
+}
+
+#[tokio::test]
+async fn legacy_installation_cas_adds_revision_without_changing_preferences() {
+    let mut transaction = BatchTransaction {
+        rows_affected: Some(1),
+        ..Default::default()
+    };
+    advance_installation(
+        &mut transaction,
+        &installed_with_revision(None),
+        serde_json::json!({"spec": {"releaseId": 2, "enabled": false}}),
+        2095,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        transaction.payloads[0],
+        serde_json::json!({
+            "spec": {"releaseId": 2, "enabled": false, "revision": 1}
+        })
+    );
 }
 
 #[test]

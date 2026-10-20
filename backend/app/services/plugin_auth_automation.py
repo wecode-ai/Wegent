@@ -13,6 +13,7 @@ from app.services.plugin_account_connections import (
     plugin_account_connection_service,
 )
 from app.services.plugin_auth_migrations import PluginAuthMigrationService
+from app.services.plugin_write_coordination import configure_auth_policy
 from shared.telemetry.decorators import trace_sync
 
 POLICY_KIND = "ConnectorAuthPolicy"
@@ -40,18 +41,7 @@ class PluginAuthAutomationService:
     @trace_sync("plugin_auth.automation.configure", "backend.plugin_auth")
     def configure(self, db: Session, user_id: int, enabled: bool) -> dict:
         self.connections._coordinate_owner(db, user_id)
-        row = self._policy(db, user_id).populate_existing().first()
-        if row is None:
-            row = Kind(
-                user_id=user_id,
-                kind=POLICY_KIND,
-                namespace=CONNECTION_NAMESPACE,
-                name="account",
-                is_active=True,
-            )
-            db.add(row)
-        row.json = {"spec": {"enabled": enabled}}
-        db.flush()
+        configure_auth_policy(db, user_id, enabled)
         return {"enabled": enabled}
 
     @trace_sync("plugin_auth.automation.reconcile", "backend.plugin_auth")

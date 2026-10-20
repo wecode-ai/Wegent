@@ -18,6 +18,7 @@ fn coordination_failures_keep_the_service_unavailable_response_contract() {
         "plugin_write_busy",
         "plugin_write_unavailable",
         "plugin_write_lease_lost",
+        "plugin_write_conflict",
     ] {
         let response =
             http_error(coordination_error(code)).into_http_error(&EphemeralBytesArena::new(256));
@@ -177,18 +178,22 @@ impl Redis for LeaseRedis {
 }
 
 #[derive(Default)]
-struct FenceTransaction {
+struct RevisionTransaction {
     statements: Vec<String>,
     rows_affected: u64,
+    next_revision: Option<i64>,
 }
 
-impl MysqlTransaction for FenceTransaction {
+impl MysqlTransaction for RevisionTransaction {
     async fn execute<S: AsRef<str> + Send, A: MysqlArgs + Send>(
         &mut self,
         sql: S,
         args: A,
     ) -> MysqlResult<MysqlExecution> {
-        assert_eq!(args.len(), 3);
+        assert_eq!(args.len(), 4);
+        self.next_revision = args
+            .first_route_value()
+            .and_then(|value| value.as_i64().ok());
         self.statements.push(sql.as_ref().to_string());
         Ok(MysqlExecution {
             rows_affected: self.rows_affected,
@@ -202,7 +207,7 @@ impl MysqlTransaction for FenceTransaction {
         A: MysqlArgs + Send,
         T: FromMysqlRow + Send,
     {
-        panic!("fence validation must use affected rows")
+        panic!("revision validation must use affected rows")
     }
 
     async fn fetch_one<S, A, T>(&mut self, _: S, _: A) -> MysqlResult<T>
@@ -327,47 +332,104 @@ async fn stale_owner_cannot_validate_or_release_the_successor_lease() {
 }
 
 #[tokio::test]
-async fn replaced_durable_fence_rejects_commit_even_if_redis_still_matches() {
+async fn changed_parent_revision_rejects_commit_even_if_redis_still_matches() {
     let redis = LeaseRedis::default();
     let lease = PluginWriteLease::acquire(Some(&redis), 23).await.unwrap();
-    let mut transaction = FenceTransaction::default();
-    let error = lease.fence_commit(&mut transaction).await.unwrap_err();
+    let mut transaction = RevisionTransaction::default();
+    let expected = PluginWriteRevision {
+        id: 42,
+        revision: 6,
+    };
+    let error = lease
+        .commit_revision(&mut transaction, expected)
+        .await
+        .unwrap_err();
     assert_eq!(
         http_error(error).detail_message(),
-        Some("plugin_write_lease_lost")
+        Some("plugin_write_conflict")
     );
     assert_eq!(transaction.statements.len(), 1);
-    assert_eq!(
-        transaction.statements[0],
-        "UPDATE plugin_write_fences SET token = ? WHERE user_id = ? AND token = ?"
+    assert!(transaction.statements[0].contains("UPDATE kinds SET json = JSON_SET"));
+    assert!(
+        transaction.statements[0]
+            .contains("COALESCE(JSON_EXTRACT(json, '$.spec.revision'), 0) = ?")
     );
+    assert!(transaction.statements[0].contains("name = 'account' AND is_active IS true"));
+    assert_eq!(transaction.next_revision, Some(7));
 }
 
 #[tokio::test]
-async fn current_durable_fence_accepts_commit_without_a_locking_read() {
+async fn current_parent_revision_accepts_commit_without_a_locking_read() {
     let redis = LeaseRedis::default();
     let lease = PluginWriteLease::acquire(Some(&redis), 23).await.unwrap();
-    let mut transaction = FenceTransaction {
+    let mut transaction = RevisionTransaction {
         rows_affected: 1,
-        ..FenceTransaction::default()
+        ..RevisionTransaction::default()
     };
-    lease.fence_commit(&mut transaction).await.unwrap();
+    lease
+        .commit_revision(
+            &mut transaction,
+            PluginWriteRevision {
+                id: 42,
+                revision: 0,
+            },
+        )
+        .await
+        .unwrap();
     assert_eq!(transaction.statements.len(), 1);
     assert!(!transaction.statements[0].contains("FOR UPDATE"));
+    assert_eq!(transaction.next_revision, Some(1));
 }
 
 #[tokio::test]
-async fn operation_deadline_rejects_commit_before_any_fence_write() {
+async fn operation_deadline_rejects_commit_before_any_revision_write() {
     let redis = LeaseRedis::default();
     let mut lease = PluginWriteLease::acquire(Some(&redis), 23).await.unwrap();
     lease.deadline = Instant::now();
-    let mut transaction = FenceTransaction::default();
-    let error = lease.fence_commit(&mut transaction).await.unwrap_err();
+    let mut transaction = RevisionTransaction::default();
+    let error = lease
+        .commit_revision(
+            &mut transaction,
+            PluginWriteRevision {
+                id: 42,
+                revision: 0,
+            },
+        )
+        .await
+        .unwrap_err();
     assert_eq!(
         http_error(error).detail_message(),
         Some("plugin_write_lease_lost")
     );
     assert!(transaction.statements.is_empty());
+}
+
+#[test]
+fn business_revisions_support_legacy_documents_and_reject_invalid_versions() {
+    for document in [
+        serde_json::json!({}),
+        serde_json::json!({"spec": {"enabled": false}}),
+    ] {
+        assert_eq!(business_revision(&document).unwrap(), 0);
+    }
+    assert_eq!(
+        business_revision(&serde_json::json!({"spec": {"revision": 7}})).unwrap(),
+        7
+    );
+    for value in [
+        serde_json::json!(-1),
+        serde_json::json!("7"),
+        serde_json::Value::Null,
+        serde_json::json!(true),
+        serde_json::json!(i64::MAX),
+    ] {
+        let error =
+            business_revision(&serde_json::json!({"spec": {"revision": value}})).unwrap_err();
+        assert_eq!(
+            http_error(error).detail_message(),
+            Some("plugin_write_conflict")
+        );
+    }
 }
 
 #[tokio::test]

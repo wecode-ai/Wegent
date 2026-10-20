@@ -394,3 +394,126 @@ def test_concurrent_real_package_installs_reuse_one_installation_and_binary(cont
         assert rows[0].id == ids[0]
         assert rows[0].json["spec"]["source"]["type"] == "upload"
         assert db.query(SkillBinary).filter_by(kind_id=ids[0]).count() == 1
+
+
+def test_expired_first_upload_rolls_back_its_install_and_binary_after_successor_commit(
+    context, monkeypatch
+):
+    package = upload_package()
+    service = InstalledPluginService()
+    client = coordination._redis_client()
+    with context.sessions() as stale:
+        # Pause the real upload at its commit boundary after both INSERTs execute.
+        with monkeypatch.context() as patch:
+            patch.setattr(stale, "commit", stale.flush)
+            old_install = service.upload_plugin(
+                db=stale,
+                user_id=context.user_id,
+                package_bytes=package,
+                filename="concurrent-upload.zip",
+            )
+        old_id = int(old_install.metadata["labels"]["id"])
+        assert stale.query(SkillBinary).filter_by(kind_id=old_id).count() == 1
+        lease = stale.info["plugin_write_leases"][context.user_id]
+        # A process can pause immediately after its last successful Redis check.
+        lease.check = lambda: None
+        assert client.pexpire(lock_key(context), 100)
+
+        with context.sessions() as successor:
+            recovered = service.upload_plugin(
+                db=successor,
+                user_id=context.user_id,
+                package_bytes=package,
+                filename="concurrent-upload.zip",
+            )
+        recovered_id = int(recovered.metadata["labels"]["id"])
+        assert recovered_id != old_id
+
+        with pytest.raises(PluginWriteError, match="plugin_write_conflict"):
+            stale.commit()
+        stale.rollback()
+
+    with context.sessions() as db:
+        rows = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == context.user_id,
+                Kind.kind == "InstalledPlugin",
+                Kind.namespace == "default",
+                Kind.json["spec"]["source"]["pluginKey"].as_string()
+                == "concurrent-upload",
+            )
+            .all()
+        )
+        assert len(rows) == 1 and rows[0].id == recovered_id and rows[0].is_active
+        assert rows[0].json["spec"]["revision"] == 1
+        assert db.get(Kind, old_id) is None
+        assert db.query(SkillBinary).filter_by(kind_id=old_id).count() == 0
+        binaries = (
+            db.query(SkillBinary)
+            .join(Kind, Kind.id == SkillBinary.kind_id)
+            .filter(Kind.user_id == context.user_id)
+            .all()
+        )
+        assert len(binaries) == 1 and binaries[0].kind_id == recovered_id
+    assert not client.exists(lock_key(context))
+
+
+def test_stale_automation_cannot_insert_an_intent_after_logout_commits(
+    local_context, monkeypatch
+):
+    context = local_context
+    automation = PluginAuthAutomationService(context.accounts)
+    client = coordination._redis_client()
+    write_intent = automation.migrations._write_intent
+    logout_completed = threading.Event()
+
+    def logout_before_intent_insert(db: Session, user_id: int, spec: dict):
+        # The real automation has already read the enabled local-auth policy.
+        lease = db.info["plugin_write_leases"][context.user_id]
+        lease.check = lambda: None
+        assert client.pexpire(lock_key(context), 100)
+        with context.sessions.begin() as successor:
+            assert lifecycle(context, successor, "logout") == {"status": "ok"}
+        logout_completed.set()
+        return write_intent(db, user_id, spec)
+
+    monkeypatch.setattr(
+        automation.migrations, "_write_intent", logout_before_intent_insert
+    )
+    with context.sessions() as stale:
+        result = automation.reconcile(
+            stale,
+            user_id=context.user_id,
+            device_id=context.device_id,
+            installed_ids=[context.plugin_id],
+        )
+        assert logout_completed.is_set()
+        assert len(result["migrations"]) == 1
+        assert (
+            stale.query(Kind)
+            .filter_by(user_id=context.user_id, kind="ConnectorMigration")
+            .count()
+            == 1
+        )
+
+        with pytest.raises(PluginWriteError, match="plugin_write_conflict"):
+            stale.commit()
+        stale.rollback()
+
+    with context.sessions.begin() as db:
+        assert (
+            db.query(Kind)
+            .filter_by(user_id=context.user_id, kind="ConnectorMigration")
+            .count()
+            == 0
+        )
+        assert context.accounts.list_connections(db, user_id=context.user_id) == []
+        assert lifecycle(context, db, "status") == {"status": "need_login"}
+        assert automation.reconcile(
+            db,
+            user_id=context.user_id,
+            device_id=context.device_id,
+            installed_ids=[context.plugin_id],
+        ) == {"migrations": []}
+    assert not client.exists(lock_key(context))

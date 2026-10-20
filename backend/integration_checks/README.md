@@ -22,7 +22,7 @@ PLUGIN_AUTH_REDIS_TEST_URL='redis://127.0.0.1:6379/15' \
 ```
 
 MySQL URL 必须指向本机的 `plugin_auth_test`，Redis URL 必须指向本机 DB 15。
-测试只创建必要的 `users`、`kinds`、`skill_binaries`、`plugin_write_fences` 表，使用合成凭据，
+测试只创建必要的 `users`、`kinds`、`skill_binaries` 表，使用合成凭据，
 每项测试清理自己创建的用户和资源，不删除整库或读取个人认证。不要将变量指向
 开发共享库或生产库。
 

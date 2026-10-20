@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.models.kind import Kind
 from app.schemas.plugin_account_auth import PluginCredentialWrite
 from app.services.plugin_account_connections import (
+    CONNECTION_KIND,
     CONNECTION_NAMESPACE,
     PluginAccountAuthError,
     PluginAccountConnectionService,
@@ -155,7 +156,16 @@ def test_enrollment_metadata_never_discloses_credentials(
     service, test_db, test_user, installed
 ):
     connection = enroll(service, test_db, test_user, installed)
-    row = test_db.query(Kind).filter(Kind.namespace == CONNECTION_NAMESPACE).one()
+    row = (
+        test_db.query(Kind)
+        .filter(
+            Kind.user_id == test_user.id,
+            Kind.kind == CONNECTION_KIND,
+            Kind.namespace == CONNECTION_NAMESPACE,
+            Kind.name == connection.id,
+        )
+        .one()
+    )
     assert "test-password" not in json.dumps(row.json)
     assert connection.revision == 1
     assert connection.device_ids == []

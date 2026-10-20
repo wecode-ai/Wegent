@@ -16,7 +16,6 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.models.kind import Kind
-from app.models.plugin_write_fence import PluginWriteFence
 from app.models.skill_binary import SkillBinary
 from app.models.user import User
 from app.schemas.plugin_account_auth import (
@@ -101,10 +100,15 @@ def sessions():
     for table in (
         User.__table__,
         Kind.__table__,
-        PluginWriteFence.__table__,
         SkillBinary.__table__,
     ):
         table.create(engine, checkfirst=True)
+    policy_index = next(
+        index
+        for index in Kind.__table__.indexes
+        if index.name == "uq_kinds_account_auth_policy"
+    )
+    policy_index.create(engine, checkfirst=True)
     redis_url = make_url(os.environ["PLUGIN_AUTH_REDIS_TEST_URL"])
     assert redis_url.host in {"127.0.0.1", "localhost"}
     assert redis_url.database == "15", "Use only the dedicated test Redis DB 15"
@@ -199,7 +203,6 @@ def created_context(sessions):
         coordination._redis_client().delete(f"wegent:plugin-write:{value.user_id}")
         with sessions.begin() as db:
             db.query(Kind).filter(Kind.user_id == value.user_id).delete()
-            db.query(PluginWriteFence).filter_by(user_id=value.user_id).delete()
             db.query(User).filter(User.id == value.user_id).delete()
 
 

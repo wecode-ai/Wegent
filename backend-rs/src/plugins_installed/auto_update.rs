@@ -19,7 +19,8 @@
 //! passed scanning. The first `AUTO_UPDATE_BATCH_SIZE` candidates are applied
 //! through the shared installed-payload builder, preserving the row's
 //! `enabled`, `componentStates` and `updatePolicy`. The endpoint always
-//! commits one pinned, fenced transaction, including an empty batch.
+//! commits one pinned transaction with business-record revision checks,
+//! including an empty batch.
 
 use std::collections::{HashMap, HashSet};
 
@@ -36,7 +37,9 @@ use crate::plugins_marketplace::db::{
 use crate::state::AppState;
 
 use super::auth;
-use super::write_coordination::{PluginWriteLease, coordination_error, http_error};
+use super::write_coordination::{
+    PluginWriteLease, business_revision, coordination_error, http_error,
+};
 use crate::http_compat::FastApiError;
 
 /// Source `plugin_marketplace_service.AUTO_UPDATE_BATCH_SIZE`.
@@ -246,18 +249,28 @@ where
 {
     let lease = PluginWriteLease::acquire(redis, user_id).await?;
     let result = tokio::time::timeout_at(lease.deadline, async {
-        lease.claim_fence(mysql).await?;
+        lease.ensure_policy(mysql).await?;
+        let catalog_revision = mysql
+            .with_transaction(async |transaction| lease.read_revision(transaction).await)
+            .await?;
         // Catalog and permission resolvers may borrow additional pool
         // connections. Complete them before pinning the write connection.
         let catalog = load_auto_update_catalog(mysql, redis, resolvers, user_id).await?;
-        // A fresh transaction starts after acquiring the lease, so its first
-        // snapshot cannot precede the previous plugin writer's commit.
+        // The write transaction reads the shared parent before installation
+        // state; its final CAS also detects commits from an expired worker.
         mysql
             .with_transaction(async |transaction| {
                 lease.verify_owned().await?;
+                let revision = lease.read_revision(transaction).await?;
+                // Catalog loading releases its connection before permission
+                // resolvers borrow from the pool. Reject it if any plugin
+                // writer committed while those dependencies were loading.
+                if revision != catalog_revision {
+                    return Err(coordination_error("plugin_write_conflict"));
+                }
                 let response =
                     apply_auto_update_batch(transaction, catalog.as_ref(), user_id).await?;
-                lease.fence_commit(transaction).await?;
+                lease.commit_revision(transaction, revision).await?;
                 Ok(response)
             })
             .await
@@ -354,22 +367,7 @@ async fn apply_auto_update_batch<T: MysqlTransaction>(
             continue;
         };
         let payload = installed_payload(plugin, release, &current_spec);
-        // `db.commit()` flushes the dirty `Kind` row: the JSON column and the
-        // Python-side `onupdate` timestamp.
-        let updated_at = chrono::Utc::now()
-            .naive_utc()
-            .format("%Y-%m-%d %H:%M:%S%.6f")
-            .to_string();
-        transaction
-            .execute(
-                "UPDATE kinds SET json=?, updated_at=? WHERE kinds.id = ?",
-                (
-                    serde_json::to_string(&payload).expect("payload serializes"),
-                    updated_at,
-                    installed.id,
-                ),
-            )
-            .await?;
+        advance_installation(transaction, installed, payload, user_id).await?;
         updated.push(PluginAutoUpdateItem {
             installed_plugin_id: installed.id,
             plugin_id: plugin.id,
@@ -385,6 +383,37 @@ async fn apply_auto_update_batch<T: MysqlTransaction>(
         updated,
         remaining_count,
     })
+}
+
+/// Keep installation CAS independent of the account policy CAS: both writes
+/// must succeed in the same transaction before its response can be committed.
+async fn advance_installation<T: MysqlTransaction>(
+    transaction: &mut T,
+    installed: &InstalledKindRow,
+    mut payload: Value,
+    user_id: i64,
+) -> MysqlResult<()> {
+    let revision = business_revision(&installed.json.0.to_value())?;
+    payload["spec"]["revision"] = Value::from(revision + 1);
+    let execution = transaction
+        .execute(
+            "UPDATE kinds SET json=?, updated_at=NOW() WHERE kinds.id = ? \
+             AND user_id = ? AND kind = 'InstalledPlugin' AND namespace = 'default' \
+             AND name = ? AND is_active IS true AND \
+             COALESCE(JSON_EXTRACT(json, '$.spec.revision'), 0) = ?",
+            (
+                serde_json::to_string(&payload).expect("payload serializes"),
+                installed.id,
+                user_id,
+                installed.name.as_str(),
+                revision,
+            ),
+        )
+        .await?;
+    if execution.rows_affected != 1 {
+        return Err(coordination_error("plugin_write_conflict"));
+    }
+    Ok(())
 }
 
 /// `_auto_update_candidates`'s filter step over the loaded catalog.

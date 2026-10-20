@@ -16,7 +16,7 @@ from app.db.pool_observability import ObservedQueuePool, register_pool
 
 _mutex = threading.Lock()
 _redis: Redis | None = None
-_fence_engines: WeakKeyDictionary[Pool, Engine] = WeakKeyDictionary()
+_policy_engines: WeakKeyDictionary[Pool, Engine] = WeakKeyDictionary()
 
 
 def redis_client() -> Redis:
@@ -34,12 +34,12 @@ def redis_client() -> Redis:
         return _redis
 
 
-def fence_engine(business_engine: Engine) -> Engine:
-    """Avoid a second checkout from an already saturated business pool."""
+def policy_engine(business_engine: Engine) -> Engine:
+    """Bound the first-use creation of the existing default auth policy."""
     if business_engine.dialect.name != "mysql":
         return business_engine
     with _mutex:
-        engine = _fence_engines.get(business_engine.pool)
+        engine = _policy_engines.get(business_engine.pool)
         if engine is None:
             engine = create_engine(
                 business_engine.url,
@@ -57,13 +57,13 @@ def fence_engine(business_engine: Engine) -> Engine:
             )
             register_pool(
                 engine.pool,
-                engine_role="plugin_fence",
+                engine_role="plugin_policy",
                 pool_size=2,
                 max_overflow=2,
                 pool_timeout=1,
                 pool_recycle=600,
             )
-            _fence_engines[business_engine.pool] = engine
+            _policy_engines[business_engine.pool] = engine
         return engine
 
 
@@ -71,8 +71,8 @@ def close_plugin_write_resources() -> None:
     global _redis
     with _mutex:
         client, _redis = _redis, None
-        engines = list(_fence_engines.values())
-        _fence_engines.clear()
+        engines = list(_policy_engines.values())
+        _policy_engines.clear()
     with ExitStack() as cleanup:
         for engine in engines:
             cleanup.callback(engine.dispose)

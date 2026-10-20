@@ -54,7 +54,6 @@ from app.models.plugin_publication import (
     PluginPublicationRevision,
     PluginReleaseIdempotency,
 )
-from app.models.plugin_write_fence import PluginWriteFence
 from app.models.project import Project
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
@@ -97,7 +96,6 @@ from app.models.work_queue import (
 from app.schemas.namespace import GroupRole
 
 __all__ = [
-    "PluginWriteFence",
     "WeworkNotification",
     "DingtalkSyncedNode",
     "CloudProject",

@@ -73,6 +73,7 @@ from app.services.plugin_device_identity import (
     plugin_device_id,
     plugin_device_rows,
 )
+from app.services.plugin_kind_revision import kind_revision, replace_installed_kind
 from app.services.plugin_marketplace_identity import (
     ENTERPRISE_CATALOG_NAMESPACE,
     OFFICIAL_CATALOG_NAMESPACE,
@@ -509,8 +510,7 @@ class PluginMarketplaceService:
         installed = existing
         payload = self._installed_payload(plugin, release)
         if installed:
-            installed.json = payload
-            installed.is_active = True
+            replace_installed_kind(db, installed, payload, is_active=True)
         else:
             installed = Kind(
                 user_id=user_id,
@@ -543,7 +543,10 @@ class PluginMarketplaceService:
             )
         plugin = self._published_plugin(db, plugin_id, user_id=user_id)
         release = self._installable_release(db, plugin, release_id)
-        self._apply_installed_release(installed, plugin=plugin, release=release)
+        payload = self._installed_release_payload(
+            installed, plugin=plugin, release=release
+        )
+        replace_installed_kind(db, installed, payload)
         db.commit()
         db.refresh(installed)
         return self._kind_to_installed(installed)
@@ -696,16 +699,29 @@ class PluginMarketplaceService:
         plugin: Plugin,
         release: PluginRelease,
     ) -> None:
+        installed.json = self._installed_release_payload(
+            installed, plugin=plugin, release=release
+        )
+
+    def _installed_release_payload(
+        self,
+        installed: Kind,
+        *,
+        plugin: Plugin,
+        release: PluginRelease,
+    ) -> dict:
         spec = installed.json.get("spec", {})
         enabled = bool(spec.get("enabled", True))
         component_states = spec.get("componentStates") or {}
         update_policy = spec.get("updatePolicy")
         if update_policy not in {"manual", "auto"}:
             update_policy = "auto"
-        installed.json = self._installed_payload(plugin, release)
-        installed.json["spec"]["enabled"] = enabled
-        installed.json["spec"]["componentStates"] = component_states
-        installed.json["spec"]["updatePolicy"] = update_policy
+        payload = self._installed_payload(plugin, release)
+        payload["spec"]["enabled"] = enabled
+        payload["spec"]["componentStates"] = component_states
+        payload["spec"]["updatePolicy"] = update_policy
+        payload["spec"]["revision"] = kind_revision(installed) + 1
+        return payload
 
     def release_package_for_install(
         self, db: Session, *, user_id: int, installed_id: int
@@ -2320,6 +2336,7 @@ class PluginMarketplaceService:
                 "namespace": "default",
             },
             "spec": {
+                "revision": 1,
                 "source": {
                     "type": "marketplace",
                     "providerKey": "wegent-market",
@@ -3201,7 +3218,7 @@ class PluginMarketplaceService:
             ):
                 target_release = release
             if not target_release:
-                self._deactivate_orphaned_catalog_install(row)
+                self._deactivate_orphaned_catalog_install(db, row)
                 self._clear_device_installations(db, installed_kind_id=row.id)
                 return True
             expected_marketplace = marketplace_name_for_visibility(matched.visibility)
@@ -3214,7 +3231,7 @@ class PluginMarketplaceService:
             ):
                 return False
             self._apply_catalog_ref_to_installed_kind(
-                row, plugin=matched, release=target_release
+                db, row, plugin=matched, release=target_release
             )
             self._reset_failed_device_installations(
                 db, installed_kind_id=row.id, release_id=target_release.id
@@ -3224,12 +3241,12 @@ class PluginMarketplaceService:
             return False
         # No accessible package can satisfy this cloud install. Deactivate the
         # orphan so full desired-state sync stops recreating it on every device.
-        self._deactivate_orphaned_catalog_install(row)
+        self._deactivate_orphaned_catalog_install(db, row)
         self._clear_device_installations(db, installed_kind_id=row.id)
         return True
 
     def _apply_catalog_ref_to_installed_kind(
-        self, row: Kind, *, plugin: Plugin, release: PluginRelease
+        self, db: Session, row: Kind, *, plugin: Plugin, release: PluginRelease
     ) -> None:
         payload = dict(row.json) if isinstance(row.json, dict) else {}
         spec = dict(payload.get("spec") or {})
@@ -3281,11 +3298,9 @@ class PluginMarketplaceService:
             plugin.catalog_namespace, plugin.slug or plugin.name
         )
         payload["metadata"] = metadata
-        row.json = payload
-        row.name = metadata["name"]
-        flag_modified(row, "json")
+        replace_installed_kind(db, row, payload, name=metadata["name"])
 
-    def _detach_stale_catalog_ref_from_installed_kind(self, row: Kind) -> None:
+    def _detached_catalog_payload(self, row: Kind) -> dict:
         payload = dict(row.json) if isinstance(row.json, dict) else {}
         spec = dict(payload.get("spec") or {})
         source = dict(spec.get("source") or {})
@@ -3303,19 +3318,15 @@ class PluginMarketplaceService:
         source_payload.pop("releaseId", None)
         spec["sourcePayload"] = source_payload
         payload["spec"] = spec
-        row.json = payload
-        flag_modified(row, "json")
+        return payload
 
-    def _deactivate_orphaned_catalog_install(self, row: Kind) -> None:
-        self._detach_stale_catalog_ref_from_installed_kind(row)
-        payload = dict(row.json) if isinstance(row.json, dict) else {}
+    def _deactivate_orphaned_catalog_install(self, db: Session, row: Kind) -> None:
+        payload = self._detached_catalog_payload(row)
         spec = dict(payload.get("spec") or {})
         spec["enabled"] = False
         spec["installState"] = "uninstalled"
         payload["spec"] = spec
-        row.json = payload
-        row.is_active = False
-        flag_modified(row, "json")
+        replace_installed_kind(db, row, payload, is_active=False)
 
     def _deactivate_duplicate_installed_kind(self, db: Session, row: Kind) -> bool:
         payload = dict(row.json) if isinstance(row.json, dict) else {}
@@ -3325,9 +3336,7 @@ class PluginMarketplaceService:
         spec["enabled"] = False
         spec["installState"] = "uninstalled"
         payload["spec"] = spec
-        row.json = payload
-        row.is_active = False
-        flag_modified(row, "json")
+        replace_installed_kind(db, row, payload, is_active=False)
         self._clear_device_installations(db, installed_kind_id=row.id)
         return True
 

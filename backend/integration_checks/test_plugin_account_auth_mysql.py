@@ -1,16 +1,22 @@
 """Real Redis/InnoDB transaction races against disposable local services."""
 
+import importlib.util
 import json
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 from pydantic import SecretStr
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.plugin_account_auth import (
@@ -19,6 +25,7 @@ from app.schemas.plugin_account_auth import (
     PluginNativeLocalLifecycle,
     PluginOAuthFinish,
 )
+from app.services import plugin_policy_revision as policy_revision
 from app.services import plugin_write_coordination as coordination
 from app.services import plugin_write_resources as resources
 from app.services.device_service import device_service
@@ -53,6 +60,161 @@ def test_simultaneous_enrollment_creates_only_one_account(context):
     assert race(context, enroll, enroll) == ["ok", "plugin_auth_revision_conflict"]
     with context.sessions() as db:
         assert len(context.accounts.list_connections(db, user_id=context.user_id)) == 1
+
+
+def test_simultaneous_first_policy_materialization_keeps_one_business_parent(
+    context, monkeypatch
+):
+    barrier = threading.Barrier(2, timeout=5)
+    materialize = policy_revision._materialize_default
+
+    def overlapping_materialization(db: Session, user_id: int) -> None:
+        # Both requests must observe absence before either attempts the INSERT.
+        barrier.wait()
+        materialize(db, user_id)
+
+    monkeypatch.setattr(
+        policy_revision, "_materialize_default", overlapping_materialization
+    )
+
+    def read_first_parent():
+        with context.sessions.begin() as db:
+            establish_snapshot(db, context)
+            return policy_revision.read_policy_revision(db, context.user_id)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        requests = [pool.submit(read_first_parent) for _ in range(2)]
+        parents = [request.result(timeout=10) for request in requests]
+
+    assert parents[0] == parents[1]
+    assert parents[0].revision == 0
+    with context.sessions() as db:
+        rows = (
+            db.query(Kind)
+            .filter_by(
+                user_id=context.user_id,
+                kind="ConnectorAuthPolicy",
+                namespace="plugin-auth",
+                name="account",
+            )
+            .all()
+        )
+        assert len(rows) == 1 and rows[0].id == parents[0].row_id
+        assert rows[0].is_active is True
+        assert rows[0].json == {"spec": {"enabled": True, "revision": 0}}
+
+
+def _policy_migration():
+    path = (
+        Path(__file__).parents[1]
+        / "alembic/versions/20261020_b9d8e7a6c501_unique_account_auth_policy.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "mysql_policy_identity_migration", path
+    )
+    assert spec and spec.loader
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    return migration
+
+
+def _has_policy_index(connection) -> bool:
+    return bool(
+        connection.scalar(
+            text(
+                "SELECT COUNT(*) FROM information_schema.statistics "
+                "WHERE table_schema = DATABASE() AND table_name = 'kinds' "
+                "AND index_name = 'uq_kinds_account_auth_policy'"
+            )
+        )
+    )
+
+
+def _column_layout(connection) -> list[tuple]:
+    inspector = inspect(connection)
+    primary_key = inspector.get_pk_constraint("kinds")["constrained_columns"]
+    return [
+        (
+            column["name"],
+            str(column["type"]),
+            column["nullable"],
+            column["default"],
+            column["name"] in primary_key,
+        )
+        for column in inspector.get_columns("kinds")
+    ]
+
+
+def _insert_migration_policy(connection, user_id: int, *, kind: str):
+    return connection.execute(
+        Kind.__table__.insert().values(
+            user_id=user_id,
+            kind=kind,
+            namespace="plugin-auth",
+            name="account",
+            json={"spec": {"enabled": False, "revision": 7}},
+            is_active=True,
+        )
+    ).inserted_primary_key[0]
+
+
+def test_mysql_policy_migration_round_trip_preserves_preferences_and_kind_names(
+    context,
+):
+    migration = _policy_migration()
+    engine = context.sessions.kw["bind"]
+    duplicate_id = None
+    with engine.connect() as connection:
+        original_columns = _column_layout(connection)
+        policy_id = _insert_migration_policy(
+            connection, context.user_id, kind="ConnectorAuthPolicy"
+        )
+        connection.commit()
+        try:
+            with Operations.context(MigrationContext.configure(connection)):
+                migration.downgrade()
+                assert not _has_policy_index(connection)
+                duplicate_id = _insert_migration_policy(
+                    connection, context.user_id, kind="ConnectorAuthPolicy"
+                )
+                connection.commit()
+                with pytest.raises(RuntimeError, match="require reconciliation"):
+                    migration.upgrade()
+                assert not _has_policy_index(connection)
+                connection.execute(
+                    Kind.__table__.delete().where(Kind.id == duplicate_id)
+                )
+                connection.commit()
+                duplicate_id = None
+                migration.upgrade()
+                assert _has_policy_index(connection)
+                with pytest.raises(IntegrityError):
+                    with connection.begin_nested():
+                        _insert_migration_policy(
+                            connection, context.user_id, kind="ConnectorAuthPolicy"
+                        )
+                unrelated_ids = [
+                    _insert_migration_policy(
+                        connection, context.user_id, kind="UnrelatedKind"
+                    )
+                    for _ in range(2)
+                ]
+                connection.commit()
+                assert len(set(unrelated_ids)) == 2
+                assert connection.scalar(
+                    select(Kind.json).where(Kind.id == policy_id)
+                ) == {"spec": {"enabled": False, "revision": 7}}
+                assert _column_layout(connection) == original_columns
+        finally:
+            connection.rollback()
+            if duplicate_id is not None:
+                connection.execute(
+                    Kind.__table__.delete().where(Kind.id == duplicate_id)
+                )
+                connection.commit()
+            if not _has_policy_index(connection):
+                with Operations.context(MigrationContext.configure(connection)):
+                    migration.upgrade()
 
 
 def test_local_logout_commits_while_an_unrelated_transaction_holds_the_user_row(
@@ -129,19 +291,19 @@ def single_connection_sessions(context):
         max_overflow=0,
         pool_timeout=1,
     )
-    fence = resources.fence_engine(engine)
+    policy_pool = resources.policy_engine(engine)
     try:
         yield sessionmaker(
             engine,
             class_=context.sessions.class_,
             expire_on_commit=False,
-        ), fence
+        ), policy_pool
     finally:
-        fence.dispose()
+        policy_pool.dispose()
         engine.dispose()
 
 
-def test_fence_claim_does_not_need_a_second_business_pool_connection(
+def test_first_policy_creation_does_not_need_a_second_business_pool_connection(
     context, single_connection_sessions
 ):
     sessions, _ = single_connection_sessions
@@ -158,13 +320,13 @@ def test_fence_claim_does_not_need_a_second_business_pool_connection(
         assert stored[0].id == connection.id
 
 
-def test_saturated_fence_pool_returns_retryable_error_and_releases_redis(
+def test_saturated_initial_policy_pool_returns_retryable_error_and_releases_redis(
     context, single_connection_sessions
 ):
-    sessions, fence = single_connection_sessions
+    sessions, policy_pool = single_connection_sessions
     with ExitStack() as connections:
         for _ in range(4):
-            connections.enter_context(fence.connect())
+            connections.enter_context(policy_pool.connect())
         with sessions() as db:
             establish_snapshot(db, context)
 
@@ -178,6 +340,28 @@ def test_saturated_fence_pool_returns_retryable_error_and_releases_redis(
             assert not coordination._redis_client().exists(
                 f"wegent:plugin-write:{context.user_id}"
             )
+
+
+def test_existing_policy_uses_no_connection_from_the_initial_policy_pool(
+    context, single_connection_sessions
+):
+    sessions, policy_pool = single_connection_sessions
+    with sessions.begin() as db:
+        acquire_plugin_write_lock(db, context.user_id)
+
+    with ExitStack() as connections:
+        for _ in range(4):
+            connections.enter_context(policy_pool.connect())
+        with sessions.begin() as db:
+            establish_snapshot(db, context)
+            enrolled = context.accounts.enroll(
+                db, user_id=context.user_id, request=context.credential()
+            )
+
+    with context.sessions() as db:
+        assert context.accounts.list_connections(db, user_id=context.user_id) == [
+            enrolled
+        ]
 
 
 def test_uninstall_invalidates_plugin_loaded_before_coordination(context):
@@ -202,7 +386,7 @@ def test_uninstall_invalidates_plugin_loaded_before_coordination(context):
         assert context.accounts.list_connections(db, user_id=context.user_id) == []
 
 
-def test_expired_worker_cannot_commit_after_successor_claims_fence(context):
+def test_expired_worker_cannot_commit_after_successor_advances_parent_revision(context):
     with context.sessions() as stale:
         acquire_plugin_write_lock(stale, context.user_id)
         stale.add(
@@ -210,12 +394,13 @@ def test_expired_worker_cannot_commit_after_successor_claims_fence(context):
                 user_id=context.user_id,
                 kind="ConnectorLocalAuthPolicy",
                 namespace="plugin-auth",
-                name="fence-test",
+                name="revision-test",
                 json={"spec": {"writer": "expired"}},
             )
         )
         stale.flush()
         lease = stale.info["plugin_write_leases"][context.user_id]
+        observed_revision = lease.policy.revision
         # Model a pause immediately after a successful Redis ownership check.
         lease.check = lambda: None
         coordination._redis_client().delete(f"wegent:plugin-write:{context.user_id}")
@@ -226,12 +411,12 @@ def test_expired_worker_cannot_commit_after_successor_claims_fence(context):
                     user_id=context.user_id,
                     kind="ConnectorLocalAuthPolicy",
                     namespace="plugin-auth",
-                    name="fence-test",
+                    name="revision-test",
                     json={"spec": {"writer": "successor"}},
                 )
             )
 
-        with pytest.raises(PluginWriteError, match="plugin_write_lease_lost"):
+        with pytest.raises(PluginWriteError, match="plugin_write_conflict"):
             stale.commit()
         stale.rollback()
 
@@ -242,11 +427,22 @@ def test_expired_worker_cannot_commit_after_successor_claims_fence(context):
                 user_id=context.user_id,
                 kind="ConnectorLocalAuthPolicy",
                 namespace="plugin-auth",
-                name="fence-test",
+                name="revision-test",
             )
             .all()
         )
         assert [row.json["spec"]["writer"] for row in rows] == ["successor"]
+        parent = (
+            db.query(Kind)
+            .filter_by(
+                user_id=context.user_id,
+                kind="ConnectorAuthPolicy",
+                namespace="plugin-auth",
+                name="account",
+            )
+            .one()
+        )
+        assert parent.json["spec"]["revision"] == observed_revision + 1
 
 
 def test_empty_auto_update_batch_does_not_block_install_before_session_cleanup(context):

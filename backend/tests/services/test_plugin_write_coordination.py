@@ -8,6 +8,7 @@ from redis.exceptions import ConnectionError
 from sqlalchemy.exc import TimeoutError
 from sqlalchemy.orm import Session
 
+from app.models.kind import Kind
 from app.services import plugin_write_coordination as coordination
 
 
@@ -47,11 +48,13 @@ def test_savepoint_end_keeps_root_lease(test_db, plugin_write_backend, finish):
 
 
 def test_other_user_can_write_while_same_user_is_busy(
-    test_db, test_engine, plugin_write_backend, monkeypatch
+    test_db, plugin_write_backend, monkeypatch
 ):
     monkeypatch.setattr(coordination, "WAIT_SECONDS", 0)
     coordination.acquire_plugin_write_lock(test_db, 17)
-    with Session(test_engine) as other:
+    with Session(
+        test_db.connection(), join_transaction_mode="create_savepoint"
+    ) as other:
         coordination.acquire_plugin_write_lock(other, 18)
         with pytest.raises(coordination.PluginWriteError) as caught:
             coordination.acquire_plugin_write_lock(other, 17)
@@ -60,9 +63,9 @@ def test_other_user_can_write_while_same_user_is_busy(
     assert "wegent:plugin-write:17" in plugin_write_backend[0].values
 
 
-def test_redis_failure_prevents_claiming_fence(test_db, monkeypatch):
+def test_redis_failure_prevents_reading_policy(test_db, monkeypatch):
     claim = Mock()
-    monkeypatch.setattr(coordination, "_claim_fence", claim)
+    monkeypatch.setattr(coordination, "read_policy_revision", claim)
     monkeypatch.setattr(
         coordination, "_redis_client", Mock(side_effect=ConnectionError("private"))
     )
@@ -79,7 +82,9 @@ def test_claim_failure_releases_acquired_lease(
     test_db, plugin_write_backend, monkeypatch
 ):
     monkeypatch.setattr(
-        coordination, "_claim_fence", Mock(side_effect=RuntimeError("claim failed"))
+        coordination,
+        "read_policy_revision",
+        Mock(side_effect=RuntimeError("claim failed")),
     )
 
     with pytest.raises(RuntimeError, match="claim failed"):
@@ -88,11 +93,11 @@ def test_claim_failure_releases_acquired_lease(
     assert not plugin_write_backend[0].values
 
 
-def test_fence_pool_timeout_is_a_safe_retryable_error(
+def test_policy_bootstrap_timeout_is_a_safe_retryable_error(
     test_db, plugin_write_backend, monkeypatch
 ):
     monkeypatch.setattr(
-        coordination, "_claim_fence", Mock(side_effect=TimeoutError("private"))
+        coordination, "read_policy_revision", Mock(side_effect=TimeoutError("private"))
     )
 
     with pytest.raises(coordination.PluginWriteError) as caught:
@@ -103,17 +108,18 @@ def test_fence_pool_timeout_is_a_safe_retryable_error(
     assert not plugin_write_backend[0].values
 
 
-def test_superseded_fence_rejects_commit_even_when_redis_reports_owned(
+def test_superseded_revision_rejects_commit_even_when_redis_reports_owned(
     test_db, plugin_write_backend
 ):
-    _, fences = plugin_write_backend
     coordination.acquire_plugin_write_lock(test_db, 17)
-    fences[17] = "successor-token"
+    policy = test_db.query(Kind).filter_by(user_id=17).one()
+    policy.json = {"spec": {"enabled": False, "revision": 1}}
+    test_db.flush()
 
     with pytest.raises(coordination.PluginWriteError) as caught:
         test_db.commit()
 
-    assert caught.value.code == "plugin_write_lease_lost"
+    assert caught.value.code == "plugin_write_conflict"
     test_db.rollback()
     assert not plugin_write_backend[0].values
 
@@ -156,3 +162,80 @@ def test_failed_release_does_not_report_successful_commit_as_failure(
     test_db.commit()
 
     assert coordination._LEASES not in test_db.info
+
+
+def test_configure_policy_retains_its_cas_version(test_db):
+    coordination.configure_auth_policy(test_db, 17, False)
+    coordination.configure_auth_policy(test_db, 17, True)
+
+    test_db.commit()
+
+    policy = test_db.query(Kind).filter_by(user_id=17).one()
+    assert policy.json == {"spec": {"enabled": True, "revision": 3}}
+
+
+@pytest.mark.parametrize("inner_commit", [False, True])
+def test_savepoint_rollback_restores_expected_policy_revision(test_db, inner_commit):
+    coordination.acquire_plugin_write_lock(test_db, 17)
+    outer = test_db.begin_nested()
+    inner = test_db.begin_nested()
+    coordination.configure_auth_policy(test_db, 17, False)
+    if inner_commit:
+        inner.commit()
+    else:
+        inner.rollback()
+    outer.rollback()
+
+    test_db.commit()
+
+    policy = test_db.query(Kind).filter_by(user_id=17).one()
+    assert policy.json == {"spec": {"enabled": True, "revision": 1}}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        None,
+        [],
+        {},
+        {"spec": None},
+        {"spec": []},
+        {"spec": {"revision": "1"}},
+        {"spec": {"revision": True}},
+        {"spec": {"revision": -1}},
+        {"spec": {"revision": 2**63 - 1}},
+    ],
+)
+def test_invalid_parent_payload_cannot_bypass_revision(test_db, payload):
+    test_db.add(
+        Kind(
+            user_id=17,
+            kind="ConnectorAuthPolicy",
+            namespace="plugin-auth",
+            name="account",
+            json=payload,
+        )
+    )
+    test_db.flush()
+
+    with pytest.raises(coordination.PluginWriteError, match="plugin_write_conflict"):
+        coordination.acquire_plugin_write_lock(test_db, 17)
+
+
+def test_existing_policy_without_revision_keeps_disabled_preference(test_db):
+    test_db.add(
+        Kind(
+            user_id=17,
+            kind="ConnectorAuthPolicy",
+            namespace="plugin-auth",
+            name="account",
+            json={"spec": {"enabled": False}},
+        )
+    )
+    test_db.flush()
+
+    coordination.acquire_plugin_write_lock(test_db, 17)
+    test_db.commit()
+
+    policy = test_db.query(Kind).filter_by(user_id=17).one()
+    assert policy.json == {"spec": {"enabled": False, "revision": 1}}

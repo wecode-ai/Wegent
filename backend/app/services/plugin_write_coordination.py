@@ -1,9 +1,9 @@
 """Transaction-scoped coordination for authentication and plugin installations.
 
-Redis serializes plugin writes without locking the shared users row. A durable
-commit fence prevents a paused worker from committing after its lease expires
-and a successor takes ownership. Ordinary database writes still use InnoDB's
-transactional locks; no SELECT FOR UPDATE is needed for coordination.
+Redis serializes plugin writes without locking the shared users row. A CAS on
+the existing account-auth policy's revision protects the whole transaction
+against a successor's committed changes. Ordinary database writes still use
+InnoDB's transactional locks; no SELECT FOR UPDATE is used for coordination.
 """
 
 import logging
@@ -12,15 +12,21 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends
 from redis.exceptions import RedisError
-from sqlalchemy import event, text
-from sqlalchemy.engine import Connection, Engine
+from sqlalchemy import event
+from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, SessionTransaction
 
 from app.api.dependencies import get_db
-from app.services.plugin_write_resources import fence_engine, redis_client
+from app.services.plugin_policy_revision import (
+    PolicyRevision,
+    advance_policy_revision,
+    read_policy_revision,
+)
+from app.services.plugin_write_errors import PluginWriteError
+from app.services.plugin_write_resources import redis_client
 
 logger = logging.getLogger(__name__)
 
@@ -29,16 +35,7 @@ WAIT_SECONDS = 3
 RENEW_SECONDS = 10
 _LEASES = "plugin_write_leases"
 _CONFIGURED = "plugin_write_read_committed"
-
-
-class PluginWriteError(HTTPException):
-    """Client-safe, retryable coordination failure."""
-
-    def __init__(self, code: str) -> None:
-        self.code = code
-        super().__init__(
-            status_code=503, detail=code, headers={"Cache-Control": "no-store"}
-        )
+_SAVEPOINTS = "plugin_policy_savepoint_revisions"
 
 
 def _redis_client() -> Any:
@@ -66,47 +63,11 @@ def get_plugin_db(db: Session = Depends(get_db)) -> Session:
     return db
 
 
-def _engine(db: Session) -> Engine:
-    bind = db.get_bind()
-    return bind.engine if isinstance(bind, Connection) else bind
-
-
-def _claim_fence(db: Session, user_id: int, token: str) -> None:
-    """Publish ownership independently of the pending business transaction."""
-    with fence_engine(_engine(db)).begin() as connection:
-        suffix = (
-            "ON DUPLICATE KEY UPDATE token = VALUES(token)"
-            if connection.dialect.name == "mysql"
-            else "ON CONFLICT(user_id) DO UPDATE SET token = excluded.token"
-        )
-        connection.execute(
-            text(
-                "INSERT INTO plugin_write_fences (user_id, token) "
-                f"VALUES (:user_id, :token) {suffix}"
-            ),
-            {"user_id": user_id, "token": token},
-        )
-
-
-def _check_commit_fence(db: Session, user_id: int, token: str) -> None:
-    """Fence the last database statement against successors' ownership."""
-    values = {"user_id": user_id, "token": token, "committed": f"{token}:committed"}
-    result = db.execute(
-        text(
-            "UPDATE plugin_write_fences SET token = :committed "
-            "WHERE user_id = :user_id AND token = :token"
-        ),
-        values,
-    )
-    # Changing the value makes both matched-row and changed-row drivers agree.
-    if result.rowcount != 1:
-        raise PluginWriteError("plugin_write_lease_lost")
-
-
 @dataclass
 class _Lease:
     lock: Any
     token: str
+    policy: PolicyRevision | None = None
     stopped: threading.Event = field(default_factory=threading.Event)
     lost: threading.Event = field(default_factory=threading.Event)
 
@@ -163,9 +124,9 @@ def acquire_plugin_write_lock(db: Session, user_id: int) -> None:
     if not acquired:
         raise PluginWriteError("plugin_write_busy")
     lease = _Lease(lock=lock, token=token)
-    threading.Thread(target=lease.renew, daemon=True).start()
     try:
-        _claim_fence(db, user_id, token)
+        threading.Thread(target=lease.renew, daemon=True).start()
+        lease.policy = read_policy_revision(db, user_id)
         lease.check()
         if not db.in_transaction():
             db.begin()
@@ -178,7 +139,7 @@ def acquire_plugin_write_lock(db: Session, user_id: int) -> None:
         args = getattr(original, "args", ())
         errno = args[0] if args and isinstance(args[0], int) else None
         logger.warning(
-            "Plugin write coordination failed stage=fence_claim "
+            "Plugin write coordination failed stage=policy_revision "
             "user_id=%s error_type=%s db_errno=%s",
             user_id,
             type(exc).__name__,
@@ -188,6 +149,30 @@ def acquire_plugin_write_lock(db: Session, user_id: int) -> None:
     except Exception:
         lease.release()
         raise
+
+
+def configure_auth_policy(db: Session, user_id: int, enabled: bool) -> None:
+    """Change the real parent policy without ever overwriting its CAS version."""
+    acquire_plugin_write_lock(db, user_id)
+    policy = db.info[_LEASES][user_id].policy
+    assert policy is not None
+    nested = db.get_nested_transaction()
+    while nested is not None and nested.nested:
+        versions = db.info.setdefault(_SAVEPOINTS, {}).setdefault(nested, {})
+        versions.setdefault(user_id, policy.revision)
+        nested = nested.parent
+    advance_policy_revision(db, policy, enabled=enabled)
+
+
+@event.listens_for(Session, "after_soft_rollback")
+def _restore_policy_revision(db: Session, previous: SessionTransaction) -> None:
+    """A savepoint rollback restores the database and its expected versions."""
+    versions = db.info.get(_SAVEPOINTS, {}).pop(previous, {})
+    leases = db.info.get(_LEASES, {})
+    for user_id, revision in versions.items():
+        lease = leases.get(user_id)
+        if lease is not None and lease.policy is not None:
+            lease.policy.revision = revision
 
 
 @event.listens_for(Session, "before_flush")
@@ -202,14 +187,16 @@ def _guard_commit(db: Session) -> None:
     if not leases or db.in_nested_transaction():
         return
     db.flush()
-    for user_id, lease in sorted(leases.items()):
+    for _, lease in sorted(leases.items()):
         lease.check()
-        _check_commit_fence(db, user_id, lease.token)
+        assert lease.policy is not None
+        advance_policy_revision(db, lease.policy)
 
 
 @event.listens_for(Session, "after_transaction_end")
 def _release_transaction(db: Session, transaction: SessionTransaction) -> None:
     if transaction.parent is not None:
         return
+    db.info.pop(_SAVEPOINTS, None)
     for lease in db.info.pop(_LEASES, {}).values():
         lease.release()

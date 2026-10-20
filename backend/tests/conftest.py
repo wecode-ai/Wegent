@@ -45,19 +45,8 @@ def plugin_write_backend(monkeypatch: pytest.MonkeyPatch):
     from tests.plugin_write_fakes import FakePluginRedis
 
     redis = FakePluginRedis()
-    fences: dict[int, str] = {}
-
-    def claim(_db: Session, user_id: int, token: str) -> None:
-        fences[user_id] = token
-
-    def check(_db: Session, user_id: int, token: str) -> None:
-        if fences.get(user_id) != token:
-            raise coordination.PluginWriteError("plugin_write_lease_lost")
-
     monkeypatch.setattr(coordination, "_redis_client", lambda: redis)
-    monkeypatch.setattr(coordination, "_claim_fence", claim)
-    monkeypatch.setattr(coordination, "_check_commit_fence", check)
-    return redis, fences
+    return redis, {}
 
 
 @pytest.fixture(scope="session", autouse=True)

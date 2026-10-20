@@ -945,6 +945,35 @@ def _create_auto_update_install(
     return installed, plugin, current, latest
 
 
+def test_marketplace_release_update_and_reinstall_advance_revision(test_db, test_user):
+    service = PluginMarketplaceService()
+    installed, plugin, _, latest = _create_auto_update_install(
+        test_db, user_id=test_user.id, index=1
+    )
+    test_db.commit()
+    assert installed.json["spec"]["revision"] == 1
+
+    service.update_release(
+        test_db,
+        user_id=test_user.id,
+        installed_id=installed.id,
+        release_id=latest.id,
+    )
+    assert installed.json["spec"]["revision"] == 2
+    assert installed.json["spec"]["enabled"] is False
+    assert installed.json["spec"]["componentStates"] == {"skills:review": False}
+    installed_plugin_service.uninstall_installed_plugin(
+        db=test_db, user_id=test_user.id, installed_id=installed.id
+    )
+    assert installed.json["spec"]["revision"] == 3
+
+    reinstalled = service.install(test_db, user_id=test_user.id, plugin_id=plugin.id)
+
+    assert int(reinstalled.metadata["labels"]["id"]) == installed.id
+    assert installed.json["spec"]["revision"] == 4
+    assert installed.is_active is True
+
+
 @pytest.mark.parametrize(
     ("install_count", "expected_batches"),
     [(0, 0), (1, 1), (5, 5), (6, 6), (12, 12)],
