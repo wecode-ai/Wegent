@@ -244,16 +244,20 @@ export function NotificationSection({
     })
   }
 
-  const updateGroupMentionUserIds = (channelId: number, value: string) => {
-    const userIds = value
-      .split(',')
-      .map(item => item.trim())
-      .filter(Boolean)
-    setChannelBindingConfigs(prev =>
-      prev.map(config =>
-        config.channel_id === channelId ? { ...config, group_mention_user_ids: userIds } : config
+  const updateGroupMentionUserIds = (channelId: number, userIds: string[]) => {
+    setChannelBindingConfigs((prev: NotificationChannelBindingConfig[]) => {
+      const existing = prev.find(
+        (cfg: NotificationChannelBindingConfig) => cfg.channel_id === channelId
+      ) ?? {
+        channel_id: channelId,
+        bind_private: true,
+        bind_group: false,
+      }
+      const rest = prev.filter(
+        (cfg: NotificationChannelBindingConfig) => cfg.channel_id !== channelId
       )
-    )
+      return [...rest, { ...existing, group_mention_user_ids: userIds }]
+    })
   }
 
   const getPrivateBound = (channelId: number) => {
@@ -386,6 +390,7 @@ export function NotificationSection({
                             setGroupBindingDialogChannel(channel.id)
                           }
                         } else {
+                          clearGroupBinding(channel.id)
                           void onCancelBinding(channel.id)
                         }
                       }}

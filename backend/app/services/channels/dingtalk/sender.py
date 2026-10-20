@@ -432,9 +432,11 @@ class DingTalkRobotSender:
                 "spaceType": "IM_GROUP",
                 "robotCode": self.client_id,
             }
-            mentions = list(mention_user_ids or [])
-            if mentions:
-                payload["imGroupOpenDeliverModel"]["atUserIds"] = mentions
+            at_user_ids = {
+                user_id: user_id for user_id in mention_user_ids or [] if user_id
+            }
+            if at_user_ids:
+                payload["imGroupOpenDeliverModel"]["atUserIds"] = at_user_ids
         else:
             payload["imRobotOpenSpaceModel"] = {
                 "supportForward": True,

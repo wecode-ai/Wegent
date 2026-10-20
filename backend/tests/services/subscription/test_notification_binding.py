@@ -193,6 +193,7 @@ def test_group_message_can_also_complete_private_binding(test_db, test_user, moc
 
 
 def test_update_developer_settings_preserves_group_name(test_db, test_user):
+    """Developer settings persist and reload group metadata and mentions."""
     subscription = _create_subscription_kind(
         test_db, owner_user_id=test_user.id, subscription_id=1004
     )

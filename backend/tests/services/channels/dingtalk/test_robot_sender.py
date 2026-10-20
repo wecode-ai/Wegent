@@ -2,6 +2,7 @@ from app.services.channels.dingtalk.sender import DingTalkRobotSender
 
 
 def test_group_card_payload_includes_requested_mentions() -> None:
+    """Group cards send mention IDs using DingTalk's map contract."""
     sender = DingTalkRobotSender("client-id", "client-secret")
 
     payload = sender._card_payload(
@@ -13,10 +14,14 @@ def test_group_card_payload_includes_requested_mentions() -> None:
         mention_user_ids=["user-1", "user-2"],
     )
 
-    assert payload["imGroupOpenDeliverModel"]["atUserIds"] == ["user-1", "user-2"]
+    assert payload["imGroupOpenDeliverModel"]["atUserIds"] == {
+        "user-1": "user-1",
+        "user-2": "user-2",
+    }
 
 
 def test_group_card_payload_omits_empty_mentions() -> None:
+    """Group cards omit the mention field when no user IDs are configured."""
     sender = DingTalkRobotSender("client-id", "client-secret")
 
     payload = sender._card_payload(

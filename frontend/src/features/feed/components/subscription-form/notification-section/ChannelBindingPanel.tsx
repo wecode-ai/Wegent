@@ -1,5 +1,7 @@
 'use client'
 
+import { useEffect, useState } from 'react'
+
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
@@ -19,8 +21,14 @@ interface ChannelBindingPanelProps {
   onCancelBinding: () => void
   onRebind: () => void
   onUnbind: () => void
-  onMentionUserIdsChange: (value: string) => void
+  onMentionUserIdsChange: (userIds: string[]) => void
 }
+
+const parseCommaSeparatedUserIds = (value: string): string[] =>
+  value
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean)
 
 const resolvePrivateStatusText = (bound: boolean, t: TFunction<string | string[]>) => {
   if (bound) {
@@ -65,6 +73,9 @@ export function ChannelBindingPanel({
   onMentionUserIdsChange,
 }: ChannelBindingPanelProps) {
   const { t } = useTranslation('feed')
+  const mentionUserIdsValue = (config.group_mention_user_ids || []).join(',')
+  const [mentionUserIdsInput, setMentionUserIdsInput] = useState(mentionUserIdsValue)
+  const [isEditingMentionUserIds, setIsEditingMentionUserIds] = useState(false)
   const groupBound = Boolean(config.group_conversation_id)
   const privateStatusText = resolvePrivateStatusText(privateBound, t)
   const groupStatusText = resolveGroupStatusText(isWaiting, groupBound, config.group_name, t)
@@ -74,6 +85,24 @@ export function ChannelBindingPanel({
   const groupTitle = config.bind_group
     ? t('notification_settings.group_delivery_enabled', '已启用群聊')
     : t('notification_settings.group_delivery_disabled', '未启用群聊')
+
+  useEffect(() => {
+    if (!isEditingMentionUserIds) {
+      setMentionUserIdsInput(mentionUserIdsValue)
+    }
+  }, [isEditingMentionUserIds, mentionUserIdsValue])
+
+  const handleMentionUserIdsChange = (value: string) => {
+    setMentionUserIdsInput(value)
+    onMentionUserIdsChange(parseCommaSeparatedUserIds(value))
+  }
+
+  const handleMentionUserIdsBlur = () => {
+    const userIds = parseCommaSeparatedUserIds(mentionUserIdsInput)
+    setMentionUserIdsInput(userIds.join(','))
+    setIsEditingMentionUserIds(false)
+    onMentionUserIdsChange(userIds)
+  }
 
   return (
     <div
@@ -226,10 +255,18 @@ export function ChannelBindingPanel({
               <input
                 id={`group-mention-users-${channelId}`}
                 type="text"
-                className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="h-11 w-full rounded-md border border-border bg-background px-3 text-sm text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 data-testid={`group-mention-users-${channelId}`}
-                value={(config.group_mention_user_ids || []).join(',')}
-                onChange={event => onMentionUserIdsChange(event.target.value)}
+                value={mentionUserIdsInput}
+                onFocus={() => setIsEditingMentionUserIds(true)}
+                onChange={event => handleMentionUserIdsChange(event.target.value)}
+                onBlur={handleMentionUserIdsBlur}
+                onKeyDown={event => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    event.currentTarget.blur()
+                  }
+                }}
                 placeholder={t(
                   'notification_settings.group_mention_users_placeholder',
                   '输入钉钉 userId，多个用英文逗号分隔'

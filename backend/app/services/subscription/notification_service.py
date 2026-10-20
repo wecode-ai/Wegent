@@ -691,6 +691,7 @@ class SubscriptionNotificationService:
     def _get_subscription_channel_binding_configs(
         self, subscription: Kind
     ) -> List[Dict[str, Any]]:
+        """Return persisted channel binding settings for a subscription."""
         json_data = subscription.json or {}
         internal = json_data.get("_internal", {})
         binding_map = internal.get("notification_channel_bindings", {})
@@ -733,6 +734,7 @@ class SubscriptionNotificationService:
     def get_subscription_channel_binding_config(
         self, db: Session, *, subscription_id: int, channel_id: int
     ) -> Optional[Dict[str, Any]]:
+        """Return one channel's persisted binding settings when available."""
         subscription = (
             db.query(Kind)
             .filter(
@@ -774,6 +776,7 @@ class SubscriptionNotificationService:
         group_name: Optional[str] = None,
         group_mention_user_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
+        """Create or update one channel binding and return the stored settings."""
         json_data = deepcopy(subscription.json or {})
         internal = json_data.get("_internal", {})
         binding_map = internal.get("notification_channel_bindings", {})
