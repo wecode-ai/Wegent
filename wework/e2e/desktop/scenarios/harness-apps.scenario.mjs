@@ -83,13 +83,22 @@ async function waitForElementCount(control, selector, expected, timeoutMs, messa
 async function waitForEmbeddedBrowserVisibility(
   control,
   label,
+  previewSelector,
   expectedVisible,
   timeoutMs,
   message
 ) {
   const startedAt = Date.now()
   let lastState = null
+  let lastError = null
   while (Date.now() - startedAt < timeoutMs) {
+    const previewError = await control.command(
+      'getText',
+      `${previewSelector} [data-testid="smart-app-development-preview-error"]`
+    )
+    if (previewError) {
+      throw new Error(`Smart app development preview failed: ${previewError}`)
+    }
     try {
       lastState = JSON.parse(
         await control.command('getEmbeddedBrowserPageState', 'body', {
@@ -100,12 +109,13 @@ async function waitForEmbeddedBrowserVisibility(
       if (lastState.visible === expectedVisible && ready) {
         return lastState
       }
-    } catch {
+    } catch (error) {
       // Reloading temporarily removes the native browser before opening its replacement.
+      lastError = error instanceof Error ? error.message : String(error)
     }
     await new Promise(resolve => setTimeout(resolve, 100))
   }
-  throw new Error(`${message}: ${JSON.stringify(lastState)}`)
+  throw new Error(`${message}: ${JSON.stringify({ lastState, lastError })}`)
 }
 
 async function waitForManifestPlugin(manifestPath, pluginSpec, timeoutMs) {
@@ -791,6 +801,7 @@ export async function createDesktopScenario({
       await waitForEmbeddedBrowserVisibility(
         control,
         developmentBrowserLabel,
+        developmentPreviewSelector,
         false,
         120_000,
         'The inactive Smart app preview reclaimed the native browser after reloading'
@@ -812,6 +823,7 @@ export async function createDesktopScenario({
       await waitForEmbeddedBrowserVisibility(
         control,
         developmentBrowserLabel,
+        developmentPreviewSelector,
         true,
         uiTimeoutMs,
         'Returning to the Smart app development task did not restore its native browser'

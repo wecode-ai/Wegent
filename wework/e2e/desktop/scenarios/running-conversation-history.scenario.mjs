@@ -229,7 +229,17 @@ async function seedLegacySearchHistory(executorHome, sqliteHome, task) {
     clientUserMessageId: 'legacy-attachment-user',
     turnId: `legacy-search-turn-${LEGACY_MATCH_TURNS[0]}`,
     content: `${LEGACY_PROMPT} ${LEGACY_MATCH_TURNS[0]}`,
-    attachments: [{ filename: 'notes.md', mime_type: 'text/markdown' }],
+    attachments: [
+      {
+        id: -1,
+        filename: 'notes.md',
+        file_size: Buffer.byteLength(LEGACY_ATTACHMENT_PREVIEW),
+        mime_type: 'text/markdown',
+        status: 'ready',
+        file_extension: '.md',
+        created_at: '2026-10-20T00:00:00Z',
+      },
+    ],
   })
 }
 
