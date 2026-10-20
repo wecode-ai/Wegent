@@ -76,6 +76,7 @@ import {
   registerApplicationActivation,
 } from './host/window-presentation.js'
 import { handlePopoutWindowInput } from './host/popout-window-shortcuts.js'
+import { createWeworkProcessExplorerService } from './host/process-explorer-service.js'
 import { DesktopRuntime } from './runtime/desktop-runtime.js'
 import { isolateDevelopmentEnvironment } from './runtime/development-isolation.js'
 import { prepareDevelopmentHistory } from './runtime/development-history-migration.js'
@@ -304,6 +305,7 @@ let popoutWindow: BrowserWindow | null = null
 let popoutWindowCreationPromise: Promise<BrowserWindow> | null = null
 let popoutWindowReadyPromise: Promise<void> | null = null
 let popoutWindowMode: PopoutWindowMode = 'composer'
+let processExplorerWindow: BrowserWindow | null = null
 let popoutShortcut: GlobalShortcutController | null = null
 let systemDragContext: { conversationTitle: string | null } = { conversationTitle: null }
 let pendingSystemDrops: Array<{
@@ -1097,6 +1099,63 @@ async function createAuxiliaryWindow(
   }
 }
 
+/**
+ * Opens (or focuses) the standalone process explorer window. It is a plain,
+ * resizable window that loads the renderer's /process-explorer route, mirroring
+ * how the popout and system-drag auxiliary windows are created.
+ */
+async function openProcessExplorerWindow(): Promise<void> {
+  if (!desktopRuntime) throw new Error('Core desktop runtime is unavailable')
+  const existing = processExplorerWindow
+  if (existing && !existing.isDestroyed()) {
+    if (existing.isMinimized()) existing.restore()
+    existing.show()
+    existing.focus()
+    return
+  }
+  const target = resolveDshAppRoute(desktopRuntime.coreDshUrl(), 'process-explorer')
+  const window = new BrowserWindow({
+    width: 720,
+    height: 640,
+    minWidth: 520,
+    minHeight: 360,
+    title: 'Process Explorer',
+    autoHideMenuBar: true,
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#181818' : '#fafafa',
+    show: false,
+    webPreferences: {
+      backgroundThrottling: false,
+      preload: dshPreloadPath,
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+    },
+  })
+  processExplorerWindow = window
+  window.removeMenu()
+  window.setMenuBarVisibility(false)
+  secureDshContents(window.webContents, desktopRuntime.coreDshUrl())
+  registerDshWindowLabel(window.webContents, 'process-explorer')
+  window.webContents.on('did-fail-load', (_event, code, description, url) => {
+    console.error('[process-explorer] renderer failed to load', { code, description, url })
+  })
+  window.on('closed', () => {
+    if (processExplorerWindow === window) processExplorerWindow = null
+  })
+  try {
+    await window.loadURL(target.toString(), {
+      extraHeaders: 'X-Wework-Window-Label: process-explorer',
+    })
+    await waitForRendererSelector(window.webContents, '[data-testid="process-explorer-window"]')
+    window.show()
+    window.focus()
+  } catch (error) {
+    if (processExplorerWindow === window) processExplorerWindow = null
+    if (!window.isDestroyed()) window.destroy()
+    throw error
+  }
+}
+
 function resizePopoutWindow(previousMode: PopoutWindowMode, mode: PopoutWindowMode): void {
   const target = popoutWindow
   if (!target || target.isDestroyed()) return
@@ -1794,6 +1853,22 @@ async function configureDesktopRuntime(): Promise<void> {
           : undefined,
     })
   }
+  const processExplorerService = createWeworkProcessExplorerService({
+    windowLabel: contentsId => dshWindowLabels.get(contentsId) ?? null,
+    embeddedBrowserLabel: contentsId => embeddedBrowser?.labelForContentsId(contentsId) ?? null,
+    runtime: async () => {
+      const diagnostics = desktopRuntime?.diagnostics()
+      const pluginSessions = pluginDevelopment ? await pluginDevelopment.list() : []
+      return {
+        coreDshPid: diagnostics?.coreDshPid ?? null,
+        executorPid: diagnostics?.executorPid ?? null,
+        workbenchRuntimes: diagnostics?.workbenchRuntimes ?? [],
+        pluginDevelopmentPids: pluginSessions.flatMap(session =>
+          session.coreDshPid ? [session.coreDshPid] : []
+        ),
+      }
+    },
+  })
   desktopRuntime = new DesktopRuntime({
     environment,
     dataDirectory: app.getPath('userData'),
@@ -1821,6 +1896,7 @@ async function configureDesktopRuntime(): Promise<void> {
         {
           executorHome:
             environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework'),
+          processExplorer: processExplorerService,
           coreDshPlugins: () => desktopRuntime,
           pluginDevelopment: () =>
             pluginDevelopment
@@ -1888,7 +1964,9 @@ async function configureDesktopRuntime(): Promise<void> {
                 ? (popoutWindow?.webContents ?? null)
                 : windowLabel === 'system-drag-panel'
                   ? (systemDragWindow?.webContents ?? null)
-                  : (workspaceWindows.get(windowLabel)?.webContents ?? null),
+                  : windowLabel === 'process-explorer'
+                    ? (processExplorerWindow?.webContents ?? null)
+                    : (workspaceWindows.get(windowLabel)?.webContents ?? null),
           cancelCloseToTray: cancelMainWindowClose,
           closeToTray: closeMainWindowToTray,
           focusMainWindow: reactivateMainWindow,
@@ -1902,6 +1980,78 @@ async function configureDesktopRuntime(): Promise<void> {
             if (target) presentWindow(target)
           },
           hideMainWindow: hideMainWindowToBackground,
+          openProcessExplorer: () => openProcessExplorerWindow(),
+          setProcessExplorerAlwaysOnTop: alwaysOnTop => {
+            const target = processExplorerWindow
+            if (!target || target.isDestroyed()) return { alwaysOnTop: false }
+            target.setAlwaysOnTop(alwaysOnTop)
+            return { alwaysOnTop: target.isAlwaysOnTop() }
+          },
+          processExplorerWindowSnapshot: async () => {
+            const target = processExplorerWindow
+            if (!target || target.isDestroyed()) {
+              return {
+                exists: false,
+                visible: false,
+                applicationPid: process.pid,
+                url: '',
+                windowLabel: '',
+                windowWidth: 0,
+                windowHeight: 0,
+                alwaysOnTop: false,
+                menuBarVisible: false,
+                testIds: [] as string[],
+                text: '',
+                layout: { viewportWidth: 0, tableClientWidth: 0, tableScrollWidth: 0 },
+              }
+            }
+            const contents = await target.webContents.executeJavaScript(
+              `(() => {
+                const table = document.querySelector('table')
+                return {
+                  url: window.location.href,
+                  windowLabel: window.__WEWORK_RUNTIME_CONFIG__?.desktopWindowLabel ?? '',
+                  text: document.body.innerText,
+                  testIds: Array.from(document.querySelectorAll('[data-testid]'))
+                    .map(element => element.getAttribute('data-testid'))
+                    .filter(value => typeof value === 'string'),
+                  layout: {
+                    viewportWidth: document.documentElement.clientWidth,
+                    tableClientWidth: table?.clientWidth ?? 0,
+                    tableScrollWidth: table?.scrollWidth ?? 0
+                  }
+                }
+              })()`
+            )
+            const bounds = target.getBounds()
+            return {
+              exists: true,
+              visible: target.isVisible(),
+              applicationPid: process.pid,
+              url: contents.url as string,
+              windowLabel: contents.windowLabel as string,
+              windowWidth: bounds.width,
+              windowHeight: bounds.height,
+              alwaysOnTop: target.isAlwaysOnTop(),
+              menuBarVisible: target.isMenuBarVisible(),
+              testIds: contents.testIds as string[],
+              text: contents.text as string,
+              layout: contents.layout as {
+                viewportWidth: number
+                tableClientWidth: number
+                tableScrollWidth: number
+              },
+            }
+          },
+          setProcessExplorerWindowSize: (width, height) => {
+            const target = processExplorerWindow
+            if (!target || target.isDestroyed()) return
+            target.setSize(Math.max(520, Math.round(width)), Math.max(360, Math.round(height)))
+          },
+          closeProcessExplorerWindow: () => {
+            const target = processExplorerWindow
+            if (target && !target.isDestroyed()) target.close()
+          },
           dockVisible: () => dockVisible,
           rendererStartupReady: createStartupReadyHandler(async source => {
             if (!mainWindow || mainWindow.isDestroyed()) return
