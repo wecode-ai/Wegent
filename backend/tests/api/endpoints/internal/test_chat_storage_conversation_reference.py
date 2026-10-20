@@ -6,8 +6,6 @@
 
 from types import SimpleNamespace
 
-from fastapi import HTTPException
-
 from app.api.endpoints.internal.chat_storage import _build_user_message_content
 from app.models.subtask_context import ContextStatus, ContextType
 
@@ -46,7 +44,12 @@ def _reference_context() -> SimpleNamespace:
 
 
 def test_history_replays_referenced_conversation_before_user_text(monkeypatch):
-    subtask = SimpleNamespace(id=11, user_id=2, prompt="continue this work")
+    subtask = SimpleNamespace(
+        id=11,
+        user_id=2,
+        sender_user_id=2,
+        prompt="continue this work",
+    )
     reference_prompt = (
         "<referenced_conversations>old transcript</referenced_conversations>"
     )
@@ -68,22 +71,29 @@ def test_history_replays_referenced_conversation_before_user_text(monkeypatch):
     ]
 
 
-def test_history_keeps_stored_user_text_when_reference_is_unavailable(monkeypatch):
-    subtask = SimpleNamespace(id=11, user_id=2, prompt="continue this work")
+def test_history_replays_reference_as_the_original_sender(monkeypatch):
+    subtask = SimpleNamespace(
+        id=11,
+        user_id=2,
+        sender_user_id=5,
+        prompt="continue this work",
+    )
+    seen = {}
 
-    def _raise(*args, **kwargs):
-        raise HTTPException(status_code=404, detail="Referenced task is unavailable")
+    def _capture(db, *, contexts, user_id):
+        seen["user_id"] = user_id
+        return "<referenced_conversations>old transcript</referenced_conversations>"
 
     monkeypatch.setattr(
         "app.services.chat.preprocessing.conversation_references."
         "build_conversation_references_prompt",
-        _raise,
+        _capture,
     )
 
-    content = _build_user_message_content(
+    _build_user_message_content(
         _FakeDb([_reference_context()]),
         subtask,
         sender_username=None,
     )
 
-    assert content == "continue this work"
+    assert seen["user_id"] == 5

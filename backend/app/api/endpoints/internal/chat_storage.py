@@ -596,20 +596,14 @@ def _build_user_message_content(
             build_conversation_references_prompt,
         )
 
-        try:
-            reference_prompt = build_conversation_references_prompt(
-                db,
-                contexts=conversation_contexts,
-                user_id=subtask.user_id,
-            )
-        except HTTPException:
-            # A referenced task may have been deleted since the message was
-            # sent; replaying history must still succeed without it.
-            logger.warning(
-                "[history] Skipping unavailable conversation reference: subtask_id=%s",
-                subtask.id,
-            )
-            reference_prompt = ""
+        # Replay with the identity that sent the message: in a group chat the
+        # task owner and the sender can differ in their reference access.
+        reference_user_id = subtask.sender_user_id or subtask.user_id
+        reference_prompt = build_conversation_references_prompt(
+            db,
+            contexts=conversation_contexts,
+            user_id=reference_user_id,
+        )
         if reference_prompt:
             reference_blocks.append({"type": "text", "text": reference_prompt})
 

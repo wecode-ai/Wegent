@@ -152,6 +152,7 @@ def build_conversation_references_prompt(
     seen_task_ids: set[int] = set()
     remaining_chars = MAX_TOTAL_REFERENCE_CHARS
     omitted_references = 0
+    unavailable_references = 0
     for context in contexts:
         if context.context_type != ContextType.CONVERSATION.value:
             continue
@@ -168,19 +169,30 @@ def build_conversation_references_prompt(
         if remaining_chars <= 0:
             omitted_references += 1
             continue
-        references.append(
-            build_conversation_reference_context(
+        try:
+            reference = build_conversation_reference_context(
                 db,
                 task_id=task_id,
                 user_id=user_id,
                 max_chars=min(MAX_REFERENCE_CHARS, remaining_chars),
             )
-        )
-        remaining_chars -= len(references[-1])
+        except HTTPException:
+            # A referenced task can be deleted or lose the reader's access
+            # between validation and rendering; one stale reference must not
+            # drop the rest.
+            unavailable_references += 1
+            continue
+        references.append(reference)
+        remaining_chars -= len(reference)
     if omitted_references:
         references.append(
             "[Additional referenced conversations omitted because the context budget "
             f"was exhausted: {omitted_references}]"
+        )
+    if unavailable_references:
+        references.append(
+            "[Referenced conversations skipped because they are no longer "
+            f"available: {unavailable_references}]"
         )
     return "\n\n".join(references)
 

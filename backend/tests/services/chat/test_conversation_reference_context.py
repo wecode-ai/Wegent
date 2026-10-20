@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from datetime import datetime
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -10,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.api.ws.events import ContextItem
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.subtask_context import ContextStatus, ContextType
 from app.models.task import TaskResource
 from app.models.user import User
 from app.services.chat.preprocessing.contexts import (
@@ -17,6 +19,7 @@ from app.services.chat.preprocessing.contexts import (
     prepare_contexts_for_chat,
 )
 from app.services.chat.preprocessing.conversation_references import (
+    build_conversation_references_prompt,
     validate_conversation_references,
 )
 from app.services.context import context_service
@@ -201,3 +204,35 @@ def test_conversation_reference_validation_requires_conversation_content(
         )
 
     assert error.value.status_code == 400
+
+
+def test_unavailable_reference_is_skipped_without_dropping_valid_ones(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    available_task = _create_task(test_db, test_user, "Still here")
+    _add_message(
+        test_db,
+        user=test_user,
+        task=available_task,
+        message_id=1,
+        role=SubtaskRole.USER,
+        prompt="Keep this transcript.",
+    )
+    removed_task = _create_task(test_db, test_user, "Already gone")
+
+    def _context(task_id: int) -> SimpleNamespace:
+        return SimpleNamespace(
+            context_type=ContextType.CONVERSATION.value,
+            status=ContextStatus.READY.value,
+            type_data={"task_id": task_id},
+        )
+
+    prompt = build_conversation_references_prompt(
+        test_db,
+        contexts=[_context(removed_task.id), _context(available_task.id)],
+        user_id=test_user.id,
+    )
+
+    assert "Keep this transcript." in prompt
+    assert "no longer available: 1" in prompt
