@@ -89,7 +89,10 @@ import type {
 import { getRuntimeWorkDeviceNamesById, getWorkbenchDeviceNamesById } from '@/lib/workbench-device'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import { runtimeConversationKey } from '@/features/workbench/runtimeConversationCache'
-import { hydrateRuntimeTaskAddress } from '@/features/workbench/workbenchRuntimeHelpers'
+import {
+  findRuntimeTask,
+  hydrateRuntimeTaskAddress,
+} from '@/features/workbench/workbenchRuntimeHelpers'
 import {
   isRuntimeTaskExecutionRunning,
   runtimeTaskTrackingExecutionStatus,
@@ -1133,6 +1136,16 @@ export function WeworkSharedProject({
                     ) ?? false,
                   modelSelection: binding.modelSelection,
                   executionContext: binding.executionContext,
+                  runtimeAddress: workspaceExecutionAddress(
+                    binding,
+                    runtimeWork,
+                    issue.id,
+                    project.project_store
+                  ),
+                  runtimeTask: findRuntimeTask(runtimeWork, {
+                    deviceId: binding.deviceId,
+                    taskId: binding.taskId,
+                  }),
                 }) as CloudTodoBoardTaskBinding
             )
             return (
@@ -1145,6 +1158,7 @@ export function WeworkSharedProject({
                     } as unknown as CloudLoopItem
                   }
                   taskBindings={boardTaskBindings}
+                  getRuntimeTranscript={services.runtimeWorkApi?.getRuntimeTranscript}
                   unread={false}
                   onClick={onOpen}
                   onArchive={onDelete ?? (() => undefined)}

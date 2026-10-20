@@ -803,8 +803,7 @@ export function createDeliveryApi(client: HttpClient) {
       return client.get(`/v1/cloud-projects/${projectId}/loop-item-pages?${query.toString()}`)
     },
     getBoardSnapshot(projectId: CloudProjectIdInput): Promise<ProjectBoardSnapshot> {
-      // The board controller coalesces reads and invalidates them on remote mutations.
-      return client.get(`/v1/cloud-projects/${projectId}/board-snapshot`, { deduplicate: false })
+      return client.get(`/v1/cloud-projects/${projectId}/board-snapshot`)
     },
     listLoopItemExecutions(
       projectId: CloudProjectIdInput,
