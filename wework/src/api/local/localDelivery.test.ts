@@ -66,6 +66,40 @@ test('loads task context from its known binding without rediscovering the projec
 })
 
 describe('local delivery API', () => {
+  test('preserves persisted assignment history in board, detail, and assignment responses', async () => {
+    const assignmentHistory = [
+      {
+        by_user_id: 1,
+        to_type: 'user',
+        to_id: '2',
+        to_name: 'Grace',
+        action: 'assign',
+        at: '2026-10-20T00:00:00Z',
+      },
+    ]
+    const record = {
+      ...taskRecord,
+      metadata: { ...taskRecord.metadata, assignment_history: assignmentHistory },
+    }
+    const request = vi.fn(async (method: string) => {
+      if (method === 'todos.list') return [record]
+      if (method === 'todos.bindings.batch') return []
+      if (method === 'todos.get' || method === 'todos.update') return record
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    const board = await api.getBoardSnapshot(projectRecord.id)
+    expect(board.items[0].assignment_history).toEqual(assignmentHistory)
+    expect((await api.getLoopItem(record.id)).assignment_history).toEqual(assignmentHistory)
+    const updated = await api.assignLoopItem(projectRecord.id, record.id, {
+      version: record.version,
+      assigneeType: 'user',
+      assigneeId: '2',
+    })
+    expect(updated.assignment_history).toEqual(assignmentHistory)
+  })
+
   test('maps persisted local Issue status transitions into the detail model', async () => {
     const statusHistory = [
       {

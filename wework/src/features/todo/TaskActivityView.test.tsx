@@ -369,6 +369,71 @@ describe('TaskActivityView', () => {
     }
   )
 
+  it('includes saved assignments between creation, comments and status changes', async () => {
+    const client = {
+      subscribe: vi.fn().mockResolvedValue({
+        snapshot: {
+          messages: [{ ...userMessage, createdAt: '2026-10-10T01:00:02Z' }],
+          latestSequence: 1,
+          currentUserId: '1',
+        },
+        unsubscribe: vi.fn(),
+      }),
+    } as unknown as ProjectChatClient
+    render(
+      <TaskActivityView
+        client={client}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={
+          {
+            id: 'WEG-1',
+            title: 'Assignment timeline',
+            status: 'in_progress',
+            version: 1,
+            created_at: '2026-10-10T01:00:00Z',
+            assignment_history: [
+              {
+                by_user_id: 1,
+                to_type: 'user',
+                to_id: '2',
+                to_name: 'Grace',
+                action: 'assign',
+                at: '2026-10-10T09:00:01+08:00',
+              },
+            ],
+          } as never
+        }
+        projectMembers={[{ user_id: 1, user_name: 'Ada' } as never]}
+        statusHistory={[
+          {
+            from_status: 'inbox',
+            to_status: 'in_progress',
+            trigger: 'user_update',
+            by_user_id: 1,
+            at: '2026-10-10T01:00:03Z',
+          },
+        ]}
+        issueTimeline
+        linear
+      />
+    )
+    const assignment = await screen.findByTestId('cloud-task-assignment-event-0')
+    expect(assignment).toHaveTextContent('Ada')
+    expect(assignment).toHaveTextContent('Grace')
+    const list = screen.getByTestId('cloud-task-activity-list')
+    expect(
+      Array.from(list.children[0].children).map(
+        entry => entry.getAttribute('data-testid') ?? entry.className
+      )
+    ).toEqual([
+      'cloud-task-status-created',
+      'cloud-task-assignment-event-0',
+      'task-detail-thread is-timeline',
+      'cloud-task-status-event-0',
+    ])
+    expect(screen.getByTestId('cloud-task-activity-WEG-1')).toHaveTextContent('共 4 条')
+  })
+
   it('waits for activity to load before reading and leaves subscription failures unread', async () => {
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       top: 0,

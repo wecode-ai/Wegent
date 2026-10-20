@@ -1,4 +1,7 @@
 import { IssueManagerEvent } from './IssueManagerEvent'
+import { IssueAssignmentEvent } from './IssueAssignmentEvent'
+import { issueActivityTimeline } from './issueActivityTimeline'
+import { useIssueActivityHistory } from './useIssueActivityHistory'
 import { issueActivityRole } from './issueActivityRole'
 import { useActivityExecutionBinding } from './useActivityExecutionStatus'
 import { useIssueActivityScroll } from '@wegent/collaboration/issue-detail/useIssueActivityScroll'
@@ -22,7 +25,6 @@ import {
   groupIssueActivityThreads,
   groupIssueTimelineThreads,
   createCollaborationTranslator,
-  compareIssueTimestamps,
   issueThreadActivityTimestamp,
   formatIssueTimestamp,
   IssueStatusHistoryList,
@@ -250,29 +252,12 @@ export function TaskActivityView({
     projectLocation === 'local'
       ? (services.projectSpaceApis?.local ?? services.deliveryApi)
       : (services.projectSpaceApis?.cloud ?? services.deliveryApi)
-  const [loadedStatusHistory, setLoadedStatusHistory] = useState<{
-    taskId: string
-    entries: SharedIssueStatusHistoryEntry[]
-  } | null>(null)
-  useEffect(() => {
-    if (!issueTimeline || statusHistory.length || !projectDeliveryApi?.getLoopItem) return
-    let active = true
-    void projectDeliveryApi.getLoopItem(task.id).then(
-      item => {
-        if (active) {
-          setLoadedStatusHistory({ taskId: task.id, entries: item.status_history ?? [] })
-        }
-      },
-      () => undefined
-    )
-    return () => {
-      active = false
-    }
-  }, [issueTimeline, projectDeliveryApi, statusHistory.length, task.id, task.status, task.version])
-  const activityStatusHistory =
-    statusHistory.length || loadedStatusHistory?.taskId !== task.id
-      ? statusHistory
-      : loadedStatusHistory.entries
+  const activityHistory = useIssueActivityHistory(
+    task,
+    statusHistory,
+    issueTimeline,
+    projectDeliveryApi
+  )
   const taskAiServices = useMemo(
     () => ({
       deliveryApi: projectDeliveryApi,
@@ -652,34 +637,16 @@ export function TaskActivityView({
         : groupIssueActivityThreads(threadMessages),
     [issueTimeline, threadMessages]
   )
-  const activityEntries = useMemo(() => {
-    const comments = commentCards.map((card, index) => ({
-      kind: 'comment' as const,
-      at: issueThreadActivityTimestamp(card),
-      index,
-      card,
-    }))
-    if (!issueTimeline) return comments
-    const creation =
-      task.created_at && !activityStatusHistory.some(entry => entry.trigger === 'create')
-        ? [{ kind: 'created' as const, at: task.created_at, index: -1 }]
-        : []
-    return [
-      ...creation,
-      ...activityStatusHistory.map((entry, index) => ({
-        kind: 'status' as const,
-        at: entry.at,
-        index,
-        entry,
-      })),
-      ...comments,
-    ].sort((left, right) => {
-      const delta = compareIssueTimestamps(left.at, right.at)
-      if (delta) return delta
-      const order = { created: 0, status: 1, comment: 2 }
-      return order[left.kind] - order[right.kind] || left.index - right.index
-    })
-  }, [activityStatusHistory, commentCards, issueTimeline, task.created_at])
+  const activityEntries = useMemo(
+    () =>
+      issueActivityTimeline({
+        cards: commentCards,
+        enabled: issueTimeline,
+        createdAt: task.created_at,
+        ...activityHistory,
+      }),
+    [activityHistory, commentCards, issueTimeline, task.created_at]
+  )
 
   function cardSessionActive(card: TaskReplyCard) {
     if (onStartHumanTaskFromReply && humanDispatchForCard(card)) return false
@@ -1263,6 +1230,16 @@ export function TaskActivityView({
                       />
                     </div>
                   </div>
+                )
+              }
+              if (activity.kind === 'assignment') {
+                return (
+                  <IssueAssignmentEvent
+                    key={`assignment-${activity.index}`}
+                    entry={activity.entry}
+                    index={activity.index}
+                    projectMembers={projectMembers}
+                  />
                 )
               }
               const card = activity.card

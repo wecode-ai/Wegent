@@ -828,6 +828,9 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
         ? record.metadata.has_additional_context
         : true,
     is_unread: record.metadata.is_unread === true,
+    assignment_history: Array.isArray(record.metadata.assignment_history)
+      ? (record.metadata.assignment_history as CloudLoopItem['assignment_history'])
+      : [],
     status_history: Array.isArray(record.metadata.status_history)
       ? (record.metadata.status_history as CloudLoopItem['status_history'])
       : [],
