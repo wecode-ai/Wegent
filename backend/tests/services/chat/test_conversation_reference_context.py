@@ -19,6 +19,7 @@ from app.services.chat.preprocessing.contexts import (
     prepare_contexts_for_chat,
 )
 from app.services.chat.preprocessing.conversation_references import (
+    _bounded_transcript,
     build_conversation_references_prompt,
     validate_conversation_references,
 )
@@ -236,3 +237,13 @@ def test_unavailable_reference_is_skipped_without_dropping_valid_ones(
 
     assert "Keep this transcript." in prompt
     assert "no longer available: 1" in prompt
+
+
+def test_transcript_budget_counts_escaped_characters() -> None:
+    rendered, omitted = _bounded_transcript(
+        [("user", "&" * 10_000)],
+        max_chars=100,
+    )
+
+    assert len(rendered) <= 100
+    assert omitted == 0

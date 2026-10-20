@@ -134,7 +134,7 @@ def build_conversation_reference_context(
                 f'<referenced_conversation id="{boundary}" task_id="{task.id}" '
                 f'title="{escape(title, quote=True)}">'
             ),
-            escape(f"{omitted_note}{rendered}".strip(), quote=False),
+            f"{omitted_note}{rendered}".strip(),
             f'</referenced_conversation id="{boundary}">',
             REFERENCED_CONVERSATIONS_CLOSE,
         ]
@@ -263,11 +263,15 @@ def _bounded_transcript(
     *,
     max_chars: int,
 ) -> tuple[str, int]:
-    """Keep the newest whole transcript entries within a character budget."""
+    """Keep the newest whole transcript entries within a character budget.
+
+    Entries are escaped before they are measured, so a transcript full of
+    ``&``/``<`` cannot expand past the budget once it reaches the prompt.
+    """
     kept: list[str] = []
     total_chars = 0
     for role, content in reversed(blocks):
-        rendered = _render_block(role, content)
+        rendered = _render_block(role, escape(content, quote=False))
         separator_chars = 1 if kept else 0
         if total_chars + len(rendered) + separator_chars > max_chars:
             if not kept:
