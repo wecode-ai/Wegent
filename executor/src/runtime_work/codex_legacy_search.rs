@@ -438,7 +438,7 @@ impl LegacyProjection {
         if user
             && self.active.is_some_and(|index| {
                 let turn = &self.turns[index];
-                !turn.explicit && !(turn.compacted && turn.item_ids.is_empty())
+                !(turn.explicit || turn.compacted && turn.item_ids.is_empty())
             })
         {
             self.finish_current();
