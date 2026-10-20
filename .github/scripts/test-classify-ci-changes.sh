@@ -632,7 +632,6 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 
 for assignment_activity_path in \
   "wework/e2e/desktop/scenarios/collaboration-issue-assignment-activity.scenario.mjs" \
-  "wework/src/features/todo/TaskActivityView.tsx" \
   "wework/src/features/todo/IssueAssignmentEvent.tsx" \
   "wework/src/features/todo/assignmentHistoryLabels.ts" \
   "wework/src/features/todo/issueActivityTimeline.ts" \

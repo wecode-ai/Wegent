@@ -734,8 +734,7 @@ classify_wework_path() {
       select_target "core:collaboration-issue-comment-mention"
       return
       ;;
-    wework/src/features/todo/TaskActivityView* | \
-      wework/src/features/todo/IssueAssignmentEvent* | \
+    wework/src/features/todo/IssueAssignmentEvent* | \
       wework/src/features/todo/assignmentHistoryLabels* | \
       wework/src/features/todo/issueActivityTimeline* | \
       wework/src/features/todo/useIssueActivityHistory* | \
