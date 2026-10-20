@@ -48,6 +48,8 @@ Backend captures the executor name and namespace from the Task Token's assistant
 
 Device downloads reuse the canonical containment checks in `workspace_read_file_chunk`. HTTP executors use `/filesystem/artifact`, which requires an explicit `root_path`. Each read resolves the real path and verifies that it stays inside the original workspace, rejecting a file replaced with an outside symlink after declaration. An older executor without this endpoint fails explicitly; a rejected read must not fall back to `/files`. Bytes pass through Backend only when requested and are not persisted in Backend artifact storage. A card reads the current file in the original workspace, not a permanent historical copy.
 
+Each artifact download is limited to 50 MiB. HTTP downloads check `Content-Length` before reading the body and count actual bytes as they arrive. Missing or understated lengths cannot bypass the limit: reading stops immediately with 413 when the limit is exceeded.
+
 ### Wework Packaged App Local-First Channel
 
 Local Electron packages reuse the release package's brand metadata and update source configuration. They must also include `app-update.yml` in Resources with `updaterCacheDirName` derived from the package name, allowing startup to migrate the actual updater cache directory. Write this file before signing the macOS app.

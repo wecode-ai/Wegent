@@ -213,6 +213,18 @@ fn context_with(context_type: &str, type_data: Value) -> ContextRow {
 }
 
 #[test]
+fn non_artifact_contexts_preserve_explicit_null_artifact_fields() {
+    for kind in ["attachment", "knowledge_base"] {
+        let brief = context_brief(&context_with(kind, json!({})));
+        let value = serde_json::to_value(brief).unwrap();
+
+        for field in ["remote_task_id", "remote_path", "modified_at", "sha256"] {
+            assert_eq!(value.get(field), Some(&Value::Null), "{kind}.{field}");
+        }
+    }
+}
+
+#[test]
 fn artifact_context_preserves_download_card_metadata() {
     let brief = context_brief(&context_with(
         "remote_workspace_artifact",

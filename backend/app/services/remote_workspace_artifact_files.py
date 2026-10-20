@@ -75,19 +75,35 @@ async def _executor_file(
         async with httpx.AsyncClient(
             timeout=REMOTE_WORKSPACE_FILE_TIMEOUT_SECONDS
         ) as client:
-            response = await client.get(
+            async with client.stream(
+                "GET",
                 f"{str(payload['base_url']).rstrip('/')}/filesystem/artifact",
                 params={"root_path": source.workspace_root, "path": relative_path},
-            )
+            ) as response:
+                return await _bounded_executor_content(response)
     except httpx.HTTPError as error:
         raise HTTPException(503, "Artifact execution source is unavailable") from error
+
+
+async def _bounded_executor_content(response: httpx.Response) -> bytes:
     if response.status_code in {400, 403, 404, 413}:
         raise HTTPException(response.status_code, "Artifact file is unavailable")
     if response.is_error:
         raise HTTPException(502, "Artifact file request failed")
-    if len(response.content) > MAX_ARTIFACT_FILE_BYTES:
-        raise HTTPException(413, "Artifact exceeds 50 MiB limit")
-    return response.content
+    declared_size = response.headers.get("content-length")
+    if declared_size is not None:
+        try:
+            oversized = int(declared_size) > MAX_ARTIFACT_FILE_BYTES
+        except ValueError as error:
+            raise HTTPException(502, "Invalid artifact file size") from error
+        if oversized:
+            raise HTTPException(413, "Artifact exceeds 50 MiB limit")
+    content = bytearray()
+    async for part in response.aiter_bytes():
+        if len(content) + len(part) > MAX_ARTIFACT_FILE_BYTES:
+            raise HTTPException(413, "Artifact exceeds 50 MiB limit")
+        content.extend(part)
+    return bytes(content)
 
 
 async def _device_chunk(

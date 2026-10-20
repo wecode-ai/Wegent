@@ -196,13 +196,9 @@ pub(crate) struct ContextBriefResponse {
     pub file_extension: RawJson,
     pub file_size: RawJson,
     pub mime_type: RawJson,
-    #[serde(skip_serializing_if = "RawJson::is_null")]
     pub remote_task_id: RawJson,
-    #[serde(skip_serializing_if = "RawJson::is_null")]
     pub remote_path: RawJson,
-    #[serde(skip_serializing_if = "RawJson::is_null")]
     pub modified_at: RawJson,
-    #[serde(skip_serializing_if = "RawJson::is_null")]
     pub sha256: RawJson,
     pub knowledge_id: RawJson,
     pub document_count: RawJson,

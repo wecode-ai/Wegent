@@ -48,6 +48,8 @@ Backend 从 Task Token 对应的 assistant subtask 捕获 executor 名称和 nam
 
 设备下载复用 `workspace_read_file_chunk` 的规范路径校验；HTTP executor 下载使用必须指定 `root_path` 的 `/filesystem/artifact`。读取前解析真实路径并检查仍位于原工作区内，因此声明后把文件替换为指向工作区外的符号链接也会被拒绝。旧 executor 不支持该端点时明确失败；校验失败后也不得退回 `/files`。文件内容只在用户下载时经过 Backend 转发，不写入 Backend 产物存储；卡片读取的是原工作区的当前文件，不是永久保存的历史副本。
 
+单个产物下载上限为 50 MiB。HTTP 下载在读取响应体前检查 `Content-Length`，并在读取过程中累计实际字节数；即使长度缺失或声明偏小，也会在超限时立即停止读取并返回 413。
+
 ### Wework 打包 App 本地优先通道
 
 本地 Electron 打包与正式发布包复用相同的品牌元数据和更新源配置。本地打包也必须在 Resources 中生成 `app-update.yml`，包含按包名生成的 `updaterCacheDirName`，以便启动时能迁移真实的更新缓存目录；该文件必须在 macOS 签名之前写入。

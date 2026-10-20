@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from collections.abc import AsyncIterator
 from unittest.mock import Mock
 
 import httpx
@@ -12,8 +13,66 @@ from pytest_mock import MockerFixture
 from app.schemas.remote_workspace import RemoteWorkspaceArtifactSource
 from app.services.remote_workspace_artifact_files import (
     _decode_chunk,
+    _executor_file,
     stream_artifact_file,
 )
+
+
+class RecordingArtifactStream(httpx.AsyncByteStream):
+    def __init__(self, chunks: list[bytes]) -> None:
+        self.chunks = chunks
+        self.chunks_read = 0
+        self.closed = False
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for chunk in self.chunks:
+            self.chunks_read += 1
+            yield chunk
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+@pytest.mark.parametrize(
+    "headers,expected_reads",
+    [({"content-length": "6"}, 0), ({}, 2), ({"content-length": "1"}, 2)],
+)
+@pytest.mark.asyncio
+async def test_executor_download_rejects_oversize_without_reading_remaining_body(
+    mocker: MockerFixture, headers: dict[str, str], expected_reads: int
+) -> None:
+    mocker.patch(
+        "app.services.remote_workspace_service.remote_workspace_service._get_executor_payload",
+        return_value={"status": "success", "base_url": "http://original"},
+    )
+    mocker.patch(
+        "app.services.remote_workspace_artifact_files.MAX_ARTIFACT_FILE_BYTES", 5
+    )
+    stream = RecordingArtifactStream([b"1234", b"56", b"unread body"])
+    client_class = httpx.AsyncClient
+    mocker.patch(
+        "httpx.AsyncClient",
+        side_effect=lambda **kw: client_class(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, headers=headers, stream=stream)
+            ),
+            **kw,
+        ),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        await _executor_file(
+            RemoteWorkspaceArtifactSource(
+                executor_name="original",
+                executor_namespace="namespace-a",
+                workspace_root="/workspace/original-repository",
+            ),
+            "outputs/report.pdf",
+        )
+
+    assert error.value.status_code == 413
+    assert stream.chunks_read == expected_reads
+    assert stream.closed
 
 
 @pytest.mark.parametrize("status,expected", [(403, 403), (404, 404), (500, 502)])
