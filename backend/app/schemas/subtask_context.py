@@ -16,18 +16,10 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.models.subtask_context import ContextType
 from app.schemas.context_display import build_context_display_fields
 
 logger = logging.getLogger(__name__)
-
-
-class ContextType(str, Enum):
-    """Context type enumeration."""
-
-    ATTACHMENT = "attachment"
-    KNOWLEDGE_BASE = "knowledge_base"
-    SELECTED_DOCUMENTS = "selected_documents"
-    EXTERNAL_KNOWLEDGE = "external_knowledge"
 
 
 class ContextStatus(str, Enum):

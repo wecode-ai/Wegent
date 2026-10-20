@@ -76,7 +76,7 @@ from app.services.remote_workspace_service import remote_workspace_service
 from app.services.shared_task import shared_task_service
 from app.services.task_fork import task_fork_service
 from app.stores.tasks import task_store
-from shared.telemetry.decorators import trace_sync
+from shared.telemetry.decorators import trace_async, trace_sync
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -431,8 +431,8 @@ def declare_remote_workspace_artifact(
 
 
 @router.get("/{task_id}/remote-workspace/artifacts/{context_id}/file")
-@trace_sync("download_remote_workspace_artifact", "tasks.api")
-def download_remote_workspace_artifact(
+@trace_async("download_remote_workspace_artifact", "tasks.api")
+async def download_remote_workspace_artifact(
     context_id: int,
     disposition: str = Query(
         "attachment", pattern="^(inline|attachment)$", description="File disposition"
@@ -441,8 +441,8 @@ def download_remote_workspace_artifact(
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Stream a declared artifact from the currently connected Task device."""
-    return remote_workspace_artifact_service.stream_file(
+    """Stream a declared artifact from its original execution workspace."""
+    return await remote_workspace_artifact_service.stream_file(
         db=db,
         task_id=task_id,
         context_id=context_id,

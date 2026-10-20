@@ -34,6 +34,20 @@ flowchart LR
     style BE fill:#14B8A6,color:#fff
 ```
 
+### 设备产物声明与下载
+
+关联 Backend Task 的 Claude Code 或 Wegent executor 可以声明最终交付文件：
+
+```bash
+$WEGENT_EXECUTOR_BINARY artifact declare --path outputs/report.pdf
+```
+
+声明仅发送文件名、相对路径、规范化工作区根目录、大小、修改时间和 SHA-256，不上传文件内容。`WEGENT_BACKEND_TASK_ID` 用于 Backend API 路径；`WEGENT_TASK_ID` 保留本地会话身份并用于工作区定位。认证只使用该轮执行的 `AUTH_TOKEN`（Task Token），不能使用独立的 runtime credential。
+
+Backend 从 Task Token 对应的 assistant subtask 捕获 executor 名称和 namespace，并与工作区根目录一起保存为产物来源。下载始终使用这份来源快照，不选择任务最新的 executor；即使原 subtask 后续发生恢复重绑，也不能把旧卡片改指向新设备。原来源不可用时返回不可用，分享和复制任务不会携带这些设备产物。
+
+设备下载复用 `workspace_read_file_chunk` 的规范路径校验；HTTP executor 下载使用必须指定 `root_path` 的 `/filesystem/artifact`。读取前解析真实路径并检查仍位于原工作区内，因此声明后把文件替换为指向工作区外的符号链接也会被拒绝。旧 executor 不支持该端点时明确失败；校验失败后也不得退回 `/files`。文件内容只在用户下载时经过 Backend 转发，不写入 Backend 产物存储；卡片读取的是原工作区的当前文件，不是永久保存的历史副本。
+
 ### Wework 打包 App 本地优先通道
 
 本地 Electron 打包与正式发布包复用相同的品牌元数据和更新源配置。本地打包也必须在 Resources 中生成 `app-update.yml`，包含按包名生成的 `updaterCacheDirName`，以便启动时能迁移真实的更新缓存目录；该文件必须在 macOS 签名之前写入。

@@ -559,6 +559,11 @@ class SharedTaskService:
             )
 
             for original_context in original_contexts:
+                if (
+                    original_context.context_type
+                    == ContextType.REMOTE_WORKSPACE_ARTIFACT.value
+                ):
+                    continue
                 new_context = SubtaskContext(
                     subtask_id=new_subtask.id,
                     user_id=new_user_id,

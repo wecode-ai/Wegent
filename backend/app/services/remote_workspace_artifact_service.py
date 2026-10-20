@@ -9,18 +9,21 @@ from pathlib import PurePosixPath
 
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.schemas.remote_workspace import (
     RemoteWorkspaceArtifactDeclareRequest,
     RemoteWorkspaceArtifactResponse,
+    RemoteWorkspaceArtifactSource,
 )
 from app.services.context import context_service
 from app.services.context.context_service import NotFoundException
-from app.services.remote_workspace_service import remote_workspace_service
+from app.services.remote_workspace_artifact_files import stream_artifact_file
 from app.stores.tasks import subtask_store
 from shared.models.db.enums import SubtaskRole
+from shared.telemetry.decorators import trace_async
 
 
 class RemoteWorkspaceArtifactService:
@@ -46,6 +49,24 @@ class RemoteWorkspaceArtifactService:
 
         relative_path = self._normalize_relative_path(request.relative_path)
         context = self._find_existing(db, subtask_id, relative_path)
+        if not subtask.executor_name:
+            raise HTTPException(409, "Artifact execution source is unavailable")
+        if context is None:
+            source = RemoteWorkspaceArtifactSource(
+                executor_name=subtask.executor_name,
+                executor_namespace=subtask.executor_namespace or "",
+                workspace_root=request.workspace_root,
+            ).model_dump()
+        else:
+            source = context.type_data.get("source")
+            if (
+                not source
+                or source.get("workspace_root") != request.workspace_root
+                or source.get("executor_name") != subtask.executor_name
+                or source.get("executor_namespace")
+                != (subtask.executor_namespace or "")
+            ):
+                raise HTTPException(409, "Artifact execution source cannot change")
         type_data = {
             "task_id": task_id,
             "relative_path": relative_path,
@@ -54,6 +75,7 @@ class RemoteWorkspaceArtifactService:
             "mime_type": request.mime_type or "application/octet-stream",
             "modified_at": request.modified_at,
             "sha256": request.sha256.lower(),
+            "source": source,
         }
         if context is None:
             context = SubtaskContext(
@@ -80,7 +102,8 @@ class RemoteWorkspaceArtifactService:
         db.refresh(context)
         return self._response(context, task_id, relative_path)
 
-    def stream_file(
+    @trace_async("stream_remote_workspace_artifact", "tasks.artifacts")
+    async def stream_file(
         self,
         db: Session,
         *,
@@ -107,22 +130,20 @@ class RemoteWorkspaceArtifactService:
         relative_path = self._normalize_relative_path(
             str((context.type_data or {}).get("relative_path", ""))
         )
-        workspace = remote_workspace_service.get_status(
-            db=db,
-            task_id=task_id,
-            user_id=user_id,
-        )
-        if not workspace.available:
-            raise HTTPException(
-                status_code=409,
-                detail="Remote workspace artifact is currently unavailable",
+        try:
+            source = RemoteWorkspaceArtifactSource.model_validate(
+                context.type_data.get("source")
             )
-        absolute_path = posixpath.join(workspace.root_path, relative_path)
-        return remote_workspace_service.stream_file(
+        except ValidationError as error:
+            raise HTTPException(
+                409, "Artifact execution source is unavailable"
+            ) from error
+        return await stream_artifact_file(
             db=db,
-            task_id=task_id,
             user_id=user_id,
-            path=absolute_path,
+            source=source,
+            relative_path=relative_path,
+            mime_type=context.type_data.get("mime_type") or "application/octet-stream",
             disposition=disposition,
         )
 

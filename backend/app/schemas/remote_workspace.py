@@ -2,9 +2,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class RemoteWorkspaceStatusResponse(BaseModel):
@@ -27,7 +28,28 @@ class RemoteWorkspaceTreeResponse(BaseModel):
     entries: List[RemoteWorkspaceTreeEntry]
 
 
-class RemoteWorkspaceArtifactDeclareRequest(BaseModel):
+class RemoteWorkspaceArtifactWorkspace(BaseModel):
+    workspace_root: str = Field(min_length=1, max_length=4096)
+
+    @field_validator("workspace_root")
+    @classmethod
+    def validate_workspace_root(cls, value: str) -> str:
+        paths = (PurePosixPath(value), PureWindowsPath(value))
+        if (
+            any(ord(char) < 32 for char in value)
+            or ".." in value.replace("\\", "/").split("/")
+            or not any(path.is_absolute() and path.parent != path for path in paths)
+        ):
+            raise ValueError("An absolute, non-root workspace directory is required")
+        return value
+
+
+class RemoteWorkspaceArtifactSource(RemoteWorkspaceArtifactWorkspace):
+    executor_name: str = Field(min_length=1)
+    executor_namespace: str = ""
+
+
+class RemoteWorkspaceArtifactDeclareRequest(RemoteWorkspaceArtifactWorkspace):
     relative_path: str = Field(min_length=1, max_length=4096)
     name: str = Field(min_length=1, max_length=255)
     file_size: int = Field(ge=0)

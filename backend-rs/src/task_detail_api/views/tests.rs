@@ -212,6 +212,34 @@ fn context_with(context_type: &str, type_data: Value) -> ContextRow {
     }
 }
 
+#[test]
+fn artifact_context_preserves_download_card_metadata() {
+    let brief = context_brief(&context_with(
+        "remote_workspace_artifact",
+        json!({
+            "task_id": 42,
+            "relative_path": "outputs/report.pdf",
+            "file_extension": ".pdf",
+            "file_size": 10,
+            "mime_type": "application/pdf",
+            "modified_at": 123,
+            "sha256": "a".repeat(64),
+            "source": {"workspace_root": "/private/workspace"},
+        }),
+    ));
+
+    let value = serde_json::to_value(brief).unwrap();
+
+    assert_eq!(value["remote_task_id"], 42);
+    assert_eq!(value["remote_path"], "outputs/report.pdf");
+    assert_eq!(value["file_extension"], ".pdf");
+    assert_eq!(value["file_size"], 10);
+    assert_eq!(value["mime_type"], "application/pdf");
+    assert_eq!(value["modified_at"], 123);
+    assert_eq!(value["sha256"], "a".repeat(64));
+    assert!(value.get("source").is_none());
+}
+
 /// `build_context_display_fields` renders `selected_documents` as
 /// `len(document_ids)` and leaves the knowledge/attachment display fields
 /// unset (recording: `{"document_count": 2, ...}` for a context with two

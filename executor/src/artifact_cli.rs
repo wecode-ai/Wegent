@@ -37,8 +37,8 @@ pub async fn run() -> Result<(), String> {
 }
 
 async fn declare(args: &[String]) -> Result<(), String> {
-    let task_id = required_env("WEGENT_TASK_ID")?;
-    let workspace = task_workspace(&task_id)?;
+    let task_id = required_env("WEGENT_BACKEND_TASK_ID")?;
+    let workspace = task_workspace(&required_env("WEGENT_TASK_ID")?)?;
     let path = required_path_option(args, "--path")?;
     let artifact = artifact_metadata(&workspace, &path)?;
     let name = option(args, "--name")
@@ -80,6 +80,7 @@ async fn declare(args: &[String]) -> Result<(), String> {
 
 #[derive(Debug, PartialEq, Eq)]
 struct ArtifactMetadata {
+    workspace_root: String,
     relative_path: String,
     name: String,
     file_size: u64,
@@ -89,6 +90,7 @@ struct ArtifactMetadata {
 
 fn declaration_payload(artifact: &ArtifactMetadata, name: &str, mime_type: &str) -> Value {
     json!({
+        "workspace_root": artifact.workspace_root,
         "relative_path": artifact.relative_path,
         "name": name,
         "file_size": artifact.file_size,
@@ -139,6 +141,7 @@ fn artifact_metadata(workspace: &Path, requested_path: &Path) -> Result<Artifact
         .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
         .map(|value| value.as_secs());
     Ok(ArtifactMetadata {
+        workspace_root: canonical_workspace.to_string_lossy().into_owned(),
         relative_path,
         name,
         file_size: metadata.len(),
@@ -244,10 +247,7 @@ fn backend_url() -> Result<String, String> {
 }
 
 fn auth_token() -> Result<String, String> {
-    env::var("WEGENT_RUNTIME_AUTH_TOKEN")
-        .or_else(|_| env::var("AUTH_TOKEN"))
-        .map(|value| value.trim().to_owned())
-        .map_err(|_| "WEGENT_RUNTIME_AUTH_TOKEN or AUTH_TOKEN is required".to_owned())
+    required_env("AUTH_TOKEN")
 }
 
 fn http_client() -> Result<reqwest::Client, String> {
@@ -316,6 +316,7 @@ mod tests {
     #[test]
     fn declaration_payload_contains_metadata_only() {
         let artifact = ArtifactMetadata {
+            workspace_root: "/workspace/repository".to_owned(),
             relative_path: "outputs/report.pdf".to_owned(),
             name: "report.pdf".to_owned(),
             file_size: 4096,
@@ -341,6 +342,7 @@ mod tests {
                 "name",
                 "relative_path",
                 "sha256",
+                "workspace_root",
             ]
         );
         assert_eq!(payload["file_size"], 4096);

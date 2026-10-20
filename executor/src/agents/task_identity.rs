@@ -9,6 +9,7 @@ use crate::{protocol::ExecutionRequest, runtime_work::runtime_task_title};
 
 pub(super) const TASK_SCOPED_ENV_KEYS: &[&str] = &[
     "AUTH_TOKEN",
+    "WEGENT_BACKEND_TASK_ID",
     "WEGENT_EXECUTOR_BINARY",
     "WEGENT_EXECUTOR_HOME",
     "WEGENT_PLUGIN_AUTH_BROKER",
@@ -26,6 +27,12 @@ pub(super) const TASK_SCOPED_ENV_KEYS: &[&str] = &[
 pub(super) fn task_identity_env(request: &ExecutionRequest) -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
     env.extend(crate::plugin_account_auth::broker::environment());
+    if !request.task_id.trim().is_empty() {
+        env.insert(
+            "WEGENT_BACKEND_TASK_ID".to_owned(),
+            request.task_id.trim().to_owned(),
+        );
+    }
     let task_id = request
         .extra
         .get("runtimeLocalTaskId")
@@ -156,6 +163,11 @@ mod tests {
             env.get("WEGENT_TASK_ID"),
             Some(&"conversation-1".to_owned())
         );
+        assert_eq!(
+            env.get("WEGENT_BACKEND_TASK_ID"),
+            Some(&"execution-1".to_owned())
+        );
+        assert!(TASK_SCOPED_ENV_KEYS.contains(&"WEGENT_BACKEND_TASK_ID"));
         assert_eq!(
             env.get("WEGENT_TASK_WORKSPACE"),
             Some(

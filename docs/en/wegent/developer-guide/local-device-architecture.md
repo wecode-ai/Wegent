@@ -34,6 +34,20 @@ flowchart LR
     style BE fill:#14B8A6,color:#fff
 ```
 
+### Device artifact declaration and download
+
+Claude Code and Wegent executors linked to a Backend Task can declare final deliverables:
+
+```bash
+$WEGENT_EXECUTOR_BINARY artifact declare --path outputs/report.pdf
+```
+
+A declaration sends only the filename, relative path, canonical workspace root, size, modification time, and SHA-256. It does not upload file contents. `WEGENT_BACKEND_TASK_ID` identifies the Backend API task, while `WEGENT_TASK_ID` retains the local conversation identity for workspace resolution. Authentication uses only the execution's `AUTH_TOKEN` (Task Token), not the separate runtime credential.
+
+Backend captures the executor name and namespace from the Task Token's assistant subtask and persists them with the workspace root as the artifact source. Downloads always use this source snapshot, never the task's latest executor. Recovery that rebinds the original subtask cannot redirect an old card to a new device. An unavailable original source remains unavailable; shared and copied tasks do not carry these device artifacts.
+
+Device downloads reuse the canonical containment checks in `workspace_read_file_chunk`. HTTP executors use `/filesystem/artifact`, which requires an explicit `root_path`. Each read resolves the real path and verifies that it stays inside the original workspace, rejecting a file replaced with an outside symlink after declaration. An older executor without this endpoint fails explicitly; a rejected read must not fall back to `/files`. Bytes pass through Backend only when requested and are not persisted in Backend artifact storage. A card reads the current file in the original workspace, not a permanent historical copy.
+
 ### Wework Packaged App Local-First Channel
 
 Local Electron packages reuse the release package's brand metadata and update source configuration. They must also include `app-update.yml` in Resources with `updaterCacheDirName` derived from the package name, allowing startup to migrate the actual updater cache directory. Write this file before signing the macOS app.
