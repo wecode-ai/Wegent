@@ -13,6 +13,7 @@ find "$diagnostics_root" \
   -maxdepth 2 \
   -type d \
   ! -name 'electron-user-data' \
+  ! -name 'backend-rs-logs' \
   -prune \
   -exec rm -rf {} +
 

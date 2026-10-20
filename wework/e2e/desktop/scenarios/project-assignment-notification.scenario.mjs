@@ -698,6 +698,7 @@ export function createDesktopScenario({
         task_id: binding.task_id,
       })
       const taskContext = await ownerRequest(`/api/v1/runtime-tasks/cloud-context?${contextQuery}`)
+      assert.equal(taskContext.backend_task_id, null)
       assert.deepEqual(taskContext.loop_item.human_task_binding, pendingIssue.human_task_binding)
       assert.equal('human_work' in taskContext.loop_item, false)
       await control.command(

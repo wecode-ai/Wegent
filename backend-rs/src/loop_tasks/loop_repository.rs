@@ -162,7 +162,7 @@ pub struct CloudContextBindingRow {
     #[mysql(rename = "loop_items_task_title")]
     pub task_title: Option<String>,
     #[mysql(rename = "loop_items_backend_task_id")]
-    pub backend_task_id: i64,
+    pub backend_task_id: Option<i64>,
     #[mysql(rename = "loop_items_linked_by_user_id")]
     pub linked_by_user_id: i32,
     #[mysql(rename = "loop_items_linked_at")]
