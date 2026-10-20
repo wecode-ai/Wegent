@@ -204,39 +204,6 @@ async function waitForBridgeText(identity, label, text, timeoutMs, message) {
   )
 }
 
-async function shortcutEffectApplied(verifyEffect, timeoutMs = 1_000) {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    if (await verifyEffect()) return true
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
-  }
-  return verifyEffect()
-}
-
-async function pressBrowserShortcut(control, key, verifyDeliveredEffect) {
-  let focusError = null
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      await control.command('nativePress', ACTIVE_COMPOSER_SELECTOR, { key })
-      return
-    } catch (error) {
-      if (
-        !(error instanceof Error) ||
-        !error.message.includes('Native keydown did not reach its target')
-      ) {
-        throw error
-      }
-      focusError = error
-      console.warn(`[desktop-e2e] Browser shortcut focus was retargeted: ${error.message}`)
-    }
-    if (verifyDeliveredEffect && (await shortcutEffectApplied(verifyDeliveredEffect))) return
-    await control.command('click', ACTIVE_COMPOSER_SELECTOR)
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
-  }
-  if (verifyDeliveredEffect && (await shortcutEffectApplied(verifyDeliveredEffect))) return
-  throw focusError
-}
-
 function fixtureTextFromInspect(inspectText) {
   if (inspectText.includes(FIXTURE_A_TEXT)) return FIXTURE_A_TEXT
   if (inspectText.includes(FIXTURE_B_TEXT)) return FIXTURE_B_TEXT
@@ -340,11 +307,9 @@ export function createDesktopScenario({ captureScreenshot, executorHome, resultD
         'true',
         'The browser shortcut checkpoint did not start with the right panel closed'
       )
-      await pressBrowserShortcut(
-        control,
-        OPEN_BROWSER_WHILE_CLOSED_KEY,
-        async () => Number(await control.command('getElementCount', BROWSER_INPUT_SELECTOR)) > 0
-      )
+      await control.command('nativePress', ACTIVE_COMPOSER_SELECTOR, {
+        key: OPEN_BROWSER_WHILE_CLOSED_KEY,
+      })
       await control.command('waitFor', BROWSER_INPUT_SELECTOR, { timeoutMs: uiTimeoutMs })
 
       await callBridge(bridgeIdentity, { action: 'open', url: fixtureAUrl, timeoutMs: 8000 })
@@ -436,9 +401,9 @@ export function createDesktopScenario({ captureScreenshot, executorHome, resultD
       )
       const firstBrowserLabel = (await callBridge(bridgeIdentity, { action: 'status' })).label
       const secondBrowserLabel = firstBrowserLabel + '-2'
-      // The second tab is already absent before the keypress, so that state cannot prove
-      // delivery. Only a successful nativePress may satisfy this negative assertion.
-      await pressBrowserShortcut(control, OPEN_BROWSER_WHILE_CLOSED_KEY)
+      await control.command('nativePress', ACTIVE_COMPOSER_SELECTOR, {
+        key: OPEN_BROWSER_WHILE_CLOSED_KEY,
+      })
       await waitForSnapshot(
         control,
         snapshot =>
@@ -453,12 +418,9 @@ export function createDesktopScenario({ captureScreenshot, executorHome, resultD
       await control.command('click', RIGHT_NEW_TAB_CHAT_OPTION_SELECTOR)
       await control.command('click', RIGHT_WORKSPACE_NEW_TAB_SELECTOR)
       await control.command('click', RIGHT_NEW_TAB_TERMINAL_OPTION_SELECTOR)
-      await pressBrowserShortcut(
-        control,
-        OPEN_BROWSER_WHILE_OPEN_KEY,
-        async () =>
-          Number(await control.command('getElementCount', SECOND_BROWSER_TAB_SELECTOR)) > 0
-      )
+      await control.command('nativePress', ACTIVE_COMPOSER_SELECTOR, {
+        key: OPEN_BROWSER_WHILE_OPEN_KEY,
+      })
       const mixedTabsSnapshot = await waitForSnapshot(
         control,
         snapshot =>

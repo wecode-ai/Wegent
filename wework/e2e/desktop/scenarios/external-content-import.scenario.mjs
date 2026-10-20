@@ -5,20 +5,6 @@ import { join } from 'node:path'
 const SOURCE_CONFIG = 'model = "desktop-e2e-imported"\n'
 const SOURCE_INSTRUCTIONS = '# Desktop E2E imported instructions\n'
 const SOURCE_SKILL = '# Desktop E2E imported skill\n'
-const IMPORTED_MODEL_PATTERN = /^model = "desktop-e2e-imported"$/mu
-
-async function waitForImportedModel(configPath, timeoutMs = 10_000) {
-  const deadline = Date.now() + timeoutMs
-  let content = ''
-  while (Date.now() < deadline) {
-    content = await readFile(configPath, 'utf8').catch(() => '')
-    if (IMPORTED_MODEL_PATTERN.test(content)) return content
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
-  }
-  assert.fail(
-    `The imported Codex model was not preserved in the managed home: ${configPath}\n${content}`
-  )
-}
 
 export async function createDesktopScenario({ captureScreenshot, executorHome, homePath }) {
   const sourceHome = join(homePath, '.codex')
@@ -57,7 +43,11 @@ export async function createDesktopScenario({ captureScreenshot, executorHome, h
         '[data-testid="external-content-import-dialog"]'
       )
 
-      await waitForImportedModel(join(destinationHome, 'config.toml'))
+      assert.match(
+        await readFile(join(destinationHome, 'config.toml'), 'utf8'),
+        /^model = "desktop-e2e-imported"$/mu,
+        'The imported Codex model was not preserved in the managed home'
+      )
       assert.equal(
         await readFile(join(destinationHome, 'AGENTS.md'), 'utf8'),
         SOURCE_INSTRUCTIONS,
