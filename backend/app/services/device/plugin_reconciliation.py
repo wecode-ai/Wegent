@@ -12,11 +12,13 @@ from app.services.plugin_device_installation_service import (
     plugin_device_installation_service,
 )
 from app.services.plugin_marketplace_service import plugin_marketplace_service
+from app.services.plugin_write_coordination import configure_plugin_session
 from shared.telemetry.decorators import trace_async
 
 
 def desired_plugins(user_id: int, device_id: str) -> dict[str, Any]:
     with get_db_session() as db:
+        configure_plugin_session(db)
         changed = plugin_marketplace_service.reconcile_stale_installed_catalog_refs(
             db, user_id=user_id
         )
@@ -82,6 +84,7 @@ async def reconcile_device_plugins(
             payload = latest
             continue
         with get_db_session() as db:
+            configure_plugin_session(db)
             plugin_device_installation_service.record_device_sync_result(
                 db, user_id=user_id, result=result
             )

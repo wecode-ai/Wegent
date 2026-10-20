@@ -1,0 +1,80 @@
+"""Bounded, process-owned connections for plugin coordination infrastructure."""
+
+import threading
+from contextlib import ExitStack
+from weakref import WeakKeyDictionary
+
+from redis import Redis
+from redis.backoff import NoBackoff
+from redis.retry import Retry
+from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine
+from sqlalchemy.pool import Pool
+
+from app.core.config import settings
+from app.db.pool_observability import ObservedQueuePool, register_pool
+
+_mutex = threading.Lock()
+_redis: Redis | None = None
+_fence_engines: WeakKeyDictionary[Pool, Engine] = WeakKeyDictionary()
+
+
+def redis_client() -> Redis:
+    """Bound each command rather than relying on Lock's contention timeout."""
+    global _redis
+    with _mutex:
+        if _redis is None:
+            _redis = Redis.from_url(
+                settings.REDIS_URL,
+                socket_timeout=0.5,
+                socket_connect_timeout=0.5,
+                retry=Retry(NoBackoff(), 0),
+                retry_on_timeout=False,
+            )
+        return _redis
+
+
+def fence_engine(business_engine: Engine) -> Engine:
+    """Avoid a second checkout from an already saturated business pool."""
+    if business_engine.dialect.name != "mysql":
+        return business_engine
+    with _mutex:
+        engine = _fence_engines.get(business_engine.pool)
+        if engine is None:
+            engine = create_engine(
+                business_engine.url,
+                poolclass=ObservedQueuePool,
+                pool_size=2,
+                max_overflow=2,
+                pool_timeout=1,
+                pool_recycle=600,
+                connect_args={
+                    "connect_timeout": 1,
+                    "read_timeout": 4,
+                    "write_timeout": 4,
+                    "init_command": "SET SESSION innodb_lock_wait_timeout = 3",
+                },
+            )
+            register_pool(
+                engine.pool,
+                engine_role="plugin_fence",
+                pool_size=2,
+                max_overflow=2,
+                pool_timeout=1,
+                pool_recycle=600,
+            )
+            _fence_engines[business_engine.pool] = engine
+        return engine
+
+
+def close_plugin_write_resources() -> None:
+    global _redis
+    with _mutex:
+        client, _redis = _redis, None
+        engines = list(_fence_engines.values())
+        _fence_engines.clear()
+    with ExitStack() as cleanup:
+        for engine in engines:
+            cleanup.callback(engine.dispose)
+        if client is not None:
+            cleanup.callback(client.close)

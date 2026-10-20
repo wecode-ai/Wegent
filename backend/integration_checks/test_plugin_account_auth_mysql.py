@@ -1,4 +1,4 @@
-"""Real InnoDB transaction races; requires a disposable plugin_auth_test database."""
+"""Real Redis/InnoDB transaction races against disposable local services."""
 
 import json
 import os
@@ -6,35 +6,48 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Callable
 
 import pytest
 from pydantic import SecretStr
+from redis import Redis
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.models.kind import Kind
+from app.models.plugin_write_fence import PluginWriteFence
 from app.models.user import User
 from app.schemas.plugin_account_auth import (
     PluginCredentialWrite,
     PluginMigrationCreate,
     PluginNativeEnrollment,
     PluginNativeExecution,
+    PluginNativeLocalLifecycle,
     PluginOAuthFinish,
 )
+from app.services import plugin_write_coordination as coordination
+from app.services import plugin_write_resources as resources
 from app.services.device_service import device_service
+from app.services.installed_plugin_service import InstalledPluginService
 from app.services.plugin_account_connections import (
     PluginAccountAuthError,
     PluginAccountConnectionService,
 )
 from app.services.plugin_auth_execution import PluginAuthExecutionService
+from app.services.plugin_auth_local_lifecycle import PluginAuthLocalLifecycleService
 from app.services.plugin_auth_transfers import PluginAuthTransferService
 from app.services.plugin_credential_cipher import PluginCredentialCipher
 from app.services.plugin_marketplace_service import PluginMarketplaceService
 from app.services.plugin_oauth_operations import PluginOAuthOperations
+from app.services.plugin_write_coordination import (
+    PluginWriteError,
+    acquire_plugin_write_lock,
+    configure_plugin_session,
+)
 
 CREDENTIAL = SecretStr(
     '{"access_token":"synthetic-access","refresh_token":"synthetic-refresh"}'
@@ -100,10 +113,26 @@ def sessions():
     engine = create_engine(url, isolation_level="REPEATABLE READ", pool_size=4)
     with engine.connect() as db:
         assert db.scalar(text("SELECT @@transaction_isolation")) == "REPEATABLE-READ"
-    for table in (User.__table__, Kind.__table__):
+    for table in (User.__table__, Kind.__table__, PluginWriteFence.__table__):
         table.create(engine, checkfirst=True)
-    yield sessionmaker(engine, expire_on_commit=False)
-    engine.dispose()
+    redis_url = make_url(os.environ["PLUGIN_AUTH_REDIS_TEST_URL"])
+    assert redis_url.host in {"127.0.0.1", "localhost"}
+    assert redis_url.database == "15", "Use only the dedicated test Redis DB 15"
+    client = Redis.from_url(str(redis_url), socket_timeout=2)
+    assert client.ping()
+
+    class PluginAuthSession(Session):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            configure_plugin_session(self)
+
+    try:
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(coordination, "_redis_client", lambda: client)
+            yield sessionmaker(engine, class_=PluginAuthSession, expire_on_commit=False)
+    finally:
+        client.close()
+        engine.dispose()
 
 
 @pytest.fixture
@@ -174,12 +203,14 @@ def context(sessions):
     finally:
         with sessions.begin() as db:
             db.query(Kind).filter(Kind.user_id == value.user_id).delete()
+            db.query(PluginWriteFence).filter_by(user_id=value.user_id).delete()
             db.query(User).filter(User.id == value.user_id).delete()
 
 
 def establish_snapshot(db: Session, context: Context) -> None:
-    # Authentication and package reads may already have opened a consistent read.
+    # Authentication reads may precede coordination; each later read must be fresh.
     assert db.query(User.id).filter(User.id == context.user_id).scalar() is not None
+    assert db.scalar(text("SELECT @@transaction_isolation")) == "READ-COMMITTED"
 
 
 def race(context: Context, *operations: Callable[[Session], object]) -> list[str]:
@@ -210,6 +241,191 @@ def test_simultaneous_enrollment_creates_only_one_account(context):
     assert race(context, enroll, enroll) == ["ok", "plugin_auth_revision_conflict"]
     with context.sessions() as db:
         assert len(context.accounts.list_connections(db, user_id=context.user_id)) == 1
+
+
+def test_local_logout_commits_while_an_unrelated_transaction_holds_the_user_row(
+    context,
+):
+    with context.sessions.begin() as db:
+        account = context.accounts.enroll(
+            db, user_id=context.user_id, request=context.credential()
+        )
+        context.accounts.grant_device(
+            db,
+            user_id=context.user_id,
+            connection_id=account.id,
+            device_id=context.device_id,
+            expected_revision=account.revision,
+        )
+
+    def logout():
+        with context.sessions() as db:
+            original = db.scalar(text("SELECT @@session.innodb_lock_wait_timeout"))
+            db.execute(text("SET SESSION innodb_lock_wait_timeout = 1"))
+            db.commit()
+            try:
+                result = PluginAuthLocalLifecycleService(context.accounts).exchange(
+                    db,
+                    user_id=context.user_id,
+                    device_id=context.device_id,
+                    request=PluginNativeLocalLifecycle(
+                        installed_plugin_id=context.plugin_id,
+                        connector_slug="test",
+                        action="logout",
+                    ),
+                )
+                db.commit()
+                return result
+            finally:
+                db.rollback()
+                db.execute(
+                    text("SET SESSION innodb_lock_wait_timeout = :timeout"),
+                    {"timeout": original},
+                )
+                db.commit()
+
+    with context.sessions() as blocker:
+        blocker.execute(
+            text("SELECT id FROM users WHERE id = :user_id FOR UPDATE"),
+            {"user_id": context.user_id},
+        ).one()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            assert pool.submit(logout).result(timeout=3) == {"status": "ok"}
+        assert blocker.in_transaction()
+
+    with context.sessions() as db:
+        account = context.accounts.list_connections(db, user_id=context.user_id)[0]
+        assert account.status == "disconnected"
+        assert account.device_ids == []
+
+
+@pytest.fixture
+def single_connection_sessions(context):
+    engine = create_engine(
+        context.sessions.kw["bind"].url,
+        isolation_level="REPEATABLE READ",
+        pool_size=1,
+        max_overflow=0,
+        pool_timeout=1,
+    )
+    fence = resources.fence_engine(engine)
+    try:
+        yield sessionmaker(
+            engine,
+            class_=context.sessions.class_,
+            expire_on_commit=False,
+        ), fence
+    finally:
+        fence.dispose()
+        engine.dispose()
+
+
+def test_fence_claim_does_not_need_a_second_business_pool_connection(
+    context, single_connection_sessions
+):
+    sessions, _ = single_connection_sessions
+    with sessions() as db:
+        establish_snapshot(db, context)
+
+        connection = context.accounts.enroll(
+            db, user_id=context.user_id, request=context.credential()
+        )
+        db.commit()
+
+    with context.sessions() as db:
+        stored = context.accounts.list_connections(db, user_id=context.user_id)
+        assert stored[0].id == connection.id
+
+
+def test_saturated_fence_pool_returns_retryable_error_and_releases_redis(
+    context, single_connection_sessions
+):
+    sessions, fence = single_connection_sessions
+    with ExitStack() as connections:
+        for _ in range(4):
+            connections.enter_context(fence.connect())
+        with sessions() as db:
+            establish_snapshot(db, context)
+
+            with pytest.raises(PluginWriteError) as failure:
+                context.accounts.enroll(
+                    db, user_id=context.user_id, request=context.credential()
+                )
+
+            assert failure.value.code == "plugin_write_unavailable"
+            assert failure.value.status_code == 503
+            assert not coordination._redis_client().exists(
+                f"wegent:plugin-write:{context.user_id}"
+            )
+
+
+def test_uninstall_invalidates_plugin_loaded_before_coordination(context):
+    with context.sessions() as stale:
+        cached = stale.get(Kind, context.plugin_id)
+        assert cached.is_active
+        with context.sessions() as current:
+            InstalledPluginService().uninstall_installed_plugin(
+                db=current,
+                user_id=context.user_id,
+                installed_id=context.plugin_id,
+            )
+
+        with pytest.raises(
+            PluginAccountAuthError, match="plugin_auth_plugin_not_found"
+        ):
+            context.accounts.enroll(
+                stale, user_id=context.user_id, request=context.credential()
+            )
+
+    with context.sessions() as db:
+        assert context.accounts.list_connections(db, user_id=context.user_id) == []
+
+
+def test_expired_worker_cannot_commit_after_successor_claims_fence(context):
+    with context.sessions() as stale:
+        acquire_plugin_write_lock(stale, context.user_id)
+        stale.add(
+            Kind(
+                user_id=context.user_id,
+                kind="ConnectorLocalAuthPolicy",
+                namespace="plugin-auth",
+                name="fence-test",
+                json={"spec": {"writer": "expired"}},
+            )
+        )
+        stale.flush()
+        lease = stale.info["plugin_write_leases"][context.user_id]
+        # Model a pause immediately after a successful Redis ownership check.
+        lease.check = lambda: None
+        coordination._redis_client().delete(f"wegent:plugin-write:{context.user_id}")
+        with context.sessions.begin() as successor:
+            acquire_plugin_write_lock(successor, context.user_id)
+            successor.add(
+                Kind(
+                    user_id=context.user_id,
+                    kind="ConnectorLocalAuthPolicy",
+                    namespace="plugin-auth",
+                    name="fence-test",
+                    json={"spec": {"writer": "successor"}},
+                )
+            )
+
+        with pytest.raises(PluginWriteError, match="plugin_write_lease_lost"):
+            stale.commit()
+        stale.rollback()
+
+    with context.sessions() as db:
+        rows = (
+            db.query(Kind)
+            .filter_by(
+                user_id=context.user_id,
+                kind="ConnectorLocalAuthPolicy",
+                namespace="plugin-auth",
+                name="fence-test",
+            )
+            .all()
+        )
+        assert [row.json["spec"]["writer"] for row in rows] == ["successor"]
 
 
 def test_empty_auto_update_batch_does_not_block_install_before_session_cleanup(context):
@@ -344,7 +560,7 @@ def test_old_snapshot_reuses_the_completed_transfer_receipt(context):
         assert context.transfer_action(stale, ticket, "finish") == completed
 
 
-def test_owner_lock_refreshes_a_previously_loaded_user(context):
+def test_coordination_refreshes_a_previously_loaded_user(context):
     with context.sessions() as stale:
         cached_user = stale.get(User, context.user_id)
         assert cached_user.is_active
@@ -397,7 +613,7 @@ def test_concurrent_refresh_claims_have_one_owner(context, oauth):
         )
         assert result["state"] == "claimed"
 
-    assert race(context, claim, claim) == ["ok", "plugin_auth_revision_conflict"]
+    assert race(context, claim, claim) == ["ok", "plugin_auth_refresh_in_progress"]
 
 
 def test_stale_refresh_completion_cannot_restore_a_disconnected_account(context, oauth):

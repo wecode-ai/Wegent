@@ -83,6 +83,10 @@ from app.services.plugin_marketplace_identity import (
 from app.services.plugin_marketplace_service import plugin_marketplace_service
 from app.services.plugin_package_parser import MAX_PLUGIN_PACKAGE_SIZE_BYTES
 from app.services.plugin_package_storage import PluginPackageStorageError
+from app.services.plugin_write_coordination import (
+    configure_plugin_session,
+    get_plugin_db,
+)
 from app.stores.tasks import subtask_store, task_store
 from shared.telemetry.decorators import trace_async
 
@@ -178,7 +182,7 @@ def _ensure_submission_matches_task_token(
 async def sync_installed_plugins_to_device(
     device_id: str,
     reconcile: bool = False,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_plugin_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginDeviceSyncResponse:
     """Push account desired plugins to one device and refresh device rows."""
@@ -208,6 +212,7 @@ async def sync_installed_plugins_to_device(
         device_id=normalized_device_id,
     )
     with get_db_session() as record_db:
+        configure_plugin_session(record_db)
         plugin_device_installation_service.record_device_sync_result(
             record_db,
             user_id=user_id,
@@ -250,7 +255,7 @@ async def sync_installed_plugins_to_device(
 async def sync_installed_plugin_to_device(
     installed_id: int,
     device_id: str,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_plugin_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginDeviceSyncResponse:
     """Merge one installed plugin without changing unrelated device state."""
@@ -286,7 +291,7 @@ async def sync_installed_plugin_to_device(
 def report_installed_plugins_on_device(
     payload: PluginDeviceReportRequest,
     device_id: str,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_plugin_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginDeviceReportResponse:
     """Acknowledge locally present plugins on one device without pushing packages."""
@@ -320,7 +325,7 @@ def report_installed_plugins_on_device(
 async def upload_plugin(
     file: UploadFile = File(...),
     enabled: bool = Form(True),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_plugin_db),
     current_user: User = Depends(security.get_current_user),
 ) -> InstalledPlugin:
     """Upload and install a Claude Code plugin ZIP package."""
@@ -400,7 +405,7 @@ def get_marketplace_plugin_access(
 async def update_marketplace_plugin_access(
     plugin_id: int,
     request: PluginAccessUpdateRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_plugin_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginAccessResponse:
     access, revoked_installs = plugin_marketplace_service.update_plugin_access(
@@ -462,7 +467,7 @@ def get_marketplace_plugin_delete_impact(
 async def delete_marketplace_plugin(
     plugin_id: int,
     request: PluginDeleteRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_plugin_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginDeleteResponse:
     installations = plugin_marketplace_service.delete_owned_personal_plugin(
@@ -539,7 +544,7 @@ async def install_marketplace_plugin(
     marketplace_id: int,
     release_id: int | None = None,
     device_id: str | None = None,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_plugin_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginMarketplaceInstallResponse:
     """Install a marketplace plugin for the current user.
@@ -592,7 +597,7 @@ async def install_marketplace_plugin(
 async def ensure_builtin_plugin_installed(
     plugin_key: str,
     request: BuiltinPluginInstallRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_plugin_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginMarketplaceInstallResponse:
     """Install a bundled plugin from the v2 marketplace catalog."""
@@ -737,7 +742,7 @@ async def update_installed_plugin(
     installed_id: int,
     request: InstalledPluginUpdateRequest,
     device_id: str | None = None,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_plugin_db),
     current_user: User = Depends(security.get_current_user),
 ) -> InstalledPlugin:
     """Update an installed plugin's runtime state, metadata, or update policy."""
@@ -793,7 +798,7 @@ async def uninstall_installed_plugin(
     installed_id: int,
     background_tasks: BackgroundTasks,
     device_id: str | None = None,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_plugin_db),
     current_user: User = Depends(security.get_current_user),
 ) -> None:
     """Commit account removal before asynchronously reconciling devices."""

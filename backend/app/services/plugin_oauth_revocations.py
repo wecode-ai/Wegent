@@ -5,6 +5,7 @@ import time
 
 from sqlalchemy.orm import Session
 
+from app.models.kind import Kind
 from app.schemas.plugin_account_auth import PluginRevocationFinish
 from app.services.plugin_account_connections import (
     PluginAccountAuthError,
@@ -46,15 +47,11 @@ class PluginOAuthRevocations:
             return job["leaseExpiresAt"] <= now
         return job.get("nextAttemptAt", 0) <= now
 
-    def _locked(self, db: Session, user_id: int, connection_id: str):
-        row = (
-            self.connections._query(db, user_id, connection_id)
-            .with_for_update()
-            .populate_existing()
-            .first()
-        )
-        if row is None:
-            raise PluginAccountAuthError("plugin_auth_connection_not_found", 404)
+    def _coordinated_connection(
+        self, db: Session, user_id: int, connection_id: str
+    ) -> Kind:
+        self.connections._coordinate_owner(db, user_id)
+        row = self.connections._get(db, user_id, connection_id)
         if row.json["spec"]["status"] != "disconnected":
             raise PluginAccountAuthError("plugin_auth_operation_mismatch", 409)
         return row
@@ -63,7 +60,7 @@ class PluginOAuthRevocations:
     def begin(
         self, db: Session, *, user_id: int, device_id: str, connection_id: str
     ) -> dict:
-        row = self._locked(db, user_id, connection_id)
+        row = self._coordinated_connection(db, user_id, connection_id)
         spec = dict(row.json["spec"])
         job = dict(spec.get("oauthRevocation") or {})
         logical_id, binding = self.connections._device_binding(db, user_id, device_id)
@@ -120,7 +117,7 @@ class PluginOAuthRevocations:
         device_id: str,
         request: PluginRevocationFinish,
     ) -> dict:
-        row = self._locked(db, user_id, request.connection_id)
+        row = self._coordinated_connection(db, user_id, request.connection_id)
         spec = dict(row.json["spec"])
         job = dict(spec.get("oauthRevocation") or {})
         logical_id, binding = self.connections._device_binding(db, user_id, device_id)
@@ -159,7 +156,7 @@ class PluginOAuthRevocations:
         device_id: str,
         expected_revision: int,
     ):
-        row = self._locked(db, user_id, connection_id)
+        row = self._coordinated_connection(db, user_id, connection_id)
         spec = dict(row.json["spec"])
         job = dict(spec.get("oauthRevocation") or {})
         if job.get("state") not in {"pending", "attention", "in_flight"}:
@@ -186,7 +183,7 @@ class PluginOAuthRevocations:
     def confirm_external(
         self, db: Session, *, user_id: int, connection_id: str, expected_revision: int
     ):
-        row = self._locked(db, user_id, connection_id)
+        row = self._coordinated_connection(db, user_id, connection_id)
         spec = dict(row.json["spec"])
         if (spec.get("oauthRevocation") or {}).get("state") not in {
             "attention",

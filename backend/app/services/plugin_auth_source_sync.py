@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.schemas.plugin_account_auth import (
+    PluginAccountConnectionResponse,
     PluginCredentialWrite,
     PluginNativeEnrollment,
 )
@@ -25,10 +26,10 @@ class PluginAuthSourceSync:
     def target(
         self, db: Session, user_id: int, spec: dict, account_id: str
     ) -> Kind | None:
+        self.connections._coordinate_owner(db, user_id)
         row = (
             self.connections._query(db, user_id)
             .populate_existing()
-            .with_for_update()
             .filter(
                 Kind.json["spec"]["sourceIdentity"].as_string()
                 == spec["source_identity"],
@@ -98,22 +99,24 @@ class PluginAuthSourceSync:
         connection_id: str,
         source: dict,
         observation: dict,
-    ) -> None:
-        row = self.connections._get(db, user_id, connection_id, lock=True)
+    ) -> PluginAccountConnectionResponse:
+        self.connections._coordinate_owner(db, user_id)
+        row = self.connections._get(db, user_id, connection_id)
         spec = deepcopy(row.json["spec"])
         spec["localAuthSources"] = {
             **spec.get("localAuthSources", {}),
             source["device_id"]: observation,
         }
-        self.connections._replace(db, row, spec, spec["revision"])
+        self.connections._advance(db, row, spec, spec["revision"])
         from app.services.plugin_auth_local_lifecycle import finish_local_login
 
         finish_local_login(db, user_id, source)
+        return self.connections._response(row)
 
     def consume(
         self, db: Session, user_id: int, spec: dict, request: PluginNativeEnrollment
     ):
-        self.connections._lock_owner(db, user_id)
+        self.connections._coordinate_owner(db, user_id)
         row = self.target(db, user_id, spec, request.account_id)
         previous = (
             row.json["spec"].get("localAuthSources", {}).get(spec["device_id"])
@@ -146,5 +149,4 @@ class PluginAuthSourceSync:
                 device_id=spec["device_id"],
                 expected_revision=connection.revision,
             )
-        self.remember(db, user_id, connection.id, spec, observation)
-        return connection
+        return self.remember(db, user_id, connection.id, spec, observation)

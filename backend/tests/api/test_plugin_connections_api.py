@@ -8,6 +8,7 @@ from app.api.endpoints.plugin_connections import router
 from app.core.config import settings
 from app.core.security import get_current_user
 from app.services.plugin_account_connections import PluginAccountAuthError
+from app.services.plugin_write_coordination import PluginWriteError
 
 
 @pytest.fixture
@@ -64,6 +65,22 @@ def test_stale_write_is_reported_as_conflict(client, monkeypatch):
     )
     assert response.status_code == 409
     assert response.json()["detail"] == "plugin_auth_revision_conflict"
+
+
+def test_coordination_unavailable_returns_safe_retryable_error(client, monkeypatch):
+    def unavailable(*_args, **_kwargs):
+        raise PluginWriteError("plugin_write_unavailable")
+
+    monkeypatch.setattr(
+        "app.api.endpoints.plugin_connections.connections.disconnect", unavailable
+    )
+
+    response = client.request(
+        "DELETE", "/plugin-connections/connection", json={"expected_revision": 1}
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "plugin_write_unavailable"}
 
 
 def test_management_api_requires_user_authentication():

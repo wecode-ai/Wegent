@@ -38,6 +38,10 @@ from app.services.plugin_credential_cipher import PluginCredentialCipherError
 from app.services.plugin_oauth_credentials import business_credential
 from app.services.plugin_oauth_operations import plugin_oauth_operations
 from app.services.plugin_oauth_revocations import plugin_oauth_revocations
+from app.services.plugin_write_coordination import (
+    PluginWriteError,
+    configure_plugin_session,
+)
 from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
@@ -126,7 +130,7 @@ async def exchange(
         )
         succeeded = result.get("success") is True
         return result
-    except (PluginAccountAuthError, RuntimeRouteError) as exc:
+    except (PluginAccountAuthError, RuntimeRouteError, PluginWriteError) as exc:
         logger.warning(
             "Plugin auth exchange rejected stage=%s code=%s "
             "operation=%s action=%s exchange_id=%s elapsed_ms=%d",
@@ -174,6 +178,7 @@ def _exchange_sync(
     data: Any,
 ) -> dict:
     with SessionLocal() as db:
+        configure_plugin_session(db)
         identity = resolve_runtime_route_identity(
             db, user_id=user_id, submitted_device_id=device_id
         )

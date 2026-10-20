@@ -10,7 +10,6 @@ from contextlib import contextmanager
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_db
 from app.core.security import get_current_user
 from app.models.user import User
 from app.schemas.plugin_account_auth import (
@@ -32,6 +31,7 @@ from app.services.plugin_account_connections import (
 from app.services.plugin_auth_automation import plugin_auth_automation
 from app.services.plugin_auth_migrations import plugin_auth_migrations
 from app.services.plugin_oauth_revocations import plugin_oauth_revocations
+from app.services.plugin_write_coordination import get_plugin_db
 
 
 def no_store(response: Response) -> None:
@@ -60,7 +60,7 @@ def connection_transaction(db: Session) -> Iterator[None]:
 
 @router.get("", response_model=list[PluginAccountConnectionResponse])
 def list_connections(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_plugin_db),
     user: User = Depends(get_current_user),
 ) -> list[PluginAccountConnectionResponse]:
     return connections.list_connections(db, user_id=user.id)
@@ -68,7 +68,7 @@ def list_connections(
 
 @router.get("/automation", response_model=PluginAuthAutomationPolicy)
 def automation_policy(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_plugin_db),
     user: User = Depends(get_current_user),
 ) -> dict:
     return {"enabled": plugin_auth_automation.enabled(db, user.id)}
@@ -77,7 +77,7 @@ def automation_policy(
 @router.patch("/automation", response_model=PluginAuthAutomationPolicy)
 def configure_automation(
     payload: PluginAuthAutomationPolicy,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_plugin_db),
     user: User = Depends(get_current_user),
 ) -> dict:
     with connection_transaction(db):
@@ -88,7 +88,7 @@ def configure_automation(
 def grant_device(
     connection_id: str,
     payload: PluginDeviceGrantWrite,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_plugin_db),
     user: User = Depends(get_current_user),
 ) -> PluginAccountConnectionResponse:
     with connection_transaction(db):
@@ -109,7 +109,7 @@ def revoke_device(
     connection_id: str,
     device_id: str,
     payload: PluginConnectionRevision,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_plugin_db),
     user: User = Depends(get_current_user),
 ) -> PluginAccountConnectionResponse:
     with connection_transaction(db):
@@ -126,7 +126,7 @@ def revoke_device(
 def disconnect(
     connection_id: str,
     payload: PluginDisconnectRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_plugin_db),
     user: User = Depends(get_current_user),
 ) -> PluginAccountConnectionResponse:
     with connection_transaction(db):
@@ -145,7 +145,7 @@ def disconnect(
 def retry_revocation(
     connection_id: str,
     payload: PluginDeviceGrantWrite,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_plugin_db),
     user: User = Depends(get_current_user),
 ) -> PluginAccountConnectionResponse:
     with connection_transaction(db):
@@ -165,7 +165,7 @@ def retry_revocation(
 def confirm_provider_revocation(
     connection_id: str,
     payload: PluginProviderRevocationConfirmation,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_plugin_db),
     user: User = Depends(get_current_user),
 ) -> PluginAccountConnectionResponse:
     with connection_transaction(db):
@@ -180,7 +180,7 @@ def confirm_provider_revocation(
 @router.post("/migrations", response_model=PluginMigrationResponse)
 def create_migration(
     payload: PluginMigrationCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_plugin_db),
     user: User = Depends(get_current_user),
 ) -> PluginMigrationResponse:
     with connection_transaction(db):

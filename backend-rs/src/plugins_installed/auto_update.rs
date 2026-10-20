@@ -8,7 +8,8 @@
 //! -> `app/services/plugin_marketplace_service.py::auto_update_batch`.
 //!
 //! The endpoint advances at most one cloud-marketplace installation per call.
-//! It locks the user's active `InstalledPlugin` kinds rows, keeps the rows
+//! It coordinates the user's plugin writes through the shared Redis lease,
+//! then reads the active `InstalledPlugin` kinds rows and keeps the rows
 //! whose stored `spec.source.type == "marketplace"`, `spec.updatePolicy ==
 //! "auto"` and whose `pluginId`/`releaseId` are integers, reloads those
 //! plugins and their current/latest releases, then applies the same
@@ -18,14 +19,11 @@
 //! passed scanning. The first `AUTO_UPDATE_BATCH_SIZE` candidates are applied
 //! through the shared installed-payload builder, preserving the row's
 //! `enabled`, `componentStates` and `updatePolicy`. The endpoint always
-//! commits the `FOR UPDATE` transaction (`db.commit()` runs even for an
-//! empty batch, releasing the InnoDB range locks), and the request-scoped
-//! `get_db` session then closes with a rollback, so the recorded empty
-//! batches end with COMMIT followed by ROLLBACK.
+//! commits one pinned, fenced transaction, including an empty batch.
 
 use std::collections::{HashMap, HashSet};
 
-use brz_mysql::{Mysql, MysqlResult};
+use brz_mysql::{Mysql, MysqlResult, MysqlTransaction};
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -38,6 +36,7 @@ use crate::plugins_marketplace::db::{
 use crate::state::AppState;
 
 use super::auth;
+use super::write_coordination::{PluginWriteLease, coordination_error, http_error};
 use crate::http_compat::FastApiError;
 
 /// Source `plugin_marketplace_service.AUTO_UPDATE_BATCH_SIZE`.
@@ -84,41 +83,35 @@ async fn auto_update_installed_plugins(
     #[inject(state)] state: &AppState,
     #[auth] user: auth::InstalledPluginsUser,
 ) -> Result<PluginAutoUpdateBatchResponse, FastApiError> {
-    match auto_update_batch(
+    auto_update_batch(
         &state.mysql,
         state.redis.as_ref(),
         &state.entity_resolvers,
         user.id,
     )
     .await
-    {
-        Ok(body) => Ok(body),
-        Err(error) => {
-            tracing::error!(%error, "auto update batch failed");
-            Err(FastApiError::internal())
-        }
-    }
+    .map_err(http_error)
 }
 
-/// The user's active `InstalledPlugin` rows, locked like the source
-/// `db.query(Kind).filter(...).order_by(Kind.id.asc()).with_for_update()`.
-async fn list_installed_kinds_for_update<M>(
-    mysql: &M,
+/// The lease serializes these rows with authentication and installation.
+async fn list_installed_kinds<T>(
+    transaction: &mut T,
     user_id: i64,
 ) -> MysqlResult<Vec<InstalledKindRow>>
 where
-    M: Mysql,
+    T: MysqlTransaction,
 {
-    mysql
-        .fetch_all(
-            format!(
-                "SELECT {KIND_COLUMNS} FROM kinds WHERE kinds.user_id = ? AND kinds.kind = \
-                 'InstalledPlugin' AND kinds.namespace = 'default' AND kinds.is_active IS true \
-                 ORDER BY kinds.id ASC FOR UPDATE"
-            ),
-            (user_id,),
-        )
+    transaction
+        .fetch_all(installed_kinds_query(), (user_id,))
         .await
+}
+
+fn installed_kinds_query() -> String {
+    format!(
+        "SELECT {KIND_COLUMNS} FROM kinds WHERE kinds.user_id = ? AND kinds.kind = \
+         'InstalledPlugin' AND kinds.namespace = 'default' AND kinds.is_active IS true \
+         ORDER BY kinds.id ASC"
+    )
 }
 
 /// `db.query(Plugin).filter(Plugin.id.in_(plugin_ids))`.
@@ -251,16 +244,55 @@ where
     M: Mysql,
     R: brz_redis::Redis,
 {
-    let installed_rows = list_installed_kinds_for_update(mysql, user_id).await?;
+    let lease = PluginWriteLease::acquire(redis, user_id).await?;
+    let result = tokio::time::timeout_at(lease.deadline, async {
+        lease.claim_fence(mysql).await?;
+        // Catalog and permission resolvers may borrow additional pool
+        // connections. Complete them before pinning the write connection.
+        let catalog = load_auto_update_catalog(mysql, redis, resolvers, user_id).await?;
+        // A fresh transaction starts after acquiring the lease, so its first
+        // snapshot cannot precede the previous plugin writer's commit.
+        mysql
+            .with_transaction(async |transaction| {
+                lease.verify_owned().await?;
+                let response =
+                    apply_auto_update_batch(transaction, catalog.as_ref(), user_id).await?;
+                lease.fence_commit(transaction).await?;
+                Ok(response)
+            })
+            .await
+    })
+    .await
+    .unwrap_or_else(|_| Err(coordination_error("plugin_write_lease_lost")));
+    lease.release().await;
+    result
+}
+
+struct AutoUpdateCatalog {
+    plugins_by_id: HashMap<i64, PluginRow>,
+    releases_by_id: HashMap<i64, PluginReleaseRow>,
+    grants_by_plugin_id: HashMap<i64, Vec<ResourceMemberRow>>,
+    access_context: Option<AccessContext>,
+}
+
+async fn load_auto_update_catalog<M, R>(
+    mysql: &M,
+    redis: Option<&R>,
+    resolvers: &EntityResolvers<R>,
+    user_id: i64,
+) -> MysqlResult<Option<AutoUpdateCatalog>>
+where
+    M: Mysql,
+    R: brz_redis::Redis,
+{
+    // Discover installed IDs on the master, then release this connection
+    // before catalog and permission lookups borrow from the pool.
+    let installed_rows = mysql
+        .with_transaction(async |transaction| list_installed_kinds(transaction, user_id).await)
+        .await?;
     let eligible = eligible_rows(&installed_rows);
     if eligible.is_empty() {
-        // `_auto_update_candidates` short-circuits before any catalog read, but
-        // `db.commit()` still runs for the empty batch (releasing the locking
-        // read's range locks) and the request-scoped session's close then
-        // rolls back the freshly opened transaction, like `get_db`.
-        mysql.execute("COMMIT", ()).await?;
-        mysql.execute("ROLLBACK", ()).await?;
-        return Ok(PluginAutoUpdateBatchResponse::empty());
+        return Ok(None);
     }
 
     let plugin_ids = distinct_ids(eligible.iter().map(|row| row.plugin_id));
@@ -288,13 +320,31 @@ where
     let access_context =
         load_access_context(mysql, redis, resolvers, user_id, &grants_by_plugin_id).await?;
 
+    Ok(Some(AutoUpdateCatalog {
+        plugins_by_id,
+        releases_by_id,
+        grants_by_plugin_id,
+        access_context,
+    }))
+}
+
+async fn apply_auto_update_batch<T: MysqlTransaction>(
+    transaction: &mut T,
+    catalog: Option<&AutoUpdateCatalog>,
+    user_id: i64,
+) -> MysqlResult<PluginAutoUpdateBatchResponse> {
+    let installed_rows = list_installed_kinds(transaction, user_id).await?;
+    let Some(catalog) = catalog else {
+        return Ok(PluginAutoUpdateBatchResponse::empty());
+    };
+    let eligible = eligible_rows(&installed_rows);
     let candidates = candidates(
         &eligible,
-        &plugins_by_id,
-        &releases_by_id,
+        &catalog.plugins_by_id,
+        &catalog.releases_by_id,
         user_id,
-        &grants_by_plugin_id,
-        access_context.as_ref(),
+        &catalog.grants_by_plugin_id,
+        catalog.access_context.as_ref(),
     );
 
     let mut updated: Vec<PluginAutoUpdateItem> = Vec::new();
@@ -310,7 +360,7 @@ where
             .naive_utc()
             .format("%Y-%m-%d %H:%M:%S%.6f")
             .to_string();
-        mysql
+        transaction
             .execute(
                 "UPDATE kinds SET json=?, updated_at=? WHERE kinds.id = ?",
                 (
@@ -328,14 +378,6 @@ where
             version: release.version.clone(),
         });
     }
-
-    // `db.commit()` runs unconditionally: even an empty batch holds InnoDB
-    // range locks from the locking read that must be released before a
-    // concurrent install can delay request cleanup. The request-scoped
-    // `get_db` session then closes, rolling back the freshly opened
-    // transaction, so the locked session always ends COMMIT then ROLLBACK.
-    mysql.execute("COMMIT", ()).await?;
-    mysql.execute("ROLLBACK", ()).await?;
 
     let remaining_count = candidates.len().saturating_sub(updated.len());
     Ok(PluginAutoUpdateBatchResponse {
@@ -763,160 +805,5 @@ fn installed_payload(
 use brz_json::adapters::python_truthy as truthy;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use brz_json::OpaqueJson;
-    use brz_mysql::Json;
-
-    #[test]
-    fn marketplace_name_matches_source_mapping() {
-        assert_eq!(
-            marketplace_name_for_visibility("personal"),
-            "wework-personal"
-        );
-        assert_eq!(marketplace_name_for_visibility("public"), "wework");
-        assert_eq!(marketplace_name_for_visibility("workspace"), "wegent");
-        assert_eq!(marketplace_name_for_visibility(""), "wegent");
-    }
-
-    #[test]
-    fn kind_name_matches_source_digest() {
-        // sha256("enterprise:weibo-miniapp-h5-develop-agent")[:10].
-        let digest = Sha256::digest(b"enterprise:weibo-miniapp-h5-develop-agent");
-        let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
-        let expected = format!("weibo-miniapp-h5-develop-agent-{}", &hex[..10]);
-        assert_eq!(
-            kind_name("enterprise", "weibo-miniapp-h5-develop-agent"),
-            expected
-        );
-    }
-
-    #[test]
-    fn component_states_uses_source_prefixes() {
-        let components = serde_json::json!({
-            "skills": [{"name": "demo"}, {"name": ""}, {}],
-            "mcps": [{"name": "srv"}],
-        });
-        let states = component_states(&components);
-        assert_eq!(states["skill:demo"], Value::Bool(true));
-        assert_eq!(states["mcp:srv"], Value::Bool(true));
-        assert!(states.get("skill:").is_none());
-    }
-
-    #[test]
-    fn empty_batch_serializes_source_shape() {
-        let body = serde_json::to_string(&PluginAutoUpdateBatchResponse::empty()).unwrap();
-        assert_eq!(
-            body,
-            r#"{"updated":[],"updatedCount":0,"remainingCount":0}"#
-        );
-    }
-
-    #[test]
-    fn eligible_rows_require_marketplace_auto_and_integer_ids() {
-        let make = |spec: Value| InstalledKindRow {
-            id: 1,
-            user_id: 157,
-            kind: "InstalledPlugin".to_string(),
-            name: "n".to_string(),
-            namespace: "default".to_string(),
-            json: Json(OpaqueJson::from_serializable(
-                serde_json::json!({ "spec": spec }),
-            )),
-            is_active: true,
-            created_at: chrono::Utc::now().naive_utc(),
-            updated_at: chrono::Utc::now().naive_utc(),
-        };
-        let eligible = make(serde_json::json!({
-            "source": {"type": "marketplace"},
-            "updatePolicy": "auto",
-            "pluginId": 17,
-            "releaseId": 129,
-        }));
-        let manual = make(serde_json::json!({
-            "source": {"type": "marketplace"},
-            "updatePolicy": "manual",
-            "pluginId": 17,
-            "releaseId": 129,
-        }));
-        let upload = make(serde_json::json!({
-            "source": {"type": "upload"},
-            "updatePolicy": "auto",
-            "pluginId": 17,
-            "releaseId": 129,
-        }));
-        let string_id = make(serde_json::json!({
-            "source": {"type": "marketplace"},
-            "updatePolicy": "auto",
-            "pluginId": "17",
-            "releaseId": 129,
-        }));
-        let rows = vec![eligible, manual, upload, string_id];
-        let selected = eligible_rows(&rows);
-        assert_eq!(selected.len(), 1);
-        assert_eq!(selected[0].plugin_id, 17);
-        assert_eq!(selected[0].release_id, 129);
-    }
-
-    /// `auto_update_batch` ends the locking session with the source's
-    /// unconditional `db.commit()` followed by the request-scoped session
-    /// close's rollback, both for the short-circuit path (no eligible rows,
-    /// no catalog reads) and after the candidate pass.
-    #[tokio::test]
-    async fn empty_batch_commits_then_rolls_back_like_the_source() {
-        let registry = || {
-            let mut registry = EntityResolvers::public(
-                brz_mysql::MysqlService::connect_lazy("mysql://test:test@127.0.0.1:1/test")
-                    .unwrap(),
-            );
-            registry.register("org_department", NoopResolver);
-            registry
-        };
-        // Short-circuit path: no eligible installed rows, so no catalog reads
-        // run before the terminal transaction control.
-        let mysql = crate::sql_test_support::KindQueryCapture::writing();
-        let response =
-            auto_update_batch(&mysql, None::<&brz_redis::RedisService>, &registry(), 2095)
-                .await
-                .unwrap();
-        assert_eq!(response.updated_count, 0);
-        assert_eq!(response.remaining_count, 0);
-        assert_eq!(mysql.queries().len(), 1, "only the FOR UPDATE read");
-        let writes: Vec<String> = mysql.writes().into_iter().map(|query| query.sql).collect();
-        assert_eq!(writes, vec!["COMMIT".to_string(), "ROLLBACK".to_string()]);
-    }
-
-    /// A resolver that matches no bindings, so the full candidate pass with
-    /// eligible rows still finds no updatable candidate (public plugins are
-    /// accessible but their latest release already matches the recorded
-    /// fixtures' semantics is irrelevant here: the capture returns no rows at
-    /// all, so `_load_auto_update_catalog` yields nothing and the batch is
-    /// empty).
-    struct NoopResolver;
-
-    #[async_trait::async_trait]
-    impl<R: brz_redis::Redis> crate::permissions::EntityResolver<R> for NoopResolver {
-        async fn match_bindings(
-            &self,
-            _: &crate::permissions::EntityResolvers<R>,
-            _: Option<&R>,
-            _: i64,
-            _: &[String],
-            _: crate::permissions::ResolutionPurpose,
-        ) -> MysqlResult<Vec<String>> {
-            Ok(Vec::new())
-        }
-
-        async fn get_resource_ids_by_entity(
-            &self,
-            _: &crate::permissions::EntityResolvers<R>,
-            _: &brz_mysql::MysqlService,
-            _: Option<&R>,
-            _: i64,
-            _: &str,
-            _: &str,
-        ) -> MysqlResult<Vec<i64>> {
-            Ok(Vec::new())
-        }
-    }
-}
+#[path = "auto_update_tests.rs"]
+mod tests;

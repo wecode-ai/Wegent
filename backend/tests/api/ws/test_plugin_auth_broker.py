@@ -8,6 +8,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError
 
 from app.api.ws import plugin_auth_broker as broker
+from app.services.plugin_write_coordination import PluginWriteError
 
 
 @pytest.fixture
@@ -78,6 +79,29 @@ async def test_identity_comes_from_session_and_errors_do_not_leak(
     exchange.assert_called_once_with(
         12, "runtime", "runtime", "instance", "enroll", data
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "code", ["plugin_write_busy", "plugin_write_unavailable", "plugin_write_lease_lost"]
+)
+async def test_coordination_failure_returns_stable_retryable_code(
+    identity, route, monkeypatch, caplog, code
+):
+    monkeypatch.setattr(
+        broker, "_exchange_sync", Mock(side_effect=PluginWriteError(code))
+    )
+
+    result = await broker.exchange(
+        sid="socket",
+        session=identity,
+        operation="local_lifecycle",
+        data={"action": "logout", "credential": "payload-secret"},
+    )
+
+    assert result == {"success": False, "error": code}
+    assert f"stage=exchange code={code}" in caplog.text
+    assert "payload-secret" not in caplog.text
 
 
 @pytest.mark.asyncio

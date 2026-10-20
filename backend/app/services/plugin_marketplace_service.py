@@ -103,6 +103,7 @@ from app.services.plugin_upstream_fetch import (
     fetch_upstream_package,
     validate_upstream_url,
 )
+from app.services.plugin_write_coordination import acquire_plugin_write_lock
 from shared.telemetry.decorators import trace_sync
 
 SEMVER_PATTERN = re.compile(
@@ -162,6 +163,7 @@ class PluginMarketplaceService:
         current published catalog, detaches orphaned cloud refs that no longer
         exist, and deactivates duplicate installs for the same pluginKey.
         """
+        acquire_plugin_write_lock(db, user_id)
         rows = (
             db.query(Kind)
             .filter(
@@ -488,8 +490,9 @@ class PluginMarketplaceService:
         release_id: int | None = None,
     ) -> InstalledPlugin:
         self.reconcile_stale_installed_catalog_refs(db, user_id=user_id)
+        # Catalog repair may have committed its own transaction.
+        acquire_plugin_write_lock(db, user_id)
         plugin = self._published_plugin(db, plugin_id, user_id=user_id)
-        plugin = db.query(Plugin).filter(Plugin.id == plugin.id).with_for_update().one()
         existing = self._find_installed(db, user_id=user_id, plugin_id=plugin.id)
         if release_id is not None:
             if not existing and release_id != plugin.latest_release_id:
@@ -530,6 +533,7 @@ class PluginMarketplaceService:
         installed_id: int,
         release_id: int,
     ) -> InstalledPlugin:
+        acquire_plugin_write_lock(db, user_id)
         installed = self._owned_install(db, user_id=user_id, installed_id=installed_id)
         spec = installed.json.get("spec", {})
         plugin_id = spec.get("pluginId")
@@ -2779,6 +2783,8 @@ class PluginMarketplaceService:
     ) -> None:
         if not revoked:
             return
+        for user_id in sorted({user_id for user_id, _ in revoked}):
+            acquire_plugin_write_lock(db, user_id)
         revoked_ids = {installed_id for _, installed_id in revoked}
         rows = (
             db.query(Kind)
@@ -2788,6 +2794,7 @@ class PluginMarketplaceService:
                 Kind.namespace == "default",
                 Kind.is_active.is_(True),
             )
+            .populate_existing()
             .all()
         )
         for row in rows:

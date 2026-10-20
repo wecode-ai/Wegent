@@ -28,6 +28,7 @@ from app.services.builtin_plugin_registry import (
 )
 from app.services.plugin_marketplace_identity import marketplace_name_for_visibility
 from app.services.plugin_package_parser import plugin_package_parser
+from app.services.plugin_write_coordination import acquire_plugin_write_lock
 
 
 class InstalledPluginService:
@@ -44,6 +45,7 @@ class InstalledPluginService:
     ) -> InstalledPlugin:
         parsed, package_bytes = plugin_package_parser.normalize_and_parse(package_bytes)
         file_hash = hashlib.sha256(package_bytes).hexdigest()
+        acquire_plugin_write_lock(db, user_id)
         existing = self._find_uploaded_plugin(
             db, user_id=user_id, plugin_key=parsed.name
         )
@@ -100,6 +102,7 @@ class InstalledPluginService:
         installed_id: int,
         request: InstalledPluginUpdateRequest,
     ) -> InstalledPlugin:
+        acquire_plugin_write_lock(db, user_id)
         row = self._get_active_installed_plugin(
             db, user_id=user_id, installed_id=installed_id
         )
@@ -140,6 +143,7 @@ class InstalledPluginService:
         user_id: int,
         installed_id: int,
     ) -> None:
+        acquire_plugin_write_lock(db, user_id)
         row = self._get_active_installed_plugin(
             db, user_id=user_id, installed_id=installed_id
         )
@@ -303,6 +307,7 @@ class InstalledPluginService:
         marketplace_id: int,
         enabled: bool = True,
     ) -> InstalledPlugin:
+        acquire_plugin_write_lock(db, user_id)
         row = (
             db.query(Kind)
             .filter(
@@ -379,6 +384,7 @@ class InstalledPluginService:
         user_id: int,
         plugin_key: str,
     ) -> InstalledPlugin:
+        acquire_plugin_write_lock(db, user_id)
         row = self._find_marketplace_item(
             db,
             user_id=BUILTIN_PLUGIN_OWNER_ID,

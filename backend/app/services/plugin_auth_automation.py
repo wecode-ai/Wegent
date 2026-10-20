@@ -34,13 +34,13 @@ class PluginAuthAutomationService:
         )
 
     def enabled(self, db: Session, user_id: int) -> bool:
-        row = self._policy(db, user_id).populate_existing().with_for_update().first()
+        row = self._policy(db, user_id).populate_existing().first()
         return row is None or row.json.get("spec", {}).get("enabled") is True
 
     @trace_sync("plugin_auth.automation.configure", "backend.plugin_auth")
     def configure(self, db: Session, user_id: int, enabled: bool) -> dict:
-        self.connections._lock_owner(db, user_id)
-        row = self._policy(db, user_id).with_for_update().first()
+        self.connections._coordinate_owner(db, user_id)
+        row = self._policy(db, user_id).populate_existing().first()
         if row is None:
             row = Kind(
                 user_id=user_id,
@@ -58,7 +58,7 @@ class PluginAuthAutomationService:
     def reconcile(
         self, db: Session, *, user_id: int, device_id: str, installed_ids: list[int]
     ) -> dict:
-        self.connections._lock_owner(db, user_id)
+        self.connections._coordinate_owner(db, user_id)
         if not self.enabled(db, user_id):
             return {"migrations": []}
         identity = resolve_runtime_route_identity(
@@ -78,6 +78,7 @@ class PluginAuthAutomationService:
                 Kind.is_active.is_(True),
                 Kind.id.in_(installed_ids),
             )
+            .populate_existing()
             .order_by(Kind.id)
             .all()
         )
@@ -103,6 +104,7 @@ class PluginAuthAutomationService:
     def _intent(
         self, db: Session, user_id: int, device_id: str, plugin: Kind, connector: dict
     ) -> dict | None:
+        self.connections._coordinate_owner(db, user_id)
         slug = connector["slug"]
         source = self.connections._source_identity(plugin.json["spec"]["source"])
         from app.services.plugin_auth_local_lifecycle import (
@@ -115,7 +117,6 @@ class PluginAuthAutomationService:
         rows = (
             self.connections._query(db, user_id)
             .populate_existing()
-            .with_for_update()
             .filter(
                 Kind.json["spec"]["sourceIdentity"].as_string() == source,
                 Kind.json["spec"]["connectorSlug"].as_string() == slug,
@@ -149,7 +150,7 @@ class PluginAuthAutomationService:
     def grant_current_device(
         self, db: Session, *, user_id: int, device_id: str
     ) -> None:
-        self.connections._lock_owner(db, user_id)
+        self.connections._coordinate_owner(db, user_id)
         if not self.enabled(db, user_id):
             return
         identity = resolve_runtime_route_identity(
@@ -161,12 +162,7 @@ class PluginAuthAutomationService:
         }:
             return
         logical, binding = self.connections._device_binding(db, user_id, device_id)
-        rows = (
-            self.connections._query(db, user_id)
-            .populate_existing()
-            .with_for_update()
-            .all()
-        )
+        rows = self.connections._query(db, user_id).populate_existing().all()
         for row in rows:
             spec = dict(row.json["spec"])
             if (

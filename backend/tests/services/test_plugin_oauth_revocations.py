@@ -3,11 +3,16 @@
 import json
 import time
 from copy import deepcopy
+from unittest.mock import Mock
 
 import pytest
+from sqlalchemy.orm import Session
 
 from app.schemas.plugin_account_auth import PluginRevocationFinish
-from app.services.plugin_account_connections import PluginAccountAuthError
+from app.services.plugin_account_connections import (
+    PluginAccountAuthError,
+    PluginAccountConnectionService,
+)
 from app.services.plugin_oauth_revocations import PluginOAuthRevocations
 from tests.services import test_plugin_oauth_operations as fixtures
 
@@ -15,6 +20,48 @@ device = fixtures.device
 installed = fixtures.installed
 service = fixtures.service
 oauth = fixtures.oauth
+
+
+@pytest.mark.parametrize(
+    "operation, parameters",
+    [
+        ("begin", {"connection_id": "a" * 64, "device_id": "device"}),
+        (
+            "finish",
+            {
+                "device_id": "device",
+                "request": PluginRevocationFinish(
+                    connection_id="a" * 64, operation_id="b" * 64, succeeded=True
+                ),
+            },
+        ),
+        (
+            "retry",
+            {
+                "connection_id": "a" * 64,
+                "device_id": "device",
+                "expected_revision": 1,
+            },
+        ),
+        ("confirm_external", {"connection_id": "a" * 64, "expected_revision": 1}),
+    ],
+)
+def test_revocation_requires_coordination_before_reading_credentials(
+    operation, parameters, monkeypatch
+):
+    connections = PluginAccountConnectionService()
+    worker = PluginOAuthRevocations(connections)
+    db = Mock(spec=Session)
+
+    def unavailable(*_args):
+        raise PluginAccountAuthError("plugin_auth_backend_unavailable", 503)
+
+    monkeypatch.setattr(connections, "_coordinate_owner", unavailable)
+
+    with pytest.raises(PluginAccountAuthError, match="plugin_auth_backend_unavailable"):
+        getattr(worker, operation)(db, user_id=1, **parameters)
+
+    assert db.mock_calls == []
 
 
 @pytest.fixture
@@ -98,7 +145,24 @@ def test_recreated_runtime_cannot_claim_or_finish_old_device_work(
         claim(revoked, test_db, test_user, device)
     with pytest.raises(PluginAccountAuthError, match="operation_mismatch"):
         finish(revoked, test_db, test_user, device, lease)
+
+
+def test_another_active_owner_cannot_claim_revocation(
+    revoked, test_db, test_admin_user, device
+):
+    test_db.commit()
     with pytest.raises(PluginAccountAuthError, match="connection_not_found"):
+        revoked[0].begin(
+            test_db,
+            user_id=test_admin_user.id,
+            device_id=device.name,
+            connection_id=revoked[1].id,
+        )
+
+
+def test_missing_owner_cannot_claim_revocation(revoked, test_db, test_user, device):
+    test_db.commit()
+    with pytest.raises(PluginAccountAuthError, match="owner_unavailable"):
         revoked[0].begin(
             test_db,
             user_id=test_user.id + 1,

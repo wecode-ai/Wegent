@@ -38,6 +38,28 @@ from app.models.subtask import Subtask
 from app.models.user import User
 
 
+@pytest.fixture(autouse=True)
+def plugin_write_backend(monkeypatch: pytest.MonkeyPatch):
+    """Mock external coordination services while exercising transaction hooks."""
+    from app.services import plugin_write_coordination as coordination
+    from tests.plugin_write_fakes import FakePluginRedis
+
+    redis = FakePluginRedis()
+    fences: dict[int, str] = {}
+
+    def claim(_db: Session, user_id: int, token: str) -> None:
+        fences[user_id] = token
+
+    def check(_db: Session, user_id: int, token: str) -> None:
+        if fences.get(user_id) != token:
+            raise coordination.PluginWriteError("plugin_write_lease_lost")
+
+    monkeypatch.setattr(coordination, "_redis_client", lambda: redis)
+    monkeypatch.setattr(coordination, "_claim_fence", claim)
+    monkeypatch.setattr(coordination, "_check_commit_fence", check)
+    return redis, fences
+
+
 @pytest.fixture(scope="session", autouse=True)
 def use_fast_test_password_hashing() -> Generator[None, None, None]:
     """Use the minimum bcrypt work factor while exercising password behavior."""

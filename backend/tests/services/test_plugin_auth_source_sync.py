@@ -3,9 +3,12 @@
 import json
 from copy import deepcopy
 
+import pytest
 from pydantic import SecretStr
 
 from app.schemas.plugin_account_auth import PluginNativeEnrollment
+from app.services.plugin_account_connections import PluginAccountAuthError
+from app.services.plugin_auth_source_sync import PluginAuthSourceSync
 from tests.services.test_plugin_account_connections import device, installed, service
 from tests.services.test_plugin_auth_automation import automation, local, reconcile
 
@@ -41,7 +44,8 @@ def test_local_password_updates_cloud_without_migration_or_grant_clicks(
     unchanged = sync(automation, test_db, test_user, installed, "first-synthetic")
     assert unchanged.revision == connection.revision
     changed = sync(automation, test_db, test_user, installed, "updated-synthetic")
-    assert changed.revision == connection.revision + 1
+    # Credential replacement and its source observation each advance the CAS.
+    assert changed.revision == connection.revision + 2
     assert set(changed.device_ids) == {"local", "logical-device"}
     secret = service.read_for_device(
         test_db,
@@ -55,6 +59,39 @@ def test_local_password_updates_cloud_without_migration_or_grant_clicks(
     stored = service._get(test_db, test_user.id, changed.id)
     assert "updated-synthetic" not in json.dumps(stored.json)
     assert "localAuthSources" not in changed.model_dump()
+
+
+def test_source_observation_advances_revision_and_rejects_stale_device_updates(
+    automation, service, test_db, test_user, installed, local, device
+):
+    connection = sync(automation, test_db, test_user, installed, "synthetic")
+    row = service._get(test_db, test_user.id, connection.id)
+    observation = deepcopy(row.json["spec"]["localAuthSources"]["local"])
+    _, binding = service._device_binding(test_db, test_user.id, local.name)
+    source = {
+        "source_identity": row.json["spec"]["sourceIdentity"],
+        "connector_slug": "mail",
+        "device_id": "local",
+        "binding": binding,
+    }
+
+    updated = PluginAuthSourceSync(service).remember(
+        test_db, test_user.id, connection.id, source, observation
+    )
+
+    assert updated.revision == connection.revision + 1
+    assert (
+        service._get(test_db, test_user.id, updated.id).json["spec"]["revision"]
+        == updated.revision
+    )
+    with pytest.raises(PluginAccountAuthError, match="plugin_auth_revision_conflict"):
+        service.grant_device(
+            test_db,
+            user_id=test_user.id,
+            connection_id=connection.id,
+            device_id=device.name,
+            expected_revision=connection.revision,
+        )
 
 
 def test_unchanged_local_source_never_overwrites_newer_cloud_credentials(

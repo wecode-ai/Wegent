@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.models.plugin_marketplace import PluginDeviceInstallation
 from app.schemas.device import DeviceType
 from app.services.device.runtime_route import resolve_runtime_route_identity
+from app.services.plugin_write_coordination import acquire_plugin_write_lock
 
 
 def plugin_device_id(db: Session, user_id: int, device_id: str) -> str:
@@ -77,10 +78,10 @@ def reconcile_plugin_device_rows(db: Session, user_id: int) -> None:
     Keep the last reported state, including failures and retry counts. A fresh
     device acknowledgement, not the account's desired version, confirms success.
     """
+    acquire_plugin_write_lock(db, user_id)
     rows = (
         db.query(PluginDeviceInstallation)
         .filter(PluginDeviceInstallation.user_id == user_id)
-        .with_for_update()
         .all()
     )
     selected = coalesce_plugin_device_rows(db, rows)
