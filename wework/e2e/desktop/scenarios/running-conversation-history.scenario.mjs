@@ -364,7 +364,14 @@ async function verifyLegacySearch(control, timeoutMs) {
     text: `Legacy search answer ${LEGACY_TURN_COUNT - 1}`,
   })
   const restored = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).pane
-  assert.deepEqual(restored.transcript, original.transcript, 'Search changed live pagination')
+  // Navigation metadata loads independently while search is open.
+  for (const field of ['loading', 'hasMoreBefore', 'loadingMoreBefore', 'loadedRanges']) {
+    assert.deepEqual(
+      restored.transcript[field],
+      original.transcript[field],
+      `Search changed live pagination: ${field}`
+    )
+  }
   assert.deepEqual(restored.messageSummary, original.messageSummary, 'Search changed live messages')
   assert.equal(Number(await control.command('getElementCount', loadNewer)), 0)
 }
