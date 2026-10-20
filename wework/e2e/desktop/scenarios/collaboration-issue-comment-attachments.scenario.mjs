@@ -82,6 +82,7 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs, workbenchRead
       mimeType: 'image/png',
       value: PNG.toString('base64'),
     })
+    // Pending previews use the same alt text before native staging completes.
     await control.command('waitFor', `${BADGE} img[alt="${filename}"]`)
     assert.equal(Number(await control.command('getElementCount', BADGE)), count)
     assert.equal(

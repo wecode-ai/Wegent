@@ -55,6 +55,7 @@ core_segments=(
   runtime-task-queue
   codex-invalid-launch-cwd
   running-conversation-history
+  latest-conversation-history
   running-plan-history
   running-sidebar-state
   codex-notification-isolation
@@ -184,7 +185,7 @@ core_shards=(
   project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention,collaboration-issue-comment-attachments
   rendering-extensions,transcript-sync,background-terminals
   runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
-  local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,native-directory-picker,collaboration-issue-comment-notification,collaboration-issue-mcp-comments
+  local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,native-directory-picker,collaboration-issue-comment-notification,collaboration-issue-mcp-comments,latest-conversation-history
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,model-overload-recovery
   model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy
   collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details
@@ -1078,6 +1079,11 @@ classify_wework_path() {
       select_target "core:model-settings"
       select_target "core:codex-account-login"
       select_target "core:model-routing"
+      return
+      ;;
+
+    wework/e2e/desktop/scenarios/latest-conversation-history.scenario.mjs)
+      select_target "core:latest-conversation-history"
       return
       ;;
 
