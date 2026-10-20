@@ -401,11 +401,23 @@ export async function createDesktopScenario({
             command = `python3 ${quote(join(cloudRoot, 'scripts/cli.py'))} read`
             await invokeCloud('plugin_auth_device_not_granted')
             assert.equal((await localAuth('health')).status, 'need_login')
+            // Reopen the detail after the direct API logout to refresh its displayed auth state.
+            await control.command('click', '[data-testid="plugin-detail-back-button"]')
+            await control.command(
+              'clickWhenEnabled',
+              `[data-testid="plugins-installed-strip-item-${installedId}"]`
+            )
             await control.command('waitFor', '[data-testid="plugin-connection-manage-group:sites"]')
             await control.command('click', '[data-testid="plugin-connection-manage-group:sites"]')
             await control.command('fill', '[data-testid="plugin-connector-source-select"]', {
               value: 'mail',
             })
+            await waitForValue(
+              () => control.command('getText', '[data-testid="plugin-connector-source-continue"]'),
+              text => text.trim() === '登录',
+              10000,
+              'Connector detail did not refresh the logged-out account'
+            )
             await control.command('click', '[data-testid="plugin-connector-source-continue"]')
             await control.command('waitFor', '[data-testid="plugin-connector-section"]', {
               text: '已连接 · git.one.example',
