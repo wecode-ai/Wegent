@@ -151,7 +151,7 @@ async fn personal_issue_task_routes_cloud_issue_targets_and_preserves_permission
             ),
         )
         .route(
-            "/api/v1/loop-items/{item_id}/comments",
+            "/api/v1/cloud-projects/12/loop-items/{item_id}/activity-comments",
             post(
                 |headers: HeaderMap,
                  AxumPath(item_id): AxumPath<String>,
