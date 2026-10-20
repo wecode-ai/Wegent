@@ -7,6 +7,10 @@ import { verifyIssueConversationDrawers } from '../modules/issue-conversation-dr
 import { verifyCollaborationIssueHome } from '../modules/collaboration-issue-home.mjs'
 import { verifyCollaborationMemberSettings } from '../modules/collaboration-member-settings.mjs'
 import {
+  selectProjectBoardGrouping,
+  verifyPersonalBoardGrouping,
+} from '../modules/collaboration-board-personal-view.mjs'
+import {
   verifyIssueDetailPropertyUi,
   verifyNewDiscussionComposerUi,
   verifyReplyComposerUi,
@@ -435,6 +439,16 @@ export function createDesktopScenario({
           timeoutMs: uiTimeoutMs,
         })
         await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+        const maintainerProject = await request(`/api/v1/cloud-projects/${project.id}`)
+        assert.equal(maintainerProject.access_role, 'Maintainer')
+        await verifyPersonalBoardGrouping(control, {
+          scoped,
+          request,
+          project,
+          groupBy: 'priority',
+        })
+        await selectProjectBoardGrouping(control, scoped, 'status')
+        await capture(control, 'collaboration-shared-core-personal-board-views.png')
         await control.command('waitFor', scoped('[data-testid="collaboration-issue-create"]'), {
           visible: true,
           timeoutMs: uiTimeoutMs,

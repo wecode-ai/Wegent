@@ -829,17 +829,6 @@ export function CollaborationApp({
                         onOpenArchive={
                           issueArchiveAvailable ? openArchiveDrawer : undefined
                         }
-                        onGroupByChange={(groupBy) =>
-                          commands.changeProjectGroup({
-                            project,
-                            groupBy,
-                            defaultStatuses: projectStatuses(
-                              project,
-                              messages,
-                              translate,
-                            ),
-                          })
-                        }
                         renderIssueCard={
                           renderBoardIssueCard
                             ? (context) =>

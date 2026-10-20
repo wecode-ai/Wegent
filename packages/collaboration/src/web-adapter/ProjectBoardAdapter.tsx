@@ -101,7 +101,6 @@ interface ProjectBoardAdapterProps {
   onArchiveCompleted?(issues: CollaborationIssue[]): void;
   onOpenArchive?(): void;
   onOpenBoardSettings?(): void;
-  onGroupByChange(groupBy: ProjectBoardGroupBy): Promise<void>;
   onOpen(issue: CollaborationIssue): void;
   onDeleteIssue?(issue: CollaborationIssue): void;
   onMove(
@@ -144,7 +143,6 @@ export function ProjectBoardAdapter({
   onMarkRead,
   onDeleteIssue,
   onOpenBoardSettings,
-  onGroupByChange,
   onMove,
   onOpen,
   project,
@@ -222,10 +220,12 @@ export function ProjectBoardAdapter({
     extensions,
     focusStorageKey: `collaboration-board-focus:${project.id}`,
     items: issues,
-    onGroupByChange,
     onMove: (issue, _column, _beforeItemId, mutation) =>
       onMove(issue, mutation),
-    personalGroupStorageKey: null,
+    personalGroupStorageKey:
+      project.current_user_id === undefined
+        ? null
+        : `collaboration-board-group:v1:${project.current_user_id}:${project.project_store}:${project.id}`,
   });
   const display = project.card_display ?? {
     show_assignee: true,

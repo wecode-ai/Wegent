@@ -1,11 +1,20 @@
 import assert from 'node:assert/strict'
 import { expandCollaborationWorkspace } from './workspace-flows.mjs'
+import {
+  assertProjectBoardGrouping,
+  createBoardFilterIssues,
+  openProjectBoard,
+  verifyPersonalAssigneeFilter,
+  verifyPersonalBoardGrouping,
+} from './collaboration-board-personal-view.mjs'
 
 export function createProjectOnlyNavigationRegression({ uiTimeoutMs }) {
   let backendUrl = ''
   let readerToken = ''
   let creatorToken = ''
   let workspace = null
+  let currentUser = null
+  let boardFilterIssues = []
   const projects = []
   const archivedProjectIds = new Set()
   let workspaceArchived = false
@@ -30,9 +39,10 @@ export function createProjectOnlyNavigationRegression({ uiTimeoutMs }) {
     async prepare(cloud, reader) {
       backendUrl = cloud.backendUrl
       readerToken = cloud.authToken
+      currentUser = reader
       const userName = `project-only-owner-${process.pid}`
       const password = 'project-only-navigation-e2e'
-      await request(readerToken, '/api/admin/users', {
+      const creator = await request(readerToken, '/api/admin/users', {
         method: 'POST',
         body: JSON.stringify({
           user_name: userName,
@@ -66,6 +76,17 @@ export function createProjectOnlyNavigationRegression({ uiTimeoutMs }) {
         method: 'POST',
         body: JSON.stringify({ user_id: reader.id, role: 'Developer' }),
       })
+      const creatorRequest = (pathname, options) => request(creatorToken, pathname, options)
+      await creatorRequest(`/api/v1/cloud-projects/${projects[0].id}/loop-items`, {
+        method: 'POST',
+        body: JSON.stringify({ title: '只读成员的个人看板视图' }),
+      })
+      boardFilterIssues = await createBoardFilterIssues(
+        creatorRequest,
+        projects[1],
+        reader,
+        creator
+      )
     },
 
     async verify(control, scoped) {
@@ -167,7 +188,30 @@ export function createProjectOnlyNavigationRegression({ uiTimeoutMs }) {
           timeoutMs: uiTimeoutMs,
         })
         await assertParent()
+        await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+        const readerRequest = (pathname, options) => request(readerToken, pathname, options)
+        if (project.id === projects[0].id) {
+          await verifyPersonalBoardGrouping(control, {
+            scoped,
+            request: readerRequest,
+            project,
+            groupBy: 'priority',
+          })
+        } else {
+          await verifyPersonalAssigneeFilter(control, {
+            scoped,
+            request: readerRequest,
+            project,
+            currentUser,
+            issues: boardFilterIssues,
+          })
+        }
       }
+      await openProjectBoard(control, scoped, projects[0])
+      await assertProjectBoardGrouping(control, scoped, 'priority')
+      await openProjectBoard(control, scoped, projects[1])
+      await assertProjectBoardGrouping(control, scoped, 'assignee')
+      await assertParent()
       await control.command('click', scoped('[data-testid="collaboration-primary-home"]'))
     },
 

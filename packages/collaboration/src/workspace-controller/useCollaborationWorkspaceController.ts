@@ -25,7 +25,6 @@ import type {
   CollaborationLocation,
   CollaborationMember,
   CollaborationProject,
-  CollaborationStatus,
 } from "../types";
 
 export interface CollaborationWorkspaceControllerState {
@@ -130,11 +129,6 @@ export interface CollaborationWorkspaceControllerCommands {
     laneIds: string[];
     optimisticItems: CollaborationIssue[];
   }): Promise<void>;
-  changeProjectGroup(input: {
-    project: CollaborationProject;
-    groupBy: "status" | "priority" | "assignee" | "tag";
-    defaultStatuses: CollaborationStatus[];
-  }): Promise<void>;
   refreshSelectedIssue(): Promise<void>;
   refreshProjectAgents(projectId: string): Promise<void>;
   replaceProject(project: CollaborationProject): void;
@@ -178,7 +172,6 @@ const unavailableCollaborationWorkspaceControllerCommands: CollaborationWorkspac
     assignIssue: async () => null,
     archiveIssue: async () => false,
     reorderIssue: async () => undefined,
-    changeProjectGroup: async () => undefined,
     refreshSelectedIssue: async () => undefined,
     refreshProjectAgents: async () => undefined,
     replaceProject: () => undefined,
@@ -818,7 +811,6 @@ export function createCollaborationWorkspaceControllerCommands({
   const selectedIssueCommentsRevisions = new Map<string, number>();
   const selectedIssueAssignmentsRevisions = new Map<string, number>();
   const projectMutationGenerations = new Map<string, number>();
-  const projectGroupChangeRevisions = new Map<string, number>();
   const externalColumnLoads = new Set<string>();
   const standardSnapshotLoads = new Map<
     string,
@@ -1411,59 +1403,6 @@ export function createCollaborationWorkspaceControllerCommands({
           reportError(messages.conflict, "conflict");
         } else {
           reportError(messages.saveFailed);
-        }
-      }
-    },
-    async changeProjectGroup({ project, groupBy, defaultStatuses }) {
-      const revision = (projectGroupChangeRevisions.get(project.id) ?? 0) + 1;
-      projectGroupChangeRevisions.set(project.id, revision);
-      const isCurrent = () =>
-        projectGroupChangeRevisions.get(project.id) === revision;
-      const config = project.board_config ?? {
-        group_by: "status" as const,
-        processing_start_status_id: defaultStatuses[1]?.id ?? null,
-        statuses: defaultStatuses,
-      };
-      dispatch({
-        type: "replace-project",
-        project: { ...project, board_config: { ...config, group_by: groupBy } },
-      });
-      try {
-        const updated = await api.projects.update(project.id, {
-          version: project.version,
-          boardConfig: { ...config, group_by: groupBy },
-        });
-        markProjectMutated(project.id);
-        if (!isCurrent()) return;
-        catalogProjects = catalogProjects.map((item) =>
-          item.id === updated.id ? updated : item,
-        );
-        dispatch({ type: "replace-project", project: updated });
-      } catch (error) {
-        if (!isCurrent()) return;
-        if (!isVersionConflict(error)) {
-          dispatch({ type: "replace-project", project });
-          reportError(messages.saveFailed);
-          return;
-        }
-        try {
-          const latest = await api.projects.get(project.id);
-          if (!isCurrent()) return;
-          const latestConfig = latest.board_config ?? config;
-          const updated = await api.projects.update(project.id, {
-            version: latest.version,
-            boardConfig: { ...latestConfig, group_by: groupBy },
-          });
-          markProjectMutated(project.id);
-          if (!isCurrent()) return;
-          catalogProjects = catalogProjects.map((item) =>
-            item.id === updated.id ? updated : item,
-          );
-          dispatch({ type: "replace-project", project: updated });
-        } catch {
-          if (!isCurrent()) return;
-          await loadProject(project.id, false);
-          reportError(messages.conflict, "conflict");
         }
       }
     },

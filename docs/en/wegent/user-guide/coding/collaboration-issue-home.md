@@ -24,6 +24,8 @@ The `collaboration-local-agent-dispatch` desktop regression checks that the owne
 
 ## Work on an Issue assigned to me
 
+On the project board, choose **Assignee** as the grouping field, then select yourself in the adjacent filter to see your assigned Issues. Clear the filter to show all assignees again. Grouping is a personal preference for the current account and project and persists across reloads. Members and viewers can use it without changing the shared board configuration. Shared status columns and card display settings remain managed by project administrators.
+
 When a native cloud project Issue is assigned directly to one member, they can open it from **Collaboration → Inbox** or the project board. Wework sends a desktop notification when another member assigns it. This workflow does not apply to external task sources or Issues owned by robots or collaboration groups.
 
 1. Select **Start work** to move the Issue to **In progress**. The only required input is **Work result**; comments and attachments remain optional.
@@ -59,6 +61,7 @@ Archiving a parent Issue also archives its child Issues so the active task tree 
 3. Issue-only `#` suggestions, distinct reference icons, and saved references.
 4. Manual ownership changes and clearing without native selects; no task slash menu.
 5. Seeding a local project through the real Tasks project API, reloading twice, and verifying one imported project with a working collaboration entry.
+6. Filtering a member's assigned Issues, combining search, and clearing the filter; retaining personal grouping after reload and isolating preferences between projects. Viewer and administrator grouping changes also leave the shared board configuration and version unchanged.
 
 Cloud fixtures are archived by the checkpoint cleanup. Local fixtures live only in the test Executor home. Failures retain runner logs; tests do not skip or retry to hide failures.
 

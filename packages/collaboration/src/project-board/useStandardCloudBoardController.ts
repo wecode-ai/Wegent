@@ -322,7 +322,6 @@ export interface StandardCloudBoardControllerOptions<
   extensions: StandardCloudBoardHostExtensions<T>;
   items: T[];
   onCurrentParentIdChange?(parentId: string | null): void;
-  onGroupByChange?(groupBy: ProjectBoardGroupBy): Promise<void> | void;
   onMove(
     item: T,
     column: ProjectBoardColumn,
@@ -543,7 +542,6 @@ export function useStandardCloudBoardController<
   extensions,
   items,
   onCurrentParentIdChange,
-  onGroupByChange,
   onMove,
   ...stateOptions
 }: StandardCloudBoardControllerOptions<T>) {
@@ -573,14 +571,6 @@ export function useStandardCloudBoardController<
   const breadcrumb = useMemo(
     () => buildStandardCloudBoardBreadcrumb(items, currentParentId),
     [currentParentId, items],
-  );
-
-  const selectGroupBy = useCallback(
-    (groupBy: ProjectBoardGroupBy) => {
-      boardState.selectGroupBy(groupBy);
-      void onGroupByChange?.(groupBy);
-    },
-    [boardState, onGroupByChange],
   );
 
   const moveItem = useCallback(
@@ -650,9 +640,6 @@ export function useStandardCloudBoardController<
     moveDroppedItem,
     setActiveDragItemId,
     setCurrentParentId,
-    state: {
-      ...boardState,
-      selectGroupBy,
-    },
+    state: boardState,
   };
 }

@@ -666,7 +666,9 @@ classify_wework_path() {
       select_target "core:cloud-space-mention"
       return
       ;;
-    wework/e2e/desktop/scenarios/collaboration-shared-core.scenario.mjs)
+    wework/e2e/desktop/scenarios/collaboration-shared-core.scenario.mjs | \
+      wework/e2e/desktop/modules/collaboration-board-personal-view.mjs | \
+      wework/e2e/desktop/modules/project-only-navigation.mjs)
       select_target "core:collaboration-shared-core"
       return
       ;;
