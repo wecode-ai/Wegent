@@ -301,7 +301,7 @@ async function verifyLegacySearch(control, timeoutMs) {
   })
   await assertFindInputFocus(control, findInput)
   await control.command('fill', findInput, { value: LEGACY_ATTACHMENT_PREVIEW })
-  await control.command('waitFor', settledCount, { text: '0 / 0' })
+  await control.command('waitFor', settledCount, { text: '0 个结果' })
   assert.equal(
     Number(await control.command('getElementCount', '[data-testid="conversation-find-retry"]')),
     0,
@@ -842,7 +842,7 @@ export function createDesktopScenario({
       await assertFindInputFocus(control, findInput)
       await control.command('fill', findInput, { value: `${PAGED_PROMPT}_NO_MATCH` })
       await control.command('waitFor', settledCount, {
-        text: '0 / 0',
+        text: '0 个结果',
       })
       assert.equal(
         Number(
@@ -857,7 +857,7 @@ export function createDesktopScenario({
       })
       assert.equal(
         (await control.command('getText', '[data-testid="conversation-find-count"]')).trim(),
-        '1 / 1',
+        '1 / 1 个结果',
         'Conversation search must find exactly one historical prompt'
       )
       assert.equal(
