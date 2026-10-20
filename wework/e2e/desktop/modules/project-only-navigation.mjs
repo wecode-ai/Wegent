@@ -138,8 +138,9 @@ export function createProjectOnlyNavigationRegression({ uiTimeoutMs }) {
       await assertParent()
       for (const project of projects.slice(0, 2)) {
         await control.command(
-          'click',
-          scoped('[data-testid="collaboration-workspace-home-wework-local-workspace"]')
+          'clickWhenEnabled',
+          scoped('[data-testid="collaboration-workspace-home-wework-local-workspace"]'),
+          { timeoutMs: uiTimeoutMs }
         )
         await control.command(
           'waitFor',

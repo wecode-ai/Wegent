@@ -79,11 +79,14 @@ describe('terminateProcessTree on Linux', () => {
     expect(process.kill).toHaveBeenCalledWith(-GROUP_ID, 'SIGKILL')
   })
 
-  test('ignores a process that disappears while reading its stat file', async () => {
-    proc.readFile.mockRejectedValue(Object.assign(new Error('gone'), { code: 'ENOENT' }))
+  test.each(['ENOENT', 'ESRCH'])(
+    'ignores a process that disappears with %s while reading its stat file',
+    async code => {
+      proc.readFile.mockRejectedValue(Object.assign(new Error('gone'), { code }))
 
-    await expect(terminateProcessTree(exitedLeader(), 50)).resolves.toBeUndefined()
-  })
+      await expect(terminateProcessTree(exitedLeader(), 50)).resolves.toBeUndefined()
+    }
+  )
 
   test('does not treat a procfs permission failure as successful shutdown', async () => {
     proc.readFile.mockRejectedValue(Object.assign(new Error('denied'), { code: 'EACCES' }))
