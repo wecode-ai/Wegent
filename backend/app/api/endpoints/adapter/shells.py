@@ -22,7 +22,6 @@ from app.models.user import User
 from app.schemas.kind import Shell as ShellCRD
 from app.services.capability_reference_service import (
     get_referenced_capability,
-    list_referenced_capabilities,
 )
 
 router = APIRouter()
@@ -191,143 +190,6 @@ def _user_shell_to_unified(
         isReference=is_reference,
         listingId=kind.id if is_reference else None,
     )
-
-
-# MIGRATION-CANDIDATE(api="GET /api/shells/unified"): remove after final confirmation.
-# @router.get("/unified", response_model=dict)
-def list_unified_shells(
-    scope: str = Query(
-        "personal",
-        description="Query scope: 'personal' (default), 'group', or 'all'",
-    ),
-    group_name: Optional[str] = Query(
-        None, description="Group name (required when scope='group')"
-    ),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-):
-    """
-    Get unified list of all available shells (both public and user-defined) with scope support.
-
-    Scope behavior:
-    - scope='personal' (default): personal shells + public shells
-    - scope='group': group shells + public shells (requires group_name)
-    - scope='all': personal + public + all user's groups
-
-    Each shell includes a 'type' field ('public' or 'user') to identify its source.
-
-    Response:
-    {
-      "data": [
-        {
-          "name": "shell-name",
-          "type": "public" | "user",
-          "displayName": "Human Readable Name",
-          "shellType": "ClaudeCode",
-          "baseImage": "ghcr.io/...",
-          "executionType": "local_engine" | "external_api"
-        }
-      ]
-    }
-    """
-    from app.services.group_permission import get_user_groups
-
-    result = []
-
-    # Determine which namespaces to query based on scope
-    namespaces_to_query = []
-    seen_names = set()
-
-    if scope == "personal":
-        namespaces_to_query = ["default"]
-    elif scope == "group":
-        # Group shells - if group_name not provided, query all user's groups
-        if group_name:
-            namespaces_to_query = [group_name]
-        else:
-            # Query all user's groups (excluding default)
-            user_groups = get_user_groups(db, current_user.id)
-            namespaces_to_query = user_groups if user_groups else []
-    elif scope == "all":
-        namespaces_to_query = ["default"] + get_user_groups(db, current_user.id)
-    else:
-        raise HTTPException(status_code=400, detail=f"Invalid scope: {scope}")
-
-    # Get public shells (always included)
-    public_shells = (
-        db.query(Kind)
-        .filter(
-            Kind.user_id == 0,
-            Kind.kind == "Shell",
-            Kind.namespace == "default",
-            Kind.is_active == True,  # noqa: E712
-        )
-        .order_by(Kind.name.asc())
-        .all()
-    )
-    for shell in public_shells:
-        try:
-            unified = _public_shell_to_unified(shell)
-            result.append(unified)
-            seen_names.add(shell.name)
-        except Exception as e:
-            logger.warning(f"Failed to parse public shell {shell.name}: {e}")
-
-    # Get user-defined shells from specified namespaces
-    for namespace in namespaces_to_query:
-        if namespace == "default":
-            # Query personal shells
-            user_shells = (
-                db.query(Kind)
-                .filter(
-                    Kind.user_id == current_user.id,
-                    Kind.kind == "Shell",
-                    Kind.namespace == "default",
-                    Kind.is_active == True,  # noqa: E712
-                )
-                .order_by(Kind.name.asc())
-                .all()
-            )
-        else:
-            # Query group shells
-            user_shells = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "Shell",
-                    Kind.namespace == namespace,
-                    Kind.is_active == True,  # noqa: E712
-                )
-                .order_by(Kind.name.asc())
-                .all()
-            )
-        referenced_shells = list_referenced_capabilities(
-            db,
-            kind="Shell",
-            user_id=current_user.id,
-            namespace=namespace,
-        )
-        referenced_ids = {shell.id for shell in referenced_shells}
-        existing_ids = {shell.id for shell in user_shells}
-        user_shells.extend(
-            shell for shell in referenced_shells if shell.id not in existing_ids
-        )
-
-        for shell in user_shells:
-            try:
-                # Deduplicate by name
-                if shell.name in seen_names:
-                    continue
-                unified = _user_shell_to_unified(
-                    shell,
-                    namespace,
-                    is_reference=shell.id in referenced_ids,
-                )
-                result.append(unified)
-                seen_names.add(shell.name)
-            except Exception as e:
-                logger.warning(f"Failed to parse user shell {shell.name}: {e}")
-
-    return {"data": [s.model_dump() for s in result]}
 
 
 @router.get("/unified/{shell_name}", response_model=dict)
@@ -548,7 +410,6 @@ def update_shell(
     # Get user shell (try all accessible namespaces)
     from app.services.group_permission import (
         check_group_permission,
-        get_effective_role_in_group,
         get_user_groups,
     )
 

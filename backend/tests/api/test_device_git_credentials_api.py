@@ -34,47 +34,6 @@ def git_credentials_client(test_db: Session, test_user: User) -> TestClient:
 
 
 @pytest.mark.api
-def test_sync_summary_never_returns_git_tokens(
-    git_credentials_client: TestClient,
-    test_db: Session,
-    test_user: User,
-):
-    test_user.git_info = [
-        {
-            "id": "git-account-1",
-            "git_domain": "https://Git.Example.com/",
-            "git_token": "api-test-secret",
-            "type": "gitea",
-            "git_login": "alice",
-            "git_email": "alice@example.com",
-        }
-    ]
-    test_db.add(test_user)
-    test_db.commit()
-
-    response = git_credentials_client.get("/api/users/me/git-accounts/sync-summary")
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "accounts": [
-            {
-                "id": "git-account-1",
-                "domain": "git.example.com",
-                "provider": "gitea",
-                "login": "alice",
-                "email": "alice@example.com",
-                "effective": True,
-                "duplicate_of": None,
-            }
-        ],
-        "effective_count": 1,
-        "duplicate_count": 0,
-    }
-    assert "api-test-secret" not in response.text
-    assert "git_token" not in response.text
-
-
-@pytest.mark.api
 def test_sync_endpoint_targets_one_device_and_returns_sanitized_result(
     git_credentials_client: TestClient,
     test_db: Session,
@@ -111,19 +70,3 @@ def test_sync_endpoint_targets_one_device_and_returns_sanitized_result(
         device_id="remote-1",
         allow_empty=False,
     )
-
-
-@pytest.fixture(autouse=True)
-def _retained_python_handler_contracts(git_credentials_client):
-    import app.api.endpoints.users as endpoint_0
-    from tests.legacy_python_routes import legacy_python_handlers
-
-    with legacy_python_handlers(git_credentials_client.app) as register:
-        register(
-            "/api/users/me/git-accounts/sync-summary",
-            endpoint_0.get_git_account_sync_summary,
-            endpoint_0.router,
-            methods=["GET"],
-            response_model=endpoint_0.GitAccountSyncSummary,
-        )
-        yield

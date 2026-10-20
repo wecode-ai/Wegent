@@ -1016,7 +1016,11 @@ export function createCollaborationWorkspaceControllerCommands({
           : undefined,
       });
     } catch {
-      if (!isCurrent()) return;
+      if (
+        !isCurrent() ||
+        mutationGeneration !== projectMutationGeneration(projectId)
+      )
+        return;
       reportError(messages.loadFailed, "load");
     } finally {
       if (showLoading && isCurrent()) {
@@ -1159,6 +1163,8 @@ export function createCollaborationWorkspaceControllerCommands({
         dispatch({ type: "project-snapshot-loaded", projectId, snapshot });
         return snapshot;
       } catch {
+        if (mutationGeneration !== projectMutationGeneration(projectId))
+          return null;
         reportError(messages.loadFailed, "load");
         return null;
       }
