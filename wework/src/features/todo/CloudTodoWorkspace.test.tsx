@@ -4492,7 +4492,8 @@ describe('CloudTodoWorkspace', () => {
       'disabled:bg-text-primary',
       'disabled:text-background'
     )
-    await userEvent.click(screen.getByRole('button', { name: '＋ 新建标签' }))
+    await userEvent.click(screen.getByTestId('cloud-project-manage-tags-toggle'))
+    await userEvent.click(await screen.findByRole('button', { name: '＋ 新建标签' }))
     expect(screen.getByTestId('cloud-project-tag-create-confirm')).toHaveClass(
       'bg-text-primary',
       'text-background',

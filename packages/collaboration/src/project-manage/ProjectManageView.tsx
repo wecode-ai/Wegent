@@ -743,7 +743,9 @@ export function ProjectManageView<
             className="cursor-pointer text-heading-md font-semibold"
             data-testid="cloud-project-manage-tags-toggle"
           >
-            {host.translate('todo.project_tags', '标签')}
+            <h2 className="inline text-heading-md font-semibold">
+              {host.translate('todo.project_tags', '标签')}
+            </h2>
           </summary>
           {tagCatalogProjectId === project.id &&
             (tagLoadState?.projectId !== project.id || tagLoadState.loading ? (
