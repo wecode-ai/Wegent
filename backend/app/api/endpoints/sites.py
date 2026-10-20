@@ -20,7 +20,6 @@ from fastapi import (
 from app.core import security
 from app.models.user import User
 from app.schemas.site import (
-    ApplicationTypeListResponse,
     EnvironmentRevision,
     EnvironmentSnapshot,
     EnvironmentVariableDeleteRequest,
@@ -38,7 +37,6 @@ from app.schemas.site import (
     SiteResponse,
     SiteUpdateRequest,
 )
-from app.services.site_application_types import list_application_types
 from app.services.sites import (
     SitesNotAvailableError,
     SitesUpstreamResponseError,
@@ -97,15 +95,6 @@ async def list_sites(
         SitesUpstreamResponseError,
     ) as error:
         _raise_sites_error(error)
-
-
-# MIGRATION-CANDIDATE(api="GET /api/sites/app-types"): remove after final confirmation.
-# @router.get("/app-types", response_model=ApplicationTypeListResponse)
-async def list_site_app_types(
-    _current_user: User = Depends(security.get_current_user),
-) -> ApplicationTypeListResponse:
-    """List application types and capabilities supported by this Backend."""
-    return list_application_types()
 
 
 @router.get(

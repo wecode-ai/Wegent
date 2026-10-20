@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useReducer, useRef } from "react";
 
 import { collectIssueSubtreeIds, removeIssueSubtree } from "../board";
+import { isIssueVersionConflict } from "../issue-detail/issueVersionConflict";
 import type {
   SharedWorkspaceApi,
   WorkspaceBoardSnapshot,
@@ -993,7 +994,11 @@ export function createCollaborationWorkspaceControllerCommands({
           : undefined,
       });
     } catch {
-      if (!isCurrent()) return;
+      if (
+        !isCurrent() ||
+        mutationGeneration !== projectMutationGeneration(projectId)
+      )
+        return;
       reportError(messages.loadFailed, "load");
     } finally {
       if (showLoading && isCurrent()) {
@@ -1136,6 +1141,8 @@ export function createCollaborationWorkspaceControllerCommands({
         dispatch({ type: "project-snapshot-loaded", projectId, snapshot });
         return snapshot;
       } catch {
+        if (mutationGeneration !== projectMutationGeneration(projectId))
+          return null;
         reportError(messages.loadFailed, "load");
         return null;
       }
@@ -1401,10 +1408,11 @@ export function createCollaborationWorkspaceControllerCommands({
         });
         return byId.get(issue.id) ?? issue;
       } catch (error) {
-        if (isVersionConflict(error)) {
+        if (isIssueVersionConflict(error)) {
           await loadProject(issue.cloud_project_id, false);
           reportError(messages.conflict, "conflict");
         } else {
+          await loadProject(issue.cloud_project_id, false);
           reportError(messages.saveFailed);
         }
         return null;

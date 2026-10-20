@@ -3,7 +3,7 @@ import { createIssueTaskBindingApi } from '@wegent/chat-core/issue-task-binding-
 import { ApiError, type HttpClient } from './http'
 import type { ProjectChatAgent } from './projectChatAgents'
 import type { ProjectChatWorkspaceBindingInput } from './projectChatAgents'
-import type { CollaborationHumanWork } from '@wegent/collaboration'
+import type { CollaborationIssue } from '@wegent/collaboration'
 import type {
   Attachment,
   ModelSelectionConfig,
@@ -113,7 +113,7 @@ export interface DeliveryFinalizeInput {
 
 export interface CloudLoopItem {
   runner_binding?: { environment_id: string } | null
-  human_work?: CollaborationHumanWork | null
+  human_task_binding?: CollaborationIssue['human_task_binding']
   assignee_group_id?: string | null
   assignee_group_name?: string | null
   id: string
@@ -885,35 +885,6 @@ export function createDeliveryApi(client: HttpClient) {
     },
     getLoopItem(itemId: string): Promise<CloudLoopItem> {
       return client.get(`/v1/loop-items/${encodeURIComponent(itemId)}`)
-    },
-    startHumanIssueWork(itemId: string, version: number): Promise<{ issue: CloudLoopItem }> {
-      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/work/start`, { version })
-    },
-    submitHumanIssueWork(
-      itemId: string,
-      version: number,
-      summary: string,
-      requestId: string
-    ): Promise<{ issue: CloudLoopItem }> {
-      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/work/submit`, {
-        version,
-        summary,
-        request_id: requestId,
-      })
-    },
-    reviewHumanIssueWork(
-      itemId: string,
-      version: number,
-      decision: 'accept' | 'request_changes',
-      requestId: string,
-      reason?: string
-    ): Promise<{ issue: CloudLoopItem }> {
-      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/work/review`, {
-        version,
-        decision,
-        request_id: requestId,
-        ...(reason ? { reason } : {}),
-      })
     },
     markLoopItemRead(itemId: string, activitySequence?: number): Promise<CloudLoopItem> {
       return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/read`, {

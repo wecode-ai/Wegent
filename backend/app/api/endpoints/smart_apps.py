@@ -18,7 +18,6 @@ from app.models.user import User
 from app.schemas.smart_app import (
     SmartAppAccessResponse,
     SmartAppAccessUpdateRequest,
-    SmartAppDownloadDescriptor,
     SmartAppMarketplaceItem,
     SmartAppMarketplaceListResponse,
     SmartAppOwnedListResponse,
@@ -91,24 +90,6 @@ def get_marketplace_item(
 ) -> SmartAppMarketplaceItem:
     try:
         return smart_app_marketplace_service.get_marketplace_item(
-            db, smart_app_id=smart_app_id, user_id=current_user.id
-        )
-    except MarketplaceArtifactStorageError as exc:
-        _raise_storage_unavailable(exc)
-
-
-# MIGRATION-CANDIDATE(api="POST /api/smart-apps/marketplace/:smart_app_id/download"): remove after final confirmation.
-# @router.post(
-#     "/marketplace/{smart_app_id}/download",
-#     response_model=SmartAppDownloadDescriptor,
-# )
-def download_marketplace_item(
-    smart_app_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-) -> SmartAppDownloadDescriptor:
-    try:
-        return smart_app_marketplace_service.download_descriptor(
             db, smart_app_id=smart_app_id, user_id=current_user.id
         )
     except MarketplaceArtifactStorageError as exc:

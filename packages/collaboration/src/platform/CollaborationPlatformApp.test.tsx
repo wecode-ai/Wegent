@@ -1789,27 +1789,14 @@ describe("CollaborationPlatformApp real component flow", () => {
     });
   });
 
-  it("keeps actionable human tasks in the inbox after removing My Work", async () => {
+  it("keeps unread assigned tasks in the inbox", async () => {
     const { api } = createApi();
     const humanIssue = {
       ...issue,
       id: "human-work-1",
       project_key: project.project_key,
       project_name: project.name,
-      human_work: {
-        assignment_id: "assignment-1",
-        assignee_user_id: 7,
-        reviewer_user_id: 1,
-        submission_message_id: null,
-        submitted_by_user_id: null,
-        state: "none" as const,
-        result: "",
-        return_reason: "",
-        ai_draft_delivery_id: null,
-        can_start: true,
-        can_submit: false,
-        can_review: false,
-      },
+      is_unread: true,
     };
     api.myWork = {
       list: emptyAsync([
