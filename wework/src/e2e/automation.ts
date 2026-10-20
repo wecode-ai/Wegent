@@ -2442,9 +2442,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       })
       return ''
     }
+    case 'stopElementMetricsSampling':
     case 'getElementMetricsSample': {
       const sample = activeElementMetricsSample
       if (!sample) throw new Error('Element metrics sampling has not started')
+      if (command.action === 'stopElementMetricsSampling') sample.stop()
       return JSON.stringify({
         done: sample.done,
         frames: sample.frames,

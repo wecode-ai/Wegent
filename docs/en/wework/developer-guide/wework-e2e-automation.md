@@ -169,6 +169,11 @@ average between samples; its initial value is `null`.
 each start and completion, making overlap visible independently of the configured
 worker limit. Compare shard durations and these metrics after increasing
 concurrency to identify CPU, memory, or I/O contention.
+Drawer animation checks sample from before the action until movement is observed
+and the track animation completes, then stop explicitly within the shared step
+timeout. Command transport and rendering delays cannot exhaust a fixed 800ms
+capture window. Movement, continuity, intermediate-frame, and reduced-motion
+assertions remain intact.
 The 2,200-delta Codex notification
 isolation stress case and the long plugin auto-update checkpoint each have a
 dedicated shard; the notification scenario uses a targeted 30-second render
