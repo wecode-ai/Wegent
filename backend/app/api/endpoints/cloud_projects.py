@@ -206,7 +206,7 @@ def create_cloud_project(
 
 
 @legacy_router.get("/{project_id}", response_model=CloudProjectResponse)
-def get_legacy_project(
+def get_cloud_project(
     project_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
