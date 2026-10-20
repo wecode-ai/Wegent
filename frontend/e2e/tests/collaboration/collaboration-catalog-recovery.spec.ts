@@ -102,7 +102,9 @@ const test = base.extend<{
           is_active: true,
         },
       })
-      cleanupPaths.unshift(`/api/teams/${team.id}`)
+      cleanupPaths.unshift(
+        `/api/teams/${team.id}?force=true&confirm_name=${encodeURIComponent(team.name)}`
+      )
       await use(team)
     } finally {
       for (const path of cleanupPaths) {
