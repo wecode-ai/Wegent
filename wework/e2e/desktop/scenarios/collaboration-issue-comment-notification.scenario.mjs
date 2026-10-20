@@ -206,6 +206,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     ]) {
       await control.command('click', selector, { visible: true })
       await waitForBrowserPage(control, browserLabel, expectedUrl)
+      await control.command('click', '[data-testid="collaboration-embedded-browser-close"]', {
+        visible: true,
+      })
+      await control.command('waitFor', '[data-testid="collaboration-embedded-browser-panel"]', {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('waitFor', issueTitle, {
         visible: true,
         stableMs: 250,
