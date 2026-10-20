@@ -286,11 +286,12 @@ async function assertLegacyContext(control, first, last) {
   const users = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="user-message-content"]`
   const answers = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`
   for (let index = first; index <= last; index += 1) {
-    await control.command('waitFor', users, {
-      text: LEGACY_MATCH_TURNS.includes(index)
-        ? `${LEGACY_PROMPT} ${index}`
-        : `Legacy search prompt ${index}`,
-    })
+    const prompt = LEGACY_MATCH_TURNS.includes(index)
+      ? `${LEGACY_PROMPT} ${index}`
+      : `Legacy search prompt ${index}`
+    await control.command('waitFor', users, { text: prompt })
+    // Browse each turn so its answer enters the virtualized render window.
+    await control.command('scrollIntoViewAsUser', users, { text: prompt })
     await control.command('waitFor', answers, { text: `Legacy search answer ${index}` })
   }
 }
