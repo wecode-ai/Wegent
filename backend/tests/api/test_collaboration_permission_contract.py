@@ -4,17 +4,28 @@ import uuid
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import HTTPException
 
-from app.api.endpoints import cloud_projects
 from app.core.security import create_access_token
 from app.models.cloud_project import CloudProject
 from app.models.resource_member import ResourceMember
 from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.services.cloud_project_visibility import project_participant_ids
-from app.services.cloud_projects.responses import list_project_responses
+from app.services.cloud_projects.responses import (
+    list_project_responses,
+    project_response,
+)
+from app.services.cloud_projects.service import cloud_project_service
 from app.services.collaboration_permissions import collaboration_permission_service
-from tests.legacy_python_routes import legacy_python_handlers
+
+
+def read_project(test_db, project_id, user):
+    try:
+        project = cloud_project_service.get(test_db, project_id, user.id)
+        return 200, project_response(test_db, project, user).model_dump()
+    except HTTPException as error:
+        return error.status_code, None
 
 
 @pytest.fixture
@@ -46,21 +57,13 @@ def scope(test_client, test_db, test_token, monkeypatch):
     member = {
         "Authorization": f"Bearer {create_access_token(data={'sub': user.user_name})}"
     }
-    with legacy_python_handlers(test_client.app) as register:
-        register(
-            "/api/v1/cloud-projects/{project_id}",
-            cloud_projects.get_cloud_project,
-            cloud_projects.legacy_router,
-            methods=["GET"],
-            response_model=cloud_projects.CloudProjectResponse,
-        )
-        yield {
-            "owner": owner,
-            "member": member,
-            "user": user,
-            "space": space.json(),
-            "project": project.json(),
-        }
+    yield {
+        "owner": owner,
+        "member": member,
+        "user": user,
+        "space": space.json(),
+        "project": project.json(),
+    }
 
 
 def invite(client, scope, role, *, project=False):
@@ -161,10 +164,10 @@ def test_cp02_cp03_cp05_role_precedence_and_restricted_projects(
     )
     ranks = {"Maintainer": 0, "Developer": 1, "Viewer": 2}
     expected = "Maintainer" if inherited == "Maintainer" else direct_role or inherited
-    detail = test_client.get(f"/api/v1/cloud-projects/{pid}", headers=scope["member"])
-    assert detail.status_code == (200 if expected else 404)
+    detail_status, detail = read_project(test_db, pid, scope["user"])
+    assert detail_status == (200 if expected else 404)
     if expected:
-        assert detail.json()["access_role"] == expected
+        assert detail["access_role"] == expected
     projects = {row.id: row for row in list_project_responses(test_db, scope["user"])}
     assert (pid in projects) == (expected is not None)
     if expected:
@@ -199,10 +202,10 @@ def test_cp04_project_guest_does_not_inherit_upward(test_client, test_db, scope,
     invite(test_client, scope, role, project=True)
     wid = scope["space"]["id"]
     pid = scope["project"]["id"]
-    detail = test_client.get(f"/api/v1/cloud-projects/{pid}", headers=scope["member"])
-    assert detail.status_code == 200
-    assert detail.json()["access_role"] == role
-    assert detail.json()["workspace_context"]["id"] == wid
+    detail_status, detail = read_project(test_db, pid, scope["user"])
+    assert detail_status == 200
+    assert detail["access_role"] == role
+    assert detail["workspace_context"]["id"] == wid
     workspace_ids = {
         row["id"]
         for row in test_client.get(
@@ -222,14 +225,7 @@ def test_cp04_project_guest_does_not_inherit_upward(test_client, test_db, scope,
         headers=scope["owner"],
         json={"name": "Sibling"},
     ).json()
-    assert (
-        test_client.get(
-            f"/api/v1/cloud-projects/{sibling['id']}", headers=scope["member"]
-        ).status_code
-        == 404
-    )
-    from app.services.cloud_projects.responses import list_project_responses
-
+    assert read_project(test_db, sibling["id"], scope["user"])[0] == 404
     # HTTP list ownership moved to Rust; retain source-service contract coverage.
     listed_projects = [
         row.model_dump() for row in list_project_responses(test_db, scope["user"])
@@ -275,7 +271,9 @@ def test_cp07_cp08_cp20_viewer_and_membership_provenance(test_client, scope):
     )
 
 
-def test_cp08_lower_direct_role_never_masks_space_administration(test_client, scope):
+def test_cp08_lower_direct_role_never_masks_space_administration(
+    test_client, test_db, scope
+):
     invite(test_client, scope, "Maintainer")
     invite(test_client, scope, "Viewer", project=True)
     pid = scope["project"]["id"]
@@ -293,16 +291,11 @@ def test_cp08_lower_direct_role_never_masks_space_administration(test_client, sc
         headers=scope["owner"],
     )
     assert removed.status_code == 204
-    assert (
-        test_client.get(
-            f"/api/v1/cloud-projects/{pid}", headers=scope["member"]
-        ).json()["access_role"]
-        == "Maintainer"
-    )
+    assert read_project(test_db, pid, scope["user"])[1]["access_role"] == "Maintainer"
 
 
 def test_cp06_cp17_cp19_creator_is_audit_only_and_ownership_transfers(
-    test_client, scope
+    test_client, test_db, scope
 ):
     wid, pid = scope["space"]["id"], scope["project"]["id"]
     old_owner = scope["space"]["owner_user_id"]
@@ -325,12 +318,8 @@ def test_cp06_cp17_cp19_creator_is_audit_only_and_ownership_transfers(
         f"/api/v1/workspaces/{wid}/members/{old_owner}", headers=scope["member"]
     )
     assert removed.status_code == 204, removed.text
-    assert (
-        test_client.get(
-            f"/api/v1/cloud-projects/{pid}", headers=scope["owner"]
-        ).status_code
-        == 404
-    )
+    old_owner_user = test_db.get(User, old_owner)
+    assert read_project(test_db, pid, old_owner_user)[0] == 404
 
 
 def test_cp09_cp13_enabled_agents_and_assignment_entry_points(test_client, scope):

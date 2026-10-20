@@ -64,31 +64,6 @@ def _task(db: Session, project: Project, **overrides: object) -> TaskResource:
     return task
 
 
-@pytest.mark.parametrize("is_expanded", [False, True])
-def test_toggle_api_group_with_null_description(
-    client: TestClient,
-    test_db: Session,
-    project: Project,
-    is_expanded: bool,
-) -> None:
-    project.description = None
-    project.config = {"taskSource": "api"}
-    _task(test_db, project)
-
-    response = client.put(
-        f"/api/projects/{project.id}", json={"is_expanded": is_expanded}
-    )
-
-    assert response.status_code == 200
-    result = response.json()
-    assert result["is_expanded"] is is_expanded
-    assert result["description"] == ""
-    assert result["task_count"] == 1
-    assert result["config"]["taskSource"] == "api"
-    test_db.refresh(project)
-    assert project.is_expanded is is_expanded
-
-
 @contextmanager
 def _selects(
     db: Session, *, mysql_statements: list[str] | None = None
@@ -733,19 +708,3 @@ def test_project_title_search_uses_display_name_when_title_is_empty(
     assert response.json()["total"] == 1
     assert response.json()["items"][0]["task_id"] == matching.id
     assert response.json()["items"][0]["task_title"] == "Fallback needle"
-
-
-@pytest.fixture(autouse=True)
-def _retained_python_handler_contracts(client):
-    import app.api.endpoints.projects as endpoint_0
-    from tests.legacy_python_routes import legacy_python_handlers
-
-    with legacy_python_handlers(client.app) as register:
-        register(
-            "/api/projects/{project_id}",
-            endpoint_0.update_project_endpoint,
-            endpoint_0.router,
-            methods=["PUT"],
-            response_model=endpoint_0.ProjectResponse,
-        )
-        yield

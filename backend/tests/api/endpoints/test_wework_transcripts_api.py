@@ -5,14 +5,17 @@
 import hashlib
 import json
 
-import pytest
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.api.endpoints.wework_transcripts import _lease_response
+from app.models.user import User
 from app.models.wework_transcript import (
     WeworkTranscript,
     WeworkTranscriptArchive,
     WeworkTranscriptTurn,
 )
+from app.schemas.wework_transcript import TranscriptLeaseRequest
+from app.services import wework_transcript_service
 
 SEGMENT_BODY = b"x" * 4096
 SEGMENT_SHA256 = hashlib.sha256(SEGMENT_BODY).hexdigest()
@@ -22,14 +25,19 @@ def _headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _lease(test_client, token, transcript_id="transcript-1", client_id="client-a"):
-    response = test_client.post(
-        f"/api/wework-transcripts/{transcript_id}/lease",
-        headers=_headers(token),
-        json={"clientId": client_id, "ttlSeconds": 60, "title": "Synced chat"},
+def _lease(test_db, transcript_id="transcript-1", client_id="client-a"):
+    user = test_db.query(User).filter(User.user_name == "testuser").one()
+    transcript = wework_transcript_service.acquire_lease(
+        test_db,
+        user_id=user.id,
+        transcript_id=transcript_id,
+        request=TranscriptLeaseRequest(
+            clientId=client_id,
+            ttlSeconds=60,
+            title="Synced chat",
+        ),
     )
-    assert response.status_code == 200
-    return response.json()
+    return _lease_response(transcript).model_dump(by_alias=True, mode="json")
 
 
 def _segment(lease, **overrides):
@@ -79,7 +87,7 @@ def test_rejects_uploaded_segment_with_mismatched_digest(
 ):
     from app.services import wework_transcript_service
 
-    lease = _lease(test_client, test_token)
+    lease = _lease(test_db)
     monkeypatch.setattr(
         wework_transcript_service.wework_transcript_storage,
         "put_stream",
@@ -105,7 +113,7 @@ def test_prunes_segments_older_than_previous_snapshot(
 ):
     from app.services import wework_transcript_service
 
-    lease = _lease(test_client, test_token)
+    lease = _lease(test_db)
     storage = wework_transcript_service.wework_transcript_storage
     deleted_keys: list[str] = []
     stored_keys: set[str] = set()
@@ -156,7 +164,7 @@ def test_continues_bounded_pruning_on_delta_commits(
 ):
     from app.services import wework_transcript_service
 
-    lease = _lease(test_client, test_token)
+    lease = _lease(test_db)
     storage = wework_transcript_service.wework_transcript_storage
     deleted_keys: list[str] = []
     stored_keys: set[str] = set()
@@ -210,7 +218,7 @@ def test_pruning_hides_obsolete_metadata_and_retries_object_deletion(
     from app.services import wework_transcript_service
     from app.services.wework_transcript_storage import WeworkTranscriptStorageError
 
-    lease = _lease(test_client, test_token)
+    lease = _lease(test_db)
     storage = wework_transcript_service.wework_transcript_storage
     monkeypatch.setattr(storage, "put_stream", lambda *_args: None)
     failures = 1
@@ -270,7 +278,7 @@ def test_pruning_hides_metadata_when_database_delete_commit_fails(
     from app.services import wework_transcript_service
     from app.services.wework_transcript_storage import WeworkTranscriptStorageError
 
-    lease = _lease(test_client, test_token)
+    lease = _lease(test_db)
     storage = wework_transcript_service.wework_transcript_storage
     monkeypatch.setattr(storage, "put_stream", lambda *_args: None)
     monkeypatch.setattr(
@@ -335,12 +343,12 @@ def test_pruning_hides_metadata_when_database_delete_commit_fails(
 
 
 def test_reports_object_storage_failure_with_a_stable_code(
-    test_client, test_token, monkeypatch
+    test_client, test_token, test_db, monkeypatch
 ):
     from app.services import wework_transcript_service
     from app.services.wework_transcript_storage import WeworkTranscriptStorageError
 
-    lease = _lease(test_client, test_token)
+    lease = _lease(test_db)
     monkeypatch.setattr(
         wework_transcript_service.wework_transcript_storage,
         "put_stream",
@@ -361,11 +369,11 @@ def test_reports_object_storage_failure_with_a_stable_code(
 
 
 def test_requires_snapshot_when_the_committed_recovery_chain_is_missing(
-    test_client, test_token, monkeypatch
+    test_client, test_token, test_db, monkeypatch
 ):
     from app.services import wework_transcript_service
 
-    lease = _lease(test_client, test_token)
+    lease = _lease(test_db)
     storage = wework_transcript_service.wework_transcript_storage
     stored_keys = set()
 
@@ -411,11 +419,11 @@ def test_requires_snapshot_when_the_committed_recovery_chain_is_missing(
 
 
 def test_rejects_conflicting_segment_before_object_storage(
-    test_client, test_token, monkeypatch
+    test_client, test_token, test_db, monkeypatch
 ):
     from app.services import wework_transcript_service
 
-    lease = _lease(test_client, test_token)
+    lease = _lease(test_db)
     uploads = []
     monkeypatch.setattr(
         wework_transcript_service.wework_transcript_storage,
@@ -440,11 +448,11 @@ def test_rejects_conflicting_segment_before_object_storage(
 
 
 def test_rejects_mismatched_summary_for_committed_segment(
-    test_client, test_token, monkeypatch
+    test_client, test_token, test_db, monkeypatch
 ):
     from app.services import wework_transcript_service
 
-    lease = _lease(test_client, test_token)
+    lease = _lease(test_db)
     monkeypatch.setattr(
         wework_transcript_service.wework_transcript_storage,
         "put_stream",
@@ -475,7 +483,7 @@ def test_reports_turn_conflict_when_turn_identity_exists_at_another_sequence(
 ):
     from app.services import wework_transcript_service
 
-    lease = _lease(test_client, test_token)
+    lease = _lease(test_db)
     transcript = test_db.query(WeworkTranscript).one()
     test_db.add(
         WeworkTranscriptTurn(
@@ -498,48 +506,12 @@ def test_reports_turn_conflict_when_turn_identity_exists_at_another_sequence(
     assert conflict.json()["detail"]["code"] == "turn_conflict"
 
 
-def test_normalizes_stale_future_fork_point_to_parent_head(
-    test_client, test_token, test_db
-):
-    _lease(test_client, test_token)
-    parent = test_db.query(WeworkTranscript).one()
-    parent.current_sequence = 11
-    test_db.commit()
-    request = {
-        "clientId": "client-b",
-        "ttlSeconds": 60,
-        "parentTranscriptId": "transcript-1",
-        "forkedAtSequence": 15,
-    }
-
-    branch = test_client.post(
-        "/api/wework-transcripts/fork-device-b/lease",
-        headers=_headers(test_token),
-        json=request,
-    )
-    retry = test_client.post(
-        "/api/wework-transcripts/fork-device-b/lease",
-        headers=_headers(test_token),
-        json=request,
-    )
-
-    assert branch.status_code == 200
-    assert retry.status_code == 200
-    item = (
-        test_db.query(WeworkTranscript)
-        .filter(WeworkTranscript.transcript_id == "fork-device-b")
-        .one()
-    )
-    assert item.parent_transcript_id == "transcript-1"
-    assert item.forked_at_sequence == 11
-
-
 def test_download_streams_the_object_through_backend(
     test_client, test_token, test_db, monkeypatch
 ):
     from app.api.endpoints import wework_transcripts
 
-    _lease(test_client, test_token)
+    _lease(test_db)
     transcript = test_db.query(WeworkTranscript).one()
     archive = WeworkTranscriptArchive(
         transcript_db_id=transcript.id,
@@ -575,7 +547,7 @@ def test_download_reports_a_missing_storage_object_as_not_found(
         WeworkTranscriptStorageNotFoundError,
     )
 
-    _lease(test_client, test_token)
+    _lease(test_db)
     transcript = test_db.query(WeworkTranscript).one()
     archive = WeworkTranscriptArchive(
         transcript_db_id=transcript.id,
@@ -606,20 +578,3 @@ def test_download_reports_a_missing_storage_object_as_not_found(
         "code": "archive_not_found",
         "message": "Wework transcript segment not found",
     }
-
-
-@pytest.fixture(autouse=True)
-def _retained_python_handler_contracts(test_client):
-    import app.api.endpoints.wework_transcripts as endpoint_0
-    from tests.legacy_python_routes import legacy_python_handlers
-
-    with legacy_python_handlers(test_client.app) as register:
-        register(
-            "/api/wework-transcripts/{transcript_id}/lease",
-            endpoint_0.acquire_lease_endpoint,
-            endpoint_0.router,
-            methods=["POST"],
-            response_model=endpoint_0.TranscriptLeaseResponse,
-            response_model_by_alias=True,
-        )
-        yield
