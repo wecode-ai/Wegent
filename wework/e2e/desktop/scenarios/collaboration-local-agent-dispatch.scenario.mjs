@@ -102,7 +102,7 @@ async function addLocalAgent(control, timeoutMs) {
 
 async function createIssueAndAssignAgent(control, agentId, timeoutMs) {
   await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
-  await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
+  await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
     value: ASSIGNED_TASK,
   })
