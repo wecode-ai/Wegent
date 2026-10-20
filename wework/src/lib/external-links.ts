@@ -7,6 +7,30 @@ import { getAppPreferences, type BrowserLinkTarget } from '@/desktop/appPreferen
 
 interface OpenExternalUrlOptions {
   target?: BrowserLinkTarget
+  source?: string
+}
+
+function diagnosticUrl(value: string): string | null {
+  try {
+    const url = new URL(value)
+    return `${url.protocol}//${url.host}${url.pathname}`
+  } catch {
+    return null
+  }
+}
+
+function logExternalLink(
+  event: string,
+  value: string,
+  source: string,
+  details: Record<string, unknown> = {}
+): void {
+  console.info('[Wework][external-link]', {
+    event,
+    source,
+    url: diagnosticUrl(value),
+    ...details,
+  })
 }
 
 export function isLocalHttpUrl(value: string | null | undefined): value is string {
@@ -38,21 +62,39 @@ export async function openExternalUrl(
   value: string,
   options: OpenExternalUrlOptions = {}
 ): Promise<boolean> {
+  const source = options.source ?? 'unknown'
   if (!isHttpUrl(value)) {
+    logExternalLink('rejected', value, source, { reason: 'unsupported-protocol' })
     return false
   }
 
-  if (isElectronRuntime()) {
-    const target = options.target ?? (await preferredLinkTarget(value))
-    if (target === 'wework' && requestEmbeddedBrowserOpen(value)) {
+  try {
+    if (isElectronRuntime()) {
+      const target = options.target ?? (await preferredLinkTarget(value))
+      logExternalLink('resolved', value, source, { target })
+      if (target === 'wework') {
+        const handedOff = requestEmbeddedBrowserOpen(value)
+        logExternalLink('browser-request', value, source, { handedOff })
+        if (handedOff) return true
+        logExternalLink('browser-fallback', value, source, { target: 'system' })
+      }
+      await openWithSystemBrowser(value)
+      logExternalLink('opened', value, source, { target: 'system' })
       return true
     }
-    await openWithSystemBrowser(value)
-    return true
-  }
 
-  window.open(value, '_blank', 'noopener,noreferrer')
-  return true
+    const openedWindow = window.open(value, '_blank', 'noopener,noreferrer')
+    logExternalLink('opened', value, source, {
+      target: 'browser',
+      openedWindow: Boolean(openedWindow),
+    })
+    return true
+  } catch (error) {
+    logExternalLink('failed', value, source, {
+      error: error instanceof Error ? error.message : String(error),
+    })
+    throw error
+  }
 }
 
 function findClickedAnchor(target: EventTarget | null): HTMLAnchorElement | null {
@@ -68,7 +110,7 @@ export function installExternalLinkHandler() {
     if (!anchor || !isHttpUrl(anchor.href)) return
 
     event.preventDefault()
-    void openExternalUrl(anchor.href).catch(error => {
+    void openExternalUrl(anchor.href, { source: 'document' }).catch(error => {
       console.error('Failed to open external URL:', error)
     })
   }

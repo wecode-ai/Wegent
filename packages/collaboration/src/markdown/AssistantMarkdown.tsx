@@ -687,6 +687,8 @@ function AssistantMarkdownLink({
   return (
     <a
       href={href}
+      target="_blank"
+      rel="noopener noreferrer"
       className={ASSISTANT_MARKDOWN_LINK_CLASS}
       data-testid="assistant-markdown-link"
       onClick={event => {

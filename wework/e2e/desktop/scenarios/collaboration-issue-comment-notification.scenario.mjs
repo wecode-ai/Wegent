@@ -8,7 +8,13 @@ const PROJECT_NAME = '评论提及通知验收'
 const MENTIONER_NAME = 'desktop-e2e-mentioner'
 const MENTIONER_PASSWORD = 'desktop-e2e-mentioner-password'
 const ISSUE_TITLE = '评论 @ 必须通知被提及的成员'
-const COMMENT_TEXT = '这条评论在验收里 @ 了你，应该收到通知'
+const COMMENT_LINK = 'https://github.com/wecode-ai/Wegent/pull/3933'
+const COMMENT_DOCUMENT_LINK = 'https://example.com/wework-comment-link'
+const COMMENT_TEXT = [
+  '这条评论在验收里 @ 了你，应该收到通知',
+  `[wecode-ai/Wegent#3933](${COMMENT_LINK})`,
+  `[外链文档](${COMMENT_DOCUMENT_LINK})`,
+].join('\n')
 const CLIENT_MESSAGE_PREFIX = 'desktop-e2e-mention'
 const FLASH_ANIMATION = 'task-detail-comment-flash'
 
@@ -73,7 +79,10 @@ async function waitForApiValue(load, predicate, message, timeoutMs) {
 /**
  * The @ notification is produced by the backend when another member comments,
  * so the scenario posts that comment over the same Socket.IO contract the app
- * uses and then drives the recipient's own window through the inbox.
+ * uses and then drives the recipient's own window through the inbox. The same
+ * comment carries a recognized GitHub link chip and a plain external link so
+ * landing from the notification also guards comment-link clicks from navigating
+ * the workbench itself.
  */
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
   let backendUrl = ''
@@ -136,6 +145,30 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
     }
     assert.fail(`The mentioned comment never flashed: animation-name=${latest}`)
+  }
+
+  async function verifyCommentLinks(control, activeSurface) {
+    const githubLink = `${activeSurface} [data-testid="composer-link-chip"][data-composer-link-url="${COMMENT_LINK}"]`
+    const documentLink = `${activeSurface} a[data-testid="assistant-markdown-link"][href="${COMMENT_DOCUMENT_LINK}"]`
+    const issueTitle = `${activeSurface} [data-testid="cloud-todo-detail-title"]`
+    await control.command('waitFor', githubLink, { visible: true, timeoutMs: uiTimeoutMs })
+    await control.command('waitFor', documentLink, { visible: true, timeoutMs: uiTimeoutMs })
+
+    const routeBeforeClick = await control.command('getRoute')
+    for (const selector of [githubLink, documentLink]) {
+      await control.command('click', selector, { visible: true })
+      await control.command('waitFor', issueTitle, {
+        visible: true,
+        stableMs: 250,
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(await control.command('getValue', issueTitle), ISSUE_TITLE)
+      assert.equal(
+        await control.command('getRoute'),
+        routeBeforeClick,
+        `Clicking an Issue comment link navigated the workbench away from ${routeBeforeClick}`
+      )
+    }
   }
 
   /**
@@ -323,6 +356,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await waitForFlash(control, commentSelectorFor(activeSurface, message.messageId), uiTimeoutMs)
       const linkFlashMs = Date.now() - linkStartedAt
       assertNavigationBudget('The DingTalk link', linkCommentMs, linkFlashMs)
+      await verifyCommentLinks(control, activeSurface)
+      await captureScreenshot(control, 'comment-notification-03-comment-links.png')
       const readIssue = await waitForApiValue(
         () => ownerRequest(`/api/v1/loop-items/${issue.id}`),
         value =>
