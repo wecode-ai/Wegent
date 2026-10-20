@@ -216,6 +216,8 @@ export function ProjectManageView<
       setRenamingTag(null)
       setRenameValue('')
       setTagBusy(false)
+      setTagCatalogProjectId(null)
+      setTagLoadState(null)
       setDisplayBusy(false)
       setStatusBusy(false)
       setVisibilityBusy(false)
