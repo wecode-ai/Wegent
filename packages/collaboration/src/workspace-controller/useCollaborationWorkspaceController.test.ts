@@ -319,6 +319,39 @@ describe("collaboration workspace controller", () => {
     expect(notify).toHaveBeenCalledWith("load failed", "error");
   });
 
+  it("discards a home preload invalidated by an Issue refresh", async () => {
+    state = { ...state, projects: [project], project, selectedIssue: issue };
+    const { api, commands } = createController();
+    const previous = {
+      items: [issue],
+      members: [],
+      agents: [],
+      taskBindings: [],
+    };
+    const reassigned = { ...issue, version: 3, assignee_user_id: 1 };
+    const updated = { ...previous, items: [reassigned] };
+    const pending = deferred<typeof previous>();
+    vi.mocked(api.issues.getBoardSnapshot)
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValue(updated);
+
+    const oldHome = commands.loadProjects();
+    await vi.waitFor(() =>
+      expect(api.issues.getBoardSnapshot).toHaveBeenCalledOnce(),
+    );
+    await commands.loadProject(project.id, false, { invalidate: true });
+    pending.resolve(previous);
+    await oldHome;
+
+    expect(state.projectItems[project.id]).toEqual([reassigned]);
+    expect(state.issues).toEqual([reassigned]);
+    expect(state.selectedIssue).toEqual(reassigned);
+    await commands.loadProject(project.id, false);
+    expect(state.issues).toEqual([reassigned]);
+    expect(state.selectedIssue).toEqual(reassigned);
+    expect(api.issues.getBoardSnapshot).toHaveBeenCalledTimes(3);
+  });
+
   it("does not request or retain My Work when the capability is disabled", async () => {
     const api = createApi();
     api.myWork!.list = vi.fn().mockResolvedValue([

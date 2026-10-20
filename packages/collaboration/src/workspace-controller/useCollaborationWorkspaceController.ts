@@ -843,9 +843,12 @@ export function createCollaborationWorkspaceControllerCommands({
   const loadHomeSnapshot = (projectId: string) => {
     const active = homeSnapshotLoads.get(projectId);
     if (active) return active;
+    const mutationGeneration = projectMutationGeneration(projectId);
     const pending = loadStandardSnapshot(projectId)
       .catch(() => null)
       .then((snapshot) => {
+        if (mutationGeneration !== projectMutationGeneration(projectId))
+          return null;
         homeSnapshotResults.set(projectId, snapshot);
         return snapshot;
       })
@@ -1038,6 +1041,7 @@ export function createCollaborationWorkspaceControllerCommands({
           ? await Promise.all(
               projects.map(async (project) => ({
                 projectId: project.id,
+                mutationGeneration: projectMutationGeneration(project.id),
                 snapshot: !canPreloadHomeSnapshot(project)
                   ? null
                   : isExternalGitProject(project)
@@ -1057,26 +1061,35 @@ export function createCollaborationWorkspaceControllerCommands({
               })),
             )
           : [];
+        const currentSnapshots = snapshots.map(
+          ({ projectId, snapshot, mutationGeneration }) => ({
+            projectId,
+            snapshot:
+              mutationGeneration === projectMutationGeneration(projectId)
+                ? snapshot
+                : getProjectSnapshot(projectId),
+          }),
+        );
         dispatch({
           type: "home-loaded",
           projects,
           projectItems: Object.fromEntries(
-            snapshots.flatMap(({ projectId, snapshot }) =>
+            currentSnapshots.flatMap(({ projectId, snapshot }) =>
               snapshot ? [[projectId, snapshot.items]] : [],
             ),
           ),
           projectMembers: Object.fromEntries(
-            snapshots.flatMap(({ projectId, snapshot }) =>
+            currentSnapshots.flatMap(({ projectId, snapshot }) =>
               snapshot ? [[projectId, snapshot.members]] : [],
             ),
           ),
           projectAgents: Object.fromEntries(
-            snapshots.flatMap(({ projectId, snapshot }) =>
+            currentSnapshots.flatMap(({ projectId, snapshot }) =>
               snapshot ? [[projectId, snapshot.agents]] : [],
             ),
           ),
           projectTaskBindings: Object.fromEntries(
-            snapshots.flatMap(({ projectId, snapshot }) =>
+            currentSnapshots.flatMap(({ projectId, snapshot }) =>
               snapshot ? [[projectId, snapshot.taskBindings]] : [],
             ),
           ),
