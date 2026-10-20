@@ -60,7 +60,6 @@ import {
   ProjectBoardSettingsDialog,
   ProjectCollaborationGroups,
   ProjectExecutionEnvironments,
-  ProjectHumanProcessing,
   ProjectIssueTable,
   ProjectCreateDialog,
   ProjectSpaceSidebar,
@@ -3799,9 +3798,7 @@ export function CloudTodoWorkspace({
                 dispatchRoundId: dispatch.roundId,
                 assignmentId: dispatch.assignmentId,
               }
-            : latest.human_work?.can_submit
-              ? (latest.human_work.ai_task_binding ?? null)
-              : null
+            : (latest.human_task_binding ?? null)
         )
       } else {
         await localApi!.bindTask(
@@ -4569,25 +4566,6 @@ export function CloudTodoWorkspace({
                             />
                           ),
                         },
-                        ...(selectedProject.location === 'cloud' &&
-                        selectedProject.task_provider === 'local'
-                          ? [
-                              {
-                                id: 'human-processing',
-                                label: t('todo.human_processing_settings'),
-                                testId: 'cloud-project-settings-human-processing',
-                                content: (
-                                  <ProjectHumanProcessing
-                                    translate={(key, fallback, options) =>
-                                      fallback === undefined
-                                        ? t(key, options)
-                                        : t(key, fallback, options)
-                                    }
-                                  />
-                                ),
-                              },
-                            ]
-                          : []),
                         ...(selectedProjectAutomationSupported &&
                         (selectedProject.location === 'cloud'
                           ? Boolean(cloudWorkspaceApi?.automations)
@@ -5278,7 +5256,6 @@ export function CloudTodoWorkspace({
                       : undefined
                   }
                   item={selectedItem}
-                  humanWorkApi={services.deliveryApi}
                   project={selectedItemProject}
                   allItems={detailAllItems}
                   showChildren={false}
@@ -5321,16 +5298,7 @@ export function CloudTodoWorkspace({
                     setBackgroundTaskItemId(null)
                     openTaskComposer({
                       workItemId: selectedItem.id,
-                      initialInput: selectedItem.human_work
-                        ? [
-                            workItemComposerReference(selectedItemProject, selectedItem),
-                            selectedItem.title,
-                            selectedItem.description,
-                            t('todo.human_work_ai_prompt'),
-                          ]
-                            .filter(Boolean)
-                            .join('\n\n')
-                        : workItemComposerReference(selectedItemProject, selectedItem),
+                      initialInput: workItemComposerReference(selectedItemProject, selectedItem),
                       backgroundAfterSend: false,
                     })
                   }}
