@@ -21,7 +21,12 @@ import {
 } from '@/features/workbench/runtimeConversationCache'
 import type { RuntimeLiveActivity } from '@/features/workbench/runtimeThinking'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { ModelSelectionConfig, RuntimeGoal, RuntimeTaskAddress } from '@/types/api'
+import type {
+  ModelSelectionConfig,
+  RuntimeGoal,
+  RuntimeTaskAddress,
+  RuntimeTaskSummary,
+} from '@/types/api'
 import type { RuntimeConversationTurn } from '@/types/workbench'
 import type { ChangeRequestMonitor } from '@/features/workbench/changeRequestMonitor'
 import { useTaskChangeRequest } from '@/features/workbench/changeRequestMonitor'
@@ -31,6 +36,10 @@ import {
 } from '@/features/workbench/changeRequestStatus'
 import { isLoopItemExecutionActive } from './cloudMyWorkModel'
 import { runtimeTaskBindingAddress } from './runtimeTaskBindingAddress'
+import {
+  useBoardRuntimeConversations,
+  type UseBoardRuntimeConversationsOptions,
+} from './useBoardRuntimeConversations'
 import { Archive, CircleCheck } from 'lucide-react'
 
 export interface BoardCardDisplaySettings {
@@ -100,6 +109,8 @@ export interface CloudTodoBoardTaskBinding {
   } | null
   runtimeGoal?: RuntimeGoal | null
   runtimeGoalLoaded?: boolean
+  runtimeAddress?: RuntimeTaskAddress
+  runtimeTask?: RuntimeTaskSummary | null
 }
 
 interface CloudTodoBoardCardProps {
@@ -113,6 +124,7 @@ interface CloudTodoBoardCardProps {
   onMarkRead?: (item: CloudLoopItem) => void
   onLoadRuntimeGoal?: (address: RuntimeTaskAddress) => Promise<void>
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
+  getRuntimeTranscript?: UseBoardRuntimeConversationsOptions['getRuntimeTranscript']
   display: BoardCardDisplaySettings
   agentNames?: Record<string, string>
   dragDisabled?: boolean
@@ -146,6 +158,7 @@ export function CloudTodoBoardCard({
   onMarkRead,
   onLoadRuntimeGoal,
   onOpenRuntimeTask,
+  getRuntimeTranscript,
   display,
   agentNames,
   dragDisabled = false,
@@ -175,6 +188,15 @@ export function CloudTodoBoardCard({
     }
   }
   const conversationTaskBindings = [...taskBindingsByConversation.values()]
+  useBoardRuntimeConversations({
+    item,
+    conversations: conversationTaskBindings.map(binding => ({
+      address: boardTaskAddress(item, binding),
+      task: binding.runtimeTask,
+    })),
+    enabled: hasActiveTask || item.status === 'in_review',
+    getRuntimeTranscript,
+  })
   const runningTaskBindings = conversationTaskBindings.filter(binding => binding.running)
   const currentTaskBinding = runningTaskBindings[0] ?? conversationTaskBindings[0]
   const changeRequestSnapshot = useTaskChangeRequest(
@@ -287,6 +309,23 @@ export function CloudTodoBoardCard({
   )
 }
 
+function boardTaskAddress(
+  item: CloudLoopItem,
+  binding: CloudTodoBoardTaskBinding
+): RuntimeTaskAddress {
+  const address = { ...runtimeTaskBindingAddress(binding), ...binding.runtimeAddress }
+  return {
+    ...address,
+    ...(binding.modelSelection
+      ? { runtimeHandle: { ...address.runtimeHandle, modelSelection: binding.modelSelection } }
+      : {}),
+    projectSession: binding.runtimeAddress?.projectSession ?? {
+      projectId: String(item.cloud_project_id),
+      issueId: String(item.id),
+    },
+  }
+}
+
 function RuntimeTaskProgressSummary({
   item,
   binding,
@@ -313,26 +352,8 @@ function RuntimeTaskProgressSummary({
   const t = useBoardTranslate()
   const { t: toolTranslate } = useTranslation('chat')
   const taskAddress = useMemo<RuntimeTaskAddress>(
-    () => ({
-      ...runtimeTaskBindingAddress({
-        device_id: binding.device_id,
-        task_id: binding.task_id,
-        modelSelection: binding.modelSelection,
-        executionContext: binding.executionContext,
-      }),
-      projectSession: {
-        projectId: String(item.cloud_project_id),
-        issueId: String(item.id),
-      },
-    }),
-    [
-      binding.device_id,
-      binding.executionContext,
-      binding.modelSelection,
-      binding.task_id,
-      item.cloud_project_id,
-      item.id,
-    ]
+    () => boardTaskAddress(item, binding),
+    [binding, item]
   )
   useEffect(() => {
     if (binding.runtimeGoalLoaded || !onLoadRuntimeGoal) return

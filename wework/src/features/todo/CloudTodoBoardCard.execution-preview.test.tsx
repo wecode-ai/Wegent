@@ -117,6 +117,13 @@ describe('CloudTodoBoardCard execution previews', () => {
               task_title: 'Newest binding',
               running: true,
               modelSelection: { modelName: 'gpt-6-sol', modelType: 'public' },
+              runtimeAddress: {
+                deviceId: 'local',
+                taskId: 'task-85',
+                runtimeHandle: {
+                  modelSelection: { modelName: 'gpt-5.6-sol', modelType: 'public' },
+                },
+              },
             },
             {
               id: 85,
