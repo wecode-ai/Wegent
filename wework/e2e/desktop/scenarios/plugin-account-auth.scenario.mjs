@@ -618,6 +618,8 @@ export async function createDesktopScenario({
               'need_login',
               `Isolated gh health must require login: ${JSON.stringify(ghHealth)}`
             )
+            await control.command('click', '[data-testid="plugin-detail-back-button"]')
+            await control.command('waitFor', '[data-testid="plugins-search-input"]')
             await verifyGithubManageConnectionConsent(control, slug, release.pluginId)
             for (const action of ['cancel', 'ordinary', 'resume']) {
               await control.command('click', '[data-testid="new-chat-button"]')
