@@ -4,6 +4,7 @@ import {
   type SpawnOptionsWithoutStdio,
 } from 'node:child_process'
 import { EventEmitter, once } from 'node:events'
+import { readdirSync, readFileSync } from 'node:fs'
 import { RotatingLog, type RotatingLogOptions } from './rotating-log.js'
 import { resolveSpawnCommand } from './spawn-command.js'
 
@@ -317,6 +318,10 @@ async function waitForProcessGroupExit(
 function processGroupExists(processGroupId: number): boolean {
   try {
     process.kill(-processGroupId, 0)
+    if (process.platform === 'linux') {
+      const hasLiveMembers = linuxProcessGroupHasLiveMembers(processGroupId)
+      if (hasLiveMembers !== null) return hasLiveMembers
+    }
     return true
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code
@@ -324,6 +329,39 @@ function processGroupExists(processGroupId: number): boolean {
     if (code === 'EPERM') return true
     throw error
   }
+}
+
+function linuxProcessGroupHasLiveMembers(processGroupId: number): boolean | null {
+  let entries: string[]
+  try {
+    entries = readdirSync('/proc')
+  } catch {
+    return null
+  }
+  let foundMember = false
+  for (const entry of entries) {
+    if (!/^\d+$/.test(entry)) continue
+    let stat: string
+    try {
+      stat = readFileSync(`/proc/${entry}/stat`, 'utf8')
+    } catch (error) {
+      // Processes may disappear while the group is being inspected.
+      const code = (error as NodeJS.ErrnoException).code
+      if (code === 'ENOENT' || code === 'ESRCH') continue
+      return null
+    }
+    const commandEnd = stat.lastIndexOf(')')
+    if (commandEnd === -1) return null
+    const [state, , group] = stat
+      .slice(commandEnd + 1)
+      .trim()
+      .split(/\s+/)
+    if (Number(group) !== processGroupId) continue
+    foundMember = true
+    // Orphaned zombies can outlive their parent in containers without an init reaper.
+    if (state !== 'Z' && state !== 'X' && state !== 'x') return true
+  }
+  return foundMember ? false : null
 }
 
 function signalProcessTree(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {
