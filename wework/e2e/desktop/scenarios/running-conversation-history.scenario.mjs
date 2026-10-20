@@ -21,7 +21,7 @@ const LEGACY_TURN_COUNT = 80
 const LEGACY_MATCH_TURNS = [5, 25]
 const SECOND_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SECOND'
 const SECOND_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SECOND_COMPLETE'
-const PAGED_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_PAGED'
+const PAGED_PROMPT = 'WEWORK-DESKTOP-E2E-RUNNING-HISTORY-PAGED'
 const PAGED_SEARCH_TERM = 'foo bar & baz'
 const PAGED_REQUEST = `${PAGED_PROMPT} foo **bar** &amp; baz`
 const PAGED_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_PAGED_COMPLETE'
@@ -503,6 +503,10 @@ export function createDesktopScenario({
   let active = false
   let restartDesktopApp
   let secondRequestReceivedResolve
+  let pagedRequestReceivedResolve
+  const pagedRequestReceived = new Promise(resolve => {
+    pagedRequestReceivedResolve = resolve
+  })
   let releasePagedResponseResolve
   const releasePagedResponse = new Promise(resolve => {
     releasePagedResponseResolve = resolve
@@ -537,6 +541,7 @@ export function createDesktopScenario({
       if (body.includes(PAGED_PROMPT)) {
         response.flushHeaders()
         response.write(sse([responseCreated(responseId)]))
+        pagedRequestReceivedResolve()
         await releasePagedResponse
         response.end(
           sse([assistantMessage(responseId, PAGED_COMPLETION), responseCompleted(responseId)])
@@ -776,6 +781,15 @@ export function createDesktopScenario({
       const pagedRowId = await waitForNewTaskRow(control, rowsBeforePagedTask, uiTimeoutMs)
       const pagedTaskId = pagedRowId.replace('runtime-local-task-row-', '')
       const pagedAddress = await waitForTaskAddress(control, pagedTaskId, uiTimeoutMs)
+      await Promise.race([
+        pagedRequestReceived,
+        new Promise((_, reject) =>
+          setTimeout(
+            () => reject(new Error('The paginated-history model request was not received')),
+            uiTimeoutMs
+          )
+        ),
+      ])
       await control.command('waitFor', '[data-testid="pause-response-button"]', {
         timeoutMs: uiTimeoutMs,
       })
