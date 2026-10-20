@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { createNativeDialogDriver } from '../modules/native-dialog-driver.mjs'
+import { createNativeDialogDriver } from '../../../electron/scripts/native-dialog-driver.mjs'
 import { withTimeout } from '../modules/shared.mjs'
 
 const PICKER_HOLD_MS = 125_000

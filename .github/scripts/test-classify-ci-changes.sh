@@ -799,7 +799,8 @@ wework_desktop_core_e2e_matrix={"include":[{"id":"core-15","name":"Core / shard 
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/native-directory-picker.scenario.mjs" \
-  "wework/e2e/desktop/modules/native-dialog-driver.mjs"
+  "wework/electron/scripts/native-dialog-driver.mjs" \
+  "wework/electron/scripts/native-dialog-driver.test.mjs"
 
 assert_desktop_case "drawing implementation and scenario select their desktop regression" \
   'wework_desktop_e2e=true

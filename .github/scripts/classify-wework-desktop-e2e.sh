@@ -345,7 +345,8 @@ classify_wework_path() {
   local path="$1"
 
   case "$path" in
-    wework/e2e/desktop/modules/native-dialog-driver.mjs | \
+    wework/electron/scripts/native-dialog-driver.mjs | \
+      wework/electron/scripts/native-dialog-driver.test.mjs | \
       wework/e2e/desktop/scenarios/native-directory-picker.scenario.mjs)
       select_target "core:native-directory-picker"
       return

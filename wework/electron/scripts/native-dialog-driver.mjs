@@ -1,16 +1,13 @@
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
-import { createRequire } from 'node:module'
 import { basename, join, sep } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { pathToFileURL } from 'node:url'
+import { CuaDriver } from '@trycua/cua-driver'
 
-const requireElectron = createRequire(new URL('../../../electron/package.json', import.meta.url))
 const ACCEPT_LABEL = /^(Open|Select|Select Folder|Choose|Choose Folder|打开|选择|选择文件夹|选取)$/i
 const CANCEL_LABEL = /^(Cancel|取消)$/i
 
 export async function createNativeDialogDriver({ pid, resultDir, timeoutMs }) {
-  const { CuaDriver } = await import(pathToFileURL(requireElectron.resolve('@trycua/cua-driver')))
   const driver = CuaDriver.create(undefined)
 
   async function call(name, args) {
