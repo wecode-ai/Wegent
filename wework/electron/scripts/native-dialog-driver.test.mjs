@@ -73,48 +73,108 @@ test('returns native accessibility controls when the tree is available', async (
   }
 })
 
-test('records each location input stage and the native window closing after submission', async () => {
+test.each(['darwin', 'win32', 'linux'])(
+  'records %s location input and waits for the native window to close after submission',
+  async platform => {
+    const resultDir = await mkdtemp(join(tmpdir(), 'native-dialog-driver-'))
+    let open = true
+    mocks.callTool.mockImplementation(async (name, encodedArgs) => {
+      const args = JSON.parse(encodedArgs)
+      if (name === 'press_key' && args.key === (platform === 'linux' ? 'o' : 'return')) open = false
+      const data =
+        name === 'list_windows'
+          ? { windows: open ? [{ pid: 42, window_id: 7 }] : [] }
+          : name === 'get_window_state'
+            ? { elements: [{ role: 'dialog', label: 'Select Folder' }], degraded: false }
+            : { effect: 'unverifiable' }
+      return {
+        isError: false,
+        text: `${name} delivered`,
+        structuredJson: JSON.stringify(data),
+        images: [{ mimeType: 'image/png', dataBase64: Buffer.from('fixture').toString('base64') }],
+      }
+    })
+    const native = await createNativeDialogDriver({
+      pid: 42,
+      resultDir,
+      timeoutMs: 1_000,
+      platform,
+    })
+
+    try {
+      await native.selectDirectory(7, '/fixture/directory')
+      const actions = (await readFile(join(resultDir, 'native-dialog-actions.jsonl'), 'utf8'))
+        .trim()
+        .split('\n')
+        .map(line => JSON.parse(line))
+      expect(
+        actions.filter(action => action.stage).map(({ stage, open }) => ({ stage, open }))
+      ).toEqual([
+        { stage: 'location-shortcut', open: true },
+        { stage: 'location-typed', open: true },
+        { stage: 'location-submitted', open: false },
+      ])
+      expect(actions.filter(action => action.name).every(action => action.text)).toBe(true)
+      const lastInput = actions.filter(action => action.name).at(-1)
+      expect(lastInput.args).toMatchObject(
+        platform === 'linux'
+          ? { key: 'o', modifiers: ['alt'], pid: 42, window_id: 7 }
+          : { key: 'return', pid: 42, window_id: 7 }
+      )
+      expect(await readdir(resultDir)).toEqual(
+        expect.arrayContaining([
+          'native-picker-7-location-shortcut.png',
+          'native-picker-7-location-typed.png',
+          'native-window-catalog.jsonl',
+        ])
+      )
+    } finally {
+      await native.close()
+      await rm(resultDir, { recursive: true, force: true })
+    }
+  }
+)
+
+test('cancels the GTK dialog with Escape and verifies it is no longer mapped', async () => {
   const resultDir = await mkdtemp(join(tmpdir(), 'native-dialog-driver-'))
   let open = true
+  let closing = false
+  let closingCatalogReads = 0
   mocks.callTool.mockImplementation(async (name, encodedArgs) => {
     const args = JSON.parse(encodedArgs)
-    if (name === 'press_key' && args.key === 'return') open = false
-    const data =
-      name === 'list_windows'
-        ? { windows: open ? [{ pid: 42, window_id: 7 }] : [] }
-        : name === 'get_window_state'
-          ? { elements: [{ role: 'dialog', label: 'Select Folder' }], degraded: false }
-          : { effect: 'unverifiable' }
+    if (name === 'press_key' && args.key === 'Escape') closing = true
+    if (name === 'list_windows' && closing) open = closingCatalogReads++ === 0
     return {
       isError: false,
-      text: `${name} delivered`,
-      structuredJson: JSON.stringify(data),
-      images: [{ mimeType: 'image/png', dataBase64: Buffer.from('fixture').toString('base64') }],
+      structuredJson: JSON.stringify(
+        name === 'list_windows'
+          ? { windows: open ? [{ pid: 42, window_id: 7 }] : [] }
+          : { effect: 'unverifiable' }
+      ),
+      images: [],
     }
   })
-  const native = await createNativeDialogDriver({ pid: 42, resultDir, timeoutMs: 1_000 })
+  const native = await createNativeDialogDriver({
+    pid: 42,
+    resultDir,
+    timeoutMs: 1_000,
+    platform: 'linux',
+  })
 
   try {
-    await native.selectDirectory(7, '/fixture/directory')
+    await native.cancel(7)
+    expect(open).toBe(false)
+    expect(mocks.callTool.mock.calls.map(([name]) => name)).toEqual([
+      'press_key',
+      'list_windows',
+      'list_windows',
+      'list_windows',
+    ])
     const actions = (await readFile(join(resultDir, 'native-dialog-actions.jsonl'), 'utf8'))
       .trim()
       .split('\n')
       .map(line => JSON.parse(line))
-    expect(
-      actions.filter(action => action.stage).map(({ stage, open }) => ({ stage, open }))
-    ).toEqual([
-      { stage: 'location-shortcut', open: true },
-      { stage: 'location-typed', open: true },
-      { stage: 'location-submitted', open: false },
-    ])
-    expect(actions.filter(action => action.name).every(action => action.text)).toBe(true)
-    expect(await readdir(resultDir)).toEqual(
-      expect.arrayContaining([
-        'native-picker-7-location-shortcut.png',
-        'native-picker-7-location-typed.png',
-        'native-window-catalog.jsonl',
-      ])
-    )
+    expect(actions.at(-1)).toMatchObject({ stage: 'canceled', windowId: 7, open: false })
   } finally {
     await native.close()
     await rm(resultDir, { recursive: true, force: true })

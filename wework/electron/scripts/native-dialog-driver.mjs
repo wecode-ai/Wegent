@@ -7,7 +7,12 @@ import { CuaDriver } from '@trycua/cua-driver'
 const ACCEPT_LABEL = /^(Open|Select|Select Folder|Choose|Choose Folder|打开|选择|选择文件夹|选取)$/i
 const CANCEL_LABEL = /^(Cancel|取消)$/i
 
-export async function createNativeDialogDriver({ pid, resultDir, timeoutMs }) {
+export async function createNativeDialogDriver({
+  pid,
+  resultDir,
+  timeoutMs,
+  platform = process.platform,
+}) {
   const driver = CuaDriver.create(undefined)
 
   async function call(name, args) {
@@ -100,6 +105,22 @@ export async function createNativeDialogDriver({ pid, resultDir, timeoutMs }) {
     return open
   }
 
+  async function dismissDialog(windowId, key, modifiers = []) {
+    await call('press_key', {
+      pid,
+      window_id: windowId,
+      key,
+      modifiers,
+      delivery_mode: 'foreground',
+    })
+    // A closing GTK dialog can stop servicing AT-SPI before it unmaps. Observe
+    // its native window lifecycle instead of walking its tree during teardown.
+    await waitFor(
+      async () => !(await windows()).some(window => window.window_id === windowId),
+      `The native directory dialog did not close after ${[...modifiers, key].join('+')}`
+    )
+  }
+
   return {
     windows,
     snapshot,
@@ -115,8 +136,8 @@ export async function createNativeDialogDriver({ pid, resultDir, timeoutMs }) {
       await call('press_key', {
         pid,
         window_id: windowId,
-        key: process.platform === 'darwin' ? 'g' : 'l',
-        modifiers: process.platform === 'darwin' ? ['cmd', 'shift'] : ['ctrl'],
+        key: platform === 'darwin' ? 'g' : 'l',
+        modifiers: platform === 'darwin' ? ['cmd', 'shift'] : ['ctrl'],
         delivery_mode: 'foreground',
       })
       assert.ok(
@@ -133,6 +154,14 @@ export async function createNativeDialogDriver({ pid, resultDir, timeoutMs }) {
         await recordDialogState(windowId, 'location-typed'),
         'Typing the fixture path unexpectedly closed the native directory dialog'
       )
+      if (platform === 'linux') {
+        // Chromium replaces the process ATK root, hiding its GTK chooser's
+        // controls from the SDK tree. Activate GTK's standard Open mnemonic;
+        // the scenario verifies the actual returned directory in the real UI.
+        await dismissDialog(windowId, 'o', ['alt'])
+        await recordDialogState(windowId, 'location-submitted')
+        return
+      }
       await call('press_key', {
         pid,
         window_id: windowId,
@@ -150,6 +179,11 @@ export async function createNativeDialogDriver({ pid, resultDir, timeoutMs }) {
       if (selected !== 'closed') await button(windowId, ACCEPT_LABEL)
     },
     async cancel(windowId) {
+      if (platform === 'linux') {
+        await dismissDialog(windowId, 'Escape')
+        await recordDialogState(windowId, 'canceled')
+        return
+      }
       await button(windowId, CANCEL_LABEL)
     },
     async close() {
