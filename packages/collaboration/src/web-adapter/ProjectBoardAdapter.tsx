@@ -227,7 +227,9 @@ export function ProjectBoardAdapter({
     onMove: (issue, _column, _beforeItemId, mutation) =>
       onMove(issue, mutation),
     personalGroupStorageKey: null,
-    personalSortStorageKey: `collaboration-board-column-sort:v2:${project.id}`,
+    personalSortStorageKey: project.current_user_id
+      ? `collaboration-board-column-sort:v2:${project.current_user_id}:${project.id}`
+      : null,
   });
   const display = project.card_display ?? {
     show_assignee: true,

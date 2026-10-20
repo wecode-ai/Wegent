@@ -92,18 +92,29 @@ projectTest(
   'sorts lanes independently with compound rules and restores choices after reload',
   async ({ page, scheduledProject: { path, issueId } }) => {
     const projectId = path.split('/').at(-1)!
-    const createIssue = (priority: 'high' | 'urgent', status = 'pending') =>
-      webApi<Resource>(page, `/api/v1/cloud-projects/${projectId}/loop-items`, {
-        method: 'POST',
-        body: { title: `Sort ${priority}`, status, priority },
-      })
+    const createIssue = async (priority: 'high' | 'urgent', status = 'pending') => {
+      // The real database stores creation timestamps to second precision.
+      await new Promise(resolve => setTimeout(resolve, 1_100))
+      return webApi<Resource & { created_at: string }>(
+        page,
+        `/api/v1/cloud-projects/${projectId}/loop-items`,
+        {
+          method: 'POST',
+          body: { title: `Sort ${priority}`, status, priority },
+        }
+      )
+    }
     const high = await createIssue('high')
     const urgent = await createIssue('urgent')
+    const newerHigh = await createIssue('high')
+    expect(Date.parse(newerHigh.created_at)).toBeGreaterThan(Date.parse(high.created_at))
     const completedHigh = await createIssue('high', 'completed')
     const completedUrgent = await createIssue('urgent', 'completed')
+    // Equal-priority cards deliberately have the opposite manual and time order.
+    const manualOrder = [issueId, newerHigh.id, high.id, urgent.id]
     await webApi(page, `/api/v1/cloud-projects/${projectId}/loop-items/reorder`, {
       method: 'POST',
-      body: { parent_id: null, status: 'pending', item_ids: [issueId, high.id, urgent.id] },
+      body: { parent_id: null, status: 'pending', item_ids: manualOrder },
     })
 
     await page.goto(path)
@@ -120,7 +131,7 @@ projectTest(
     }
 
     await expect(sort).toHaveAttribute('data-sort-rules', 'priority-desc')
-    await assertOrder('pending', [urgent.id, high.id, issueId])
+    await assertOrder('pending', [urgent.id, newerHigh.id, high.id, issueId])
     await assertOrder('completed', [completedUrgent.id, completedHigh.id])
     await sort.click()
     await page.getByTestId('cloud-board-sort-by-pending-manual').click()
@@ -129,12 +140,12 @@ projectTest(
     await page.getByTestId('cloud-board-sort-by-completed-rule-0-mode').click()
     await page.getByTestId('cloud-board-sort-by-completed-rule-0-mode-created-asc').click()
     await completedSort.click()
-    await assertOrder('pending', [issueId, high.id, urgent.id])
+    await assertOrder('pending', manualOrder)
     await assertOrder('completed', [completedHigh.id, completedUrgent.id])
     await page.reload()
     await expect(sort).toHaveAttribute('data-sort-rules', 'manual')
     await expect(completedSort).toHaveAttribute('data-sort-rules', 'created-asc')
-    await assertOrder('pending', [issueId, high.id, urgent.id])
+    await assertOrder('pending', manualOrder)
     await assertOrder('completed', [completedHigh.id, completedUrgent.id])
     await sort.click()
     await page.getByTestId('cloud-board-sort-by-pending-add').click()
@@ -143,10 +154,25 @@ projectTest(
     await page.getByTestId('cloud-board-sort-by-pending-rule-1-mode-created-asc').click()
     await sort.click()
     await expect(sort).toHaveAttribute('data-sort-rules', 'priority-desc,created-asc')
-    await assertOrder('pending', [urgent.id, high.id, issueId])
+    await assertOrder('pending', [urgent.id, high.id, newerHigh.id, issueId])
     await page.reload()
     await expect(sort).toHaveAttribute('data-sort-rules', 'priority-desc,created-asc')
-    await assertOrder('pending', [urgent.id, high.id, issueId])
+    await assertOrder('pending', [urgent.id, high.id, newerHigh.id, issueId])
+    await expect(completedSort).toHaveAttribute('data-sort-rules', 'created-asc')
+
+    await sort.click()
+    await page.getByTestId('cloud-board-sort-by-pending-rule-1-up').click()
+    await sort.click()
+    await expect(sort).toHaveAttribute('data-sort-rules', 'created-asc,priority-desc')
+    await assertOrder('pending', [issueId, high.id, urgent.id, newerHigh.id])
+
+    await sort.click()
+    await page.getByTestId('cloud-board-sort-by-pending-rule-0-down').click()
+    await page.getByTestId('cloud-board-sort-by-pending-rule-1-mode').click()
+    await page.getByTestId('cloud-board-sort-by-pending-rule-1-mode-created-desc').click()
+    await sort.click()
+    await expect(sort).toHaveAttribute('data-sort-rules', 'priority-desc,created-desc')
+    await assertOrder('pending', [urgent.id, newerHigh.id, high.id, issueId])
     await expect(completedSort).toHaveAttribute('data-sort-rules', 'created-asc')
   }
 )

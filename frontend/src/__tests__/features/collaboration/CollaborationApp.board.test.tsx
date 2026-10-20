@@ -46,6 +46,7 @@ function project(groupBy: GroupBy = 'status'): CollaborationProject {
       show_date: true,
     },
     created_by_user_id: 1,
+    current_user_id: 1,
     status: 'active',
     tags: ['后端'],
     version: 1,
@@ -128,6 +129,67 @@ async function dragCardTo(card: HTMLElement, target: HTMLElement) {
 
 describe('CollaborationApp shared project board', () => {
   beforeEach(() => localStorage.clear())
+
+  it('keeps lane rules isolated when accounts switch in the same browser', async () => {
+    const legacyKey = 'collaboration-board-column-sort:v2:project-1'
+    localStorage.setItem(legacyKey, JSON.stringify({ '["status","pending"]': [] }))
+    const mountAccount = async (userId: number | undefined) => {
+      const api = {
+        projects: {
+          get: jest.fn().mockResolvedValue({ ...project(), current_user_id: userId }),
+          listExecutionEnvironments: jest.fn().mockResolvedValue([]),
+        },
+        issues: {
+          getBoardSnapshot: jest.fn().mockResolvedValue({
+            items: [issue()],
+            members: [],
+            taskBindings: [],
+          }),
+        },
+        members: { list: jest.fn().mockResolvedValue([]) },
+        agents: { list: jest.fn().mockResolvedValue([]) },
+      } as unknown as SharedWorkspaceApi
+      const host: CollaborationHostAdapter = {
+        capabilities: { automation: true, dingtalkAitable: false },
+        location: { projectId: 'project-1', issueId: null, view: 'board' },
+        navigate: jest.fn(),
+      }
+      const view = render(
+        <CollaborationApp api={api} host={host} locale="zh-CN" pollIntervalMs={0} />
+      )
+      const sort = await screen.findByTestId('cloud-board-sort-by-pending')
+      return { ...view, sort }
+    }
+
+    const first = await mountAccount(1)
+    expect(first.sort).toHaveAttribute('data-sort-rules', 'priority-desc')
+    fireEvent.click(first.sort)
+    fireEvent.click(screen.getByTestId('cloud-board-sort-by-pending-manual'))
+    first.unmount()
+
+    const second = await mountAccount(2)
+    expect(second.sort).toHaveAttribute('data-sort-rules', 'priority-desc')
+    fireEvent.click(second.sort)
+    fireEvent.click(screen.getByTestId('cloud-board-sort-by-pending-add'))
+    second.unmount()
+
+    const firstRestored = await mountAccount(1)
+    expect(firstRestored.sort).toHaveAttribute('data-sort-rules', 'manual')
+    firstRestored.unmount()
+    const secondRestored = await mountAccount(2)
+    expect(secondRestored.sort).toHaveAttribute('data-sort-rules', 'priority-desc,created-desc')
+    secondRestored.unmount()
+
+    const unknownAccount = await mountAccount(undefined)
+    expect(unknownAccount.sort).toHaveAttribute('data-sort-rules', 'priority-desc')
+    fireEvent.click(unknownAccount.sort)
+    fireEvent.click(screen.getByTestId('cloud-board-sort-by-pending-manual'))
+    expect(Object.keys(localStorage).sort()).toEqual([
+      'collaboration-board-column-sort:v2:1:project-1',
+      'collaboration-board-column-sort:v2:2:project-1',
+      legacyKey,
+    ])
+  })
 
   it.each([false, true])(
     'renders the shared board without unread indicators (runtime=%s)',
@@ -219,7 +281,7 @@ describe('CollaborationApp shared project board', () => {
         'collaboration-issue-urgent',
       ])
       expect(
-        JSON.parse(localStorage.getItem('collaboration-board-column-sort:v2:project-1')!)
+        JSON.parse(localStorage.getItem('collaboration-board-column-sort:v2:1:project-1')!)
       ).toEqual({ '["status","pending"]': [] })
       const completedSort = screen.getByTestId('cloud-board-sort-by-completed')
       expect(completedSort).toHaveAttribute('data-sort-rules', 'priority-desc')
