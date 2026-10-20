@@ -14,7 +14,7 @@ async function assertNoPickerError(control) {
   assert.equal(await control.command('getElementCount', PICKER_ERROR), '0')
 }
 
-async function readHostPid(registryDirectory) {
+async function readHostRecord(registryDirectory) {
   const records = await Promise.all(
     (await readdir(registryDirectory))
       .filter(name => name.endsWith('.json'))
@@ -23,12 +23,14 @@ async function readHostPid(registryDirectory) {
   const hosts = records.filter(record => record.instanceKind === 'main')
   assert.equal(hosts.length, 1, 'The isolated application must publish exactly one main host')
   assert.ok(Number.isSafeInteger(hosts[0].pid) && hosts[0].pid > 0)
-  return hosts[0].pid
+  assert.match(hosts[0].address, /^127\.0\.0\.1:\d+$/)
+  assert.ok(typeof hosts[0].token === 'string' && hosts[0].token.length > 0)
+  return hosts[0]
 }
 
 async function openPicker(control, native) {
-  const previousWindows = await native.windows()
   await control.command('waitFor', PROJECT_BUTTON, { enabled: true })
+  const previousWindows = await native.windows()
   await control.command('click', PROJECT_BUTTON)
   await control.command('click', '[data-testid="add-local-project-option"]')
   const windowId = await native.waitForDialog(previousWindows)
@@ -102,11 +104,24 @@ export function createDesktopScenario({
     async verify(control) {
       assert.equal(typeof restartDesktopApp, 'function')
       await control.command('waitFor', PROJECT_BUTTON, { timeoutMs: workbenchReadyTimeoutMs })
-      const hostPid = await readHostPid(registryDirectory)
+      const host = await readHostRecord(registryDirectory)
+      const hostPid = host.pid
       native = await createNativeDialogDriver({
         pid: hostPid,
         resultDir,
         timeoutMs: uiTimeoutMs,
+      })
+      // Renderer automation can be ready while the native startup splash is
+      // still visible. Establish the real main window before cataloging dialogs.
+      await native.waitForMainWindow(async () => {
+        const response = await fetch(`http://${host.address}/status`, {
+          headers: { authorization: `Bearer ${host.token}` },
+          signal: AbortSignal.timeout(uiTimeoutMs),
+        })
+        assert.equal(response.status, 200, 'The isolated desktop status request failed')
+        const payload = await response.json()
+        assert.equal(payload.ok, true)
+        return payload.data
       })
       const selectedPath = join(workspacePath, 'native-picker-selected')
       const recoveryPath = join(workspacePath, 'native-picker-after-cancel')

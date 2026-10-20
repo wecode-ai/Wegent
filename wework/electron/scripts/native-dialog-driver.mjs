@@ -124,6 +124,15 @@ export async function createNativeDialogDriver({
   return {
     windows,
     snapshot,
+    async waitForMainWindow(readStatus) {
+      return waitFor(async () => {
+        const status = await readStatus()
+        assert.equal(status.pid, pid, 'Desktop readiness belongs to another host process')
+        if (!status.ready || !status.visible || !status.title) return false
+        const currentWindows = await windows()
+        return currentWindows.some(window => window.title === status.title) && currentWindows
+      }, 'The main application window did not become visible before opening the native picker')
+    },
     async waitForDialog(previousWindows) {
       const previousIds = new Set(previousWindows.map(window => window.window_id))
       return waitFor(async () => {

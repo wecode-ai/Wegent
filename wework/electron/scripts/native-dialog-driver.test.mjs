@@ -73,6 +73,51 @@ test('returns native accessibility controls when the tree is available', async (
   }
 })
 
+test('waits for the real main window so a splash transition cannot become the picker', async () => {
+  const resultDir = await mkdtemp(join(tmpdir(), 'native-dialog-driver-'))
+  const splash = { pid: 42, window_id: 1, title: 'Wework' }
+  const main = { pid: 42, window_id: 2, title: 'WeWork' }
+  const picker = { pid: 42, window_id: 3, title: 'Select Folder' }
+  const catalogs = [[splash], [splash, main], [main, picker]]
+  mocks.callTool.mockImplementation(async () => ({
+    isError: false,
+    structuredJson: JSON.stringify({ windows: catalogs.shift() }),
+    images: [],
+  }))
+  const readStatus = vi
+    .fn()
+    .mockResolvedValueOnce({ pid: 42, ready: true, visible: false, title: 'WeWork' })
+    .mockResolvedValue({ pid: 42, ready: true, visible: true, title: 'WeWork' })
+  const native = await createNativeDialogDriver({ pid: 42, resultDir, timeoutMs: 1_000 })
+
+  try {
+    const previousWindows = await native.waitForMainWindow(readStatus)
+    expect(previousWindows).toEqual([splash, main])
+    expect(readStatus).toHaveBeenCalledTimes(3)
+    await expect(native.waitForDialog(previousWindows)).resolves.toBe(picker.window_id)
+  } finally {
+    await native.close()
+    await rm(resultDir, { recursive: true, force: true })
+  }
+})
+
+test('rejects main-window readiness from a different host process', async () => {
+  const native = await createNativeDialogDriver({ pid: 42, timeoutMs: 1_000 })
+  try {
+    await expect(
+      native.waitForMainWindow(async () => ({
+        pid: 43,
+        ready: true,
+        visible: true,
+        title: 'WeWork',
+      }))
+    ).rejects.toThrow('another host process')
+    expect(mocks.callTool).not.toHaveBeenCalled()
+  } finally {
+    await native.close()
+  }
+})
+
 test.each(['darwin', 'win32', 'linux'])(
   'records %s location input and waits for the native window to close after submission',
   async platform => {
