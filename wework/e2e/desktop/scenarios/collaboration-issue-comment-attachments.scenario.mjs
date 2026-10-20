@@ -26,7 +26,7 @@ const RECOVERY_IMAGE = 'comment-recovery.png'
  * upload failure: the draft must remain, no comment may be written, and restoring
  * the file must allow exactly one successful submission. A second Issue stays empty.
  */
-export function createDesktopScenario({ executorHome, workbenchReadyTimeoutMs }) {
+export function createDesktopScenario({ executorHome, uiTimeoutMs, workbenchReadyTimeoutMs }) {
   let backendUrl
   let authToken
   let project
@@ -96,12 +96,25 @@ export function createDesktopScenario({ executorHome, workbenchReadyTimeoutMs })
   }
 
   async function persistedComment(control, text, filenames) {
-    await control.command('waitFor', `${CONTENT} [data-testid="cloud-task-activity-list"]`, {
-      text,
-    })
-    const matches = (await json(commentsPath())).filter(comment => comment.body.startsWith(text))
-    assert.equal(matches.length, 1, `Expected exactly one persisted comment for ${text}`)
-    const comment = matches[0]
+    // Queued replies show their draft text before uploading and persisting it.
+    // Wait for the authoritative comment, then assert its exact rendered ID.
+    const deadline = Date.now() + uiTimeoutMs
+    let comments = []
+    let comment
+    while (Date.now() < deadline) {
+      comments = await json(commentsPath())
+      const matches = comments.filter(item => item.body.startsWith(text))
+      assert.ok(matches.length <= 1, `Duplicate persisted comments for ${text}`)
+      if (matches.length === 1) {
+        comment = matches[0]
+        break
+      }
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    assert.ok(
+      comment,
+      `Comment was not persisted within ${uiTimeoutMs}ms: ${text}; comments=${JSON.stringify(comments)}`
+    )
     const selector = `${CONTENT} [data-testid="cloud-task-activity-message-${comment.id}"]`
     await control.command('waitFor', selector, { text })
     const stored = await json(attachmentsPath())
