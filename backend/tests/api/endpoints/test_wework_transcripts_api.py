@@ -5,6 +5,8 @@
 import hashlib
 import json
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from app.api.endpoints.wework_transcripts import _lease_response
 from app.models.user import User
 from app.models.wework_transcript import (
@@ -14,7 +16,6 @@ from app.models.wework_transcript import (
 )
 from app.schemas.wework_transcript import TranscriptLeaseRequest
 from app.services import wework_transcript_service
-from sqlalchemy.exc import SQLAlchemyError
 
 SEGMENT_BODY = b"x" * 4096
 SEGMENT_SHA256 = hashlib.sha256(SEGMENT_BODY).hexdigest()

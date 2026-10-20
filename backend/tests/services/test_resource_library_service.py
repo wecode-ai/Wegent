@@ -8,6 +8,10 @@ import logging
 from datetime import datetime
 
 import pytest
+from fastapi import HTTPException
+from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
+
 from app.core.security import get_password_hash
 from app.models.kind import Kind
 from app.models.marketplace_resource import MarketplaceResource
@@ -33,9 +37,6 @@ from app.services.skill_binding_service import (
     skill_binding_service,
 )
 from app.services.skill_resolution import find_skill_by_ref
-from fastapi import HTTPException
-from sqlalchemy.orm import Session
-from sqlalchemy.orm.attributes import flag_modified
 
 
 def _create_skill(
