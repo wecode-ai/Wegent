@@ -9,6 +9,10 @@ import type { ArchivedConversationItem } from '@/types/api'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { notifyWorkbenchCloudArchivesChanged } from '@/features/workbench/workbenchCloudDataEvents'
 import {
+  readReplyPrediction,
+  writeReplyPrediction,
+} from '@/features/reply-predictions/replyPredictionCache'
+import {
   deleteArchivedLocalHarnessSession,
   listArchivedLocalHarnessSessions,
   notifyLocalHarnessSessionsChanged,
@@ -92,6 +96,55 @@ describe('ArchivedConversationsSettingsPage', () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
+  })
+
+  test.each([true, false])(
+    'clears the suggestion cache only when single deletion is accepted: %s',
+    async accepted => {
+      const scope = JSON.stringify([
+        archivedItem.deviceId,
+        archivedItem.taskId,
+        archivedItem.workspacePath,
+      ])
+      writeReplyPrediction(scope, { key: 'turn-1', text: '请继续', accepted: false, failed: false })
+      deleteArchivedConversation.mockResolvedValue({ accepted })
+      render(<ArchivedConversationsSettingsPage />)
+      await screen.findByText('Greet user')
+      await userEvent.click(screen.getByTestId('archived-delete-button-device-1-codex-1'))
+      await userEvent.click(screen.getByTestId('archived-delete-confirm-dialog-confirm-button'))
+      await waitFor(() =>
+        expect(screen.queryByTestId('archived-delete-confirm-dialog')).not.toBeInTheDocument()
+      )
+      expect(readReplyPrediction(scope, 'turn-1')).toEqual(
+        accepted ? null : expect.objectContaining({ text: '请继续' })
+      )
+    }
+  )
+
+  test('clears only successfully deleted tasks in a partially failed bulk deletion', async () => {
+    const items = [archivedItemAt(1), archivedItemAt(2)]
+    const scopes = items.map(item =>
+      JSON.stringify([item.deviceId, item.taskId, item.workspacePath])
+    )
+    scopes.forEach(scope =>
+      writeReplyPrediction(scope, { key: 'turn-1', text: '请继续', accepted: false, failed: false })
+    )
+    listArchivedConversations
+      .mockResolvedValueOnce({ items, projectGroups: [], total: 2 })
+      .mockResolvedValue({ items: [], projectGroups: [], total: 0 })
+    deleteArchivedConversationsBulk.mockResolvedValue({
+      results: [
+        { taskId: items[0].taskId, deleted: true },
+        { taskId: items[1].taskId, deleted: false },
+      ],
+    })
+    render(<ArchivedConversationsSettingsPage />)
+    await screen.findByText('Archived conversation 1')
+    await userEvent.click(screen.getByTestId('archived-bulk-delete-button'))
+    await userEvent.click(screen.getByTestId('archived-bulk-delete-confirm-dialog-confirm-button'))
+    await waitFor(() => expect(deleteArchivedConversationsBulk).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(readReplyPrediction(scopes[0], 'turn-1')).toBeNull())
+    expect(readReplyPrediction(scopes[1], 'turn-1')?.text).toBe('请继续')
   })
 
   test('uses the compact Codex row and an in-app single delete confirmation', async () => {

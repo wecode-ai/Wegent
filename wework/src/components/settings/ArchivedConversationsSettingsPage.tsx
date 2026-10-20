@@ -25,6 +25,7 @@ import {
 import { SettingsPage, SettingsPageHeader } from './settings-ui'
 import type { ArchivedConversationItem } from '@/types/api'
 import { track } from '@/telemetry/client'
+import { deleteReplyPredictions } from '@/features/reply-predictions/replyPredictionService'
 import {
   deleteArchivedLocalHarnessSession,
   listArchivedLocalHarnessSessions,
@@ -517,6 +518,7 @@ export function ArchivedConversationsSettingsPage({
         const harnessItems = deleteItems.filter(item => localHarnessSessionId(item))
         for (const item of harnessItems) {
           await deleteArchivedLocalHarnessSession(localHarnessSessionId(item)!)
+          deleteReplyPredictions(archivedConversationAddress(item))
         }
         const deletedHarnessKeys = new Set(harnessItems.map(itemAddressKey))
         notifyArchivedBulkDeleteDeleted(deletedHarnessKeys)
@@ -543,9 +545,9 @@ export function ArchivedConversationsSettingsPage({
                 .filter(result => result.deleted === true)
                 .map(result => String(result.taskId || ''))
             )
-            const batchDeletedKeys = new Set(
-              batch.filter(item => deletedTaskIds.has(item.taskId)).map(itemAddressKey)
-            )
+            const deletedItems = batch.filter(item => deletedTaskIds.has(item.taskId))
+            deletedItems.forEach(item => deleteReplyPredictions(archivedConversationAddress(item)))
+            const batchDeletedKeys = new Set(deletedItems.map(itemAddressKey))
             notifyArchivedBulkDeleteDeleted(batchDeletedKeys)
             completed += batch.length
             setArchivedBulkDeleteProgress({
@@ -614,8 +616,10 @@ export function ArchivedConversationsSettingsPage({
       const harnessSessionId = localHarnessSessionId(item)
       if (harnessSessionId) {
         await deleteArchivedLocalHarnessSession(harnessSessionId)
+        deleteReplyPredictions(archivedConversationAddress(item))
       } else {
         const response = await api.deleteArchivedConversation(archivedConversationAddress(item))
+        if (response.accepted) deleteReplyPredictions(archivedConversationAddress(item))
         const cleanupText = cleanupErrorsFromResults([
           response as unknown as Record<string, unknown>,
         ])
