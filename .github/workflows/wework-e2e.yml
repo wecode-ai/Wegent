@@ -403,6 +403,12 @@ jobs:
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
           test -x "$WEWORK_E2E_BACKEND_RS_BIN"
           test -x "$WEWORK_E2E_CODEX_BIN"
+          native_session=()
+          if [[ ",$WEWORK_E2E_SEGMENTS," == *",native-directory-picker,"* ]]; then
+            apt-get update
+            apt-get install -y --no-install-recommends at-spi2-core dbus-daemon
+            native_session=(dbus-run-session --)
+          fi
           if [[ ",$WEWORK_E2E_SEGMENTS," == *",plugin-development,"* ]]; then
             apt-get update
             apt-get install -y --no-install-recommends gdb
@@ -413,7 +419,7 @@ jobs:
             cp .github/scripts/run-wework-executor-with-gdb.sh "$WEWORK_E2E_EXECUTOR_BIN.gdb"
             export WEWORK_E2E_EXECUTOR_BIN="$WEWORK_E2E_EXECUTOR_BIN.gdb"
           fi
-          node wework/e2e/desktop/run-checkpoints.mjs \
+          "${native_session[@]}" node wework/e2e/desktop/run-checkpoints.mjs \
             --parallel-segments "$WEWORK_E2E_SEGMENTS"
 
       - name: Prune transient Wework desktop E2E caches

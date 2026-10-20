@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { writeFile } from 'node:fs/promises'
+import { appendFile, writeFile } from 'node:fs/promises'
 import { basename, join, sep } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { CuaDriver } from '@trycua/cua-driver'
@@ -16,6 +16,12 @@ export async function createNativeDialogDriver({ pid, resultDir, timeoutMs }) {
     })
     assert.equal(result.isError, false, `${name} failed: ${result.text}`)
     const data = result.structuredJson ? JSON.parse(result.structuredJson) : null
+    if (['click', 'press_key', 'type_text'].includes(name)) {
+      await appendFile(
+        join(resultDir, 'native-dialog-actions.jsonl'),
+        `${JSON.stringify({ name, args, result: data })}\n`
+      )
+    }
     assert.notEqual(data?.effect, 'refused', `${name} was refused: ${result.text}`)
     return { data, images: result.images }
   }
@@ -46,6 +52,11 @@ export async function createNativeDialogDriver({ pid, resultDir, timeoutMs }) {
       assert.ok(png, 'The native dialog screenshot is missing')
       await writeFile(join(resultDir, `${evidenceName}.png`), Buffer.from(png.dataBase64, 'base64'))
     }
+    assert.notEqual(
+      result.data.degraded,
+      true,
+      `The native accessibility tree is degraded: ${result.data.degraded_reason}`
+    )
     return result.data
   }
 
