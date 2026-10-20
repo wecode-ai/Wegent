@@ -58,16 +58,27 @@ export function ReplyPredictionProvider({
   const runtimeRevision = latestTurnId ?? ''
   const modelSelection = lifecycle?.task?.modelSelection
   const runtimeSource = useMemo<ReplyPredictionSource | null>(() => {
-    if (!deviceId || !taskId || !latestTurnId) return null
+    const workspaceBacked = address?.workspaceKind !== 'chat' && !address?.projectSession
+    if (!address || !deviceId || !taskId || !latestTurnId || (workspaceBacked && !workspacePath))
+      return null
     return {
-      scope: JSON.stringify([deviceId, taskId, workspacePath]),
+      scope: JSON.stringify([deviceId, taskId, workspaceBacked ? workspacePath : null]),
       revision: runtimeRevision,
       busy: Boolean(runtimeBusy),
-      address: { deviceId, taskId, workspacePath },
+      address,
       modelSelection,
       latestTurnId,
     }
-  }, [deviceId, taskId, workspacePath, runtimeRevision, runtimeBusy, latestTurnId, modelSelection])
+  }, [
+    address,
+    deviceId,
+    taskId,
+    workspacePath,
+    runtimeRevision,
+    runtimeBusy,
+    latestTurnId,
+    modelSelection,
+  ])
   const target = runtimeSource
   const scope = target?.scope
   const busy = target?.busy ?? false
