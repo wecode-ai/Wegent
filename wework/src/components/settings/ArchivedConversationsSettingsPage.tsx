@@ -528,20 +528,30 @@ export function ArchivedConversationsSettingsPage({
         total += harnessItems.length
         setArchivedBulkDeleteProgress({ completed, total, running: true })
         for (let round = 0; round < ARCHIVED_DELETE_MAX_VERIFY_ROUNDS; round += 1) {
-          const localItems = deleteItems.filter(item => item.source === 'local')
-          const cloudItems = deleteItems.filter(item => item.source === 'cloud')
-          const batches = [
-            ...chunkItems(localItems, ARCHIVED_DELETE_BATCH_SIZE),
-            ...chunkItems(cloudItems, ARCHIVED_DELETE_BATCH_SIZE),
-          ]
+          const deviceItems = new Map<string, ArchivedConversationItem[]>()
+          for (const item of deleteItems) {
+            const key = JSON.stringify([item.source, item.deviceId])
+            const group = deviceItems.get(key) ?? []
+            group.push(item)
+            deviceItems.set(key, group)
+          }
+          const batches = [...deviceItems.values()].flatMap(group =>
+            chunkItems(group, ARCHIVED_DELETE_BATCH_SIZE)
+          )
           for (const batch of batches) {
             const response = await api.deleteArchivedConversationsBulk({
               items: batch.map(archivedConversationAddress),
             })
-            const cleanupText = cleanupErrorsFromResults(response.results)
+            // The cloud API wraps each executor's per-task results in a device result.
+            const results = response.results.flatMap(result =>
+              Array.isArray(result.results)
+                ? (result.results as Record<string, unknown>[])
+                : [result]
+            )
+            const cleanupText = cleanupErrorsFromResults(results)
             if (cleanupText) cleanupErrors.push(cleanupText)
             const deletedTaskIds = new Set(
-              response.results
+              results
                 .filter(result => result.deleted === true)
                 .map(result => String(result.taskId || ''))
             )
