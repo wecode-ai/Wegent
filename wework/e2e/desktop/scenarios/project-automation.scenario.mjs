@@ -85,6 +85,7 @@ async function createGroup(control, { name, leader }) {
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenchReadyTimeoutMs }) {
   let backendUrl = ''
   let authToken = ''
+  let cloudEnvironment
   let workspace = null
   let project = null
   let fixtureArchived = false
@@ -123,6 +124,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     appEnvironment,
 
     async prepareCloud(cloud) {
+      cloudEnvironment = cloud
       backendUrl = cloud.backendUrl
       authToken = cloud.authToken
       await request('/api/admin/setup-complete', { method: 'POST' })
@@ -585,9 +587,27 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           { visible: false, timeoutMs: uiTimeoutMs }
         )
         await capture(control, 'project-automation-07-group-deleted.png')
+        // A separate App reads the authorized HTTP catalog instead of local IPC.
+        const catalogDeviceId = `catalog-recovery-app-${process.pid}`
+        await cloudEnvironment.startGeneratedRemoteDevice({
+          deviceId: catalogDeviceId,
+          deviceName: 'Catalog recovery App',
+          deviceType: 'app',
+        })
+        const catalogDevice = await cloudEnvironment.waitForDeviceType(catalogDeviceId, 'app')
+        assert.notEqual(catalogDevice.id, localDevice.id)
+        for (const resourcePath of [
+          `/api/v1/workspaces/${workspace.id}`,
+          `/api/v1/cloud-projects/${project.id}`,
+        ]) {
+          await request(`${resourcePath}/execution-environments`, {
+            method: 'POST',
+            body: JSON.stringify({ device_id: catalogDevice.id }),
+          })
+        }
         await verifyCloudSaveDuringNativeFaults(control, {
           projectId: project.id,
-          device: localDevice,
+          device: catalogDevice,
           request,
           proxy,
           waitForApiValue,
