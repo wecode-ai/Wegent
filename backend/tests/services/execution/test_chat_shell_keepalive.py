@@ -15,11 +15,24 @@ from app.services.execution.dispatcher import ExecutionDispatcher
 from app.services.execution.router import CommunicationMode, ExecutionTarget
 from shared.models import ExecutionRequest
 
+_TEST_TIMEOUT_SECONDS = 30
+
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("idle_seconds, expected_connections", [(0.0, 1), (3.0, 2)])
+@pytest.mark.parametrize(
+    "idle_seconds, first_response_delay, expected_connections",
+    [
+        pytest.param(0.0, 0.0, 1, id="reuse"),
+        pytest.param(3.0, 0.0, 2, id="idle-expiry"),
+        pytest.param(0.0, 2.1, 1, id="slow-response"),
+    ],
+)
 async def test_sequential_dispatches_retire_idle_connections(
-    monkeypatch, caplog, idle_seconds: float, expected_connections: int
+    monkeypatch,
+    caplog,
+    idle_seconds: float,
+    first_response_delay: float,
+    expected_connections: int,
 ) -> None:
     """Reuse active connections and retire idle ones before the server's 5s limit."""
     monkeypatch.setenv("NO_PROXY", "127.0.0.1")
@@ -41,6 +54,8 @@ async def test_sequential_dispatches_retire_idle_connections(
                     if line.lower().startswith(b"content-length:")
                 )
                 requests.append(await reader.readexactly(content_length))
+                if len(requests) == 1:
+                    await asyncio.sleep(first_response_delay)
                 # Like StreamingResponse, terminate a chunked HTTP response
                 # after delivering the terminal SSE event.
                 body = (
@@ -83,15 +98,15 @@ async def test_sequential_dispatches_retire_idle_connections(
                 return_value={"model": "test-model", "input": "hello"},
             ),
         ):
-            async with server, pool.lifespan():
+            # This bounds hangs, not request latency or the simulated idle clock.
+            async with (
+                asyncio.timeout(_TEST_TIMEOUT_SECONDS),
+                server,
+                pool.lifespan(),
+            ):
                 for subtask_id in (1, 2):
                     request = ExecutionRequest(task_id=101, subtask_id=subtask_id)
-                    await asyncio.wait_for(
-                        dispatcher._dispatch_sse(request, target, AsyncMock()),
-                        # SDK initialization can exceed 2s on a loaded worker.
-                        # Idle expiry is controlled by idle_clock, not this watchdog.
-                        timeout=30,
-                    )
+                    await dispatcher._dispatch_sse(request, target, AsyncMock())
                     idle_clock = idle_seconds
 
                 assert len(requests) == 2
@@ -102,4 +117,6 @@ async def test_sequential_dispatches_retire_idle_connections(
         for writer in connections:
             writer.close()
         if handlers:
-            await asyncio.wait_for(asyncio.gather(*handlers), timeout=2)
+            await asyncio.wait_for(
+                asyncio.gather(*handlers), timeout=_TEST_TIMEOUT_SECONDS
+            )

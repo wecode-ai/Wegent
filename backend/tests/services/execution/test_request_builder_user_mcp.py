@@ -397,6 +397,8 @@ class TestUserScopedMcpInjection:
         )
 
         assert "mcpServers" not in skill_data
+        assert skill_data["configuration_required"] is True
+        assert "Use DingTalk docs MCP." not in skill_data["prompt"]
         assert "Configuration Required" in skill_data["prompt"]
         assert "wegent://modal/mcp-provider-config?provider=dingtalk&service=docs" in (
             skill_data["prompt"]

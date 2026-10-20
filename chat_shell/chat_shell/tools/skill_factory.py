@@ -133,6 +133,9 @@ def prepare_load_skill_tool(
                     "description": config.get("description", ""),
                     "prompt": config.get("prompt", ""),
                     "displayName": config.get("displayName", ""),
+                    "prompt_in_system_prompt": config.get(
+                        "prompt_in_system_prompt", False
+                    ),
                 }
 
     # Create LoadSkillTool with the available skills

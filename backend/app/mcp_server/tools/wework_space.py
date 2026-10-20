@@ -58,6 +58,10 @@ from app.services.loop_items.provider_router import (
 )
 from app.services.loop_items.service import loop_item_service
 from app.services.project_automation_execution import project_automation_execution
+from app.services.project_chat.issue_comments import (
+    add_issue_comment,
+    list_issue_comments,
+)
 from app.services.project_chat.service import project_chat_service
 from app.services.workspaces import workspace_service
 from app.services.workspaces.storage import workspace_id_for_project
@@ -663,34 +667,50 @@ async def update_board_item(
 
 
 @mcp_tool(server="wework_space")
+def list_board_item_comments(
+    token_info: MCPAuthInfo,
+    space_id: str = "",
+    item_id: str = "",
+    after_sequence: int = 0,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    """Read the latest Issue activity comments, or page forward after a sequence."""
+
+    with SessionLocal() as db:
+        project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
+        resolved_item_id = _item_id(db, token_info, item_id)
+        _read_item(db, project, resolved_item_id, token_info.user_id)
+        return list_issue_comments(
+            db,
+            user_id=token_info.user_id,
+            project_id=str(project.id),
+            item_id=resolved_item_id,
+            after_sequence=after_sequence,
+            limit=limit,
+        )
+
+
+@mcp_tool(server="wework_space")
 def add_board_item_comment(
     token_info: MCPAuthInfo,
     body: str,
     space_id: str = "",
     item_id: str = "",
 ) -> dict[str, Any]:
-    """Add a comment to a provider-backed board item."""
+    """Add a visible comment to the Wework Issue activity."""
 
     with SessionLocal() as db:
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         resolved_item_id = _item_id(db, token_info, item_id)
         _read_item(db, project, resolved_item_id, token_info.user_id)
-        if project.task_provider in {"github", "gitlab"}:
-            result = dict(
-                external_loop_item_provider.add_comment(
-                    db, resolved_item_id, token_info.user_id, body
-                )
-            )
-        else:
-            result = dict(
-                loop_item_service.add_comment(
-                    db,
-                    resolved_item_id,
-                    token_info.user_id,
-                    body,
-                )
-            )
-        return result
+        return add_issue_comment(
+            db,
+            user_id=token_info.user_id,
+            user_name=token_info.user_name,
+            project_id=str(project.id),
+            item_id=resolved_item_id,
+            body=body,
+        )
 
 
 @mcp_tool(server="wework_space")
