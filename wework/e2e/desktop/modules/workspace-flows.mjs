@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { verifyWorkspaceTabReturn } from './workspace-tab-return.mjs'
@@ -1562,7 +1563,7 @@ async function verifyExistingTaskBoardAssociation(
     'The fixed collaboration tab did not open the collaboration platform',
     { fixed: true }
   )
-  const targetProjectName = 'Existing Task Target Board'
+  const targetProjectName = `Existing Task Target Board ${randomUUID().slice(0, 8)}`
   await createLocalCollaborationProject(control, activeBoardContentSelector, targetProjectName)
   await configureFirstProjectExecutionEnvironment(
     control,
@@ -1621,19 +1622,68 @@ async function verifyExistingTaskBoardAssociation(
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command(
-    'markElementWithText',
-    '[data-testid="work-item-context-menu"] [data-testid^="work-item-workspace-option-"]',
-    {
-      text: targetProjectName,
-      value: 'existing-task-target-board',
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
+  const pickerSearch = '[data-testid="project-space-picker-search"]'
+  await control.command('fill', pickerSearch, { value: 'NO_SUCH_PROJECT_PRJBA8FC1_42' })
+  await control.command('waitFor', '[data-testid="project-space-picker-empty"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        '[data-testid="work-item-context-menu"] [role="option"]'
+      )
+    ),
+    0,
+    'Searching for an unknown project must not leave unrelated options selectable'
   )
+  await control.command('waitFor', '[data-testid="clear-project-space-context-button"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="project-space-picker-clear-search"]')
+  await control.command('fill', pickerSearch, { value: targetProjectName })
+  await control.command('waitFor', '[data-testid="work-item-context-menu"] [role="option"]', {
+    text: targetProjectName,
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('select', '[data-testid="project-space-picker-sort"]', {
+    value: 'name-desc',
+  })
+  const targetOption = '[data-testid="work-item-context-menu"] [role="option"]'
+  assert.equal(
+    Number(await control.command('getElementCount', targetOption)),
+    1,
+    'Searching for the unique test project must produce exactly one selectable result'
+  )
+  const targetGroup = await control.command('getAttribute', targetOption, {
+    value: 'data-group-key',
+  })
+  assert.ok(targetGroup, 'Every project option must expose its owning space identity')
   await control.command(
     'click',
-    '[data-testid="work-item-context-menu"] [data-e2e-anchor-id="existing-task-target-board"]'
+    `[data-testid="project-space-picker-group"][data-group-key=${JSON.stringify(targetGroup)}]`
   )
+  await control.command('waitFor', targetOption, {
+    text: targetProjectName,
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('press', pickerSearch, { key: 'Escape' })
+  await control.command('waitFor', '[data-testid="work-item-context-menu"]', {
+    visible: false,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="work-item-change-board"]')
+  await control.command('fill', pickerSearch, { value: targetProjectName })
+  await control.command('waitFor', '[data-testid="work-item-context-menu"] [role="option"]', {
+    text: targetProjectName,
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('press', pickerSearch, { key: 'Enter' })
   await control.command('waitFor', '[data-testid="task-board-association-dialog"]', {
     text: targetProjectName,
     visible: true,
