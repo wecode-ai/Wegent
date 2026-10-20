@@ -578,6 +578,20 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
     "$account_fixture"
 done
 
+for coordination_path in \
+  "backend/app/services/plugin_write_coordination.py" \
+  "backend/app/services/plugin_write_resources.py"; do
+  assert_desktop_case "plugin write coordination selects its lifecycle regressions: $coordination_path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-account-auth,plugin-uninstall-resilience"},{"id":"cloud-15","name":"Cloud / shard 15","segments":"plugin-auto-update"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+    "$coordination_path"
+done
+
 assert_desktop_case "shared collaboration package selects its desktop checkpoint" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true

@@ -1115,6 +1115,14 @@ classify_path() {
   local path="$1"
 
   case "$path" in
+    backend/app/services/plugin_write_coordination.py | \
+      backend/app/services/plugin_write_resources.py)
+      select_target "cloud:plugin-account-auth"
+      select_target "cloud:plugin-uninstall-resilience"
+      select_target "cloud:plugin-auto-update"
+      ;;
+  esac
+  case "$path" in
     packages/collaboration/src/controls/ModelSelector* | \
       packages/collaboration/src/controls/ModelPowerSlider* | \
       packages/collaboration/src/controls/model-selector-utils*)
