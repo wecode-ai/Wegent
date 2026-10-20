@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -25,10 +26,14 @@ interface ChannelBindingPanelProps {
 }
 
 const parseCommaSeparatedUserIds = (value: string): string[] =>
-  value
-    .split(',')
-    .map(item => item.trim())
-    .filter(Boolean)
+  Array.from(
+    new Set(
+      value
+        .split(',')
+        .map(item => item.trim())
+        .filter(Boolean)
+    )
+  )
 
 const resolvePrivateStatusText = (bound: boolean, t: TFunction<string | string[]>) => {
   if (bound) {
@@ -252,10 +257,10 @@ export function ChannelBindingPanel({
               <Label htmlFor={`group-mention-users-${channelId}`}>
                 {t('notification_settings.group_mention_users', '@ 指定用户')}
               </Label>
-              <input
+              <Input
                 id={`group-mention-users-${channelId}`}
                 type="text"
-                className="h-11 w-full rounded-md border border-border bg-background px-3 text-sm text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="h-11 bg-background"
                 data-testid={`group-mention-users-${channelId}`}
                 value={mentionUserIdsInput}
                 onFocus={() => setIsEditingMentionUserIds(true)}

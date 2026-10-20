@@ -433,7 +433,9 @@ class DingTalkRobotSender:
                 "robotCode": self.client_id,
             }
             at_user_ids = {
-                user_id: user_id for user_id in mention_user_ids or [] if user_id
+                user_id.strip(): user_id.strip()
+                for user_id in mention_user_ids or []
+                if isinstance(user_id, str) and user_id.strip()
             }
             if at_user_ids:
                 payload["imGroupOpenDeliverModel"]["atUserIds"] = at_user_ids

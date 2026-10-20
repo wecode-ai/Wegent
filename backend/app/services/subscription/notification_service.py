@@ -37,6 +37,7 @@ from app.schemas.subscription import (
 from app.schemas.subscription import NotificationLevel as SchemaNotificationLevel
 from app.schemas.subscription import (
     SubscriptionFollowConfig,
+    normalize_dingtalk_mention_user_ids,
 )
 from app.services.subscription.websocket import (
     emit_subscription_binding_update,
@@ -52,6 +53,24 @@ SUBSCRIPTION_KIND = "Subscription"
 BINDING_PENDING_TTL_SECONDS = 600
 BINDING_PENDING_PREFIX = "subscription:binding:pending:"
 BINDING_PENDING_INDEX_PREFIX = "subscription:binding:pending:index:"
+
+
+def _normalize_channel_binding_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize persisted or requested channel binding values."""
+    bind_group = bool(cfg.get("bind_group", False))
+    group_conversation_id = cfg.get("group_conversation_id")
+    mention_user_ids = normalize_dingtalk_mention_user_ids(
+        cfg.get("group_mention_user_ids") or []
+    )
+    if not bind_group or not group_conversation_id:
+        mention_user_ids = []
+    return {
+        "bind_private": bool(cfg.get("bind_private", True)),
+        "bind_group": bind_group,
+        "group_conversation_id": group_conversation_id,
+        "group_name": cfg.get("group_name"),
+        "group_mention_user_ids": mention_user_ids,
+    }
 
 
 class SubscriptionNotificationService:
@@ -346,15 +365,7 @@ class SubscriptionNotificationService:
                     item_data = dict(item)
                 channel_id = str(item_data["channel_id"])
                 channel_binding_map[channel_id] = {
-                    "bind_private": bool(item_data.get("bind_private", True)),
-                    "bind_group": bool(item_data.get("bind_group", False)),
-                    "group_conversation_id": item_data.get("group_conversation_id"),
-                    "group_name": item_data.get("group_name"),
-                    "group_mention_user_ids": [
-                        value
-                        for value in item_data.get("group_mention_user_ids", [])
-                        if isinstance(value, str) and value
-                    ],
+                    **_normalize_channel_binding_config(item_data),
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                 }
             internal["notification_channel_bindings"] = channel_binding_map
@@ -700,15 +711,7 @@ class SubscriptionNotificationService:
             result.append(
                 {
                     "channel_id": int(channel_id),
-                    "bind_private": bool(cfg.get("bind_private", True)),
-                    "bind_group": bool(cfg.get("bind_group", False)),
-                    "group_conversation_id": cfg.get("group_conversation_id"),
-                    "group_name": cfg.get("group_name"),
-                    "group_mention_user_ids": [
-                        value
-                        for value in cfg.get("group_mention_user_ids", [])
-                        if isinstance(value, str) and value
-                    ],
+                    **_normalize_channel_binding_config(cfg),
                 }
             )
         return result
@@ -752,17 +755,7 @@ class SubscriptionNotificationService:
         cfg = binding_map.get(str(channel_id))
         if not cfg:
             return None
-        return {
-            "bind_private": bool(cfg.get("bind_private", True)),
-            "bind_group": bool(cfg.get("bind_group", False)),
-            "group_conversation_id": cfg.get("group_conversation_id"),
-            "group_name": cfg.get("group_name"),
-            "group_mention_user_ids": [
-                value
-                for value in cfg.get("group_mention_user_ids", [])
-                if isinstance(value, str) and value
-            ],
-        }
+        return _normalize_channel_binding_config(cfg)
 
     def _upsert_subscription_channel_binding(
         self,
@@ -782,7 +775,7 @@ class SubscriptionNotificationService:
         binding_map = internal.get("notification_channel_bindings", {})
         existing = binding_map.get(str(channel_id), {})
 
-        updated = {
+        merged = {
             "bind_private": (
                 bind_private
                 if bind_private is not None
@@ -806,6 +799,9 @@ class SubscriptionNotificationService:
                 if group_mention_user_ids is not None
                 else existing.get("group_mention_user_ids", [])
             ),
+        }
+        updated = {
+            **_normalize_channel_binding_config(merged),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         binding_map[str(channel_id)] = updated

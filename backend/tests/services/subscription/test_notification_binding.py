@@ -249,3 +249,79 @@ def test_update_developer_settings_preserves_group_name(test_db, test_user):
             "group_mention_user_ids": ["user-1", "user-2"],
         }
     ]
+
+
+def test_update_developer_settings_normalizes_group_mentions(test_db, test_user):
+    """Mention IDs are trimmed, deduplicated, and stripped of invalid values."""
+    subscription = _create_subscription_kind(
+        test_db, owner_user_id=test_user.id, subscription_id=1005
+    )
+
+    updated = subscription_notification_service.update_developer_settings(
+        test_db,
+        subscription_id=subscription.id,
+        user_id=test_user.id,
+        notification_level=NotificationLevel.NOTIFY,
+        notification_channel_ids=[123],
+        channel_binding_configs=[
+            {
+                "channel_id": 123,
+                "bind_private": True,
+                "bind_group": True,
+                "group_conversation_id": "conversation-123",
+                "group_mention_user_ids": [" user-1 ", "user-1", "", None, 42],
+            }
+        ],
+    )
+
+    assert updated.channel_binding_configs[0].group_mention_user_ids == ["user-1"]
+
+
+def test_update_developer_settings_clears_mentions_without_group(test_db, test_user):
+    """Mention IDs are removed when the channel no longer delivers to a group."""
+    subscription = _create_subscription_kind(
+        test_db, owner_user_id=test_user.id, subscription_id=1006
+    )
+    subscription_notification_service.update_developer_settings(
+        test_db,
+        subscription_id=subscription.id,
+        user_id=test_user.id,
+        notification_level=NotificationLevel.NOTIFY,
+        notification_channel_ids=[123],
+        channel_binding_configs=[
+            {
+                "channel_id": 123,
+                "bind_private": True,
+                "bind_group": True,
+                "group_conversation_id": "conversation-123",
+                "group_mention_user_ids": ["user-1"],
+            }
+        ],
+    )
+
+    updated = subscription_notification_service.update_developer_settings(
+        test_db,
+        subscription_id=subscription.id,
+        user_id=test_user.id,
+        notification_level=NotificationLevel.NOTIFY,
+        notification_channel_ids=[123],
+        channel_binding_configs=[
+            {
+                "channel_id": 123,
+                "bind_private": True,
+                "bind_group": False,
+                "group_conversation_id": None,
+                "group_mention_user_ids": ["stale-user"],
+            }
+        ],
+    )
+
+    assert updated.channel_binding_configs[0].group_mention_user_ids == []
+    persisted = (
+        test_db.query(Kind)
+        .filter(Kind.id == subscription.id, Kind.kind == "Subscription")
+        .first()
+    )
+    assert persisted is not None
+    binding = persisted.json["_internal"]["notification_channel_bindings"]["123"]
+    assert binding["group_mention_user_ids"] == []

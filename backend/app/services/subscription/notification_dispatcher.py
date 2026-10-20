@@ -29,6 +29,7 @@ from app.schemas.subscription import (
     NotificationWebhook,
     NotificationWebhookType,
     SubscriptionFollowConfig,
+    normalize_dingtalk_mention_user_ids,
 )
 from app.services.subscription.notification_service import (
     subscription_notification_service,
@@ -314,8 +315,8 @@ class SubscriptionNotificationDispatcher:
                     send_private = bool(binding_config.get("bind_private", True))
                     send_group = bool(binding_config.get("bind_group", False))
                     group_conversation_id = binding_config.get("group_conversation_id")
-                    group_mention_user_ids = list(
-                        binding_config.get("group_mention_user_ids", [])
+                    group_mention_user_ids = normalize_dingtalk_mention_user_ids(
+                        binding_config.get("group_mention_user_ids") or []
                     )
                 tasks.append(
                     self._send_dingtalk_notification(

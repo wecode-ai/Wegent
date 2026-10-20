@@ -11,7 +11,7 @@ def test_group_card_payload_includes_requested_mentions() -> None:
         card_param_map={"title": "Daily report"},
         open_space_id="dtv1.card//IM_GROUP.group-1",
         preview="Daily report",
-        mention_user_ids=["user-1", "user-2"],
+        mention_user_ids=["user-1", " user-2 ", "user-1"],
     )
 
     assert payload["imGroupOpenDeliverModel"]["atUserIds"] == {

@@ -345,8 +345,8 @@ describe('NotificationSection private binding dialog', () => {
     await user.type(input, 'user-1,')
     expect(input).toHaveValue('user-1,')
 
-    await user.type(input, 'user-2')
-    expect(input).toHaveValue('user-1,user-2')
+    await user.type(input, 'user-2, user-1')
+    expect(input).toHaveValue('user-1,user-2, user-1')
 
     await user.tab()
     const configs = JSON.parse(screen.getByTestId('binding-configs').textContent || '[]')
