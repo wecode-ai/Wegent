@@ -354,13 +354,14 @@ function checkpointScenarioEnv(env, checkpoint) {
     nextEnv.TZ = 'Asia/Shanghai'
   }
   if (
+    checkpoint === 'application-menu' ||
     checkpoint === 'native-window-chrome' ||
     checkpoint === 'browser-multi-tabs' ||
     checkpoint === 'core-task-flow' ||
     checkpoint === 'project-assignment-notification'
   ) {
-    // Core task flow verifies the native drag-to-popout window. macOS background
-    // mode prohibits activation and hides the app when that window is presented.
+    // These checks present native auxiliary windows and must observe them as
+    // visible. macOS background mode prohibits activation and hides the app.
     // Assignment notification also verifies tag commits through native focus loss.
     nextEnv.WEWORK_E2E_BACKGROUND_WINDOW = '0'
   }

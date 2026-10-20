@@ -18,6 +18,43 @@
   "navigation": {
     "home": "Home"
   },
+  "process_explorer": {
+    "title": "Process Explorer",
+    "refresh": "Refresh",
+    "filter_placeholder": "Filter by name, PID, or launch details",
+    "column_process": "Process",
+    "column_pid": "Process ID",
+    "column_cpu": "CPU %",
+    "column_memory": "Memory",
+    "column_uptime": "Uptime",
+    "empty": "No processes to show.",
+    "select_process_hint": "Select a process to see its launch details.",
+    "degraded": "Some process information is unavailable: {{reasons}}",
+    "owner": {
+      "application": "Application",
+      "windows": "Windows",
+      "core-runtime": "Core runtime",
+      "executor": "Executor",
+      "plugin-development": "Plugin development",
+      "helpers": "Chromium helpers",
+      "other": "Other processes"
+    },
+    "degraded_reason": {
+      "system_process_table_unavailable": "The system process table is not available on this platform",
+      "system_process_table_failed": "The system process table could not be read",
+      "renderer_labels_failed": "Renderer labels could not be read",
+      "host_process_provider_failed": "Host runtime processes could not be read"
+    },
+    "load_failed": "Could not read process information",
+    "always_on_top": "Keep on top",
+    "always_on_top_active": "Stop keeping on top",
+    "resize_column_hint": "Drag to resize; double-click to reset",
+    "copy_launch_details": "Copy launch details",
+    "copied": "Copied",
+    "summary_memory": "Memory {{memory}}",
+    "summary_processes": "{{processCount}} processes",
+    "summary_hint": "CPU is the sum of the listed WeWork process CPU usage, not system-wide usage."
+  },
   "project_ai": {
     "file_unavailable": "This project executor cannot read the selected file. Use a local project or upload it in the task details.",
     "model_unavailable": "Could not load models. Please try again later."

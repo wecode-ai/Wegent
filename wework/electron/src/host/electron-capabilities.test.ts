@@ -367,6 +367,12 @@ function createIsolatedClipboardRouter(
   return { router, targetWindow, notificationNavigation }
 }
 
+describe('Process explorer capabilities', () => {
+  test('stays read-only', () => {
+    expect(HOST_CAPABILITIES).not.toContain('diagnostics.endProcess')
+  })
+})
+
 describe('Core DSH runtime capabilities', () => {
   test('publishes persisted preferences to every subscribed window', async () => {
     const updated = { fixedWorkspaceTabs: [{ id: 'task-1', kind: 'task' }] }

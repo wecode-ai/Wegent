@@ -18,6 +18,43 @@
   "navigation": {
     "home": "首页"
   },
+  "process_explorer": {
+    "title": "进程查看器",
+    "refresh": "刷新",
+    "filter_placeholder": "按名称、PID 或启动详情筛选",
+    "column_process": "进程",
+    "column_pid": "进程 ID",
+    "column_cpu": "CPU %",
+    "column_memory": "内存",
+    "column_uptime": "运行时长",
+    "empty": "暂无进程。",
+    "select_process_hint": "选择一个进程查看启动详情。",
+    "degraded": "部分进程信息不可用：{{reasons}}",
+    "owner": {
+      "application": "应用",
+      "windows": "窗口",
+      "core-runtime": "核心运行时",
+      "executor": "执行器",
+      "plugin-development": "插件开发",
+      "helpers": "Chromium 辅助进程",
+      "other": "其他进程"
+    },
+    "degraded_reason": {
+      "system_process_table_unavailable": "当前平台不支持读取系统进程表",
+      "system_process_table_failed": "系统进程表读取失败",
+      "renderer_labels_failed": "渲染进程标签读取失败",
+      "host_process_provider_failed": "宿主运行时进程读取失败"
+    },
+    "load_failed": "无法读取进程信息",
+    "always_on_top": "置顶",
+    "always_on_top_active": "取消置顶",
+    "resize_column_hint": "拖动调整列宽，双击恢复默认",
+    "copy_launch_details": "复制启动详情",
+    "copied": "已复制",
+    "summary_memory": "内存 {{memory}}",
+    "summary_processes": "{{processCount}} 个进程",
+    "summary_hint": "CPU 为当前列出的 WeWork 进程占用之和，不是系统整体占用。"
+  },
   "project_ai": {
     "file_unavailable": "这个项目执行器无法读取所选文件，请使用本地项目或在任务详情中上传文件。",
     "model_unavailable": "模型列表加载失败，请稍后重试。"
