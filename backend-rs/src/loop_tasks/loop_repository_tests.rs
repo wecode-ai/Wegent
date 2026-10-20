@@ -54,6 +54,39 @@ fn cloud_context_projection_carries_start_at() {
 }
 
 #[test]
+fn cloud_context_binds_owner_aliases_and_task_without_interpolating_values() {
+    let aliases = ["electron-app".to_owned(), "app-record-7".to_owned()];
+    let (sql, args) = cloud_context_binding_statement(19, &aliases, "task-'quoted");
+    assert!(sql.contains("loop_items.task_user_id = ?"));
+    assert!(sql.contains("loop_items.device_id IN (?, ?)"));
+    assert!(sql.contains("loop_items.task_id = ?"));
+    assert!(sql.contains("loop_items.deleted_at IS NULL"));
+    assert!(sql.contains("loop_items.unlinked_at IS NULL"));
+    assert!(sql.contains("loop_items.resource_type IN ('execution')"));
+    assert!(sql.contains("ORDER BY loop_items.linked_at DESC, loop_items.id DESC"));
+    assert!(!sql.contains("task-'quoted"));
+    assert!(matches!(args.as_slice(), [
+        StatementArg::Int(19), StatementArg::Str(first),
+        StatementArg::Str(second), StatementArg::Str(task),
+    ] if first == "electron-app" && second == "app-record-7" && task == "task-'quoted"));
+}
+
+#[tokio::test]
+async fn missing_cloud_context_uses_scoped_alias_lookup_and_returns_none() {
+    let mysql = crate::sql_test_support::KindQueryCapture::default();
+    let binding = LoopItemRepository::new(&mysql)
+        .find_cloud_context_binding(19, "electron-app", "task-1")
+        .await
+        .unwrap();
+    assert!(binding.is_none());
+    let queries = mysql.queries();
+    assert_eq!(queries.len(), 2);
+    assert_eq!(queries[0].first_integer, Some(19));
+    assert_eq!(queries[1].args, 3);
+    assert!(queries[1].sql.contains("loop_items.device_id IN (?)"));
+}
+
+#[test]
 fn role_hierarchy() {
     assert!(has_permission("Owner", "RestrictedAnalyst"));
     assert!(has_permission("Maintainer", "Reporter"));

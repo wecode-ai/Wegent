@@ -183,6 +183,7 @@ export interface CreateProjectRuntimeTaskOptions {
 }
 
 export interface RuntimePaneActionOptions {
+  isCurrent?: () => boolean
   onError?: (error: string) => void
   onQueued?: (response: RuntimeSendResponse) => void
   silentBusyRetry?: boolean

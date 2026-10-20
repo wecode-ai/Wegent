@@ -1227,12 +1227,14 @@ fn is_final_assistant_message(item: &Value) -> bool {
 #[path = "transcript/message_projection.rs"]
 mod message_projection;
 
-pub(crate) use message_projection::{normalized_user_request_content, visible_user_request_content};
 use message_projection::{
     assistant_message_phase_name, collect_assistant_message, file_changes_block, guidance_block,
     is_internal_turn_abort_message, item_completed_at, item_timestamp, normalized_phase_or_status,
     plan_block, push_accumulated_assistant, push_reasoning_block, push_user_message_once,
     AssistantEmitContext, AssistantTurnAccumulation,
+};
+pub(crate) use message_projection::{
+    normalized_user_request_content, visible_user_request_content,
 };
 
 #[path = "transcript/tool_projection.rs"]

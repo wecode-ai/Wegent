@@ -19,7 +19,7 @@ const source: ReplyPredictionSource = {
   revision: 'completed-turn',
   latestTurnId: 'turn-1',
   busy: false,
-  address: { deviceId: 'device-1', taskId: 'task-1' },
+  address: { deviceId: 'device-1', taskId: 'task-1', workspacePath: '/workspace' },
 }
 type Predict = (data: { signal?: AbortSignal }) => Promise<{ suggestion: string | null }>
 const apis = new WeakMap<Predict, { predict: Predict }>()
@@ -108,6 +108,39 @@ function fixture(
 }
 
 describe('reply prediction provider', () => {
+  it.each([
+    { workspaceKind: 'chat' },
+    { projectSession: { projectId: 'project-1', issueId: 'issue-1' } },
+  ])('predicts non-workspace sessions and preserves their address: %j', async session => {
+    const predict = vi.fn(async () => ({ suggestion: '请继续' }))
+    const address = { ...source.address, workspacePath: undefined, ...session }
+    const { rerender } = render(fixture(predict, { ...source, address }))
+
+    await waitFor(() => expect(screen.getByRole('button')).toHaveTextContent('请继续'))
+    expect(predict).toHaveBeenCalledWith(expect.objectContaining({ address }))
+
+    rerender(fixture(predict, { ...source, address: { ...address, workspacePath: '/session' } }))
+    expect(predict).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button')).toHaveTextContent('请继续')
+  })
+
+  it('waits for the task workspace to be restored before generating or reading its cache', async () => {
+    const predict = vi.fn(async () => ({ suggestion: '请继续' }))
+    const { rerender } = render(
+      fixture(predict, {
+        ...source,
+        address: { ...source.address, workspacePath: undefined },
+      })
+    )
+    expect(predict).not.toHaveBeenCalled()
+    expect(screen.queryByRole('status')).toBeNull()
+
+    rerender(fixture(predict))
+    await waitFor(() => expect(screen.getByRole('button')).toHaveTextContent('请继续'))
+    expect(predict).toHaveBeenCalledTimes(1)
+    expect(predict).toHaveBeenCalledWith(expect.objectContaining({ address: source.address }))
+  })
+
   it.each(['suggestion', 'failure'])(
     'refreshes a cached %s when the session model changes',
     async state => {

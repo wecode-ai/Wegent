@@ -2,13 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Shared plugin device identity and runtime-route resolution.
+//! Shared owned-device identity and runtime-route resolution.
 //!
 //! Source: `app/services/device/identity.py`,
 //! `app/services/device/runtime_route.py`, and
 //! `app/services/plugin_device_identity.py`. Resolves a submitted device id to
 //! its canonical identity and coalesces `plugin_device_installations` rows.
-//! Used by both the marketplace listing and installed-plugin APIs.
+//! Used by plugin APIs and project session bindings.
 
 use brz_mysql::{FromMysqlRow, Mysql, MysqlResult, MysqlTransaction};
 use chrono::NaiveDateTime;
@@ -153,22 +153,32 @@ fn device_identity_ids(device: &DeviceKindRow) -> Vec<String> {
     candidates
 }
 
-/// Source `app/services/device/identity.py::_unambiguous_device`.
-fn unambiguous_device(matches: Vec<DeviceKindRow>) -> Option<DeviceKindRow> {
-    if matches.is_empty() {
+/// Resolve aliases inside the already owner-scoped set of active devices.
+fn resolve_device_alias<'a>(
+    devices: &'a [DeviceKindRow],
+    device_id: &str,
+) -> Option<&'a DeviceKindRow> {
+    let submitted = device_id.trim();
+    if submitted.is_empty() {
         return None;
     }
-    if matches.len() == 1 {
-        return Some(matches.into_iter().next().expect("one"));
+    if let Some(record_id) = record_id_from_route(submitted) {
+        return devices.iter().find(|device| {
+            device.id == record_id && DeviceType::from_spec(&device.spec()) == DeviceType::App
+        });
     }
-    let app_matches: Vec<DeviceKindRow> = matches
-        .into_iter()
-        .filter(|d| DeviceType::from_spec(&d.spec()) == DeviceType::App)
+    let matches: Vec<_> = devices
+        .iter()
+        .filter(|device| device_identity_ids(device).iter().any(|id| id == submitted))
         .collect();
-    if app_matches.len() == 1 {
-        return Some(app_matches.into_iter().next().expect("one"));
+    if matches.len() == 1 {
+        return Some(matches[0]);
     }
-    None
+    let app_matches: Vec<_> = matches
+        .into_iter()
+        .filter(|device| DeviceType::from_spec(&device.spec()) == DeviceType::App)
+        .collect();
+    (app_matches.len() == 1).then(|| app_matches[0])
 }
 
 /// Source `app/services/device/identity.py::resolve_owned_device_alias`.
@@ -198,11 +208,36 @@ where
         );
     }
     let all: Vec<DeviceKindRow> = mysql.fetch_all(KINDS_DEVICE_QUERY, (user_id,)).await?;
-    let matches: Vec<DeviceKindRow> = all
-        .into_iter()
-        .filter(|d| device_identity_ids(d).iter().any(|id| id == submitted))
-        .collect();
-    Ok(unambiguous_device(matches))
+    Ok(resolve_device_alias(&all, submitted).cloned())
+}
+
+/// Return aliases that unambiguously identify the same user-owned device.
+/// Unknown or ambiguous input retains its existing exact-address semantics.
+pub(crate) async fn owned_device_identity_ids<M>(
+    mysql: &M,
+    user_id: i64,
+    device_id: &str,
+) -> MysqlResult<Vec<String>>
+where
+    M: Mysql,
+{
+    let devices: Vec<DeviceKindRow> = mysql.fetch_all(KINDS_DEVICE_QUERY, (user_id,)).await?;
+    Ok(unambiguous_device_identity_ids(&devices, device_id))
+}
+
+fn unambiguous_device_identity_ids(devices: &[DeviceKindRow], device_id: &str) -> Vec<String> {
+    let mut aliases = vec![device_id.to_owned()];
+    let Some(device) = resolve_device_alias(devices, device_id) else {
+        return aliases;
+    };
+    for alias in device_identity_ids(device) {
+        if resolve_device_alias(devices, &alias).map(|resolved| resolved.id) == Some(device.id)
+            && !aliases.contains(&alias)
+        {
+            aliases.push(alias);
+        }
+    }
+    aliases
 }
 
 /// Source `app/services/device/runtime_route.py::RuntimeRouteIdentity`,
@@ -556,6 +591,115 @@ mod tests {
             }),
         };
         assert_eq!(canonical_device_id(&row), "8afb8635");
+    }
+
+    fn app_device(id: i64, app_id: &str) -> DeviceKindRow {
+        DeviceKindRow {
+            id,
+            name: "logical-device".to_owned(),
+            json: serde_json::json!({
+                "spec": {
+                    "deviceType": "app",
+                    "deviceId": "runtime-device",
+                    "appDeviceId": app_id,
+                }
+            }),
+        }
+    }
+
+    #[test]
+    fn session_aliases_resolve_both_app_and_record_addresses() {
+        let devices = [app_device(7, "electron-app")];
+        for submitted in ["electron-app", "app-record-7", "logical-device"] {
+            let aliases = unambiguous_device_identity_ids(&devices, submitted);
+            assert_eq!(aliases.first().map(String::as_str), Some(submitted));
+            for expected in [
+                "electron-app",
+                "app-record-7",
+                "logical-device",
+                "runtime-device",
+            ] {
+                assert!(aliases.iter().any(|alias| alias == expected));
+            }
+            assert_eq!(aliases.len(), 4);
+        }
+    }
+
+    #[test]
+    fn session_aliases_exclude_shared_names_of_distinct_app_installations() {
+        let devices = [
+            app_device(7, "electron-first"),
+            app_device(8, "electron-second"),
+        ];
+        assert_eq!(
+            unambiguous_device_identity_ids(&devices, "app-record-7"),
+            ["app-record-7", "electron-first"]
+        );
+        assert_eq!(
+            unambiguous_device_identity_ids(&devices, "electron-second"),
+            ["electron-second", "app-record-8"]
+        );
+        for ambiguous in ["logical-device", "runtime-device"] {
+            assert_eq!(
+                unambiguous_device_identity_ids(&devices, ambiguous),
+                [ambiguous]
+            );
+        }
+    }
+
+    #[test]
+    fn session_aliases_preserve_the_existing_unique_app_preference() {
+        let devices = [
+            app_device(7, "electron-app"),
+            DeviceKindRow {
+                id: 8,
+                name: "logical-device".to_owned(),
+                json: serde_json::json!({"spec": {"deviceType": "local"}}),
+            },
+        ];
+        assert_eq!(
+            resolve_device_alias(&devices, "logical-device").unwrap().id,
+            7
+        );
+        assert!(
+            unambiguous_device_identity_ids(&devices, "app-record-7")
+                .iter()
+                .any(|alias| alias == "logical-device")
+        );
+    }
+
+    #[test]
+    fn session_aliases_keep_unknown_and_foreign_record_addresses_exact() {
+        let devices = [app_device(7, "electron-app")];
+        for submitted in ["app-record-8", " unknown-device ", ""] {
+            assert_eq!(
+                unambiguous_device_identity_ids(&devices, submitted),
+                [submitted]
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn session_aliases_load_only_the_owners_active_default_devices() {
+        let mysql = crate::sql_test_support::KindQueryCapture::default();
+        assert_eq!(
+            owned_device_identity_ids(&mysql, 19, "electron-app")
+                .await
+                .unwrap(),
+            ["electron-app"]
+        );
+        let queries = mysql.queries();
+        assert_eq!(queries.len(), 1);
+        assert_eq!(queries[0].first_integer, Some(19));
+        assert_eq!(queries[0].args, 1);
+        for filter in [
+            "kinds.user_id = ?",
+            "kinds.kind = 'Device'",
+            "kinds.namespace = 'default'",
+            "kinds.is_active = true",
+        ] {
+            assert!(queries[0].sql.contains(filter));
+        }
     }
 
     #[test]

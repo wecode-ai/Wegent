@@ -28,9 +28,7 @@ from app.schemas.knowledge import (
     DocumentMoveRequest,
     KnowledgeBaseListResponse,
     KnowledgeDocumentCreateV1,
-    KnowledgeDocumentListResponse,
     KnowledgeDocumentResponse,
-    KnowledgeDocumentSortField,
     KnowledgeDocumentUpdate,
     KnowledgeFolderCreate,
     KnowledgeFolderCreateOpen,
@@ -38,7 +36,6 @@ from app.schemas.knowledge import (
     KnowledgeFolderUpdate,
     KnowledgeFolderUpdateOpen,
     KnowledgeSearchRequest,
-    SortOrder,
 )
 from app.schemas.rag import RetrieveResponse
 from app.services.knowledge import KnowledgeFolderService, KnowledgeService
@@ -138,80 +135,6 @@ def list_knowledge_bases_open(
 # ---------------------------------------------------------------------------
 # GET /knowledge/documents  — list documents in a knowledge base
 # ---------------------------------------------------------------------------
-
-
-# MIGRATION-CANDIDATE(api="GET /api/knowledge/documents"): remove after final confirmation.
-# @router.get(
-#     "/documents",
-#     response_model=KnowledgeDocumentListResponse,
-# )
-@trace_sync("list_documents_open", "knowledge.api")
-def list_documents_open(
-    knowledge_base_id: int = Query(
-        ...,
-        description="Knowledge base ID to list documents from",
-    ),
-    folder_id: int | None = Query(
-        default=None,
-        ge=0,
-        description="Filter documents by folder (None = all, 0 = root)",
-    ),
-    include_subfolders: bool = Query(
-        default=False,
-        description="Whether folder_id includes descendant folders",
-    ),
-    keyword: str | None = Query(
-        default=None,
-        description="Search keyword for document names",
-    ),
-    sort_by: KnowledgeDocumentSortField = Query(
-        default=KnowledgeDocumentSortField.CREATED_AT,
-        description="Document sort field",
-    ),
-    sort_order: SortOrder = Query(
-        default=SortOrder.DESC,
-        description="Document sort order",
-    ),
-    limit: int = Query(
-        default=DEFAULT_KNOWLEDGE_LIST_LIMIT,
-        ge=1,
-        le=MAX_KNOWLEDGE_LIST_LIMIT,
-        description="Maximum number of documents to return",
-    ),
-    offset: int = Query(
-        default=0,
-        ge=0,
-        description="Start offset for paginated document listing",
-    ),
-    auth_context: AuthContext = Depends(get_auth_context),
-    db: Session = Depends(get_db),
-) -> KnowledgeDocumentListResponse:
-    """
-    List documents in a knowledge base.
-
-    Returns all documents belonging to the specified knowledge base,
-    provided the authenticated user has access to it.
-
-    Authentication:
-        - Personal API key: Returns documents accessible to the key owner
-        - Service API key: Requires wegent-username header to specify the target user
-    """
-    current_user = auth_context.user
-    try:
-        return knowledge_orchestrator.list_documents(
-            db=db,
-            user=current_user,
-            knowledge_base_id=knowledge_base_id,
-            folder_id=folder_id,
-            limit=limit,
-            offset=offset,
-            include_subfolders=include_subfolders,
-            keyword=keyword,
-            sort_by=sort_by.value,
-            sort_order=sort_order.value,
-        )
-    except ValueError as exc:
-        _raise_open_knowledge_http_error(exc)
 
 
 # ---------------------------------------------------------------------------
