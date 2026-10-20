@@ -58,11 +58,20 @@ export function createDesktopScenario({ executorHome, workbenchReadyTimeoutMs })
     return `/api/v1/loop-items/${item.id}/attachments`
   }
 
-  async function openIssue(control) {
+  async function openIssue(control, item = issue) {
     await control.command('openWeworkScheme', 'body', {
-      value: `wework://boards/${project.id}/issues/${issue.id}`,
+      value: `wework://boards/${project.id}/issues/${item.id}`,
     })
-    await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail-title"]`)
+    await control.command('waitFor', `${CONTENT} [data-testid="cloud-task-activity-${item.id}"]`)
+    assert.equal(
+      await control.command('getValue', `${CONTENT} [data-testid="cloud-todo-detail-title"]`),
+      item.title
+    )
+    await control.command(
+      'waitFor',
+      `${CONTENT} [data-testid="cloud-task-activity-${item.id}"] [data-testid="cloud-task-activity-list"] [role="status"]`,
+      { visible: false, stableMs: 200 }
+    )
     await control.command('waitFor', COMPOSER, { visible: true })
   }
 
@@ -223,15 +232,48 @@ export function createDesktopScenario({ executorHome, workbenchReadyTimeoutMs })
         await writeFile(staged[0], bytes)
       }
       await control.command('clickWhenEnabled', SEND)
-      await persistedComment(control, RECOVERY_TEXT, [RECOVERY_IMAGE])
+      const recovered = await persistedComment(control, RECOVERY_TEXT, [RECOVERY_IMAGE])
       await assertComposerCleared(control)
 
       await reloadMainWindow(control, 'The desktop did not reconnect after image comment reload')
       await openIssue(control)
       await persistedComment(control, ROOT_TEXT, [IMAGE_NAMES[0]])
       await persistedComment(control, REPLY_TEXT, IMAGE_NAMES.slice(1))
+      await control.command(
+        'waitFor',
+        `${CONTENT} [data-testid="cloud-task-activity-replies-${root.id}"] [data-testid="cloud-task-activity-message-${reply.id}"]`,
+        { text: REPLY_TEXT }
+      )
       await persistedComment(control, RECOVERY_TEXT, [RECOVERY_IMAGE])
       assert.equal((await json(commentsPath())).length, 3)
+
+      await openIssue(control, otherIssue)
+      const activity = `${CONTENT} [data-testid="cloud-task-activity-${otherIssue.id}"]`
+      const activityText = await control.command('getText', activity)
+      for (const text of [ROOT_TEXT, REPLY_TEXT, RECOVERY_TEXT, ...IMAGE_NAMES, RECOVERY_IMAGE]) {
+        assert.equal(activityText.includes(text), false, `Other Issue leaked ${text}`)
+      }
+      for (const comment of [root, reply, recovered]) {
+        assert.equal(
+          Number(
+            await control.command(
+              'getElementCount',
+              `${activity} [data-testid="cloud-task-activity-message-${comment.id}"]`
+            )
+          ),
+          0
+        )
+      }
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            `${activity} [data-testid^="issue-comment-attachment-"]`
+          )
+        ),
+        0
+      )
+      await assertComposerCleared(control)
       assert.deepEqual(await json(commentsPath(otherIssue)), [])
       assert.deepEqual(await json(attachmentsPath(otherIssue)), [])
       assert.notEqual(root.id, reply.id)
