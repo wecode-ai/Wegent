@@ -4,6 +4,7 @@ import { basename, delimiter, dirname, isAbsolute, join, resolve, sep } from 'no
 import semver from 'semver'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
 import * as tar from 'tar'
+import { materializeBundledRuntimes } from './bundled-runtime-materializer.js'
 import {
   selectBundledDshRuntimeMatching,
   type BundledDshRuntime,
@@ -91,9 +92,8 @@ export interface ResolveWorkbenchProjectPnpmOptions {
 export async function resolveWorkbenchProjectPnpmCommand(
   options: ResolveWorkbenchProjectPnpmOptions
 ): Promise<WorkbenchProjectPnpmCommand> {
-  const runtime = await selectBundledDshRuntimeMatching(
-    options.runtimeRoot,
-    'workbench',
+  const runtime = await resolveWorkbenchRuntime(
+    options,
     options.versionRequirement ?? WORKBENCH_DSH_VERSION
   )
   const nodeCommand = options.environment.WEWORK_NODE_PATH?.trim() || 'node'
@@ -110,11 +110,7 @@ export async function resolveWorkbenchProjectPnpmCommand(
 export async function prepareWorkbenchDshLaunch(
   options: PrepareWorkbenchDshOptions
 ): Promise<WorkbenchDshLaunch> {
-  const runtime = await selectBundledDshRuntimeMatching(
-    options.runtimeRoot,
-    'workbench',
-    options.manifest.requirements.dsh
-  )
+  const runtime = await resolveWorkbenchRuntime(options, options.manifest.requirements.dsh)
   validateRequirements(options.manifest, runtime)
   const nodeCommand = options.environment.WEWORK_NODE_PATH?.trim() || 'node'
   const dshHome = resolve(
@@ -224,6 +220,19 @@ export async function prepareWorkbenchDshLaunch(
     version: runtime.version,
     sourceFingerprint: runtime.sourceFingerprint,
   }
+}
+
+async function resolveWorkbenchRuntime(
+  options: ResolveWorkbenchProjectPnpmOptions,
+  versionRequirement: string
+): Promise<BundledDshRuntime> {
+  const resources = options.environment.WEWORK_HARNESS_RESOURCE_ROOT?.trim()
+  if (resources) {
+    await materializeBundledRuntimes(resources, options.runtimeRoot, ['workbench'], {
+      versionRequirement,
+    })
+  }
+  return selectBundledDshRuntimeMatching(options.runtimeRoot, 'workbench', versionRequirement)
 }
 
 function validateRequirements(manifest: WorkbenchAppManifest, runtime: BundledDshRuntime): void {

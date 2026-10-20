@@ -315,11 +315,31 @@ describe('shared IssueDetail', () => {
     expect(nextApi.attachments.list).toHaveBeenCalledTimes(1)
   })
 
-  it.each([409, 500])('uses the latest callbacks after a %s save failure', async status => {
+  it.each([
+    {
+      name: 'version conflict',
+      error: Object.assign(new Error('Save failed'), {
+        status: 409,
+        detail: { code: 'version_conflict', message: 'TODO changed' },
+      }),
+      conflict: true,
+    },
+    {
+      name: 'business rejection',
+      error: Object.assign(new Error('Save failed'), {
+        status: 409,
+        detail: 'This action is unavailable',
+      }),
+      conflict: false,
+    },
+    {
+      name: 'server failure',
+      error: Object.assign(new Error('Save failed'), { status: 500 }),
+      conflict: false,
+    },
+  ])('uses the latest callbacks after a $name', async ({ error, conflict }) => {
     const api = createApi()
-    jest
-      .mocked(api.issues.update)
-      .mockRejectedValue(Object.assign(new Error('Save failed'), { status }))
+    jest.mocked(api.issues.update).mockRejectedValue(error)
     const original = { onError: jest.fn(), onConflict: jest.fn() }
     const latest = { onError: jest.fn(), onConflict: jest.fn() }
     const view = renderDetail(api, original)
@@ -331,8 +351,9 @@ describe('shared IssueDetail', () => {
     })
     fireEvent.click(screen.getByTestId('cloud-todo-save'))
     await waitFor(() =>
-      expect(status === 409 ? latest.onConflict : latest.onError).toHaveBeenCalledTimes(1)
+      expect(conflict ? latest.onConflict : latest.onError).toHaveBeenCalledTimes(1)
     )
+    expect(conflict ? latest.onError : latest.onConflict).not.toHaveBeenCalled()
     expect(original.onError).not.toHaveBeenCalled()
     expect(original.onConflict).not.toHaveBeenCalled()
     expect(api.attachments.list).toHaveBeenCalledTimes(1)
