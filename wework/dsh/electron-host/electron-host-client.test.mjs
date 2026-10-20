@@ -226,3 +226,173 @@ test('reports an unexpected Electron host pipe close exactly once', async () => 
   assert.equal(disconnects.length, 1)
   assert.equal(disconnects[0].code, 'host_disconnected')
 })
+
+const DIALOG_CASES = [
+  {
+    capability: 'dialog.open',
+    completed: { canceled: false, filePaths: ['/project'] },
+    canceled: { canceled: true, filePaths: [] },
+  },
+  {
+    capability: 'dialog.save',
+    completed: { canceled: false, filePath: '/report.txt' },
+    canceled: { canceled: true, filePath: '' },
+  },
+  {
+    capability: 'dialog.message',
+    completed: { response: 0, checkboxChecked: false },
+    canceled: { response: 1, checkboxChecked: false },
+  },
+]
+
+for (const { capability, completed, canceled } of DIALOG_CASES) {
+  for (const [outcome, result] of Object.entries({ completed, canceled })) {
+    test(`${capability} returns a ${outcome} result after a long user interaction`, async t => {
+      t.mock.timers.enable({ apis: ['setTimeout'] })
+      const { client, requests, respond } = await startHost(t, [capability])
+      const invocation = client.invoke(capability)
+      const settled = t.mock.fn()
+      void invocation.then(settled, settled)
+      await new Promise(resolve => setImmediate(resolve))
+
+      // Advance well beyond the production 120-second request timeout.
+      t.mock.timers.tick(600_000)
+      await new Promise(resolve => setImmediate(resolve))
+
+      assert.equal(settled.mock.callCount(), 0)
+      assert.equal(requests.length, 1)
+      assert.equal(client.pending.size, 1)
+      respond(requests[0], { ok: true, result })
+
+      assert.deepEqual(await invocation, result)
+      assert.equal(client.pending.size, 0)
+    })
+  }
+}
+
+test('ordinary requests still time out while a native dialog waits for the user', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const { client, requests, respond } = await startHost(t, ['dialog.open', 'window.getState'])
+  const dialog = client.invoke('dialog.open')
+  const ordinaryRequest = assert.rejects(
+    client.invoke('window.getState'),
+    error =>
+      error instanceof ElectronHostError &&
+      error.code === 'host_timeout' &&
+      error.message === 'Electron host request timed out: window.getState'
+  )
+  await new Promise(resolve => setImmediate(resolve))
+
+  t.mock.timers.tick(120_000)
+  await ordinaryRequest
+
+  assert.equal(client.pending.size, 1)
+  const result = { canceled: false, filePaths: ['/project'] }
+  respond(
+    requests.find(request => request.capability === 'dialog.open'),
+    { ok: true, result }
+  )
+  assert.deepEqual(await dialog, result)
+  assert.equal(client.pending.size, 0)
+})
+
+for (const reason of ['host_disconnected', 'client_closed']) {
+  test(`pending native dialogs are rejected and cleaned up on ${reason}`, async t => {
+    const { client, hostToDsh } = await startHost(
+      t,
+      DIALOG_CASES.map(({ capability }) => capability)
+    )
+    const rejections = DIALOG_CASES.map(({ capability }) =>
+      assert.rejects(
+        client.invoke(capability),
+        error => error instanceof ElectronHostError && error.code === reason
+      )
+    )
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(client.pending.size, DIALOG_CASES.length)
+
+    if (reason === 'host_disconnected') hostToDsh.end()
+    else client.stop()
+
+    await Promise.all(rejections)
+    assert.equal(client.pending.size, 0)
+  })
+}
+
+test('native dialog failures are preserved and cleaned up', async t => {
+  const { client, requests, respond } = await startHost(t, ['dialog.open'])
+  const rejection = assert.rejects(
+    client.invoke('dialog.open'),
+    error =>
+      error instanceof ElectronHostError &&
+      error.code === 'capability_failed' &&
+      error.message === 'Native dialog failed' &&
+      error.details.capability === 'dialog.open'
+  )
+  await new Promise(resolve => setImmediate(resolve))
+
+  respond(requests[0], {
+    ok: false,
+    error: {
+      code: 'capability_failed',
+      message: 'Native dialog failed',
+      details: { capability: 'dialog.open' },
+    },
+  })
+
+  await rejection
+  assert.equal(client.pending.size, 0)
+})
+
+test('native dialog requests are cleaned up when the host pipe cannot be written', async t => {
+  const { client, dshToHost } = await startHost(t, ['dialog.open'])
+  dshToHost.destroy()
+
+  await assert.rejects(
+    client.invoke('dialog.open'),
+    error => error instanceof ElectronHostError && error.code === 'host_disconnected'
+  )
+
+  assert.equal(client.pending.size, 0)
+})
+
+async function startHost(t, capabilities) {
+  const hostToDsh = new PassThrough()
+  const dshToHost = new PassThrough()
+  const client = new ElectronHostClient({
+    token: 'test-token',
+    input: hostToDsh,
+    output: dshToHost,
+  })
+  t.after(() => {
+    client.stop()
+    hostToDsh.destroy()
+    dshToHost.destroy()
+  })
+  const requests = []
+  dshToHost.on('data', chunk => {
+    const message = JSON.parse(chunk.toString('utf8'))
+    if (message.type === 'hello') {
+      hostToDsh.write(
+        `${JSON.stringify({
+          type: 'hello',
+          ok: true,
+          protocolVersion: ELECTRON_HOST_PROTOCOL_VERSION,
+          capabilities,
+        })}\n`
+      )
+    } else {
+      requests.push(message)
+    }
+  })
+  await client.start()
+  return {
+    client,
+    hostToDsh,
+    dshToHost,
+    requests,
+    respond(request, response) {
+      hostToDsh.write(`${JSON.stringify({ type: 'response', id: request.id, ...response })}\n`)
+    },
+  }
+}

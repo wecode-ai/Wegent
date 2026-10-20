@@ -7,6 +7,7 @@ export interface DesktopE2ERuntimeConfig {
   disabled?: boolean
   localModelsCatalogReady?: boolean
   modelServerUrl?: string
+  nativeDirectoryPicker?: boolean
   posthogHost?: string
   posthogKey?: string
   seedLocalModels?: boolean

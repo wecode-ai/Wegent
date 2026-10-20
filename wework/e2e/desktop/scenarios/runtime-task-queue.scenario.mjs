@@ -294,9 +294,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await control.command('click', '[data-testid="settings-menu-button"]')
       await control.command('waitFor', '[data-testid="general-max-concurrent-tasks-select"]', {
         timeoutMs: uiTimeoutMs,
+        enabled: true,
       })
       await control.command('select', '[data-testid="general-max-concurrent-tasks-select"]', {
         value: '1',
+      })
+      await control.command(
+        'waitFor',
+        '[data-testid="general-max-concurrent-tasks-select"] option[value="1"]:checked'
+      )
+      await control.command('waitFor', '[data-testid="general-max-concurrent-tasks-select"]', {
+        enabled: true,
       })
       assert.equal(
         await control.command('getValue', '[data-testid="general-max-concurrent-tasks-select"]'),
@@ -638,9 +646,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await control.command('click', '[data-testid="settings-menu-button"]')
       await control.command('waitFor', '[data-testid="general-max-concurrent-tasks-select"]', {
         timeoutMs: uiTimeoutMs,
+        enabled: true,
       })
       await control.command('select', '[data-testid="general-max-concurrent-tasks-select"]', {
         value: '2',
+      })
+      await control.command('waitFor', '[data-testid="general-max-concurrent-tasks-select"]', {
+        enabled: true,
       })
       await waitForRequestCount(requests, 6, uiTimeoutMs)
       await control.command('click', '[data-testid="settings-back-button"]')

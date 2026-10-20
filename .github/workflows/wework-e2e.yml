@@ -380,7 +380,7 @@ jobs:
           setup-toolchain: "false"
 
       - name: Install Electron for native startup and schema verification
-        if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')
+        if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup') || contains(matrix.segments, 'native-directory-picker')
         run: |
           pnpm --dir wework/electron install --frozen-lockfile
           pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
@@ -403,6 +403,10 @@ jobs:
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
           test -x "$WEWORK_E2E_BACKEND_RS_BIN"
           test -x "$WEWORK_E2E_CODEX_BIN"
+          if [[ ",$WEWORK_E2E_SEGMENTS," == *",native-directory-picker,"* ]]; then
+            apt-get update
+            apt-get install -y --no-install-recommends at-spi2-core dbus-daemon libglib2.0-bin
+          fi
           if [[ ",$WEWORK_E2E_SEGMENTS," == *",plugin-development,"* ]]; then
             apt-get update
             apt-get install -y --no-install-recommends gdb
@@ -698,7 +702,7 @@ jobs:
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Install Electron for native startup and schema verification
-        if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')
+        if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup') || contains(matrix.segments, 'native-directory-picker')
         run: |
           pnpm --dir wework/electron install --frozen-lockfile
           pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"

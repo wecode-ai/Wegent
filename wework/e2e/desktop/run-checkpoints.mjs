@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { DESKTOP_CHECKPOINTS } from './checkpoints.mjs'
 import { runWithCheckpointResources } from './checkpoint-scheduler.mjs'
 import { resolveDesktopCodexBinary } from './modules/desktop-build-flows.mjs'
+import { resolveCheckpointProcess } from './modules/checkpoint-process-command.mjs'
 import {
   compactInactiveDesktopE2EResults,
   resolveDesktopE2EResultRoot,
@@ -22,6 +23,7 @@ const CHECKPOINT_RESOURCES = new Map([
   // These macOS checkpoints move native windows and require a foreground renderer for cursor arrival.
   ['browser-toolbar-actions', ['macos-inspector-foreground']],
   ['tray-lifecycle', ['macos-inspector-foreground']],
+  ['native-directory-picker', ['macos-inspector-foreground']],
   ['browser-annotation-design', ['macos-inspector-foreground']],
   ['project-assignment-notification', ['macos-inspector-foreground']],
   // Fresh packaged runtime extraction contends when these cloud checkpoints share a runner.
@@ -97,6 +99,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'component-update': './scenarios/component-update.scenario.mjs',
   'native-window-startup': './scenarios/native-window-startup.scenario.mjs',
   'native-window-chrome': './scenarios/native-window-chrome.scenario.mjs',
+  'native-directory-picker': './scenarios/native-directory-picker.scenario.mjs',
   'renderer-storage': './scenarios/renderer-storage.scenario.mjs',
   'application-menu': './scenarios/application-menu.scenario.mjs',
   'tray-lifecycle': './scenarios/tray-lifecycle.scenario.mjs',
@@ -211,6 +214,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'component-update',
   'native-window-startup',
   'native-window-chrome',
+  'native-directory-picker',
   'renderer-storage',
   'application-menu',
   'tray-lifecycle',
@@ -257,8 +261,6 @@ const DEFAULT_DESKTOP_CHECKPOINTS = DESKTOP_CHECKPOINTS.filter(
 )
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..', '..')
-const taskFlowPath = join(scriptDir, 'task-flow.e2e.mjs')
-const isolatedXvfbPath = join(scriptDir, 'run-with-openbox.sh')
 const cliArgs = process.argv.slice(2)
 const requestedArgs = cliArgs[0] === '--' ? cliArgs.slice(1) : cliArgs
 
@@ -276,20 +278,8 @@ function runTaskFlow(args, env, label) {
     let resultDir = null
     let outputTail = ''
     let stderrTail = ''
-    const isolateDisplay = process.platform === 'linux' && env.WEWORK_E2E_ISOLATED_XVFB === 'true'
-    const command = isolateDisplay ? 'xvfb-run' : process.execPath
-    const commandArgs = isolateDisplay
-      ? [
-          '-a',
-          '--server-args=-screen 0 1280x720x24',
-          'sh',
-          isolatedXvfbPath,
-          process.execPath,
-          taskFlowPath,
-          ...args,
-        ]
-      : [taskFlowPath, ...args]
-    const child = spawn(command, commandArgs, {
+    const launch = resolveCheckpointProcess({ args, scriptDir, environment: env })
+    const child = spawn(launch.command, launch.args, {
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
     })

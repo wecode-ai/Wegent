@@ -110,7 +110,7 @@ export function GeneralSettingsPage() {
   const [showImportDialog, setShowImportDialog] = useState(false)
   const [pendingWorkbenchMode, setPendingWorkbenchMode] = useState<WorkbenchMode | null>(null)
   const [recordingPopoutShortcut, setRecordingPopoutShortcut] = useState(false)
-  const [maxConcurrentTasks, setMaxConcurrentTasks] = useState(DEFAULT_MAX_CONCURRENT_TASKS)
+  const [maxConcurrentTasks, setMaxConcurrentTasks] = useState<number | null>(null)
   const [installedSmartApps, setInstalledSmartApps] = useState<HarnessAppInstallation[]>([])
   const [pendingSendKey, setPendingSendKey] = useState<'enter' | 'cmd_enter' | null>(null)
   const [pendingFollowUpBehavior, setPendingFollowUpBehavior] = useState<'queue' | 'guide' | null>(
@@ -856,8 +856,8 @@ export function GeneralSettingsPage() {
             control={
               <select
                 data-testid="general-max-concurrent-tasks-select"
-                value={maxConcurrentTasks}
-                disabled={loading || saving}
+                value={maxConcurrentTasks ?? DEFAULT_MAX_CONCURRENT_TASKS}
+                disabled={loading || saving || maxConcurrentTasks === null}
                 aria-label={t('workbench.general_settings_max_concurrent_tasks')}
                 onChange={event => {
                   void saveMaxConcurrentTasks(Number(event.target.value))

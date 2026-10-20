@@ -7,6 +7,8 @@ const DEFAULT_TIMEOUT_MS = 120_000
 const RUNTIME_PREPARATION_TIMEOUT_MS = 15 * 60_000
 const RUNTIME_PREPARATION_CAPABILITIES = new Set(['smartApps.start', 'smartApps.verify'])
 const DEFAULT_PRINCIPAL = '@wegent/dsh-app-wework'
+// Native dialogs complete when the user responds, regardless of elapsed time.
+const USER_INTERACTION_CAPABILITIES = new Set(['dialog.open', 'dialog.save', 'dialog.message'])
 
 export class ElectronHostError extends Error {
   constructor(code, message, details = {}) {
@@ -132,8 +134,11 @@ export class ElectronHostClient {
     const id = `dsh-${++this.sequence}`
     const response = deferred()
     this.pending.set(id, response)
-    this.write({ type: 'request', id, capability, params })
     try {
+      this.write({ type: 'request', id, capability, params })
+      if (USER_INTERACTION_CAPABILITIES.has(capability)) {
+        return await response.promise
+      }
       return await withTimeout(
         response.promise,
         RUNTIME_PREPARATION_CAPABILITIES.has(capability)

@@ -68,6 +68,7 @@ core_segments=(
   component-update
   native-window-startup
   native-window-chrome
+  native-directory-picker
   renderer-storage
   application-menu
   tray-lifecycle
@@ -184,7 +185,7 @@ core_shards=(
   project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention,collaboration-issue-comment-attachments
   rendering-extensions,transcript-sync,background-terminals
   runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
-  local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification,collaboration-issue-mcp-comments,latest-conversation-history
+  local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,native-directory-picker,collaboration-issue-comment-notification,collaboration-issue-mcp-comments,latest-conversation-history
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,model-overload-recovery
   model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy
   collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details
@@ -343,6 +344,15 @@ select_all_desktop_suites() {
 
 classify_wework_path() {
   local path="$1"
+
+  case "$path" in
+    wework/electron/scripts/native-dialog-driver.mjs | \
+      wework/electron/scripts/native-dialog-driver.test.mjs | \
+      wework/e2e/desktop/scenarios/native-directory-picker.scenario.mjs)
+      select_target "core:native-directory-picker"
+      return
+      ;;
+  esac
 
   case "$path" in
     wework/src/features/workbench/runtimeConversationCache* | \
