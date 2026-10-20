@@ -2213,7 +2213,7 @@ describe('PluginsWorkspace', () => {
     expect(reveal).toHaveTextContent('查看 Plugin 5, Plugin 6，以及另外 14 个')
     expect(reveal.querySelector('img')).toHaveAttribute(
       'src',
-      'file:///Users/test/plugins/plugin-5/assets/logo.png'
+      '/wework/executor/v1/plugin-image?path=%2FUsers%2Ftest%2Fplugins%2Fplugin-5%2Fassets%2Flogo.png'
     )
 
     await userEvent.click(reveal)
