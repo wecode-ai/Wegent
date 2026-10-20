@@ -25,6 +25,7 @@ import {
 import { SettingsPage, SettingsPageHeader } from './settings-ui'
 import type { ArchivedConversationItem } from '@/types/api'
 import { track } from '@/telemetry/client'
+import { deleteReplyPredictions } from '@/features/reply-predictions/replyPredictionService'
 import {
   deleteArchivedLocalHarnessSession,
   listArchivedLocalHarnessSessions,
@@ -517,6 +518,7 @@ export function ArchivedConversationsSettingsPage({
         const harnessItems = deleteItems.filter(item => localHarnessSessionId(item))
         for (const item of harnessItems) {
           await deleteArchivedLocalHarnessSession(localHarnessSessionId(item)!)
+          deleteReplyPredictions(archivedConversationAddress(item))
         }
         const deletedHarnessKeys = new Set(harnessItems.map(itemAddressKey))
         notifyArchivedBulkDeleteDeleted(deletedHarnessKeys)
@@ -526,26 +528,36 @@ export function ArchivedConversationsSettingsPage({
         total += harnessItems.length
         setArchivedBulkDeleteProgress({ completed, total, running: true })
         for (let round = 0; round < ARCHIVED_DELETE_MAX_VERIFY_ROUNDS; round += 1) {
-          const localItems = deleteItems.filter(item => item.source === 'local')
-          const cloudItems = deleteItems.filter(item => item.source === 'cloud')
-          const batches = [
-            ...chunkItems(localItems, ARCHIVED_DELETE_BATCH_SIZE),
-            ...chunkItems(cloudItems, ARCHIVED_DELETE_BATCH_SIZE),
-          ]
+          const deviceItems = new Map<string, ArchivedConversationItem[]>()
+          for (const item of deleteItems) {
+            const key = JSON.stringify([item.source, item.deviceId])
+            const group = deviceItems.get(key) ?? []
+            group.push(item)
+            deviceItems.set(key, group)
+          }
+          const batches = [...deviceItems.values()].flatMap(group =>
+            chunkItems(group, ARCHIVED_DELETE_BATCH_SIZE)
+          )
           for (const batch of batches) {
             const response = await api.deleteArchivedConversationsBulk({
               items: batch.map(archivedConversationAddress),
             })
-            const cleanupText = cleanupErrorsFromResults(response.results)
+            // The cloud API wraps each executor's per-task results in a device result.
+            const results = response.results.flatMap(result =>
+              Array.isArray(result.results)
+                ? (result.results as Record<string, unknown>[])
+                : [result]
+            )
+            const cleanupText = cleanupErrorsFromResults(results)
             if (cleanupText) cleanupErrors.push(cleanupText)
             const deletedTaskIds = new Set(
-              response.results
+              results
                 .filter(result => result.deleted === true)
                 .map(result => String(result.taskId || ''))
             )
-            const batchDeletedKeys = new Set(
-              batch.filter(item => deletedTaskIds.has(item.taskId)).map(itemAddressKey)
-            )
+            const deletedItems = batch.filter(item => deletedTaskIds.has(item.taskId))
+            deletedItems.forEach(item => deleteReplyPredictions(archivedConversationAddress(item)))
+            const batchDeletedKeys = new Set(deletedItems.map(itemAddressKey))
             notifyArchivedBulkDeleteDeleted(batchDeletedKeys)
             completed += batch.length
             setArchivedBulkDeleteProgress({
@@ -614,8 +626,10 @@ export function ArchivedConversationsSettingsPage({
       const harnessSessionId = localHarnessSessionId(item)
       if (harnessSessionId) {
         await deleteArchivedLocalHarnessSession(harnessSessionId)
+        deleteReplyPredictions(archivedConversationAddress(item))
       } else {
         const response = await api.deleteArchivedConversation(archivedConversationAddress(item))
+        if (response.accepted) deleteReplyPredictions(archivedConversationAddress(item))
         const cleanupText = cleanupErrorsFromResults([
           response as unknown as Record<string, unknown>,
         ])
