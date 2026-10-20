@@ -65,29 +65,6 @@ def get_transcript_endpoint(
     )
 
 
-# MIGRATION-CANDIDATE(api="POST /api/wework-transcripts/:transcript_id/lease"): remove after final confirmation.
-# @router.post(
-#     "/{transcript_id}/lease",
-#     response_model=TranscriptLeaseResponse,
-#     response_model_by_alias=True,
-# )
-def acquire_lease_endpoint(
-    transcript_id: str,
-    request: TranscriptLeaseRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    transcript = _translate(
-        lambda: wework_transcript_service.acquire_lease(
-            db,
-            user_id=current_user.id,
-            transcript_id=transcript_id,
-            request=request,
-        )
-    )
-    return _lease_response(transcript)
-
-
 @router.put(
     "/{transcript_id}/lease/{fencing_token}",
     response_model=TranscriptLeaseResponse,
