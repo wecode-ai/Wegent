@@ -161,10 +161,12 @@ describe("collaboration workspace controller", () => {
       eager: true,
     },
     myWorkEnabled = false,
+    deferDispatch = false,
   ) {
     const dispatch = (action: CollaborationWorkspaceControllerAction) => {
       actions.push(action);
-      state = collaborationWorkspaceControllerReducer(state, action);
+      if (!deferDispatch)
+        state = collaborationWorkspaceControllerReducer(state, action);
     };
     return {
       api,
@@ -350,6 +352,68 @@ describe("collaboration workspace controller", () => {
     expect(state.issues).toEqual([reassigned]);
     expect(state.selectedIssue).toEqual(reassigned);
     expect(api.issues.getBoardSnapshot).toHaveBeenCalledTimes(3);
+  });
+
+  it("preserves refreshed home data when React batches snapshot dispatches before refs update", async () => {
+    state = {
+      ...state,
+      projects: [project],
+      project,
+      issues: [issue],
+      selectedIssue: issue,
+      projectItems: { [project.id]: [issue] },
+      projectMembers: { [project.id]: [] },
+      projectAgents: { [project.id]: [] },
+      projectTaskBindings: { [project.id]: [] },
+    };
+    const previous = {
+      items: [issue],
+      members: [],
+      agents: [],
+      taskBindings: [],
+    };
+    const reassigned = { ...issue, version: 3, assignee_user_id: 1 };
+    const pending = deferred<typeof previous>();
+    const api = createApi();
+    vi.mocked(api.issues.getBoardSnapshot)
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValueOnce({ ...previous, items: [reassigned] });
+    const { commands } = createController(api, vi.fn(), undefined, false, true);
+
+    const oldHome = commands.loadProjects();
+    await vi.waitFor(() =>
+      expect(api.issues.getBoardSnapshot).toHaveBeenCalledOnce(),
+    );
+    await commands.loadProject(project.id, false, { invalidate: true });
+    pending.resolve(previous);
+    await oldHome;
+    // React may apply both queued results before the next render updates the refs.
+    state = actions.reduce(collaborationWorkspaceControllerReducer, state);
+
+    expect(state.projectItems[project.id]).toEqual([reassigned]);
+    expect(state.issues).toEqual([reassigned]);
+    expect(state.selectedIssue).toEqual(reassigned);
+  });
+
+  it("does not preserve an old snapshot after a non-invalidated home read fails", async () => {
+    state = {
+      ...state,
+      projectItems: { [project.id]: [issue] },
+      projectMembers: { [project.id]: [] },
+      projectAgents: { [project.id]: [] },
+      projectTaskBindings: { [project.id]: [] },
+    };
+    const { api, commands } = createController();
+    vi.mocked(api.issues.getBoardSnapshot).mockRejectedValueOnce(
+      new Error("unavailable"),
+    );
+
+    await commands.loadProjects();
+
+    expect(state.projectItems).toEqual({});
+    expect(state.projectMembers).toEqual({});
+    expect(state.projectAgents).toEqual({});
+    expect(state.projectTaskBindings).toEqual({});
   });
 
   it("does not request or retain My Work when the capability is disabled", async () => {

@@ -200,6 +200,7 @@ export type CollaborationWorkspaceControllerAction =
   | {
       type: "home-loaded";
       projects: CollaborationProject[];
+      preserveSnapshotProjectIds: string[];
       projectItems: Record<string, CollaborationIssue[]>;
       projectMembers: Record<string, CollaborationMember[]>;
       projectAgents: Record<string, CollaborationAgent[]>;
@@ -322,6 +323,19 @@ function mergeReorderIssues(
   ];
 }
 
+function preserveProjectSnapshotValues<T>(
+  incoming: Record<string, T>,
+  current: Record<string, T>,
+  projectIds: readonly string[],
+): Record<string, T> {
+  const values = { ...incoming };
+  for (const projectId of projectIds) {
+    if (Object.hasOwn(current, projectId))
+      values[projectId] = current[projectId];
+  }
+  return values;
+}
+
 export function collaborationWorkspaceControllerReducer(
   state: CollaborationWorkspaceControllerState,
   action: CollaborationWorkspaceControllerAction,
@@ -339,10 +353,26 @@ export function collaborationWorkspaceControllerReducer(
       return {
         ...state,
         projects: action.projects,
-        projectItems: action.projectItems,
-        projectMembers: action.projectMembers,
-        projectAgents: action.projectAgents,
-        projectTaskBindings: action.projectTaskBindings,
+        projectItems: preserveProjectSnapshotValues(
+          action.projectItems,
+          state.projectItems,
+          action.preserveSnapshotProjectIds,
+        ),
+        projectMembers: preserveProjectSnapshotValues(
+          action.projectMembers,
+          state.projectMembers,
+          action.preserveSnapshotProjectIds,
+        ),
+        projectAgents: preserveProjectSnapshotValues(
+          action.projectAgents,
+          state.projectAgents,
+          action.preserveSnapshotProjectIds,
+        ),
+        projectTaskBindings: preserveProjectSnapshotValues(
+          action.projectTaskBindings,
+          state.projectTaskBindings,
+          action.preserveSnapshotProjectIds,
+        ),
         myWork: action.myWork,
         error: null,
         errorSource: null,
@@ -1061,18 +1091,20 @@ export function createCollaborationWorkspaceControllerCommands({
               })),
             )
           : [];
-        const currentSnapshots = snapshots.map(
-          ({ projectId, snapshot, mutationGeneration }) => ({
-            projectId,
-            snapshot:
-              mutationGeneration === projectMutationGeneration(projectId)
-                ? snapshot
-                : getProjectSnapshot(projectId),
-          }),
+        const currentSnapshots = snapshots.filter(
+          ({ projectId, mutationGeneration }) =>
+            mutationGeneration === projectMutationGeneration(projectId),
         );
+        const preserveSnapshotProjectIds = snapshots
+          .filter(
+            ({ projectId, mutationGeneration }) =>
+              mutationGeneration !== projectMutationGeneration(projectId),
+          )
+          .map(({ projectId }) => projectId);
         dispatch({
           type: "home-loaded",
           projects,
+          preserveSnapshotProjectIds,
           projectItems: Object.fromEntries(
             currentSnapshots.flatMap(({ projectId, snapshot }) =>
               snapshot ? [[projectId, snapshot.items]] : [],
