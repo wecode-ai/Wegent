@@ -24,6 +24,8 @@ use crate::logging::log_executor_event;
 use crate::protocol::ExecutionRequest;
 
 mod assignment_notifications;
+#[cfg(test)]
+mod issue_access_tests;
 
 use assignment_notifications::emit_local_assignment_notifications;
 
@@ -640,7 +642,8 @@ fn context_scope_error(grant: &SpaceContextGrant, arguments: &Value) -> Option<S
             return Some("The requested project space is outside this Agent session".to_owned());
         }
     }
-    if grant.role != Some(SpaceContextRole::Manager) {
+    // Personal Issue tasks inherit project access; dispatch executors stay Issue-scoped.
+    if grant.role == Some(SpaceContextRole::Executor) {
         if let Some(requested_item_id) = arguments.get("item_id").and_then(Value::as_str) {
             if grant.item_id.as_deref().is_some_and(|item_id| {
                 !requested_item_id.trim().is_empty() && requested_item_id != item_id
@@ -3938,7 +3941,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_arguments_outside_the_context_grant() {
+    fn personal_issue_context_keeps_the_project_boundary() {
         let grant = SpaceContextGrant {
             version: 1,
             task_id: "task-1".to_owned(),
@@ -3959,7 +3962,7 @@ mod tests {
         );
         assert!(
             context_scope_error(&grant, &json!({"space_id": "space-1", "item_id": "item-2"}))
-                .is_some()
+                .is_none()
         );
         assert!(
             context_scope_error(&grant, &json!({"space_id": "space-1", "item_id": "item-1"}))
