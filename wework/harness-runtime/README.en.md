@@ -52,7 +52,9 @@ legacy assets remain in the existing Release and are not rebuilt, downloaded,
 or uploaded during packaging, nor included in installers or the Core DSH component.
 
 Downloads require HTTPS and stream-check size and SHA-256 before publishing
-the archive cache and extracting it. Archives live under `archives/` in the
+the archive cache and extracting it. Downloads abort after 60 seconds without
+progress. Host app startup and verification requests use a 15-minute budget;
+ordinary requests retain their existing budget. Archives live under `archives/` in the
 runtime cache root; extracted directories are keyed by source fingerprint.
 Concurrent requests for one fingerprint share preparation. Materialized runtimes
 work offline. Cached archives are verified again before re-extraction, and corrupt

@@ -89,6 +89,7 @@ export interface HttpClientOptions {
 }
 
 export interface HttpRequestOptions {
+  deduplicate?: boolean
   redirectOnUnauthorized?: boolean
   signal?: AbortSignal
   headers?: HeadersInit
@@ -302,10 +303,11 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
   }
 
   function get<T>(endpoint: string, requestOptions: HttpRequestOptions = {}): Promise<T> {
+    const deduplicate = requestOptions.deduplicate !== false && !requestOptions.signal
     const token = getToken()
     const redirectKey = requestOptions.redirectOnUnauthorized === false ? 'no-redirect' : 'redirect'
     const cacheKey = `${redirectKey}:${token ?? ''}:${endpoint}`
-    if (!requestOptions.signal) {
+    if (deduplicate) {
       const currentRequest = inFlightGetRequests.get(cacheKey)
       if (currentRequest) {
         return currentRequest as Promise<T>
@@ -317,11 +319,11 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
       { method: 'GET', headers: requestOptions.headers },
       requestOptions
     ).finally(() => {
-      if (!requestOptions.signal) {
+      if (deduplicate) {
         inFlightGetRequests.delete(cacheKey)
       }
     })
-    if (!requestOptions.signal) {
+    if (deduplicate) {
       inFlightGetRequests.set(cacheKey, nextRequest)
     }
     return nextRequest

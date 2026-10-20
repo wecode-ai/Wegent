@@ -200,6 +200,27 @@ describe('createHttpClient', () => {
     })
   })
 
+  test('allows invalidated reads to bypass an older in-flight request', async () => {
+    let finishPrevious!: (response: unknown) => void
+    fetchMock
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            finishPrevious = resolve
+          })
+      )
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ version: 2 }) })
+    const client = createHttpClient({ baseUrl: '/api' })
+    const previous = client.get('/board')
+    await expect(client.get('/board', { deduplicate: false })).resolves.toEqual({ version: 2 })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const sharedPrevious = client.get('/board')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    finishPrevious({ ok: true, status: 200, json: async () => ({ version: 1 }) })
+    await expect(previous).resolves.toEqual({ version: 1 })
+    await expect(sharedPrevious).resolves.toEqual({ version: 1 })
+  })
+
   test('clears get dedupe after the request settles', async () => {
     fetchMock
       .mockResolvedValueOnce({

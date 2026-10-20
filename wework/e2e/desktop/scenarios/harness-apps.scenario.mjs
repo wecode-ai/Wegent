@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { access, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { pathToFileURL } from 'node:url'
 
 import {
   createZipFixture,
@@ -12,6 +12,7 @@ import {
 } from '../modules/zip-fixtures.mjs'
 import { telemetryEvents } from '../modules/response-protocol.mjs'
 import { verifySmartAppMarketplaceIdentity } from '../modules/smart-app-marketplace-identity.mjs'
+import { packagedResourcesRoot } from '../modules/workbench-schema-compatibility.mjs'
 import {
   verifyDefaultOnlyDshPackage,
   verifyDownloadedDshRuntimeCache,
@@ -298,6 +299,12 @@ export async function createDesktopScenario({
   let ownerRequest
   return {
     requiresCloudEnvironment: true,
+    async prepareApp({ appBinary }) {
+      await verifyDefaultOnlyDshPackage(
+        join(packagedResourcesRoot(appBinary), 'harness-runtime'),
+        join(resultDir, 'harness-runtime')
+      )
+    },
 
     async prepareCloud({ authToken, backendUrl, publishOfficialSmartApp }) {
       await publishOfficialSmartApp(officialSource)
@@ -454,10 +461,6 @@ export async function createDesktopScenario({
     },
 
     async verify(control) {
-      await verifyDefaultOnlyDshPackage(
-        fileURLToPath(new URL('../../../electron/resources/harness-runtime/', import.meta.url)),
-        join(resultDir, 'harness-runtime')
-      )
       await setExperimentalFeatures(control, false, uiTimeoutMs)
       await control.command('navigate', 'body', { value: '/' })
       await control.command('waitFor', '[data-testid="workspace-tab-add"]', {

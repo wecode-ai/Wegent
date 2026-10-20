@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import type { RuntimeDescriptor } from './bundled-runtime-materializer.js'
+import { createDownloadInactivityTimeout } from './download-timeout.js'
 
 export async function resolveRuntimeArchive(
   resourceRoot: string,
@@ -60,16 +61,33 @@ async function downloadArchive(
   runtime: RuntimeDescriptor,
   fetchImpl: typeof fetch
 ): Promise<void> {
-  const response = await fetchImpl(url.href, { signal: AbortSignal.timeout(300_000) })
+  const timeout = createDownloadInactivityTimeout(60_000)
+  try {
+    await streamArchive(url, destination, runtime, fetchImpl, timeout)
+  } finally {
+    timeout.clear()
+  }
+}
+
+async function streamArchive(
+  url: URL,
+  destination: string,
+  runtime: RuntimeDescriptor,
+  fetchImpl: typeof fetch,
+  timeout: ReturnType<typeof createDownloadInactivityTimeout>
+): Promise<void> {
+  const response = await fetchImpl(url.href, { signal: timeout.signal })
   if (!response.ok || !response.body) {
     throw new Error(`DSH runtime download failed: HTTP ${response.status} (${runtime.dshVersion})`)
   }
+  timeout.refresh()
   const hash = createHash('sha256')
   let bytes = 0
   await pipeline(
     Readable.fromWeb(response.body as import('node:stream/web').ReadableStream),
     async function* (source) {
       for await (const chunk of source) {
+        timeout.refresh()
         bytes += chunk.length
         if (bytes > runtime.archiveBytes) throw new Error('DSH runtime download size mismatch')
         hash.update(chunk)

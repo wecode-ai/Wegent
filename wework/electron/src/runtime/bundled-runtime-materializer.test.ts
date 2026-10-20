@@ -212,6 +212,28 @@ async function downloadableRuntimeFixture() {
 }
 
 describe('downloadable DSH runtimes', () => {
+  test('aborts stalled downloads and removes their temporary files', async () => {
+    const f = await downloadableRuntimeFixture()
+    f.fetchImpl.mockImplementation(
+      (_url, init) =>
+        new Promise((_resolve, reject) => {
+          init!.signal!.addEventListener('abort', () => reject(init!.signal!.reason), {
+            once: true,
+          })
+        })
+    )
+    vi.useFakeTimers()
+    try {
+      const rejected = expect(f.materialize()).rejects.toThrow()
+      await vi.waitFor(() => expect(f.fetchImpl).toHaveBeenCalledTimes(1))
+      await vi.advanceTimersByTimeAsync(60_000)
+      await rejected
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(await readdir(join(f.cache, 'archives'))).toEqual([])
+  })
+
   test('downloads legacy runtimes when source development resources share the runtime cache', async () => {
     const f = await downloadableRuntimeFixture()
     vi.stubGlobal('fetch', f.fetchImpl)
