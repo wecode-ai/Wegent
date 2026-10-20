@@ -170,7 +170,7 @@ export async function selectWhenOptionAvailable(control, selector, value, timeou
   await control.command('select', selector, { value })
 }
 
-async function selectAgentEnvironment(
+export async function selectAgentEnvironment(
   control,
   testId,
   value,

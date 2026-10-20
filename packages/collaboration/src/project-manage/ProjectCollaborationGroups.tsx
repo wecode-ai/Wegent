@@ -49,30 +49,56 @@ export function ProjectCollaborationGroups({
     useState<CollaborationAgent[]>(agents);
   const [availableMembers, setAvailableMembers] =
     useState<CollaborationMember[]>(members);
+  const [membersError, setMembersError] = useState<string | null>(null);
+  const [membersRevision, setMembersRevision] = useState(0);
+  const [groupsError, setGroupsError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     if (!api.projects.listCollaborationGroups) {
       return [];
     }
-    const [available, projectGroups, projectAgents, projectMembers] =
-      await Promise.all([
-        workspaceId && api.workspaces?.listCollaborationGroups
-          ? api.workspaces.listCollaborationGroups(workspaceId)
-          : Promise.resolve([]),
-        api.projects.listCollaborationGroups(projectId),
-        api.agents.list(projectId),
-        api.members.list(projectId),
-      ]);
+    const [available, projectGroups, projectAgents] = await Promise.all([
+      workspaceId && api.workspaces?.listCollaborationGroups
+        ? api.workspaces.listCollaborationGroups(workspaceId)
+        : Promise.resolve([]),
+      api.projects.listCollaborationGroups(projectId),
+      api.agents.list(projectId),
+    ]);
     setWorkspaceGroups(available);
     setGroups(projectGroups);
     setAvailableAgents(projectAgents);
-    setAvailableMembers(projectMembers);
+    setGroupsError(null);
     return projectAgents;
   }, [api, projectId, workspaceId]);
 
   useEffect(() => {
-    void reload();
+    let active = true;
+    void reload().catch((error: unknown) => {
+      if (active)
+        setGroupsError(error instanceof Error ? error.message : String(error));
+    });
+    return () => {
+      active = false;
+    };
   }, [reload]);
+
+  useEffect(() => {
+    let active = true;
+    setMembersError(null);
+    void api.members.list(projectId).then(
+      (projectMembers) => {
+        if (!active) return;
+        setAvailableMembers(projectMembers);
+      },
+      (error: unknown) => {
+        if (!active) return;
+        setMembersError(error instanceof Error ? error.message : String(error));
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [api, projectId, membersRevision]);
 
   useEffect(() => {
     setAvailableAgents(agents);
@@ -165,86 +191,122 @@ export function ProjectCollaborationGroups({
       : undefined;
 
   return (
-    <WorkspaceCollaborationGroupsConfiguration
-      groups={groups}
-      availableGroups={workspaceGroups.filter(
-        (group) => !projectGroupIds.has(group.id),
-      )}
-      members={availableMembers}
-      agents={availableAgents}
-      locale={locale}
-      currentUserId={currentUserId}
-      canManage={canManage}
-      agentActions={agentActions}
-      commands={{
-        searchUsers: async () => [],
-        addMember: async () => {
-          throw new Error("Project collaboration groups cannot add members");
-        },
-        updateMember: async () => {
-          throw new Error("Project collaboration groups cannot update members");
-        },
-        removeMember: async () => undefined,
-        async createCollaborationGroup(input) {
-          if (!api.projects.createCollaborationGroup) {
-            throw new Error("Project collaboration group API is unavailable");
-          }
-          const created = await api.projects.createCollaborationGroup(
-            projectId,
-            input,
-          );
-          await reload();
-          return created;
-        },
-        async updateCollaborationGroup(groupId, input) {
-          const group = groups.find((candidate) => candidate.id === groupId);
-          if (!group) {
-            throw new Error("Project collaboration group was not found");
-          }
-          let updated: CollaborationGroup | undefined;
-          if (group.owner_type === "workspace") {
-            if (!workspaceId || !api.workspaces?.updateCollaborationGroup) {
-              throw new Error(
-                "Workspace collaboration group API is unavailable",
+    <>
+      {groupsError ? (
+        <div
+          className="collaboration-alert"
+          role="alert"
+          data-testid="project-groups-load-error"
+        >
+          {locale === "zh-CN"
+            ? "加载协作小组失败："
+            : "Failed to load collaboration groups: "}
+          {groupsError}
+        </div>
+      ) : null}
+      {membersError ? (
+        <div
+          className="collaboration-alert"
+          role="alert"
+          data-testid="project-group-members-error"
+        >
+          {locale === "zh-CN"
+            ? "加载项目成员失败："
+            : "Failed to load project members: "}
+          {membersError}
+          <button
+            className="collaboration-link-button"
+            data-testid="project-group-members-retry"
+            onClick={() => setMembersRevision((revision) => revision + 1)}
+            type="button"
+          >
+            {locale === "zh-CN" ? "重试" : "Retry"}
+          </button>
+        </div>
+      ) : null}
+      <WorkspaceCollaborationGroupsConfiguration
+        groups={groups}
+        availableGroups={workspaceGroups.filter(
+          (group) => !projectGroupIds.has(group.id),
+        )}
+        members={availableMembers}
+        agents={availableAgents}
+        locale={locale}
+        currentUserId={currentUserId}
+        canManage={canManage}
+        agentActions={agentActions}
+        commands={{
+          searchUsers: async () => [],
+          addMember: async () => {
+            throw new Error("Project collaboration groups cannot add members");
+          },
+          updateMember: async () => {
+            throw new Error(
+              "Project collaboration groups cannot update members",
+            );
+          },
+          removeMember: async () => undefined,
+          async createCollaborationGroup(input) {
+            if (!api.projects.createCollaborationGroup) {
+              throw new Error("Project collaboration group API is unavailable");
+            }
+            const created = await api.projects.createCollaborationGroup(
+              projectId,
+              input,
+            );
+            await reload();
+            return created;
+          },
+          async updateCollaborationGroup(groupId, input) {
+            const group = groups.find((candidate) => candidate.id === groupId);
+            if (!group) {
+              throw new Error("Project collaboration group was not found");
+            }
+            let updated: CollaborationGroup | undefined;
+            if (group.owner_type === "workspace") {
+              if (!workspaceId || !api.workspaces?.updateCollaborationGroup) {
+                throw new Error(
+                  "Workspace collaboration group API is unavailable",
+                );
+              }
+              updated = await api.workspaces.updateCollaborationGroup(
+                workspaceId,
+                groupId,
+                input,
+              );
+            } else {
+              updated = await api.projects.updateCollaborationGroup?.(
+                projectId,
+                groupId,
+                input,
               );
             }
-            updated = await api.workspaces.updateCollaborationGroup(
-              workspaceId,
-              groupId,
-              input,
-            );
-          } else {
-            updated = await api.projects.updateCollaborationGroup?.(
+            if (!updated) {
+              throw new Error("Project collaboration group API is unavailable");
+            }
+            await reload();
+            return updated;
+          },
+          async addCollaborationGroup(groupId) {
+            if (!api.projects.addCollaborationGroup) {
+              throw new Error("Project collaboration group API is unavailable");
+            }
+            const added = await api.projects.addCollaborationGroup(
               projectId,
               groupId,
-              input,
             );
-          }
-          if (!updated) {
-            throw new Error("Project collaboration group API is unavailable");
-          }
-          await reload();
-          return updated;
-        },
-        async addCollaborationGroup(groupId) {
-          if (!api.projects.addCollaborationGroup) {
-            throw new Error("Project collaboration group API is unavailable");
-          }
-          const added = await api.projects.addCollaborationGroup(
-            projectId,
-            groupId,
-          );
-          await reload();
-          return added;
-        },
-        async removeCollaborationGroup(groupId) {
-          if (!api.projects.removeCollaborationGroup) {
-            throw new Error("Project collaboration group API is unavailable");
-          }
-          await api.projects.removeCollaborationGroup(projectId, groupId);
-          await reload();
-        },
-      }}
-    />
+            await reload();
+            return added;
+          },
+          async removeCollaborationGroup(groupId) {
+            if (!api.projects.removeCollaborationGroup) {
+              throw new Error("Project collaboration group API is unavailable");
+            }
+            await api.projects.removeCollaborationGroup(projectId, groupId);
+            await reload();
+          },
+        }}
+      />
+    </>
   );
 }

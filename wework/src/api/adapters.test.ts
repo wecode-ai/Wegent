@@ -177,7 +177,8 @@ describe('REST adapters', () => {
     await createModelApi(client).listModels()
 
     expect(client.get).toHaveBeenCalledWith(
-      '/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework'
+      '/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework',
+      { signal: expect.any(AbortSignal) }
     )
   })
 
@@ -200,8 +201,10 @@ describe('REST adapters', () => {
     controller.abort()
     await rejected
     expect(client.get).toHaveBeenCalledExactlyOnceWith(
-      '/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework'
+      '/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework',
+      { signal: expect.any(AbortSignal) }
     )
+    expect(vi.mocked(client.get).mock.calls[0][1]?.signal?.aborted).toBe(false)
     resolveModels(response)
     await expect(active).resolves.toEqual(response)
     await expect(api.listModels()).resolves.toEqual(response)

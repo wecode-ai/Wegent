@@ -90,6 +90,12 @@ devices appear initially; use **Show offline devices** in the bottom-right corne
 to include other devices. Native models are added only after selecting a specific
 device. Editing an existing Agent preserves its saved choices.
 
+Cloud model requests end after 10 seconds and release the pending cache entry,
+so refreshing starts a new request. You can still select and save a cloud model
+while device-native model discovery fails or remains pending. Collaboration groups
+load their member list independently. A member loading failure offers a retry;
+loaded groups, Agents, and group saves remain available.
+
 ### Set cloud board access
 
 Cloud projects have two access modes: **Private** and **Public**. A public project grants every signed-in user the Viewer (read-only) or Developer (create and edit issues) role. A private project is available only through existing grants. Project roles are Owner, Maintainer, Developer, and Viewer. Owners manage the project and members; Maintainers can also manage issue security. Developers and above can assign the issue owner, and the issue creator can always assign their own issue.

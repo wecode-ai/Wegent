@@ -5,10 +5,16 @@ import {
   openDirectProjectCreation,
   openProjectAgentCreator,
   inProjectCreateDialog,
-  selectCloudAgentModel,
   selectCollaborationDomain,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
+import { PluginFaultProxy } from '../modules/plugin-fault-proxy.mjs'
+import {
+  assertSavedCloudRouting,
+  readBasicCloudDefault,
+  verifyCloudSaveDuringNativeFaults,
+  verifyLocalBasicDefaultSave,
+} from '../modules/agent-catalog-regressions.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const WORKSPACE_NAME = '协作组验收空间'
@@ -82,6 +88,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
   let workspace = null
   let project = null
   let fixtureArchived = false
+  let proxy
+  const appEnvironment = {}
 
   const request = (pathname, options) => requestJson(backendUrl, authToken, pathname, options)
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
@@ -112,11 +120,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
 
   return {
     requiresCloudEnvironment: true,
+    appEnvironment,
 
     async prepareCloud(cloud) {
       backendUrl = cloud.backendUrl
       authToken = cloud.authToken
       await request('/api/admin/setup-complete', { method: 'POST' })
+      proxy = await new PluginFaultProxy(backendUrl).start()
+      appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL = proxy.url
     },
 
     async verify(control) {
@@ -362,7 +373,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           selectableModels.length > 0,
           'No executable model is available for Agent creation'
         )
-        await selectCloudAgentModel(control, request, selectableModels[0].name, uiTimeoutMs)
+        const defaultModel = await readBasicCloudDefault(
+          control,
+          'wework-agent',
+          'wework-agent-resource-creator',
+          uiTimeoutMs
+        )
         await control.command('fill', '[data-testid="wework-agent-system-prompt"]', {
           value: '负责 Issue 分解、委派与交付验收。按项目约束完成任务并给出可验证证据。',
         })
@@ -382,6 +398,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           uiTimeoutMs
         )
         assert.ok(projectAgent.wegentTeamId, 'The project Agent must retain its Team binding')
+        await assertSavedCloudRouting(request, projectAgent, defaultModel, { mode: 'project_pool' })
         const localDevice = await waitForApiValue(
           () => request('/api/devices/online'),
           devices => devices.items.find(device => device.device_type === 'app') ?? null,
@@ -568,6 +585,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           { visible: false, timeoutMs: uiTimeoutMs }
         )
         await capture(control, 'project-automation-07-group-deleted.png')
+        await verifyCloudSaveDuringNativeFaults(control, {
+          projectId: project.id,
+          device: localDevice,
+          request,
+          proxy,
+          waitForApiValue,
+          timeoutMs: uiTimeoutMs,
+        })
+        await verifyLocalBasicDefaultSave(control, uiTimeoutMs)
       } finally {
         try {
           await archiveFixture()
@@ -582,7 +608,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     },
 
     async cleanup() {
-      await archiveFixture()
+      try {
+        await archiveFixture()
+      } finally {
+        await proxy?.stop()
+      }
     },
+    diagnostics: () => ({ catalogRequests: proxy?.requests }),
   }
 }

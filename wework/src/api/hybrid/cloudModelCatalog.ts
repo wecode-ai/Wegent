@@ -1,7 +1,5 @@
 import type { UnifiedModel } from '@/types/api'
 
-const REQUEST_TIMEOUT_MS = 10_000
-
 /** Cache cloud models and refresh only on initial load or an explicit request. */
 export function createCloudModelCatalog(
   load: (signal: AbortSignal, forceRefresh: boolean) => Promise<UnifiedModel[]>
@@ -9,7 +7,6 @@ export function createCloudModelCatalog(
   let models: UnifiedModel[] = []
   let loadStarted = false
   let request: AbortController | null = null
-  let requestTimer: number | undefined
   const listeners = new Set<() => void>()
 
   function loadCatalog(forceRefresh: boolean) {
@@ -17,10 +14,6 @@ export function createCloudModelCatalog(
     loadStarted = true
     const controller = new AbortController()
     request = controller
-    requestTimer = window.setTimeout(() => {
-      controller.abort(new DOMException('Cloud model request timed out', 'TimeoutError'))
-    }, REQUEST_TIMEOUT_MS)
-
     void Promise.resolve()
       .then(() => load(controller.signal, forceRefresh))
       .then(nextModels => {
@@ -34,7 +27,6 @@ export function createCloudModelCatalog(
       })
       .finally(() => {
         if (request !== controller) return
-        window.clearTimeout(requestTimer)
         request = null
       })
   }
@@ -51,7 +43,6 @@ export function createCloudModelCatalog(
       listeners.add(listener)
       return () => {
         if (!listeners.delete(listener) || listeners.size > 0) return
-        window.clearTimeout(requestTimer)
         if (request) {
           const controller = request
           request = null
