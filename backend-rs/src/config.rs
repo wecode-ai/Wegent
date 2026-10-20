@@ -470,6 +470,8 @@ pub struct OidcConfig {
     // source-compatible settings field
     #[allow(dead_code)]
     pub redirect_uri: String,
+    /// Source `OIDC_CLI_REDIRECT_URI` (the CLI callback's redirect URI).
+    pub cli_redirect_uri: String,
     /// Source `FRONTEND_URL`.
     pub frontend_url: String,
 }
@@ -483,6 +485,7 @@ impl Default for OidcConfig {
             client_id: "wegent".to_string(),
             client_secret: "test".to_string(),
             redirect_uri: "http://localhost:8000/api/auth/oidc/callback".to_string(),
+            cli_redirect_uri: "http://localhost:8000/api/auth/oidc/cli-callback".to_string(),
             frontend_url: "http://localhost:3000".to_string(),
         }
     }
@@ -505,9 +508,18 @@ impl OidcConfig {
                 .unwrap_or_else(|| "test".to_string()),
             redirect_uri: env_or_dotenv("OIDC_REDIRECT_URI")
                 .unwrap_or_else(|| "http://localhost:8000/api/auth/oidc/callback".to_string()),
+            cli_redirect_uri: env_or_dotenv("OIDC_CLI_REDIRECT_URI")
+                .unwrap_or_else(|| "http://localhost:8000/api/auth/oidc/cli-callback".to_string()),
             frontend_url: env_or_dotenv("FRONTEND_URL")
                 .unwrap_or_else(|| "http://localhost:3000".to_string()),
         }
+    }
+
+    /// The source's CLI OAuth client id (`self.client_id + "-cli"` in
+    /// `app/services/oidc.py`).
+    #[must_use]
+    pub fn cli_client_id(&self) -> String {
+        format!("{}-cli", self.client_id)
     }
 }
 

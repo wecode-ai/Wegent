@@ -229,7 +229,7 @@ pub fn extract_authorization_token(authorization: Option<&str>) -> String {
 }
 
 /// `verify_token` with key rotation: try the active key, then legacy keys.
-fn verify_token(config: &AuthConfig, token: &str) -> Result<String, ()> {
+pub(crate) fn verify_token(config: &AuthConfig, token: &str) -> Result<String, ()> {
     let mut validation = Validation::new(algorithm(config));
     // python-jose rejects the `none` algorithm; HS256 is the configured
     // algorithm and no audience is required. A present `exp`/`nbf` is

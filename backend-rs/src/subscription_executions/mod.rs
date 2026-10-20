@@ -405,7 +405,9 @@ async fn executions(
         .await
         .map_err(internal_error)?;
 
-    // Build the subscription cache: id -> SubscriptionInfo.
+    // Build the subscription cache: id -> SubscriptionInfo. The team refs
+    // are keyed by (name, namespace) in the source dict, so repeated
+    // references collapse to one first-seen entry per team.
     let mut subscription_cache: Vec<(i32, SubscriptionInfo)> = Vec::new();
     let mut team_refs: Vec<(String, String)> = Vec::new();
     for sub in &subscriptions {
@@ -413,7 +415,7 @@ async fn executions(
         info.name = sub.name.clone();
         info.owner_user_id = sub.user_id;
         if let Some(ref team_ref) = info.team_ref {
-            team_refs.push((team_ref.name.clone(), team_ref.namespace.clone()));
+            insert_team_ref(&mut team_refs, team_ref);
         }
         subscription_cache.push((sub.id, info));
     }
@@ -750,6 +752,21 @@ async fn fetch_teams<M: Mysql>(
         predicate = team_predicate(team_refs)
     );
     mysql.fetch_all(sql, ()).await
+}
+
+/// Append a `teamRef` to the ordered set of distinct team references.
+///
+/// The source stores `team_refs` in a dict keyed by `(name, namespace)`, so
+/// repeated references across the batch-loaded subscriptions collapse to one
+/// first-seen entry per team. Preserving that identity keeps the rendered
+/// `or_(*team_conditions)` predicate identical to the source query.
+fn insert_team_ref(team_refs: &mut Vec<(String, String)>, team_ref: &TeamRef) {
+    let already_present = team_refs
+        .iter()
+        .any(|(name, namespace)| *name == team_ref.name && *namespace == team_ref.namespace);
+    if !already_present {
+        team_refs.push((team_ref.name.clone(), team_ref.namespace.clone()));
+    }
 }
 
 /// Render the source's `or_(*team_conditions)` predicate. SQLAlchemy omits

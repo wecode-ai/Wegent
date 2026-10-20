@@ -34,7 +34,6 @@ use crate::{
         branch_diff, branch_diff_shortstat, hosting_cli_status, push_current_branch,
         workspace_diff, worktree_add, worktree_remove,
     },
-    local::git_commit_message::generate_commit_message,
     local::harnesses::{
         list_local_harnesses, prepare_local_harness_launch, ListLocalHarnessesRequest,
         PrepareLocalHarnessLaunchRequest,
@@ -1439,14 +1438,6 @@ impl AppIpcServer {
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| AppIpcError::new("bad_request", "command_key is required"))?;
         let command_key = command_key.trim();
-
-        if command_key == "git_generate_commit_message" {
-            let cwd = string_field(&params, "path").or_else(|| string_field(&params, "cwd"));
-            let env = string_env(params.get("env"))?;
-            let result = generate_commit_message(cwd, env).await;
-            return serde_json::to_value(result)
-                .map_err(|error| AppIpcError::new("internal_error", error.to_string()));
-        }
 
         if command_key == "ls_skills" {
             let result = list_local_skills().await;

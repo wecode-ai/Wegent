@@ -13,6 +13,53 @@ afterEach(async () => {
 })
 
 describe('materializeBundledRuntimes', () => {
+  test('shares one extracted archive across roles and later launches', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-shared-runtime-materializer-'))
+    roots.push(root)
+    const resources = join(root, 'resources')
+    const cache = join(root, 'cache')
+    await mkdir(resources)
+    const core = await runtimeArchive(resources, 'core', '0.2.0-rc.2', 'a', ['core', 'workbench'])
+    const workbench = { ...core, role: 'workbench' }
+    await writeFile(
+      join(resources, 'runtimes.json'),
+      JSON.stringify({ runtimes: [core, workbench] })
+    )
+
+    await materializeBundledRuntimes(resources, cache, ['core'])
+    const identityPath = join(cache, core.sourceFingerprint, 'runtime.json')
+    const original = await stat(identityPath)
+    await rm(join(resources, core.assetName))
+
+    await materializeBundledRuntimes(resources, cache, ['workbench'])
+    await materializeBundledRuntimes(resources, cache)
+
+    expect((await stat(identityPath)).ino).toBe(original.ino)
+    expect(JSON.parse(await readFile(identityPath, 'utf8')).roles).toEqual(['core', 'workbench'])
+    expect(JSON.parse(await readFile(join(cache, 'runtimes.json'), 'utf8')).runtimes).toEqual([
+      core,
+      workbench,
+    ])
+  })
+
+  test('rejects an archive that does not declare the requested role', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-invalid-runtime-role-'))
+    roots.push(root)
+    const resources = join(root, 'resources')
+    await mkdir(resources)
+    const core = await runtimeArchive(resources, 'core', '0.2.0-rc.2', 'a', ['workbench'])
+    await writeFile(
+      join(resources, 'runtimes.json'),
+      JSON.stringify({
+        runtimes: [core, { ...core, role: 'workbench' }],
+      })
+    )
+
+    await expect(
+      materializeBundledRuntimes(resources, join(root, 'cache'), ['core'])
+    ).rejects.toThrow('Bundled DSH runtime identity is invalid')
+  })
+
   test('extracts only requested runtimes while retaining the complete catalog', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-runtime-materializer-'))
     roots.push(root)
@@ -98,14 +145,15 @@ async function runtimeArchive(
   resources: string,
   role: string,
   dshVersion: string,
-  fingerprintCharacter: string
+  fingerprintCharacter: string,
+  roles?: string[]
 ) {
   const sourceFingerprint = fingerprintCharacter.repeat(64)
   const staging = join(resources, `staging-${role}`)
   await mkdir(staging)
   await writeFile(
     join(staging, 'runtime.json'),
-    JSON.stringify({ dshVersion, role, sourceFingerprint })
+    JSON.stringify({ dshVersion, ...(roles ? { roles } : { role }), sourceFingerprint })
   )
   const assetName = `${role}-${dshVersion}.tar.gz`
   const archive = join(resources, assetName)

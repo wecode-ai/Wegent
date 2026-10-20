@@ -48,6 +48,7 @@ const CHECKPOINT_RESOURCES = new Map([
     ['collaboration-runtime', 'desktop-runtime-intensive'],
   ],
   ['collaboration-issue-comment-notification', ['collaboration-runtime']],
+  ['collaboration-issue-mcp-comments', ['collaboration-runtime']],
   ['collaboration-issue-archive', ['collaboration-runtime', 'desktop-runtime-intensive']],
 ])
 const CHECKPOINT_SCENARIO_MODULES = {
@@ -65,6 +66,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'temporary-chat': './scenarios/temporary-chat.scenario.mjs',
   'embedded-browser': './scenarios/embedded-browser-agent.scenario.mjs',
   'change-request-status': './scenarios/change-request-status.scenario.mjs',
+  'git-commit-generation': './scenarios/git-commit-generation.scenario.mjs',
   'claude-runtime': './scenarios/claude-runtime.scenario.mjs',
   'local-file-preview': './scenarios/local-file-preview.scenario.mjs',
   'local-harness': './scenarios/local-terminal.scenario.mjs',
@@ -124,6 +126,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
     './scenarios/collaboration-issue-comment-mention.scenario.mjs',
   'collaboration-issue-comment-notification':
     './scenarios/collaboration-issue-comment-notification.scenario.mjs',
+  'collaboration-issue-mcp-comments': './scenarios/collaboration-issue-mcp-comments.scenario.mjs',
   'collaboration-issue-archive': './scenarios/collaboration-issue-archive.scenario.mjs',
   'plugin-development': './scenarios/plugin-development.scenario.mjs',
   'task-attachments': './scenarios/task-attachments.scenario.mjs',
@@ -156,6 +159,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'codex-account-login',
   'cloud-space-mention',
   'change-request-status',
+  'git-commit-generation',
   'claude-runtime',
   'local-file-preview',
   'local-harness',
@@ -177,6 +181,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-local-group-cancellation',
   'collaboration-issue-comment-mention',
   'collaboration-issue-comment-notification',
+  'collaboration-issue-mcp-comments',
   'collaboration-issue-archive',
   'plugin-development',
   'task-attachments',
@@ -503,7 +508,10 @@ async function prepareSharedHarnessRuntime(appBinary, parentDirectory) {
     const identity = JSON.parse(await readFile(join(extractedRoot, 'runtime.json'), 'utf8'))
     if (
       identity.dshVersion !== runtime.dshVersion ||
-      identity.role !== runtime.role ||
+      !(
+        identity.role === runtime.role ||
+        (Array.isArray(identity.roles) && identity.roles.includes(runtime.role))
+      ) ||
       identity.sourceFingerprint !== runtime.sourceFingerprint
     ) {
       throw new Error(`Bundled DSH runtime identity is invalid: ${runtime.assetName}`)

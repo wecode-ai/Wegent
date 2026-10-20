@@ -23,6 +23,7 @@ brz-logs = { version = "=0.0.16", features = ["metrics"] }
 brz-metrics = { version = "=0.0.12", features = ["tokio"] }
 brz-mysql = { version = "=0.0.20", features = ["metrics", "slow-log"] }
 brz-redis = { version = "=0.0.16", features = ["metrics", "slow-log"] }
+bytes = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 chrono-tz = { version = "0.10", default-features = false, features = ["std"] }
 erased-serde = "0.4"
@@ -36,6 +37,7 @@ jsonwebtoken = { version = "9.3", default-features = false }
 # `md5` for the repository-token digest and the URL-metadata cache key
 # (`hashlib.md5`).
 md-5 = "0.10"
+regex = "1"
 serde = { version = "1", features = ["derive"] }
 brz-json = "=0.0.11"
 # Preserve source dict ordering at the remaining dynamic mutation boundaries.
@@ -46,7 +48,16 @@ tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-threa
 toml = "0.8"
 tokio-util = { version = "0.7", features = ["io"] }
 tracing = "0.1"
+turbojpeg = { version = "=1.5.1", default-features = false, features = ["cmake"] }
 url = "2"
+yaml-rust2 = { version = "0.10.4", default-features = false }
+# Pillow's PNG encoder compresses with `deflateInit2(level 9, windowBits 15,
+# memLevel 9, Z_FILTERED)`. `flate2` fixes memLevel at 8 and `zlib-rs` does not
+# reproduce zlib's deflate stream byte-for-byte, so the attachment PNG encoder
+# calls the already-linked zlib through this FFI surface.
+libz-sys = "1.1"
+brotli = { version = "8.0.4", default-features = false, features = ["std"] }
+zstd = { version = "0.13.1", features = ["arrays"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }

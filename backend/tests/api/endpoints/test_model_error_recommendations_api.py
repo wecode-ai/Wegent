@@ -5,6 +5,8 @@
 import json
 from unittest.mock import patch
 
+import pytest
+
 from app.core.config import settings
 
 
@@ -130,3 +132,18 @@ def test_error_recommendations_preserve_explicit_empty_entries(
             },
         }
     }
+
+
+@pytest.fixture(autouse=True)
+def _retained_python_handler_contracts(test_client):
+    import app.api.endpoints.adapter.models as endpoint_0
+    from tests.legacy_python_routes import legacy_python_handlers
+
+    with legacy_python_handlers(test_client.app) as register:
+        register(
+            "/api/models/error-recommendations",
+            endpoint_0.get_error_recommendations,
+            endpoint_0.router,
+            methods=["GET"],
+        )
+        yield

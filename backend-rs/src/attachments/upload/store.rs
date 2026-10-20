@@ -51,6 +51,13 @@ pub const UPDATE_READY_WITH_IMAGE_QUERY: &str = "UPDATE subtask_contexts SET sta
      image_base64=?, extracted_text=?, text_length=?, type_data=?, updated_at=now() \
      WHERE subtask_contexts.id = ?";
 
+/// `_parse_and_update_context`'s `except DocumentParseError` branch:
+/// `context.status = FAILED; context.error_message = str(e)` before the caller
+/// commits and re-raises. SQLAlchemy writes the two changed attributes in
+/// mapper order.
+pub const UPDATE_FAILED_QUERY: &str = "UPDATE subtask_contexts SET status='failed', \
+     error_message=?, updated_at=now() WHERE subtask_contexts.id = ?";
+
 /// `db.commit()` + `db.refresh(context)`: SQLAlchemy re-selects the row by
 /// primary key with unaliased columns.
 pub const REFRESH_CONTEXT_QUERY: &str = "SELECT subtask_contexts.id, subtask_contexts.subtask_id, \

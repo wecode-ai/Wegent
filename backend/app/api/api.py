@@ -24,6 +24,7 @@ from app.api.endpoints import (
     im_sessions,
     installed_mcps,
     installed_plugins,
+    issue_activity_comments,
     knowledge,
     knowledge_artifacts,
     knowledge_open,
@@ -181,6 +182,9 @@ api_router.include_router(
     cloud_projects.router, prefix="/v1/projects", tags=["projects"]
 )
 api_router.include_router(
+    cloud_projects.legacy_router, prefix="/v1/projects", tags=["projects"]
+)
+api_router.include_router(
     workspaces.router, prefix="/v1/workspaces", tags=["workspaces"]
 )
 api_router.include_router(
@@ -222,6 +226,9 @@ api_router.include_router(
     tags=["cloud-projects"],
 )
 api_router.include_router(deliveries.router, prefix="/v1", tags=["deliveries"])
+api_router.include_router(
+    issue_activity_comments.router, prefix="/v1", tags=["deliveries"]
+)
 api_router.include_router(feedback.router, prefix="/v1/feedback", tags=["feedback"])
 api_router.include_router(api_keys.router, prefix="/api-keys", tags=["api-keys"])
 api_router.include_router(devices.router, prefix="/devices", tags=["devices"])

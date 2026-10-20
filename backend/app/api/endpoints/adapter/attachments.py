@@ -1026,7 +1026,8 @@ async def create_attachment_download_token(
     }
 
 
-@router.get("/{attachment_id}/executor-download")
+# MIGRATION-CANDIDATE(api="GET /api/attachments/:attachment_id/executor-download"): remove after final confirmation.
+# @router.get("/{attachment_id}/executor-download")
 async def executor_download_attachment(
     attachment_id: int,
     db: Session = Depends(get_db),

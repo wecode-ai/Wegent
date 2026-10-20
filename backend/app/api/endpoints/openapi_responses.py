@@ -1944,7 +1944,8 @@ async def cancel_response(
     )
 
 
-@router.delete("/{response_id}", response_model=ResponseDeletedObject)
+# MIGRATION-CANDIDATE(api="DELETE /api/v1/responses/:response_id"): remove after final confirmation.
+# @router.delete("/{response_id}", response_model=ResponseDeletedObject)
 @limiter.limit(settings.RATE_LIMIT_DELETE_RESPONSE)
 async def delete_response(
     request: Request,

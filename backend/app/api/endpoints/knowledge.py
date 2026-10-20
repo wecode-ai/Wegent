@@ -560,10 +560,11 @@ def create_knowledge_base(
         )
 
 
-@router.get(
-    "/{knowledge_base_id}/document-protection",
-    response_model=DocumentProtectionResponse,
-)
+# MIGRATION-CANDIDATE(api="GET /api/knowledge-bases/:knowledge_base_id/document-protection"): remove after final confirmation.
+# @router.get(
+#     "/{knowledge_base_id}/document-protection",
+#     response_model=DocumentProtectionResponse,
+# )
 def get_document_protection(
     knowledge_base_id: int,
     response: Response,
@@ -1431,10 +1432,11 @@ def create_folder(
         _raise_document_detail_http_error(e)
 
 
-@router.get(
-    "/{knowledge_base_id}/folders",
-    response_model=list[KnowledgeFolderResponse],
-)
+# MIGRATION-CANDIDATE(api="GET /api/knowledge-bases/:knowledge_base_id/folders"): remove after final confirmation.
+# @router.get(
+#     "/{knowledge_base_id}/folders",
+#     response_model=list[KnowledgeFolderResponse],
+# )
 @trace_sync("get_folder_tree", "knowledge.api")
 def get_folder_tree(
     knowledge_base_id: int,
@@ -1841,9 +1843,10 @@ async def refresh_kb_summary(
     )
 
 
-@summary_router.get(
-    "/{kb_id}/documents/{doc_id}/detail", response_model=DocumentDetailResponse
-)
+# MIGRATION-CANDIDATE(api="GET /api/knowledge-bases/:kb_id/documents/:doc_id/detail"): remove after final confirmation.
+# @summary_router.get(
+#     "/{kb_id}/documents/{doc_id}/detail", response_model=DocumentDetailResponse
+# )
 @trace_async("get_document_detail", "knowledge.api")
 async def get_document_detail(
     kb_id: int,

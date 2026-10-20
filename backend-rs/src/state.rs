@@ -54,6 +54,13 @@ pub struct AppState {
     pub jwt_algorithm: String,
     pub mysql: brz_mysql::MysqlService,
     pub redis: Option<brz_redis::RedisService>,
+    /// Process-lifetime Celery publisher for work the source detaches from a
+    /// request (`index_document_task.delay(...)`). Its subscriber keeps the
+    /// result-backend lane off the shared Redis writer session.
+    pub celery: crate::CeleryBroker,
+    /// Process-owned Socket.IO Redis-adapter subscription used by migrated
+    /// handlers that perform an interactive `sio.call` round trip.
+    pub socketio_rpc: Option<std::sync::Arc<crate::socketio_rpc::SocketIoRpc>>,
     pub oidc_config: OidcConfig,
     pub oidc: OidcService,
     /// Callback selected by the application before route construction.
@@ -83,6 +90,10 @@ pub struct AppState {
     /// default registers none; an application with a market registers its
     /// provider before route construction.
     pub skill_market: crate::skill_market::SkillMarketRegistry,
+    /// MCP provider plugins for `POST /api/mcp-providers/{provider_key}/servers`.
+    /// The public default registers none; an application with providers
+    /// registers its plugins before route construction.
+    pub mcp_providers: crate::mcp_providers::McpProviderRegistry,
     /// `GET /api/devices` `runtime_features` projection for the cloud device
     /// group. The public default renders none; an application whose
     /// configured cloud store projects cached Runtime features registers its
@@ -115,4 +126,10 @@ pub struct AppState {
     /// worker built at startup so the fire-and-forget executor/chat-shell
     /// dispatch is initialization-owned rather than a request-owned task.
     pub responses_dispatch: std::sync::Arc<crate::responses::dispatch::ResponsesDispatch>,
+    /// `OutboundTokenService._collect_extra_claims`: extra JWT claims for
+    /// `POST /api/v1/token-issuers/{issuer_id}/issue`. The public default
+    /// contributes none; an application whose deployment patches the source
+    /// service (for example to inject `employee_id`) registers its own
+    /// implementation before route construction.
+    pub token_issuer_extra_claims: Arc<dyn crate::token_issuers::OutboundTokenExtraClaims>,
 }

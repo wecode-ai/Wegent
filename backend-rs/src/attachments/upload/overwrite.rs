@@ -79,11 +79,15 @@ pub(crate) enum OverwriteError {
 }
 
 impl OverwriteError {
-    /// The error as the upload endpoint renders it.
+    /// The error as the upload endpoint renders it: `HTTPException(detail=...)`
+    /// always wraps the detail value in `{"detail": ...}`.
     pub(crate) fn into_upload_error(self) -> FastApiError {
         match self {
             Self::Detail(error) => error,
-            Self::Parse(body) => FastApiError::json_body(StatusCode::BAD_REQUEST, body),
+            Self::Parse(body) => FastApiError::json_body(
+                StatusCode::BAD_REQUEST,
+                serde_json::json!({ "detail": body }),
+            ),
         }
     }
 
@@ -278,6 +282,14 @@ pub(crate) struct Preflush {
     pub(crate) params: Vec<Param>,
 }
 
+/// `_overwrite_attachment_impl`'s result: the refreshed row the caller renders
+/// plus the truncation info the upload response carries.
+pub(crate) struct OverwriteOutcome {
+    /// `db.refresh(context)`'s row, absent only when the row disappeared.
+    pub row: Option<super::store::SubtaskContextRefreshRow>,
+    pub truncation_info: Option<Value>,
+}
+
 /// `_overwrite_attachment_impl`: reset, store, parse, commit, then
 /// `db.refresh(context)`.
 ///
@@ -296,7 +308,7 @@ pub(crate) async fn overwrite_attachment_internal(
     binary_data: &[u8],
     extra_type_data: &Map<String, Value>,
     caller_flush: Option<Preflush>,
-) -> Result<(), OverwriteError> {
+) -> Result<OverwriteOutcome, OverwriteError> {
     // `_validate_attachment_input`.
     let (extension, mime_type) =
         super::validate_input(filename, binary_data).map_err(OverwriteError::Detail)?;
@@ -358,6 +370,7 @@ pub(crate) async fn overwrite_attachment_internal(
     let reset_type_data = attributes.current.type_data.clone().unwrap_or_default();
     let stored_type_data = with_encryption(reset_type_data.clone(), encrypt);
     let mut parse_failure: Option<Value> = None;
+    let mut truncation_info: Option<Value> = None;
 
     state
         .mysql
@@ -412,7 +425,7 @@ pub(crate) async fn overwrite_attachment_internal(
             attributes.flush(transaction, context_id).await?;
 
             // `_parse_and_update_context` + the `READY` flush.
-            match document::parse(binary_data, &extension) {
+            match document::parse_async(binary_data, &extension).await {
                 Ok(parsed) => {
                     let mut type_data = attributes.current.type_data.clone().unwrap_or_default();
                     type_data.insert(
@@ -431,10 +444,16 @@ pub(crate) async fn overwrite_attachment_internal(
                     attributes.current.text_length = parsed.text_length as i32;
                     attributes.current.image_base64 = Some(parsed.image_base64.unwrap_or_default());
                     attributes.current.type_data = Some(type_data);
+                    truncation_info = parsed.truncation_info.clone();
                     attributes.flush(transaction, context_id).await?;
                 }
                 Err(error) => {
-                    // The source commits the `PARSING` state before re-raising.
+                    // `_parse_and_update_context`'s `except DocumentParseError`
+                    // branch: mark the row failed, then let the caller commit
+                    // and re-raise.
+                    attributes.current.status = "failed".to_string();
+                    attributes.current.error_message = Some(error.message.clone());
+                    attributes.flush(transaction, context_id).await?;
                     parse_failure = Some(parse_error_value(&error));
                 }
             }
@@ -443,14 +462,19 @@ pub(crate) async fn overwrite_attachment_internal(
         .await
         .map_err(|error| OverwriteError::Detail(mysql_failure(error)))?;
 
-    // `db.refresh(context)`.
-    refresh_context(&state.mysql, context_id)
-        .await
-        .map_err(|error| OverwriteError::Detail(mysql_failure(error)))?;
-
     match parse_failure {
+        // The source re-raises before its `db.refresh(context)`.
         Some(body) => Err(OverwriteError::Parse(body)),
-        None => Ok(()),
+        // `db.refresh(context)`.
+        None => {
+            let row = refresh_context(&state.mysql, context_id)
+                .await
+                .map_err(|error| OverwriteError::Detail(mysql_failure(error)))?;
+            Ok(OverwriteOutcome {
+                row,
+                truncation_info,
+            })
+        }
     }
 }
 

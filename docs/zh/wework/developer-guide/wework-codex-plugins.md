@@ -173,3 +173,13 @@ Wework 会把当前模型类别写入本地运行时请求。Codex 官方模型�
 Backend 同时接受 Codex 与 Claude Code 插件包，支持上传、云端市场发布、安装与设备同步，并为每个存储包标准化生成两个运行时的清单。Wegent 云端市场以 Backend 的安装记录为准；本地自定义市场和 OpenAI 官方市场仍以本机 Codex app-server 为准。
 
 Backend 重建或迁移市场目录后，会核对已安装 Kind 的 `pluginId`、`releaseId`、`source.catalogItemId` 和 `source.marketplace`。即使插件和 Release ID 都没有变化，只要 `source.marketplace` 与插件当前 visibility 推导出的市场名不一致，也必须更新安装记录并重置失败的设备安装状态。这样 visibility 从 `public` 调整到 `workspace` 时，已安装记录会从 `wework` 修复到 `wegent`，不会因为其他引用字段相同而被误判为 no-op。
+
+## 项目空间 Issue 评论
+
+PR Review 等插件通过 `wework_space.list_board_item_comments` 读取 Issue 动态中的讨论，通过 `add_board_item_comment` 发布可见评论。两个工具使用相同的项目、Issue 权限和动态消息存储；返回的评论 ID 就是动态消息 ID。写入后通过现有 Socket.IO 推送刷新界面，重载后仍可读取。
+
+原生 Executor 对应的 HTTP 接口是 `GET/POST /api/v1/cloud-projects/{project_id}/loop-items/{item_id}/activity-comments`。读取默认返回最近 200 条，最多 500 条，按序号升序排列；使用 `after_sequence` 向后分页。只读成员可以读取，不能写入；其它 Issue 的消息不会出现在结果中。
+
+旧的 `/loop-items/{item_id}/comments` 仍承载 provider 评论和历史分配事件，不能直接删除底层数据；这些历史记录不会自动迁入 Issue 动态。插件应使用项目空间工具，不再把旧接口返回 ID 视为 Issue 动态已发布的证据。
+
+桌面 CI 的 Core 分片 15 包含 `collaboration-issue-mcp-comments`：验证 MCP 写入后可见、重载后持久化、原生 HTTP 写入实时可见、MCP 读回 PR 链接、跨 Issue 隔离以及页面没有协作加载错误。测试清理先退出 Electron，再关闭云端测试服务，避免仍打开的页面因服务关闭而显示错误。

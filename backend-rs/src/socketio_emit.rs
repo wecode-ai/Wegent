@@ -38,10 +38,26 @@ pub(crate) fn host_id() -> &'static str {
 /// `json.dumps(message)` (default `", "` / `": "` separators, key order as
 /// constructed). `data` is the JSON array of positional arguments.
 pub(crate) fn emit_message(event: &str, data: &str, namespace: &str, room: &str) -> String {
+    emit_message_with_callback(event, data, namespace, room, None)
+}
+
+/// `AsyncPubSubManager.emit` with the optional RPC callback identity that
+/// `Server.call` adds: `[sid, namespace, id]`.
+pub(crate) fn emit_message_with_callback(
+    event: &str,
+    data: &str,
+    namespace: &str,
+    room: &str,
+    callback: Option<(&str, u64)>,
+) -> String {
+    let callback = match callback {
+        Some((sid, id)) => format!("[\"{sid}\", \"{namespace}\", {id}]"),
+        None => "null".to_string(),
+    };
     format!(
         "{{\"method\": \"emit\", \"event\": \"{event}\", \"data\": {data}, \"binary\": false, \
          \"namespace\": \"{namespace}\", \"room\": \"{room}\", \"skip_sid\": null, \
-         \"callback\": null, \"host_id\": \"{}\"}}",
+         \"callback\": {callback}, \"host_id\": \"{}\"}}",
         host_id()
     )
 }
@@ -80,5 +96,25 @@ mod tests {
             .and_then(|rest| rest.strip_suffix("\"}"))
             .expect("host_id suffix");
         assert_eq!(host.len(), 32);
+    }
+
+    #[test]
+    fn callback_messages_carry_the_rpc_identity() {
+        let message = emit_message_with_callback(
+            "device:sync_capabilities",
+            "[{\"mode\": \"replace\"}]",
+            "/local-executor",
+            "socket-1",
+            Some(("socket-1", 7)),
+        );
+        assert!(message.contains(
+            "\"room\": \"socket-1\", \"skip_sid\": null, \
+             \"callback\": [\"socket-1\", \"/local-executor\", 7],"
+        ));
+        assert!(message.starts_with(
+            "{\"method\": \"emit\", \"event\": \"device:sync_capabilities\", \
+             \"data\": [{\"mode\": \"replace\"}], \"binary\": false, \
+             \"namespace\": \"/local-executor\", "
+        ));
     }
 }

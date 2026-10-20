@@ -457,11 +457,12 @@ async def bind_runtime_task_im_sessions_endpoint(
     )
 
 
-@router.get(
-    "/im-notifications",
-    response_model=RuntimeIMNotificationSettingsResponse,
-    response_model_by_alias=True,
-)
+# MIGRATION-CANDIDATE(api="GET /api/runtime-work/im-notifications"): remove after final confirmation.
+# @router.get(
+#     "/im-notifications",
+#     response_model=RuntimeIMNotificationSettingsResponse,
+#     response_model_by_alias=True,
+# )
 @trace_async("runtime_work.im_notifications.get", "runtime_work.api")
 async def get_im_notification_settings_endpoint(
     db: Session = Depends(get_db),

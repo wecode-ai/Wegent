@@ -97,3 +97,19 @@ def test_public_team_icon_rejects_excessive_pixel_dimensions(monkeypatch):
     assert exc_info.value.status_code == 400
     assert exc_info.value.detail == "Team icon dimensions are too large"
     image.convert.assert_not_called()
+
+
+@pytest.fixture(autouse=True)
+def _retained_python_handler_contracts(test_client):
+    import app.api.endpoints.resource_library as endpoint_0
+    from tests.legacy_python_routes import legacy_python_handlers
+
+    with legacy_python_handlers(test_client.app) as register:
+        register(
+            "/api/resource-library/assets/team-icons/{asset_id}",
+            endpoint_0.get_public_team_icon,
+            endpoint_0.router,
+            methods=["GET"],
+            include_in_schema=False,
+        )
+        yield

@@ -118,7 +118,8 @@ async def get_branch_diff(
     )
 
 
-@router.get("/repositories/search", response_model=List[RepositoryResult])
+# MIGRATION-CANDIDATE(api="GET /api/git/repositories/search"): remove after final confirmation.
+# @router.get("/repositories/search", response_model=List[RepositoryResult])
 async def search_repositories(
     q: str = Query(..., description="Search query for repository name"),
     timeout: int = Query(30, ge=5, le=60, description="Search timeout in seconds"),

@@ -34,6 +34,21 @@ ruby -ryaml -e '
   puts step.fetch("run")
 ' "${RUNTIME_ACTION_FILE:-$script_dir/../actions/build-wework-core-e2e/action.yml}" > "$temp_dir/build.sh"
 
+cat > "$temp_dir/bin/apt-get" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+test -z "${GITHUB_TOKEN:-}"
+test ! -f "$DOCKER_CONFIG/config.json"
+case "$*" in
+  update) test "$#" -eq 1 ;;
+  'install -y --no-install-recommends cmake nasm') test "$#" -eq 5 ;;
+  *) exit 1 ;;
+esac
+printf 'apt %s\n' "$*" >> "$TEST_LOG"
+if [[ "$1" == install && "${FAIL_APT_INSTALL:-false}" == true ]]; then
+  exit 1
+fi
+EOF
 cat > "$temp_dir/bin/cargo" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -90,7 +105,8 @@ run_case() {
   local mode="$1" failure="$2" expected="$3"
   local logout_failure="${4:-false}"
   local artifact_failure="${5:-false}"
-  local repo="$temp_dir/repo-$mode-$failure-$logout_failure-$artifact_failure"
+  local apt_failure="${6:-false}"
+  local repo="$temp_dir/repo-$mode-$failure-$logout_failure-$artifact_failure-$apt_failure"
   mkdir -p "$repo/.github/scripts" "$repo/docker-config"
   printf '{"auths":{"ghcr.io":{"auth":"synthetic-credential"}}}\n' > "$repo/docker-config/config.json"
   touch "$repo/log"
@@ -124,7 +140,7 @@ EOF
   (cd "$repo"; PATH="$temp_dir/bin:$PATH" TEST_LOG="$repo/log" \
     BUILD_RUNTIMES_FROM_SOURCE="$mode" FAIL_CARGO="$failure" \
     EXECUTOR_ARTIFACT="$mode" EXECUTOR_HEAD_SHA=synthetic-head-sha \
-    FAIL_ARTIFACT="$artifact_failure" \
+    FAIL_ARTIFACT="$artifact_failure" FAIL_APT_INSTALL="$apt_failure" \
     DOCKER_CONFIG="$repo/docker-config" FAIL_LOGOUT="$logout_failure" \
     GITHUB_TOKEN=synthetic-read-token EXECUTOR_IMAGE=executor \
     BACKEND_RS_IMAGE=backend bash "$temp_dir/build.sh") || status=$?
@@ -140,15 +156,19 @@ EOF
     test "$(grep -c logout "$repo/log")" -eq 1
     if [[ "$logout_failure" == true ]]; then
       test -f "$repo/docker-config/config.json"
-      if grep -q cargo "$repo/log"; then return 1; fi
+      if grep -Eq "^(cargo|apt )" "$repo/log"; then return 1; fi
     else
       test ! -f "$repo/docker-config/config.json"
-      test "$(grep -c cargo "$repo/log")" -eq 1
+      local expected_build_log=$'apt update\napt install -y --no-install-recommends cmake nasm'
+      if [[ "$apt_failure" != true ]]; then
+        expected_build_log+=$'\ncargo'
+      fi
+      test "$(grep -E '^(apt |cargo$)' "$repo/log")" = "$expected_build_log"
     fi
     test "$(grep -c artifact "$repo/log")" -eq 1
   else
     if grep -q logout "$repo/log"; then return 1; fi
-    if grep -q cargo "$repo/log"; then return 1; fi
+    if grep -Eq "^(cargo|apt )" "$repo/log"; then return 1; fi
     test "$(grep -c oci "$repo/log")" -eq 2
   fi
 }
@@ -158,4 +178,5 @@ run_case false false success
 run_case true true failure
 run_case true false failure true
 run_case true false failure false true
+run_case true false failure false false true
 echo 'Wework runtime source/OCI handoff tests passed'
