@@ -148,6 +148,10 @@ Linux Core 和 Cloud job 最多并行运行 4 个彼此隔离的 checkpoint，�
 分片内 checkpoint 数量限制。每个 checkpoint 使用独立的数据库、Redis、端口和运行目录，
 Harness runtime 在分片启动前统一解压，因此不再因“重型运行时”或“协作”分组而全程串行。
 macOS 中需要争用原生桌面前台的 checkpoint 仍通过资源锁保持串行。
+
+`split-workbench` 含固定 3 秒的拖拽交互性能断言，使用独立 Linux 分片，
+避免其他全栈实例争抢 CPU 改变性能基准。它仍保留完整功能断言，并记录拖拽移动、
+松开事件分发和分屏就绪的分阶段耗时；其他功能分片仍可运行最多 4 个实例。
 各 Core/Cloud matrix job 还提供跨 runner 的套件级并行。分片按 CI 实测耗时平衡并设定
 上限，以控制完整套件的关键路径；新增或明显变慢的 checkpoint
 必须重新校准分片，不能靠删覆盖或重跑失败用例来缩短关键路径。

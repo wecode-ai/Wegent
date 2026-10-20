@@ -154,6 +154,12 @@ Redis, ports, and runtime directories, and Harness runtimes are extracted once
 before the shard starts. The former intensive-runtime and Collaboration groups
 therefore no longer serialize entire checkpoints. macOS checkpoints that require
 the native desktop foreground still use an exclusive resource lock.
+
+`split-workbench` keeps its fixed three-second drag interaction assertion on a
+dedicated Linux shard so competing full-stack instances do not change the benchmark's
+CPU allocation. It retains all functional assertions and logs pointer movement,
+pointer-up dispatch, and split readiness timings. Other functional shards still
+allow up to four instances.
 Core and Cloud matrix jobs also provide
 suite-level parallelism across runners. Shards are balanced from observed CI
 durations and capped to bound the complete suite's critical path; a new or

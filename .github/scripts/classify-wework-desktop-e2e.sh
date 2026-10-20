@@ -201,7 +201,7 @@ core_shards=(
   project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,stand-in,collaboration-local-group-coordinate,collaboration-human-round-resume
   resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-task-discovery,collaboration-app-queue-identity,collaboration-issue-archive,collaboration-local-group-cancellation
   workspace-attachments,automation-lifecycle,drawing-attachment
-  project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention,collaboration-issue-comment-attachments
+  project-assignment-notification,priority-filter,collaboration-issue-comment-mention,collaboration-issue-comment-attachments
   transcript-sync,background-terminals
   runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification,collaboration-issue-mcp-comments,latest-conversation-history
@@ -210,6 +210,8 @@ core_shards=(
   collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details,stand-in-cloud
   rendering-extensions,streaming-content,streaming-tools,streaming-timers
   streaming-scroll,streaming-message-order,streaming-subagents
+  # Preserve the fixed interaction latency budget without CPU contention from other apps.
+  split-workbench
 )
 
 validate_core_shards() {
@@ -394,6 +396,10 @@ classify_wework_path() {
   local path="$1"
 
   case "$path" in
+    wework/e2e/desktop/scenarios/split-workbench.scenario.mjs)
+      select_target "core:split-workbench"
+      return
+      ;;
     wework/e2e/desktop/scenarios/harness-apps.scenario.mjs | \
       wework/e2e/desktop/modules/harness-app-*)
       select_target "core:harness-app-development"
