@@ -268,6 +268,26 @@ async function createIssue(control, projectId, request, owner, uiTimeoutMs, titl
     'click',
     `[data-testid="cloud-todo-create-assignee-option-user:${owner.id}"]`
   )
+  assert.equal(
+    Number(
+      await control.command('getElementCount', '[data-testid="wework-assignment-notify-confirm"]')
+    ),
+    0,
+    'Selecting an assignee must not open a notification confirmation dialog'
+  )
+  await control.command('waitFor', scoped('[data-testid="cloud-todo-create-confirm"]'), {
+    text: '保存并通知',
+  })
+  await control.command('click', scoped('[data-testid="cloud-todo-create-confirm-options"]'))
+  const silentSave = '[data-testid="cloud-todo-create-confirm-without-notification"]'
+  await control.command('waitFor', silentSave, { text: '仅保存不通知', visible: true })
+  await control.command('press', silentSave, { key: 'Escape' })
+  await waitForValue(
+    () => control.command('getElementCount', silentSave),
+    value => Number(value) === 0,
+    'Escape must dismiss the save notification menu',
+    uiTimeoutMs
+  )
   await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-create-confirm"]'), {
     timeoutMs: uiTimeoutMs,
   })
