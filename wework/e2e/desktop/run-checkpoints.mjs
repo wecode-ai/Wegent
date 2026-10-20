@@ -24,33 +24,6 @@ const CHECKPOINT_RESOURCES = new Map([
   ['tray-lifecycle', ['macos-inspector-foreground']],
   ['browser-annotation-design', ['macos-inspector-foreground']],
   ['project-assignment-notification', ['macos-inspector-foreground']],
-  // Fresh packaged runtime extraction contends when these cloud checkpoints share a runner.
-  ['plugin-account-auth', ['desktop-runtime-intensive']],
-  ['cloud-device-lifecycle', ['desktop-runtime-intensive']],
-  ['resilience', ['desktop-runtime-intensive']],
-  ['environment-panel-scroll', ['desktop-runtime-intensive']],
-  ['workspace-attachments', ['desktop-runtime-intensive']],
-  ['automation-lifecycle', ['desktop-runtime-intensive']],
-  ['collaboration-shared-core', ['collaboration-runtime', 'desktop-runtime-intensive']],
-  ['collaboration-issue-task-discovery', ['collaboration-runtime', 'desktop-runtime-intensive']],
-  ['collaboration-app-queue-identity', ['collaboration-runtime', 'desktop-runtime-intensive']],
-  ['collaboration-local-agent-dispatch', ['collaboration-runtime', 'desktop-runtime-intensive']],
-  ['collaboration-remote-agent-dispatch', ['collaboration-runtime', 'desktop-runtime-intensive']],
-  ['collaboration-local-group-coordinate', ['collaboration-runtime', 'desktop-runtime-intensive']],
-  ['collaboration-remote-group-coordinate', ['collaboration-runtime', 'desktop-runtime-intensive']],
-  [
-    'collaboration-remote-group-planning-details',
-    ['collaboration-runtime', 'desktop-runtime-intensive'],
-  ],
-  ['collaboration-human-round-resume', ['collaboration-runtime', 'desktop-runtime-intensive']],
-  [
-    'collaboration-local-group-cancellation',
-    ['collaboration-runtime', 'desktop-runtime-intensive'],
-  ],
-  ['collaboration-issue-comment-notification', ['collaboration-runtime']],
-  ['collaboration-issue-comment-attachments', ['collaboration-runtime']],
-  ['collaboration-issue-mcp-comments', ['collaboration-runtime']],
-  ['collaboration-issue-archive', ['collaboration-runtime', 'desktop-runtime-intensive']],
 ])
 const CHECKPOINT_SCENARIO_MODULES = {
   'goal-state-sync': './scenarios/goal-state-sync.scenario.mjs',
@@ -638,7 +611,20 @@ async function runParallelCheckpoints(checkpoints) {
       WEWORK_E2E_PORT_REGISTRY_DIR: sharedRuntimeDirectory,
     }
     const failures = []
+    const activeCheckpoints = new Set()
     const workerCount = Math.min(parallelCheckpointLimit(), checkpoints.length)
+    const logActivity = (event, checkpoint) => {
+      console.log(
+        `[desktop-e2e-schedule] ${JSON.stringify({
+          timestamp: new Date().toISOString(),
+          event,
+          checkpoint,
+          workerCount,
+          activeCount: activeCheckpoints.size,
+          activeCheckpoints: [...activeCheckpoints],
+        })}`
+      )
+    }
     console.log(
       `[desktop-e2e] Running ${checkpoints.length} checkpoints with ${workerCount} parallel workers`
     )
@@ -646,13 +632,22 @@ async function runParallelCheckpoints(checkpoints) {
     await runWithCheckpointResources({
       checkpoints,
       workerCount,
-      resourceFor: checkpoint => CHECKPOINT_RESOURCES.get(checkpoint),
+      resourceFor: checkpoint =>
+        process.platform === 'darwin' ? CHECKPOINT_RESOURCES.get(checkpoint) : [],
       run: async checkpoint => {
         const env = checkpointScenarioEnv({ ...sharedEnv }, checkpoint)
         delete env.WEWORK_E2E_CONTROL_SERVER_PORT
         delete env.WEWORK_E2E_MODEL_SERVER_PORT
         console.log(`\n[desktop-e2e] START ${checkpoint}`)
-        const result = await runTaskFlow(parallelCheckpointArgs(checkpoint), env, checkpoint)
+        activeCheckpoints.add(checkpoint)
+        logActivity('start', checkpoint)
+        let result
+        try {
+          result = await runTaskFlow(parallelCheckpointArgs(checkpoint), env, checkpoint)
+        } finally {
+          activeCheckpoints.delete(checkpoint)
+          logActivity('end', checkpoint)
+        }
         if (result.code === 0) {
           console.log(
             `[desktop-e2e] PASS ${checkpoint}: duration=${formatDuration(result.durationMs)}, assertion-errors=none${result.resultDir ? `, evidence=${result.resultDir}` : ''}`

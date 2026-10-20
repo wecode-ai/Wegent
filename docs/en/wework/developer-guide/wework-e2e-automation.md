@@ -146,17 +146,30 @@ checkpoint. When upstream checkpoints are skipped, each checkpoint establishes
 its own minimal fixtures instead of depending on tasks or UI state created only
 by the complete flow. PR CI builds the smallest segment matrix for the changed
 feature paths. Shared desktop infrastructure, merge queue, scheduled runs, and
-`ci:all` still run the complete desktop suites. Core uses seventeen fixed GitHub
-Actions matrix jobs and Cloud uses fifteen. A Core job runs at most two isolated
-checkpoints concurrently so three complete Electron, Executor, and real-backend
-stacks cannot contend for one runner's CPU; Cloud jobs retain up to three
-concurrent checkpoints. Checkpoints that share the Collaboration cloud runtime
-or have demonstrated timing contention remain serialized through an exclusive
-resource lock. The thirty-two Core and Cloud matrix jobs still provide
+`ci:all` still run the complete desktop suites. Core and Cloud shard definitions
+live in `.github/scripts/classify-wework-desktop-e2e.sh`. Linux Core and Cloud jobs
+run at most four isolated checkpoints concurrently; actual concurrency also
+depends on the shard's checkpoint count. Each checkpoint owns its database,
+Redis, ports, and runtime directories, and Harness runtimes are extracted once
+before the shard starts. The former intensive-runtime and Collaboration groups
+therefore no longer serialize entire checkpoints. macOS checkpoints that require
+the native desktop foreground still use an exclusive resource lock.
+Core and Cloud matrix jobs also provide
 suite-level parallelism across runners. Shards are balanced from observed CI
 durations and capped to bound the complete suite's critical path; a new or
 materially slower checkpoint requires rebalancing instead of
-removing coverage or rerunning failures. The 2,200-delta Codex notification
+removing coverage or rerunning failures.
+Linux Core/Cloud tests emit `[runner-resources]` JSON records at startup, completion,
+and every 15 seconds, also saved as `runner-resources.jsonl` in the diagnostic
+artifact. Records include CPU utilization, load average, memory, available disk
+space, Linux CPU/memory/I/O pressure, and cgroup CPU limits, memory peaks, and OOM
+counters. Unreadable kernel metrics report `unavailable`. CPU utilization is the
+average between samples; its initial value is `null`.
+`[desktop-e2e-schedule]` logs list active checkpoints and actual concurrency on
+each start and completion, making overlap visible independently of the configured
+worker limit. Compare shard durations and these metrics after increasing
+concurrency to identify CPU, memory, or I/O contention.
+The 2,200-delta Codex notification
 isolation stress case and the long plugin auto-update checkpoint each have a
 dedicated shard; the notification scenario uses a targeted 30-second render
 budget without changing the shared 10-second UI timeout. CI first builds one Core Electron
