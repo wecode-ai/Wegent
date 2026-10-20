@@ -28,7 +28,7 @@ async function revealIssueCard(control, issueId, title, timeoutMs) {
 }
 
 async function createIssue(control, title, status, timeoutMs) {
-  await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
+  await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   const dialog = scoped('[data-testid="collaboration-issue-create-dialog"]')
   await control.command('waitFor', `${dialog} [data-testid="cloud-todo-create-panel"]`, {
     visible: true,
