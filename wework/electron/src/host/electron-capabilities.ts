@@ -701,7 +701,8 @@ export function createElectronCapabilityRouter(
       stringParam(params, 'key'),
       () => (label === 'main' ? e2eHost.focusMainWindow() : e2eHost.focusWindow(label)),
       process.env,
-      phase as E2EKeyPhase
+      phase as E2EKeyPhase,
+      booleanParam(params, 'focus') ?? true
     )
   })
   router.register('e2e.getProcessSnapshot', () => getElectronProcessSnapshot())
