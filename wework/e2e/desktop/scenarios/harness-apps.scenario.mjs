@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { access, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import {
   createZipFixture,
@@ -12,6 +12,10 @@ import {
 } from '../modules/zip-fixtures.mjs'
 import { telemetryEvents } from '../modules/response-protocol.mjs'
 import { verifySmartAppMarketplaceIdentity } from '../modules/smart-app-marketplace-identity.mjs'
+import {
+  verifyDefaultOnlyDshPackage,
+  verifyDownloadedDshRuntimeCache,
+} from '../modules/dsh-runtime-cache.mjs'
 
 const INSTALLATION_ID = 'dsh-e2e-smoke'
 const IMPORTED_INSTALLATION_ID = 'dsh-e2e-smoke-imported'
@@ -290,6 +294,7 @@ export async function createDesktopScenario({
   const downloadsPath =
     process.platform === 'linux' ? join(resultDir, 'home') : join(homedir(), 'Downloads')
   let sharedSmartAppId = null
+  let legacyRuntimeCache
   let ownerRequest
   return {
     requiresCloudEnvironment: true,
@@ -449,6 +454,10 @@ export async function createDesktopScenario({
     },
 
     async verify(control) {
+      await verifyDefaultOnlyDshPackage(
+        fileURLToPath(new URL('../../../electron/resources/harness-runtime/', import.meta.url)),
+        join(resultDir, 'harness-runtime')
+      )
       await setExperimentalFeatures(control, false, uiTimeoutMs)
       await control.command('navigate', 'body', { value: '/' })
       await control.command('waitFor', '[data-testid="workspace-tab-add"]', {
@@ -587,6 +596,10 @@ export async function createDesktopScenario({
         '0.1.0-rc.8',
         'An existing Smart app must keep its declared compatible runtime'
       )
+      legacyRuntimeCache = await verifyDownloadedDshRuntimeCache(
+        join(resultDir, 'harness-runtime'),
+        '0.1.0-rc.8'
+      )
       await control.command(
         'click',
         `[data-testid="workspace-tab-select-${officialManagementTabId}"]`
@@ -697,6 +710,11 @@ export async function createDesktopScenario({
           ?.runtimeVersion,
         '0.2.0-rc.2',
         'A newly created Smart app must launch the current Workbench runtime'
+      )
+      assert.deepEqual(
+        await verifyDownloadedDshRuntimeCache(join(resultDir, 'harness-runtime'), '0.1.0-rc.8'),
+        legacyRuntimeCache,
+        'Launching another app must preserve the verified legacy archive cache'
       )
       assert.equal(blankWorkbenchSnapshot.workbench?.currentProject, null)
       assert.equal(
@@ -1473,6 +1491,11 @@ export async function createDesktopScenario({
         timeoutMs: 30_000,
       })
       await captureScreenshot(control, 'harness-apps-09a-reopened.png', 'body')
+      assert.deepEqual(
+        await verifyDownloadedDshRuntimeCache(join(resultDir, 'harness-runtime'), '0.1.0-rc.8'),
+        legacyRuntimeCache,
+        'Reopening a legacy app must reuse its previously verified runtime archive'
+      )
       const reopenedAppTabId = await control.command('getAttribute', appSurface, {
         value: 'data-workspace-tab-id',
       })
