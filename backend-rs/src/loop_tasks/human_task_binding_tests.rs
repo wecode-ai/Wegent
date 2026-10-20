@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Shape guards for the `human_issue_work_service.view` projection.
+//! Contract tests for status-independent human task identities.
 
 use super::*;
 use crate::loop_tasks::loop_repository::CommentRow;
@@ -109,30 +109,6 @@ fn rejects_a_mismatched_assignee() {
 }
 
 #[test]
-fn can_start_matches_the_source_branches() {
-    let work = json!({"assignment_id": "a", "state": "none"});
-    let work = work.as_object();
-    assert!(can_start(Some("inbox"), "a", work));
-    assert!(can_start(Some("pending"), "a", work));
-    assert!(!can_start(Some("in_progress"), "a", work));
-    // A reassignment that has not been started under the current assignment.
-    assert!(can_start(Some("in_review"), "b", work));
-    assert!(can_start(Some("in_review"), "a", None));
-    // Same assignment already has a non-`none` state.
-    let started = json!({"assignment_id": "a", "state": "submitted"});
-    assert!(!can_start(Some("completed"), "a", started.as_object()));
-}
-
-#[test]
-fn work_value_preserves_present_nulls() {
-    let work = json!({"result": "", "submission_message_id": null, "state": "accepted"});
-    let work = work.as_object();
-    assert_eq!(work_value(work, "result"), Some(json!("")));
-    assert_eq!(work_value(work, "submission_message_id"), Some(Value::Null));
-    assert_eq!(work_value(work, "missing"), None);
-}
-
-#[test]
 fn uuid5_matches_python_namespace_url() {
     assert_eq!(
         direct_human_assignment_id("EXAMPLE-10", "1000000000000000003"),
@@ -145,8 +121,8 @@ fn uuid5_matches_python_namespace_url() {
 }
 
 #[test]
-fn ai_task_binding_uses_the_direct_human_identity() {
-    let binding = ai_task_binding("EXAMPLE-10", "1000000000000000003");
+fn direct_task_binding_uses_the_direct_human_identity() {
+    let binding = direct_task_binding("EXAMPLE-10", "1000000000000000003");
     assert_eq!(
         binding["humanAssignmentId"],
         "0cc4f520-a9bf-560e-a89a-422ae4dc4b05"
@@ -154,4 +130,91 @@ fn ai_task_binding_uses_the_direct_human_identity() {
     assert_eq!(binding["dispatchId"], "direct-human:1000000000000000003");
     assert_eq!(binding["dispatchRoundId"], "direct");
     assert_eq!(binding["assignmentId"], "1000000000000000003");
+}
+
+fn round_metadata() -> Value {
+    json!({
+        "activity_type": "manager_assignment",
+        "dispatch_id": "dispatch-1",
+        "coordination_round_id": "round-1",
+        "dispatch_assignments": [null, "invalid", {
+            "assignee_type": "human",
+            "human_user_id": "52",
+            "human_assignment_id": "human-1",
+            "assignment_id": "member-1",
+        }],
+    })
+}
+
+#[test]
+fn round_binding_preserves_the_complete_manager_identity() {
+    for user_id in [json!("52"), json!(52)] {
+        let mut metadata = round_metadata();
+        metadata["dispatch_assignments"][2]["human_user_id"] = user_id;
+        assert_eq!(
+            round_task_binding([&metadata].into_iter(), 52),
+            Some(json!({
+                "humanAssignmentId": "human-1",
+                "assignmentId": "member-1",
+                "dispatchId": "dispatch-1",
+                "dispatchRoundId": "round-1",
+            }))
+        );
+        assert_eq!(round_task_binding([&metadata].into_iter(), 53), None);
+    }
+}
+
+#[test]
+fn round_binding_requires_all_four_identity_fields() {
+    for key in [
+        "human_assignment_id",
+        "assignment_id",
+        "dispatch_id",
+        "coordination_round_id",
+    ] {
+        for invalid in [Value::Null, json!(""), json!(false)] {
+            let mut metadata = round_metadata();
+            if matches!(key, "human_assignment_id" | "assignment_id") {
+                metadata["dispatch_assignments"][2][key] = invalid;
+            } else {
+                metadata[key] = invalid;
+            }
+            assert_eq!(round_task_binding([&metadata].into_iter(), 52), None);
+        }
+    }
+}
+
+#[test]
+fn incomplete_or_unrelated_latest_round_never_uses_an_older_identity() {
+    let older = round_metadata();
+    for members in [
+        Value::Null,
+        json!({}),
+        json!([]),
+        json!([{
+            "assignee_type": "human", "human_user_id": "53",
+            "human_assignment_id": "other", "assignment_id": "other",
+        }]),
+    ] {
+        let mut latest = round_metadata();
+        latest["dispatch_assignments"] = members;
+        assert_eq!(round_task_binding([&latest, &older].into_iter(), 52), None);
+    }
+}
+
+#[test]
+fn round_binding_skips_non_manager_activity_and_unstructured_metadata() {
+    let manager = round_metadata();
+    let values = [
+        Value::Null,
+        json!([]),
+        json!("legacy"),
+        json!({}),
+        json!({"activity_type": "comment"}),
+        manager.clone(),
+    ];
+    assert_eq!(
+        round_task_binding(values.iter(), 52),
+        round_task_binding([&manager].into_iter(), 52)
+    );
 }

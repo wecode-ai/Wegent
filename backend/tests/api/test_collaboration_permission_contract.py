@@ -201,6 +201,35 @@ def test_cp07_cp08_cp20_viewer_and_membership_provenance(test_client, scope):
     )
 
 
+@pytest.mark.parametrize("target_status", ["in_progress", "in_review", "completed"])
+def test_cp07_viewer_cannot_change_issue_status(test_client, scope, target_status):
+    invite(test_client, scope, "Viewer")
+    pid = scope["project"]["id"]
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{pid}/loop-items",
+        headers=scope["owner"],
+        json={"title": "Status permission contract"},
+    )
+    assert created.status_code == 201, created.text
+    issue = created.json()
+    changed = test_client.patch(
+        f"/api/v1/loop-items/{issue['id']}",
+        headers=scope["member"],
+        json={
+            "version": issue["version"],
+            "status": target_status,
+        },
+    )
+    assert changed.status_code == 403, changed.text
+    current = test_client.get(
+        f"/api/v1/loop-items/{issue['id']}", headers=scope["owner"]
+    ).json()
+    assert (current["status"], current["version"]) == (
+        issue["status"],
+        issue["version"],
+    )
+
+
 def test_cp08_lower_direct_role_never_masks_space_administration(
     test_client, test_db, scope
 ):
