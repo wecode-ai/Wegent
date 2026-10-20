@@ -236,6 +236,8 @@ export async function selectProjectRunnerModel(control, timeoutMs) {
   const environment = `[data-testid="${prefix}-environment"]`
   const model = `[data-testid="${prefix}-model"]`
   const identity = JSON.stringify(['codex', MODEL_PROVIDER_ID, DEFAULT_MODEL_ID])
+  await control.command('waitFor', `${model} option:checked:not([value=""])`, { timeoutMs })
+  const cloudDefault = await control.command('getValue', model)
   await control.command('waitFor', `${environment}[data-value="policy:project_pool"]`, {
     timeoutMs,
   })
@@ -246,7 +248,13 @@ export async function selectProjectRunnerModel(control, timeoutMs) {
   const environmentId = optionId.slice(`${prefix}-environment-option-`.length)
   assert.ok(environmentId, 'The isolated execution environment must be available')
   await control.command('clickWhenEnabled', firstDevice, { timeoutMs })
-  await control.command('waitFor', `${model} option[value='${identity}']:checked`, { timeoutMs })
+  await control.command('waitFor', `${model} option[value='${identity}']`, { timeoutMs })
+  assert.equal(
+    await control.command('getValue', model),
+    cloudDefault,
+    'Selecting a device must preserve the chosen cloud model'
+  )
+  await selectWhenOptionAvailable(control, model, identity, timeoutMs)
   await selectAgentEnvironment(
     control,
     `${prefix}-environment`,
@@ -351,7 +359,7 @@ export async function openProjectAgentCreator(
   editorTestId = 'cloud-project-chat-agent-editor'
 ) {
   await control.command('clickWhenEnabled', addSelector, { timeoutMs })
-  const createMode = '[data-testid="project-agent-mode-create-card"]'
+  const createMode = '[data-testid="project-agent-mode-create"]'
   await control.command('waitFor', createMode, { visible: true, timeoutMs })
   await control.command('click', createMode)
   await control.command('waitFor', `[data-testid="${editorTestId}"]`, {

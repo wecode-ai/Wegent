@@ -47,21 +47,26 @@ export function ProjectCollaborationGroups({
   );
   const [availableAgents, setAvailableAgents] =
     useState<CollaborationAgent[]>(agents);
+  const [availableMembers, setAvailableMembers] =
+    useState<CollaborationMember[]>(members);
 
   const reload = useCallback(async () => {
     if (!api.projects.listCollaborationGroups) {
       return [];
     }
-    const [available, projectGroups, projectAgents] = await Promise.all([
-      workspaceId && api.workspaces?.listCollaborationGroups
-        ? api.workspaces.listCollaborationGroups(workspaceId)
-        : Promise.resolve([]),
-      api.projects.listCollaborationGroups(projectId),
-      api.agents.list(projectId),
-    ]);
+    const [available, projectGroups, projectAgents, projectMembers] =
+      await Promise.all([
+        workspaceId && api.workspaces?.listCollaborationGroups
+          ? api.workspaces.listCollaborationGroups(workspaceId)
+          : Promise.resolve([]),
+        api.projects.listCollaborationGroups(projectId),
+        api.agents.list(projectId),
+        api.members.list(projectId),
+      ]);
     setWorkspaceGroups(available);
     setGroups(projectGroups);
     setAvailableAgents(projectAgents);
+    setAvailableMembers(projectMembers);
     return projectAgents;
   }, [api, projectId, workspaceId]);
 
@@ -165,7 +170,7 @@ export function ProjectCollaborationGroups({
       availableGroups={workspaceGroups.filter(
         (group) => !projectGroupIds.has(group.id),
       )}
-      members={members}
+      members={availableMembers}
       agents={availableAgents}
       locale={locale}
       currentUserId={currentUserId}

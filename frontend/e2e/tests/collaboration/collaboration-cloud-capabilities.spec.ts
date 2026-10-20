@@ -7,6 +7,7 @@ import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import {
   openBlankProjectCreation,
+  selectCollaborationProjectView,
   webApi,
   writeSharedComposer,
 } from '../../utils/collaboration-test-support'
@@ -943,7 +944,7 @@ test.describe('Collaboration cloud capabilities', () => {
             `/api/v1/cloud-projects/${encodeURIComponent(project.id)}`
           )
         ).board_config?.statuses.length ?? 0
-      await page.getByTestId('collaboration-tab-board').click()
+      await selectCollaborationProjectView(page, 'board')
       await page.getByTestId('collaboration-board-settings').click()
       await expect(page.getByTestId('project-board-settings-dialog')).toBeVisible()
       await page.getByTestId('cloud-board-status-add').click()
