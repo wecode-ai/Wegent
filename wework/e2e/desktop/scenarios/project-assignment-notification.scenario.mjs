@@ -417,6 +417,7 @@ async function verifyManualCommentFlow(control, request, projectId, owner, uiTim
     '看板拖拽未能直接完成 Issue',
     uiTimeoutMs
   )
+  await control.command('scrollIntoView', scoped('[data-testid="cloud-todo-column-completed"]'))
   await control.command(
     'waitFor',
     scoped(
