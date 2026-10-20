@@ -5147,5 +5147,32 @@
     "without_notification": "Do not notify",
     "with_notification": "Notify",
     "connect": "Connect to the cloud to view notifications"
+  },
+  "standIn": {
+    "title": "My Stand-in",
+    "close": "Close",
+    "auto": "Enable Stand-in",
+    "prompt": "How should your Stand-in work? (optional)",
+    "prompt_placeholder": "For example: Start with a plan, then explain what changed and how it was verified. Ask me when unsure.",
+    "current_device": "Current device",
+    "device": "Where to work",
+    "select_device": "Select a device",
+    "device_unavailable": "Selected device unavailable; select again",
+    "offline": "Offline",
+    "no_permission": "A project Developer role is required to enable Stand-in.",
+    "future_only": "Existing tasks won’t start automatically",
+    "cancel": "Cancel",
+    "save": "Save",
+    "saving": "Saving…",
+    "loading": "Loading…",
+    "reload": "Reload",
+    "saved": "Stand-in settings saved",
+    "enabled": "My Stand-in · Automatic handling enabled",
+    "project_enabled": "Stand-in enabled",
+    "description": "Let your Stand-in take care of tasks while you’re busy. It handles new assignments so you can review the results when they’re ready.",
+    "agent": "Which agent to use",
+    "default_agent": "General assistant (default)",
+    "agent_unavailable": "Selected agent is unavailable",
+    "agent_load_failed": "Unable to load agents. Reopen settings to retry."
   }
 }

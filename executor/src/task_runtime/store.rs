@@ -16,7 +16,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 mod code_projects;
-mod execution_workspace;
+pub(crate) mod execution_workspace;
 
 use super::credentials::{encrypt_provider_config, update_provider_config};
 use super::model::{
@@ -45,6 +45,9 @@ use local_execution_activity::{
 
 #[path = "collaboration_dispatch.rs"]
 mod collaboration_dispatch;
+
+#[path = "stand_in.rs"]
+mod stand_in;
 
 const LOCAL_SCHEMA_VERSION: i64 = 10;
 const DEFAULT_WORK_ITEM_PROJECT_ID: &str = "default-work-items";

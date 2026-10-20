@@ -52,6 +52,7 @@ export interface CollaborationPlatformLocation {
 }
 
 export interface CollaborationPlatformHostAdapter {
+  renderProjectSidebarBadge?(project: CollaborationProject): ReactNode;
   currentUser?: {
     id: number;
     name: string;

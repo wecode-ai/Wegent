@@ -1662,6 +1662,31 @@ export function createHybridWorkbenchServices(
     },
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
+    standInApi: {
+      async list(userId, deviceId) {
+        const identity = await getLocalRuntimeSidebarIdentity()
+        const api =
+          deviceId === identity?.deviceId ? localServices.standInApi : cloudServices.standInApi
+        if (!api) throw new Error('Executor settings are unavailable')
+        return api.list(userId, deviceId)
+      },
+      async get(projectId, userId, projectStore, deviceId, standInId) {
+        const identity = await getLocalRuntimeSidebarIdentity()
+        const api =
+          deviceId === identity?.deviceId ? localServices.standInApi : cloudServices.standInApi
+        if (!api) throw new Error('Executor settings are unavailable')
+        return api.get(projectId, userId, projectStore, deviceId, standInId)
+      },
+      async save(projectId, userId, projectStore, settings) {
+        const identity = await getLocalRuntimeSidebarIdentity()
+        const api =
+          settings.executionDeviceId === identity?.deviceId
+            ? localServices.standInApi
+            : cloudServices.standInApi
+        if (!api) throw new Error('Executor settings are unavailable')
+        return api.save(projectId, userId, projectStore, settings)
+      },
+    },
     projectDevicePluginApi,
     automationApi,
     attachmentApi: {
