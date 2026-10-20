@@ -224,10 +224,12 @@ export function createDesktopScenario({ modelResponseTimeoutMs, workbenchReadyTi
           value: REPLY,
         })
         await control.command('clickWhenEnabled', `${composer} [data-testid="send-message-button"]`)
-        await control.command('waitFor', scoped('[data-testid="cloud-task-activity-list"]'), {
-          text: PROGRESS,
-          timeoutMs: modelResponseTimeoutMs,
-        })
+        await waitForValue(
+          () => modelRequests.length,
+          count => count >= 2,
+          'The real executor did not start the UI reply',
+          modelResponseTimeoutMs
+        )
         await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
         await singlePreview(control, 'process', PROGRESS)
         assert.deepEqual(bindingAddresses(await bindings()), bindingAddresses(originalBindings))
