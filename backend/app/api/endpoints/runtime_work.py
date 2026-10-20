@@ -46,6 +46,8 @@ from app.schemas.runtime_work import (
     RuntimeTaskRenameRequest,
     RuntimeTranscriptRequest,
     RuntimeTranscriptResponse,
+    RuntimeTranscriptSearchRequest,
+    RuntimeTranscriptSearchResponse,
     RuntimeWorkListResponse,
     RuntimeWorkSearchRequest,
     RuntimeWorkSearchResponse,
@@ -345,6 +347,26 @@ async def get_runtime_transcript_endpoint(
         db=db,
         user_id=current_user.id,
         address=address,
+    )
+
+
+@router.post(
+    "/transcript/search",
+    response_model=RuntimeTranscriptSearchResponse,
+    response_model_by_alias=True,
+    response_model_exclude_none=True,
+)
+async def search_runtime_transcript_endpoint(
+    request: RuntimeTranscriptSearchRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Search one native transcript through the owning executor."""
+
+    return await runtime_work_service.search_runtime_transcript(
+        db=db,
+        user_id=current_user.id,
+        request=request,
     )
 
 

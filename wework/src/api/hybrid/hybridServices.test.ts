@@ -124,6 +124,7 @@ const mocks = vi.hoisted(() => {
       syncRuntimeRemoteProjects: localSyncRemoteProjects,
       activateRuntimeProject: localActivateProject,
       getRuntimeTranscript: vi.fn(),
+      searchRuntimeTranscript: vi.fn(),
       materializeRuntimeTask: vi.fn(),
       prepareRuntimeModel: vi.fn().mockResolvedValue(true),
       listRuntimeWork: localListRuntimeWork,
@@ -190,6 +191,7 @@ const mocks = vi.hoisted(() => {
     runtimeWorkApi: {
       materializeRuntimeTask: cloudMaterializeRuntimeTask,
       getRuntimeTranscript: vi.fn(),
+      searchRuntimeTranscript: vi.fn(),
       prepareRuntimeModel: vi.fn().mockResolvedValue(true),
       listRuntimeWork: cloudListRuntimeWork,
       createRuntimeTask: cloudCreateRuntimeTask,
@@ -957,6 +959,31 @@ describe('execution status write-back on history reads', () => {
     expect(mocks.localServices.runtimeWorkApi.getRuntimeTranscript).toHaveBeenCalledWith(request)
     expect(mocks.cloudServices.runtimeWorkApi.getRuntimeTranscript).not.toHaveBeenCalled()
   })
+
+  it.each([false, true])(
+    'authorizes project-scoped search before device routing (%s)',
+    async projectScoped => {
+      const request = {
+        ...address,
+        query: 'needle',
+        ...(projectScoped
+          ? { projectSession: { projectId: 'project-1', issueId: 'issue-1' } }
+          : {}),
+      }
+      const result = { matches: [], totalMatches: 0, isCapped: false }
+      const local = mocks.localServices.runtimeWorkApi.searchRuntimeTranscript
+      const cloud = mocks.cloudServices.runtimeWorkApi.searchRuntimeTranscript
+      local.mockReset().mockResolvedValue(result)
+      cloud.mockReset().mockResolvedValue(result)
+
+      expect(await createServices().runtimeWorkApi!.searchRuntimeTranscript(request)).toEqual(
+        result
+      )
+
+      expect(projectScoped ? cloud : local).toHaveBeenCalledExactlyOnceWith(request)
+      expect(projectScoped ? local : cloud).not.toHaveBeenCalled()
+    }
+  )
 
   it('reports a completed local turn to durable cloud storage after reading history', async () => {
     mocks.localServices.runtimeWorkApi.getRuntimeTranscript.mockResolvedValue(response)

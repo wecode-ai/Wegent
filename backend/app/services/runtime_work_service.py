@@ -60,6 +60,7 @@ from app.schemas.runtime_work import (
     RuntimeProjectWork,
     RuntimeSendRequest,
     RuntimeSendResponse,
+    RuntimeSessionReadRequest,
     RuntimeSupervisorCreateInput,
     RuntimeTaskAddress,
     RuntimeTaskArchiveResponse,
@@ -78,6 +79,8 @@ from app.schemas.runtime_work import (
     RuntimeTaskRenameRequest,
     RuntimeTranscriptRequest,
     RuntimeTranscriptResponse,
+    RuntimeTranscriptSearchRequest,
+    RuntimeTranscriptSearchResponse,
     RuntimeWorkListResponse,
     RuntimeWorkSearchItem,
     RuntimeWorkSearchProjectRef,
@@ -444,14 +447,7 @@ async def get_runtime_transcript(
 ) -> RuntimeTranscriptResponse:
     """Read a LocalTask transcript from the owning local executor."""
 
-    if getattr(address, "project_session", None) is not None:
-        from app.services.project_chat.session_access import resolve_project_transcript
-
-        user_id, normalized_address = resolve_project_transcript(db, user_id, address)
-    else:
-        normalized_address = _normalized_address(address)
-        _ensure_owned_device(db, user_id, normalized_address.device_id)
-        _touch_workspace_mapping(db, user_id, normalized_address)
+    user_id, normalized_address = _resolve_runtime_session_read(db, user_id, address)
     payload = _runtime_transcript_payload(address, normalized_address)
     started_at = time.perf_counter()
     logger.info(
@@ -524,6 +520,42 @@ async def get_runtime_transcript(
         )
         raise HTTPException(
             502, "Runtime returned an invalid conversation response"
+        ) from exc
+
+
+@trace_async(
+    span_name="runtime_work.transcript.search", tracer_name="backend.runtime_work"
+)
+async def search_runtime_transcript(
+    *,
+    db: Session,
+    user_id: int,
+    request: RuntimeTranscriptSearchRequest,
+) -> RuntimeTranscriptSearchResponse:
+    """Search the exact authorized session without returning its full content."""
+
+    user_id, address = _resolve_runtime_session_read(db, user_id, request)
+    try:
+        result = await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=address.device_id,
+            method="runtime.tasks.transcript.search",
+            payload=_runtime_transcript_search_payload(request, address),
+            timeout_seconds=RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS,
+            **(
+                {"allow_app_device_task_reading": True}
+                if request.project_session is not None
+                else {}
+            ),
+        )
+    except RuntimeRpcError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    _raise_runtime_rpc_failure(result)
+    try:
+        return RuntimeTranscriptSearchResponse.model_validate(result)
+    except ValidationError as exc:
+        raise HTTPException(
+            502, "Runtime returned an invalid conversation search response"
         ) from exc
 
 
@@ -3868,6 +3900,29 @@ def canonical_runtime_event_address(
 
 def _runtime_task_address_payload(address: RuntimeTaskAddress) -> dict[str, Any]:
     return address.model_dump(by_alias=True, exclude_none=True)
+
+
+def _resolve_runtime_session_read(
+    db: Session, user_id: int, request: RuntimeSessionReadRequest
+) -> tuple[int, RuntimeTaskAddress]:
+    if getattr(request, "project_session", None) is not None:
+        from app.services.project_chat.session_access import resolve_project_transcript
+
+        return resolve_project_transcript(db, user_id, request)
+    address = _normalized_address(request)
+    _ensure_owned_device(db, user_id, address.device_id)
+    _touch_workspace_mapping(db, user_id, address)
+    return user_id, address
+
+
+def _runtime_transcript_search_payload(
+    request: RuntimeTranscriptSearchRequest, address: RuntimeTaskAddress
+) -> dict[str, Any]:
+    payload = _runtime_task_address_payload(address)
+    payload["query"] = request.query
+    if request.limit is not None:
+        payload["limit"] = request.limit
+    return payload
 
 
 def _runtime_transcript_payload(

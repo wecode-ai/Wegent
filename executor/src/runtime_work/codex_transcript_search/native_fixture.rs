@@ -1,0 +1,459 @@
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+use std::{fs, os::unix::fs::PermissionsExt};
+
+use super::*;
+
+#[tokio::test]
+async fn native_search_pages_visible_messages_and_hydrates_only_the_match_window() {
+    let _environment = crate::agents::CodexLaunchEnvironment::new();
+    let directory = tempfile::tempdir().unwrap();
+    let binary = directory.path().join("search-fixture");
+    let log = directory.path().join("requests.jsonl");
+    let script = r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> '__LOG__'
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*) result='{}' ;;
+    *'"method":"initialized"'*) continue ;;
+    *'"method":"thread/read"'*) result='{"thread":{"id":"thread-1","historyMode":"paginated"}}' ;;
+    *'"method":"thread/items/read"'*)
+      result='{"data":[{"turnId":"turn-1","item":{"id":"match","type":"agentMessage","text":__MATCH_TEXT__}}]}' ;;
+    *'"method":"thread/turns/list"'*)
+      case "$line" in
+        *'"threadId":"repeat-turns"'*) result='{"data":[],"nextCursor":"repeated-turn-cursor"}' ;;
+        *'"cursor":null'*) result='{"data":[{"id":"reverted-turn","status":"completed","items":[]},{"id":"turn-1","status":"completed","items":[]}],"nextCursor":"scan-turns-next","backwardsCursor":"search-page-anchor"}' ;;
+        *'"cursor":"scan-turns-next"'*) result='{"data":[{"id":"turn-2","status":"completed","items":[]}],"nextCursor":null,"backwardsCursor":"turn-2-anchor"}' ;;
+        *'"cursor":"search-page-anchor"'*) result='{"data":[{"id":"reverted-turn","status":"completed","items":[]}],"nextCursor":"after-reverted","backwardsCursor":"search-page-anchor"}' ;;
+        *'"cursor":"after-reverted"'*) result='{"data":[{"id":"turn-1","status":"completed","items":[]}],"nextCursor":"after-center","backwardsCursor":"turn-anchor"}' ;;
+        *'"cursor":"before-older"'*) result='{"data":[{"id":"oldest","status":"completed","items":[]}],"nextCursor":null}' ;;
+        *'"cursor":"after-newer"'*) result='{"data":[{"id":"newest","status":"completed","items":[]}],"nextCursor":null}' ;;
+        *'"sortDirection":"desc"'*) result='{"data":[{"id":"turn-1","status":"completed","items":[],"itemsView":"notLoaded"},{"id":"older","status":"completed","items":[]}],"nextCursor":"before-older"}' ;;
+        *) result='{"data":[{"id":"turn-1","status":"completed","items":[],"itemsView":"notLoaded"},{"id":"newer","status":"completed","items":[]}],"nextCursor":"after-newer"}' ;;
+      esac ;;
+    *'"method":"thread/items/list"'*)
+      case "$line" in
+        *'"threadId":"repeat-items"'*) result='{"data":[],"nextCursor":"repeated-item-cursor"}' ;;
+        *'"cursor":"scan-items-next"'*) result='{"data":[{"turnId":"turn-1","item":{"id":"formatted","type":"userMessage","clientId":"formatted-client","content":[{"type":"text","text":"foo **bar** &amp; baz"}]}},{"turnId":"turn-1","item":{"id":"steer","type":"userMessage","clientId":"steer-client","content":[{"type":"text","text":"fo&#111; bar &amp; baz"}]}},{"turnId":"turn-1","item":{"id":"tool","type":"commandExecution","text":"needle foo bar & baz"}}],"nextCursor":null}' ;;
+        *'"turnId":"turn-2"'*) result='{"data":[{"turnId":"turn-2","item":{"id":"late-message","type":"agentMessage","text":"late **match**"}}],"nextCursor":null}' ;;
+        *'"cursor":"older-more"'*) result='{"data":[{"turnId":"older","item":{"id":"older-head","type":"agentMessage","text":"older head"}}],"nextCursor":null}' ;;
+        *'"cursor":"newer-more"'*) result='{"data":[{"turnId":"newer","item":{"id":"newer-tail","type":"agentMessage","text":"newer tail"}}],"nextCursor":null}' ;;
+        *'"turnId":"older"'*) result='{"data":[{"turnId":"older","item":{"id":"older-tail","type":"agentMessage","text":"older tail"}}],"nextCursor":"older-more"}' ;;
+        *'"turnId":"newer"'*) result='{"data":[{"turnId":"newer","item":{"id":"newer-head","type":"agentMessage","text":"newer head"}}],"nextCursor":"newer-more"}' ;;
+        *'"turnId":"oldest"'*) result='{"data":[{"turnId":"oldest","item":{"id":"oldest-item","type":"agentMessage","text":"oldest"}}],"nextCursor":null}' ;;
+        *'"turnId":"newest"'*) result='{"data":[{"turnId":"newest","item":{"id":"newest-item","type":"agentMessage","text":"newest"}}],"nextCursor":null}' ;;
+        *'"cursor":null'*) result='{"data":[{"turnId":"turn-1","item":{"id":"hidden","type":"userMessage","clientId":"hidden-client","content":[{"type":"text","text":"shown\n\n# User-provided text attachments\nMIME Type: text/needle"}]}},{"turnId":"turn-1","item":{"id":"match","type":"agentMessage","text":__MATCH_TEXT__}},{"turnId":"turn-1","item":{"id":"body","type":"userMessage","client_id":"body-client","content":[{"type":"text","text":"needle raw count once"}]}}],"nextCursor":"scan-items-next"}' ;;
+        *'"sortDirection":"desc"'*) result='{"data":[{"turnId":"turn-1","item":{"id":"before-2","type":"agentMessage","text":"second"}},{"turnId":"turn-1","item":{"id":"before-1","type":"userMessage","content":[{"type":"text","text":"first"}]}}],"nextCursor":null}' ;;
+        *) result='{"data":[{"turnId":"turn-1","item":{"id":"after","type":"agentMessage","text":"last"}}],"nextCursor":null}' ;;
+      esac ;;
+    *) result='{}' ;;
+  esac
+  printf '{"id":%s,"result":%s}\n' "$id" "$result"
+done
+"#;
+    let match_text = format!(
+        "[needle](https://hidden.example/needle) ![needle](image.png) `needle` {}end",
+        "padding ".repeat(30_000)
+    );
+    fs::write(
+        &binary,
+        script.replace("__LOG__", &log.to_string_lossy()).replace(
+            "__MATCH_TEXT__",
+            &serde_json::to_string(&match_text).unwrap(),
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+    let request = serde_json::from_value(json!({
+        "user_name":"synthetic", "team_namespace":"default", "team_name":"search",
+        "team_id":12, "bot":[{"id":31,"shell_type":"Codex"}],
+    }))
+    .unwrap();
+    let client = CodexAppServerClient::new(binary.to_string_lossy())
+        .for_request(&request)
+        .unwrap();
+    let result = search_codex_transcript(
+        &client,
+        "thread-1",
+        "needle",
+        250,
+        &HashSet::from(["reverted-turn".to_owned()]),
+        &HashMap::from([
+            ("hidden-client".to_owned(), "shown".to_owned()),
+            ("body-client".to_owned(), "needle **needle**".to_owned()),
+        ]),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result["totalMatches"], 4);
+    assert_eq!(result["isCapped"], false);
+    assert_eq!(result["matches"][0]["itemId"], "match");
+    assert_eq!(result["matches"][1]["occurrence"], 1);
+    assert_eq!(result["matches"][2]["itemId"], "body");
+    assert_eq!(result["matches"][2]["messageId"], "body-client");
+    assert_eq!(result["matches"][3]["occurrence"], 1);
+    assert!(result["matches"][0].get("text").is_none());
+    let search_calls = calls(&log);
+    let methods: Vec<_> = search_calls
+        .iter()
+        .filter_map(|call| call["method"].as_str())
+        .collect();
+    assert_eq!(
+        methods,
+        [
+            "initialize",
+            "initialized",
+            "thread/read",
+            "thread/turns/list",
+            "thread/items/list",
+            "thread/items/list",
+            "thread/turns/list",
+            "thread/items/list"
+        ]
+    );
+    assert!(search_calls.iter().all(|call| {
+        call["method"] != "thread/items/list" || call["params"]["turnId"] != "reverted-turn"
+    }));
+    for call in search_calls.iter().filter(|call| {
+        call["method"] == "thread/turns/list" || call["method"] == "thread/items/list"
+    }) {
+        assert_eq!(call["params"]["limit"], 100);
+        assert_eq!(call["params"]["sortDirection"], "asc");
+        if call["method"] == "thread/turns/list" {
+            assert_eq!(call["params"]["itemsView"], "notLoaded");
+        }
+    }
+    let cursor = parse_search_cursor(result["matches"][0]["cursor"].as_str().unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(cursor.turn_offset, 1);
+    let page = load_search_match(&client, json!({"id":"thread-1"}), cursor)
+        .await
+        .unwrap();
+    assert_eq!(page.thread["turns"].as_array().unwrap().len(), 3);
+    assert_eq!(page.thread["turns"][0]["id"], "older");
+    assert_eq!(page.thread["turns"][2]["id"], "newer");
+    let items = page.thread["turns"][1]["items"].as_array().unwrap();
+    let ids: Vec<_> = items
+        .iter()
+        .map(|item| item["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["before-1", "before-2", "match", "after"]);
+    assert_eq!(items[2]["text"], match_text);
+    let projected =
+        crate::runtime_work::transcript::full_transcript_messages(&page.thread, "test-device");
+    assert!(projected
+        .iter()
+        .any(
+            |message| message["runtimeItems"].as_array().is_some_and(|items| items
+                .iter()
+                .any(|item| item["id"] == "match" && item["content"] == match_text))
+        ));
+    let calls = calls(&log);
+    let turn_call = calls
+        .iter()
+        .find(|call| {
+            call["method"] == "thread/turns/list" && call["params"]["cursor"] == "turn-anchor"
+        })
+        .unwrap();
+    assert_eq!(turn_call["params"]["cursor"], "turn-anchor");
+    assert_eq!(turn_call["params"]["limit"], 2);
+    let neighbor_calls: Vec<_> = calls
+        .iter()
+        .filter(|call| {
+            call["method"] == "thread/items/list" && call["params"]["cursor"].is_object()
+        })
+        .collect();
+    assert_eq!(neighbor_calls.len(), 2);
+    for call in neighbor_calls {
+        assert_eq!(
+            call["params"]["cursor"],
+            json!({"type":"item", "itemId":"match"})
+        );
+        assert_eq!(call["params"]["limit"], 50);
+    }
+    let metadata_calls: Vec<_> = calls
+        .iter()
+        .filter(|call| call["method"] == "thread/read")
+        .collect();
+    assert_eq!(metadata_calls.len(), 1);
+    assert_eq!(metadata_calls[0]["params"]["includeTurns"], false);
+    for (cursor, direction, partial_id, boundary_id) in [
+        (
+            page.before_cursor.as_deref().unwrap(),
+            CodexTranscriptDirection::Descending,
+            "older",
+            "oldest",
+        ),
+        (
+            page.after_cursor.as_deref().unwrap(),
+            CodexTranscriptDirection::Ascending,
+            "newer",
+            "newest",
+        ),
+    ] {
+        assert!(is_search_cursor(cursor));
+        let continuation = parse_context_cursor(cursor).unwrap().unwrap();
+        let partial = load_context_page(&client, json!({"id":"thread-1"}), continuation, direction)
+            .await
+            .unwrap();
+        assert_eq!(partial.thread["turns"][0]["id"], partial_id);
+        let cursor = match direction {
+            CodexTranscriptDirection::Descending => partial.before_cursor.as_deref(),
+            CodexTranscriptDirection::Ascending => partial.after_cursor.as_deref(),
+        }
+        .unwrap();
+        let continuation = parse_context_cursor(cursor).unwrap().unwrap();
+        let boundary =
+            load_context_page(&client, json!({"id":"thread-1"}), continuation, direction)
+                .await
+                .unwrap();
+        assert_eq!(boundary.thread["turns"][0]["id"], boundary_id);
+        assert!(boundary.before_cursor.is_none());
+        assert!(boundary.after_cursor.is_none());
+    }
+    let (turns, continuation) = initial_context_side(
+        &client,
+        "thread-1",
+        &json!({"id":"turn-1", "items":[]}),
+        "turn-1",
+        &json!({"data":[{"id":"turn-1"},{"id":"older"}],"nextCursor":"before-older"}),
+        Some("center-more".to_owned()),
+        ContextDirection::Desc,
+    )
+    .await
+    .unwrap();
+    assert!(turns.is_empty());
+    let continuation = parse_context_cursor(continuation.as_deref().unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(continuation.pending_turns.len(), 2);
+    let center = load_context_page(
+        &client,
+        json!({"id":"thread-1"}),
+        continuation,
+        CodexTranscriptDirection::Descending,
+    )
+    .await
+    .unwrap();
+    assert_eq!(center.thread["turns"][0]["id"], "turn-1");
+    assert!(center.prepend_item_turn_ids.contains("turn-1"));
+    let continuation = parse_context_cursor(center.before_cursor.as_deref().unwrap())
+        .unwrap()
+        .unwrap();
+    let neighbor = load_context_page(
+        &client,
+        json!({"id":"thread-1"}),
+        continuation,
+        CodexTranscriptDirection::Descending,
+    )
+    .await
+    .unwrap();
+    assert_eq!(neighbor.thread["turns"][0]["id"], "older");
+
+    let markdown = search_codex_transcript(
+        &client,
+        "thread-1",
+        "foo bar & baz",
+        250,
+        &HashSet::from(["reverted-turn".to_owned()]),
+        &HashMap::new(),
+    )
+    .await
+    .unwrap();
+    let ids: Vec<_> = markdown["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|matched| matched["itemId"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["formatted", "steer"]);
+    assert_eq!(markdown["matches"][1]["messageId"], "steer-client");
+    assert_eq!(markdown["isCapped"], false);
+    let late = search_codex_transcript(
+        &client,
+        "thread-1",
+        "late match",
+        250,
+        &HashSet::from(["reverted-turn".to_owned()]),
+        &HashMap::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(late["totalMatches"], 1);
+    assert_eq!(late["matches"][0]["itemId"], "late-message");
+    let late_cursor = parse_search_cursor(late["matches"][0]["cursor"].as_str().unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(late_cursor.turn_cursor, "turn-2-anchor");
+    assert_eq!(late_cursor.turn_offset, 0);
+
+    let before_cap = self::calls(&log).len();
+    let capped = search_codex_transcript(
+        &client,
+        "thread-1",
+        "needle",
+        1,
+        &HashSet::from(["reverted-turn".to_owned()]),
+        &HashMap::from([("hidden-client".to_owned(), "shown".to_owned())]),
+    )
+    .await
+    .unwrap();
+    assert_eq!(capped["totalMatches"], 1);
+    assert_eq!(capped["isCapped"], true);
+    assert_eq!(self::calls(&log).len() - before_cap, 3);
+
+    let invalid = CodexSearchCursor {
+        turn_id: "removed-turn".to_owned(),
+        item_id: "match".to_owned(),
+        turn_cursor: "search-page-anchor".to_owned(),
+        turn_offset: 1,
+    };
+    let error = load_search_match(&client, json!({"id":"thread-1"}), invalid)
+        .await
+        .err()
+        .unwrap();
+    assert!(error.contains("no longer available"));
+    let invalid_offset = CodexSearchCursor {
+        turn_id: "turn-1".to_owned(),
+        item_id: "match".to_owned(),
+        turn_cursor: "search-page-anchor".to_owned(),
+        turn_offset: SEARCH_PAGE_SIZE,
+    };
+    assert!(
+        resolve_search_turn_cursor(&client, "thread-1", &invalid_offset)
+            .await
+            .unwrap_err()
+            .contains("offset")
+    );
+    for (thread_id, expected_error) in [
+        ("repeat-turns", "repeated turn cursor"),
+        ("repeat-items", "repeated item cursor"),
+    ] {
+        let error = search_codex_transcript(
+            &client,
+            thread_id,
+            "absent query",
+            250,
+            &HashSet::from(["reverted-turn".to_owned()]),
+            &HashMap::new(),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains(expected_error));
+    }
+    client.restart().await;
+}
+
+fn calls(log: &std::path::Path) -> Vec<Value> {
+    fs::read_to_string(log)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
+#[tokio::test]
+async fn legacy_dispatch_searches_rollout_without_native_history_requests() {
+    let _environment = crate::agents::CodexLaunchEnvironment::new();
+    let directory = tempfile::tempdir().unwrap();
+    let rollout = directory.path().join("legacy.jsonl");
+    let records = [
+        json!({"type":"session_meta", "payload":{"id":"thread-legacy"}}),
+        json!({"type":"event_msg", "payload":{"type":"task_started", "turn_id":"turn-legacy"}}),
+        json!({"type":"event_msg", "payload":{"type":"user_message", "message":"visible question", "client_id":"user-client"}}),
+        json!({"type":"event_msg", "payload":{"type":"agent_message", "message":"visible needle answer"}}),
+        json!({"type":"event_msg", "payload":{"type":"task_complete", "turn_id":"turn-legacy"}}),
+    ];
+    fs::write(
+        &rollout,
+        records
+            .iter()
+            .map(|record| format!("{record}\n"))
+            .collect::<String>(),
+    )
+    .unwrap();
+    let binary = directory.path().join("legacy-search-fixture");
+    let log = directory.path().join("requests.jsonl");
+    let metadata = json!({"thread":{
+        "id":"thread-legacy", "historyMode":"legacy", "path":rollout,
+    }});
+    let script = r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> '__LOG__'
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialized"'*) continue ;;
+    *'"method":"thread/read"'*) result='__METADATA__' ;;
+    *) result='{}' ;;
+  esac
+  printf '{"id":%s,"result":%s}\n' "$id" "$result"
+done
+"#;
+    fs::write(
+        &binary,
+        script
+            .replace("__LOG__", &log.to_string_lossy())
+            .replace("__METADATA__", &metadata.to_string()),
+    )
+    .unwrap();
+    fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+    let request = serde_json::from_value(json!({
+        "user_name":"synthetic", "team_namespace":"default", "team_name":"search",
+        "team_id":12, "bot":[{"id":31,"shell_type":"Codex"}],
+    }))
+    .unwrap();
+    let client = CodexAppServerClient::new(binary.to_string_lossy())
+        .for_request(&request)
+        .unwrap();
+    let result = search_codex_transcript(
+        &client,
+        "thread-legacy",
+        "needle",
+        250,
+        &HashSet::new(),
+        &HashMap::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result["totalMatches"], 1);
+    assert_eq!(result["matches"][0]["itemId"], "item-2");
+    let cursor = result["matches"][0]["cursor"].as_str().unwrap();
+    assert!(is_search_cursor(cursor));
+    let page = super::super::codex_transcript_page::load_codex_transcript(
+        &client,
+        super::super::codex_transcript_page::CodexTranscriptRequest {
+            thread_id: "thread-legacy",
+            cursor: Some(cursor),
+            limit: 5,
+            direction: super::super::codex_transcript_page::CodexTranscriptDirection::Descending,
+            full_content: true,
+            prefer_rollout_history: false,
+        },
+    )
+    .await
+    .unwrap();
+    let items = page.thread["turns"][0]["items"].as_array().unwrap();
+    assert!(items
+        .iter()
+        .any(|item| item["id"] == "item-2" && item["text"] == "visible needle answer"));
+    let requests = calls(&log);
+    let methods: Vec<_> = requests
+        .iter()
+        .filter_map(|call| call["method"].as_str())
+        .collect();
+    assert_eq!(
+        methods,
+        ["initialize", "initialized", "thread/read", "thread/read"]
+    );
+    for request in requests
+        .iter()
+        .filter(|call| call["method"] == "thread/read")
+    {
+        assert_eq!(request["params"]["includeTurns"], false);
+    }
+    client.restart().await;
+}

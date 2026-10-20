@@ -6,6 +6,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
+from tests.utils.collaboration import (
+    authorize_project,
+    authorize_project_agent,
+    authorize_resource,
+)
 
 from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
 from app.models.kind import Kind
@@ -17,11 +22,6 @@ from app.schemas.base_role import BaseRole
 from app.schemas.project_chat import ProjectChatCommentExecution, ProjectChatSend
 from app.services.project_chat.comment_execution import execute_comment
 from app.services.project_chat.service import project_chat_service
-from tests.utils.collaboration import (
-    authorize_project,
-    authorize_project_agent,
-    authorize_resource,
-)
 
 
 @pytest.fixture
@@ -552,6 +552,53 @@ async def test_member_reads_bound_transcript_using_original_owner(scenario, role
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("role", [BaseRole.Developer, BaseRole.Viewer])
+async def test_member_searches_only_bound_transcript_using_original_owner(
+    scenario, role
+):
+    from app.schemas.runtime_work import RuntimeTranscriptSearchRequest
+    from app.services.runtime_work_service import search_runtime_transcript
+
+    s = scenario
+    s.grant.role = role.value
+    s.db.commit()
+    result = {
+        "matches": [{"itemId": "item-1", "occurrence": 0, "cursor": "match-cursor"}],
+        "totalMatches": 1,
+        "isCapped": False,
+    }
+    s.rpc.return_value = result
+    request = RuntimeTranscriptSearchRequest(
+        deviceId="admin-cloud",
+        taskId="original-session",
+        workspacePath="/forged",
+        runtimeHandle={"threadId": "another-session"},
+        projectSession={"projectId": str(s.project.id), "issueId": s.issue.id},
+        query="needle",
+        limit=250,
+    )
+
+    response = await search_runtime_transcript(
+        db=s.db, user_id=s.member.id, request=request
+    )
+
+    assert response.model_dump(by_alias=True, exclude_none=True) == result
+    s.rpc.assert_awaited_once_with(
+        user_id=s.owner.id,
+        device_id="admin-cloud",
+        method="runtime.tasks.transcript.search",
+        payload={
+            "deviceId": "admin-cloud",
+            "taskId": "original-session",
+            "query": "needle",
+            "limit": 250,
+        },
+        timeout_seconds=30,
+        allow_app_device_task_reading=True,
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "requested_task", ["original-session", "original-session-manager-initial"]
 )
@@ -628,21 +675,32 @@ async def test_invalid_runtime_transcript_returns_explicit_gateway_error(scenari
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("search", [False, True])
 @pytest.mark.parametrize(
     "change",
     ["outsider", "wrong_issue", "wrong_task", "wrong_device", "conflicting_owner"],
 )
 async def test_project_transcript_rejects_unbound_or_unauthorized_requests(
-    scenario, change
+    scenario, change, search
 ):
-    from app.schemas.runtime_work import RuntimeTranscriptRequest
-    from app.services.runtime_work_service import get_runtime_transcript
+    from app.schemas.runtime_work import (
+        RuntimeTranscriptRequest,
+        RuntimeTranscriptSearchRequest,
+    )
+    from app.services.runtime_work_service import (
+        get_runtime_transcript,
+        search_runtime_transcript,
+    )
 
     s = scenario
-    request = RuntimeTranscriptRequest(
+    request_type = (
+        RuntimeTranscriptSearchRequest if search else RuntimeTranscriptRequest
+    )
+    request = request_type(
         deviceId="admin-cloud",
         taskId="original-session",
         projectSession={"projectId": str(s.project.id), "issueId": s.issue.id},
+        **({"query": "needle"} if search else {}),
     )
     if change == "outsider":
         s.db.delete(s.grant)
@@ -665,7 +723,12 @@ async def test_project_transcript_rejects_unbound_or_unauthorized_requests(
         )
     s.db.commit()
     with pytest.raises(HTTPException) as exc:
-        await get_runtime_transcript(db=s.db, user_id=s.member.id, address=request)
+        if search:
+            await search_runtime_transcript(
+                db=s.db, user_id=s.member.id, request=request
+            )
+        else:
+            await get_runtime_transcript(db=s.db, user_id=s.member.id, address=request)
     assert exc.value.status_code in {403, 404, 409}
     s.rpc.assert_not_awaited()
 
@@ -708,8 +771,9 @@ async def test_project_transcript_uses_manual_binding_and_reports_real_device_fa
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("search", [False, True])
 async def test_project_transcript_websocket_uses_same_authorization(
-    scenario, monkeypatch
+    scenario, monkeypatch, search
 ):
     from contextlib import contextmanager
 
@@ -731,11 +795,14 @@ async def test_project_transcript_websocket_uses_same_authorization(
     await ws.relay_ipc_request(
         user_id=s.member.id,
         device_id="admin-cloud",
-        method="runtime.tasks.transcript",
+        method=(
+            "runtime.tasks.transcript.search" if search else "runtime.tasks.transcript"
+        ),
         params={
             "deviceId": "forged-device",
             "taskId": "original-session",
             "projectSession": {"projectId": str(s.project.id), "issueId": s.issue.id},
+            **({"query": "needle", "limit": 250} if search else {}),
         },
         timeout_seconds=30,
     )
@@ -743,6 +810,7 @@ async def test_project_transcript_websocket_uses_same_authorization(
     assert s.rpc.await_args.kwargs["payload"] == {
         "deviceId": "admin-cloud",
         "taskId": "original-session",
+        **({"query": "needle", "limit": 250} if search else {}),
     }
 
 

@@ -48,6 +48,8 @@ import type {
   RuntimeTaskIMNotificationSubscriptionResponse,
   RuntimeTranscriptRequest,
   RuntimeTranscriptResponse,
+  RuntimeTranscriptSearchRequest,
+  RuntimeTranscriptSearchResponse,
   RuntimeWorkSearchRequest,
   RuntimeWorkSearchResponse,
   RuntimeWorkspaceSearchRequest,
@@ -133,6 +135,11 @@ export function createRuntimeWorkApi(client: HttpClient) {
     },
     getRuntimeTranscript(request: RuntimeTranscriptRequest): Promise<RuntimeTranscriptResponse> {
       return client.post('/runtime-work/transcript', request)
+    },
+    searchRuntimeTranscript(
+      request: RuntimeTranscriptSearchRequest
+    ): Promise<RuntimeTranscriptSearchResponse> {
+      return client.post('/runtime-work/transcript/search', request)
     },
     searchRuntimeWork(data: RuntimeWorkSearchRequest): Promise<RuntimeWorkSearchResponse> {
       return client.post('/runtime-work/search', data)

@@ -39,6 +39,7 @@ import type {
   RuntimeSendResponse,
   RuntimeSupervisorCreateInput,
   RuntimeTaskAddress,
+  RuntimeTranscriptSearchResponse,
   RuntimeTaskQueueReorderRequest,
   RuntimeTaskCreateRequest,
   RuntimeTaskForkTarget,
@@ -313,6 +314,10 @@ export interface WorkbenchContextValue {
   reorderQueuedRuntimeTask: (data: RuntimeTaskQueueReorderRequest) => Promise<void>
   searchRuntimeWork: (request: RuntimeWorkSearchRequest) => Promise<RuntimeWorkSearchResponse>
   loadRuntimeTranscriptForPane: RuntimeTranscriptLoader
+  searchRuntimeTranscriptForPane: (
+    address: RuntimeTaskAddress,
+    query: string
+  ) => Promise<RuntimeTranscriptSearchResponse>
   subscribeRuntimeTaskStream: (
     address: RuntimeTaskAddress,
     handlers: RuntimeTaskStreamHandlers

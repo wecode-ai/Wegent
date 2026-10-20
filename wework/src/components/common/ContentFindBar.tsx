@@ -160,7 +160,7 @@ export function ContentFindBar({
               }
             }}
             placeholder={placeholder}
-            className="h-6 min-w-0 flex-1 bg-transparent text-base leading-6 text-text-primary outline-none placeholder:text-text-muted disabled:cursor-not-allowed disabled:opacity-60"
+            className="content-find-input h-6 min-w-0 flex-1 bg-transparent text-base leading-6 text-text-primary placeholder:text-text-muted disabled:cursor-not-allowed disabled:opacity-60"
           />
         </div>
         <div className="col-[2/3] row-[1] flex h-[44px] items-center pe-4">

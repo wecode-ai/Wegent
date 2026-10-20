@@ -134,13 +134,18 @@ class ProjectSessionScope(BaseModel):
     issue_id: str = Field(..., alias="issueId", min_length=1)
 
 
-class RuntimeTranscriptRequest(RuntimeTaskAddress):
-    """Request a page of a device-local runtime transcript."""
+class RuntimeSessionReadRequest(RuntimeTaskAddress):
+    """Read one runtime session using device ownership or a project binding."""
 
-    limit: Optional[int] = Field(default=None, ge=1, le=200)
     project_session: Optional[ProjectSessionScope] = Field(
         default=None, alias="projectSession"
     )
+
+
+class RuntimeTranscriptRequest(RuntimeSessionReadRequest):
+    """Request a page of a device-local runtime transcript."""
+
+    limit: Optional[int] = Field(default=None, ge=1, le=200)
     before_cursor: Optional[str] = Field(default=None, alias="beforeCursor")
     after_cursor: Optional[str] = Field(default=None, alias="afterCursor")
     include_full_content: bool = Field(default=False, alias="includeFullContent")
@@ -148,6 +153,31 @@ class RuntimeTranscriptRequest(RuntimeTaskAddress):
         default=False,
         alias="conversationContextOnly",
     )
+
+
+class RuntimeTranscriptSearchRequest(RuntimeSessionReadRequest):
+    """Search one persisted runtime transcript without loading its pages."""
+
+    query: str = Field(..., min_length=1)
+    limit: Optional[int] = Field(default=None, ge=1, le=250)
+
+
+class RuntimeTranscriptSearchMatch(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    message_id: Optional[str] = Field(default=None, alias="messageId")
+    item_id: Optional[str] = Field(default=None, alias="itemId")
+    turn_id: Optional[str] = Field(default=None, alias="turnId")
+    occurrence: int = Field(..., ge=0)
+    cursor: str = Field(..., min_length=1)
+
+
+class RuntimeTranscriptSearchResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    matches: list[RuntimeTranscriptSearchMatch]
+    total_matches: int = Field(..., alias="totalMatches", ge=0)
+    is_capped: bool = Field(..., alias="isCapped")
 
 
 class RuntimeFileChangesRevertRequest(BaseModel):

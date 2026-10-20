@@ -1,0 +1,491 @@
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+use super::*;
+use crate::runtime_work::{
+    transcript::visible_user_request_content,
+    transcript_search_text::{
+        assistant_block_search_text, assistant_search_text, markdown_search_text,
+    },
+};
+
+const MAX_TRANSCRIPT_SEARCH_MATCHES: usize = 250;
+const CACHED_SEARCH_CURSOR_PREFIX: &str = "wework-cached-search:";
+const CACHED_CONTEXT_CURSOR_PREFIX: &str = "wework-cached-search-context:";
+
+impl RuntimeWorkRpcHandler {
+    pub(super) async fn search_transcript(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let task_id = runtime_task_id(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let query = string_field(&payload, "query").unwrap_or_default();
+        let limit = integer_field(&payload, "limit")
+            .and_then(|value| usize::try_from(value).ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(MAX_TRANSCRIPT_SEARCH_MATCHES)
+            .min(MAX_TRANSCRIPT_SEARCH_MATCHES);
+        if query.trim().is_empty() {
+            return Ok(transcript_search_response(Vec::new(), 0, false));
+        }
+        let link = self.local_task_link(&task_id);
+        let linked_session_id = link.as_ref().and_then(runtime_session_id_from_link);
+        let requested_session_id = runtime_session_id_from_payload(&payload);
+        let direct_thread_override = requested_session_id
+            .as_deref()
+            .zip(linked_session_id.as_deref())
+            .is_some_and(|(requested, linked)| requested != linked);
+        let session_id = requested_session_id.or(linked_session_id);
+        let cached_only = link.as_ref().is_some_and(|link| {
+            link.ephemeral
+                || !runtime_has_provider_transcript_reader(&link.runtime)
+                || session_id.is_none()
+                || (!direct_thread_override && provider_transcript_is_unmaterialized(link))
+        });
+        if cached_only {
+            let link = link.as_ref().expect("cached search requires a local task");
+            let messages = cached_search_messages(link);
+            return Ok(search_cached_transcript(&messages, &query, limit));
+        }
+        let Some(thread_id) = session_id else {
+            return Ok(transcript_search_response(Vec::new(), 0, false));
+        };
+        let client = link
+            .as_ref()
+            .map(|link| {
+                self.codex_app_server
+                    .for_request(&runtime_event_request_from_link(link))
+            })
+            .unwrap_or_else(|| Ok(self.codex_app_server.clone()))
+            .map_err(|error| AppIpcError::new("codex_error", error))?;
+        let excluded_turn_ids = link
+            .as_ref()
+            .filter(|_| !direct_thread_override)
+            .map(|link| superseded_transcript_turn_ids(&link.runtime_handle))
+            .unwrap_or_default();
+        let user_content_by_client_id = link
+            .as_ref()
+            .filter(|_| !direct_thread_override)
+            .map(search_user_content_by_client_id)
+            .unwrap_or_default();
+        crate::runtime_work::codex_transcript_search::search_codex_transcript(
+            &client,
+            &thread_id,
+            &query,
+            limit,
+            &excluded_turn_ids,
+            &user_content_by_client_id,
+        )
+        .await
+        .map_err(|error| AppIpcError::new("transcript_search_failed", error))
+    }
+}
+
+fn search_user_content_by_client_id(link: &RuntimeTaskLink) -> HashMap<String, String> {
+    user_message_presentations(link)
+        .iter()
+        .filter_map(|presentation| {
+            let id = string_field(presentation, "clientUserMessageId")
+                .or_else(|| string_field(presentation, "client_user_message_id"))?;
+            let content = string_field(presentation, "content").unwrap_or_default();
+            user_presentation_restores_content(
+                &content,
+                !normalized_attachments(presentation.get("attachments")).is_empty(),
+            )
+            .then_some((id, content))
+        })
+        .collect()
+}
+
+fn cached_search_messages(link: &RuntimeTaskLink) -> Vec<Value> {
+    let mut messages = cached_messages(link);
+    append_unique_transcript_messages(&mut messages, completed_transcript_messages(link));
+    normalize_overload_recovery_messages(&mut messages, &link.runtime_handle);
+    remove_superseded_transcript_turns(&mut messages, &link.runtime_handle);
+    let mut presentations = user_message_presentations(link);
+    for presentation in &mut presentations {
+        presentation["ensureVisible"] = json!(false);
+    }
+    attach_user_message_presentations_for_page(&mut messages, presentations, &[], &[], true, true);
+    messages
+}
+
+pub(super) fn cached_search_match_response(
+    link: &RuntimeTaskLink,
+    cursor: &str,
+    limit: Option<usize>,
+    running: bool,
+    after: bool,
+) -> Result<Option<Value>, AppIpcError> {
+    let continuation = cursor.strip_prefix(CACHED_CONTEXT_CURSOR_PREFIX);
+    let Some(value) = continuation.or_else(|| cursor.strip_prefix(CACHED_SEARCH_CURSOR_PREFIX))
+    else {
+        return Ok(None);
+    };
+    let id: String = serde_json::from_str(value).map_err(|error| {
+        AppIpcError::new(
+            "bad_request",
+            format!("Invalid cached search cursor: {error}"),
+        )
+    })?;
+    let all_messages = cached_search_messages(link);
+    let index = all_messages
+        .iter()
+        .position(|message| string_field(message, "id").as_deref() == Some(&id))
+        .ok_or_else(|| {
+            AppIpcError::new(
+                "transcript_search_failed",
+                "Search message is no longer available",
+            )
+        })?;
+    let limit = limit.unwrap_or(100).clamp(1, 200);
+    let (start, end) = if continuation.is_some() {
+        if after {
+            let start = index + 1;
+            (start, start.saturating_add(limit).min(all_messages.len()))
+        } else {
+            (index.saturating_sub(limit), index)
+        }
+    } else {
+        let start = index.saturating_sub(limit / 2);
+        (start, start.saturating_add(limit).min(all_messages.len()))
+    };
+    let messages = all_messages[start..end].to_vec();
+    let boundary_cursor = |message: Option<&Value>| {
+        message.and_then(|message| {
+            string_field(message, "id")
+                .map(|id| format!("{CACHED_CONTEXT_CURSOR_PREFIX}{}", json!(id)))
+        })
+    };
+    let before_cursor = (start > 0)
+        .then(|| boundary_cursor(messages.first()))
+        .flatten();
+    let after_cursor = (end < all_messages.len())
+        .then(|| boundary_cursor(messages.last()))
+        .flatten();
+    let turn_navigation = transcript_turn_navigation(&messages);
+    Ok(Some(transcript_response(TranscriptResponseInput {
+        local_task_id: link.local_task_id.clone(),
+        workspace_path: link.workspace_path.clone(),
+        runtime: link.runtime.clone(),
+        messages,
+        context_usage: None,
+        running,
+        pagination: TranscriptPagination::Opaque {
+            before_cursor,
+            after_cursor,
+        },
+        full_content: true,
+        conversation_context_only: false,
+        turn_item_source: TranscriptTurnItemSource::CachedMessages,
+        turn_navigation,
+    })))
+}
+
+fn transcript_search_response(matches: Vec<Value>, total: usize, capped: bool) -> Value {
+    json!({
+        "success": true,
+        "matches": matches,
+        "totalMatches": total,
+        "isCapped": capped,
+    })
+}
+
+fn search_cached_transcript(messages: &[Value], query: &str, limit: usize) -> Value {
+    let needle = query.trim().to_lowercase();
+    if needle.is_empty() {
+        return transcript_search_response(Vec::new(), 0, false);
+    }
+    let mut matches = Vec::new();
+    let mut total = 0;
+    for message in messages {
+        let role = string_field(message, "role").unwrap_or_default();
+        if !matches!(role.as_str(), "user" | "assistant") {
+            continue;
+        }
+        let turn_id =
+            string_field(message, "turnId").or_else(|| string_field(message, "subtaskId"));
+        let Some(message_id) = string_field(message, "id") else {
+            continue;
+        };
+        for (item_id, text) in cached_message_search_sources(message, &role) {
+            let count = text.to_lowercase().match_indices(needle.as_str()).count();
+            total += count;
+            for occurrence in 0..count.min(limit.saturating_sub(matches.len())) {
+                let mut item = json!({
+                    "itemId": item_id,
+                    "occurrence": occurrence,
+                    "cursor": format!("{CACHED_SEARCH_CURSOR_PREFIX}{}", json!(message_id)),
+                });
+                if let Some(turn_id) = turn_id.as_ref() {
+                    item["turnId"] = json!(turn_id);
+                }
+                if role == "user" {
+                    item["messageId"] = json!(item_id);
+                }
+                matches.push(item);
+            }
+        }
+    }
+    let capped = total > matches.len();
+    transcript_search_response(matches, total, capped)
+}
+
+fn cached_message_search_sources(message: &Value, role: &str) -> Vec<(String, String)> {
+    let Some(message_id) = string_field(message, "id") else {
+        return Vec::new();
+    };
+    let content = string_field(message, "content").unwrap_or_default();
+    if role == "user" {
+        let id = string_field(message, "clientUserMessageId")
+            .or_else(|| string_field(message, "client_user_message_id"))
+            .unwrap_or(message_id);
+        return vec![(
+            id,
+            markdown_search_text(visible_user_request_content(&content)),
+        )];
+    }
+    let mut sources = Vec::new();
+    for block in message
+        .get("blocks")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|block| string_field(block, "type").as_deref() == Some("text"))
+    {
+        if let (Some(id), Some(text)) = (string_field(block, "id"), string_field(block, "content"))
+        {
+            if !text.trim().is_empty() && text.trim() != content.trim() {
+                sources.push((id, assistant_block_search_text(&text)));
+            }
+        }
+    }
+    sources.push((message_id, assistant_search_text(&content)));
+    sources
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn search_user_content_matches_transcript_presentation_restoration() {
+        let link = RuntimeTaskLink {
+            runtime_handle: json!({"userMessagePresentations":[
+                {"clientUserMessageId":"attachment-user", "content":"visible request",
+                 "attachments":[{"filename":"notes.md"}]},
+                {"clientUserMessageId":"empty-user", "content":"",
+                 "attachments":[{"filename":"notes.md"}]},
+                {"clientUserMessageId":"ordinary-user", "content":"original request"},
+            ]}),
+            ..RuntimeTaskLink::default()
+        };
+        let content_by_id = search_user_content_by_client_id(&link);
+        assert_eq!(content_by_id.len(), 2);
+        for (id, expected) in &content_by_id {
+            let mut messages = vec![json!({
+                "id":"provider-user", "role":"user", "clientUserMessageId":id,
+                "content":"injected attachment preview",
+            })];
+            attach_user_message_presentations(&mut messages, user_message_presentations(&link));
+            assert_eq!(messages[0]["content"].as_str(), Some(expected.as_str()));
+        }
+    }
+
+    #[test]
+    fn cached_search_uses_the_restored_body_for_matching_and_hydration() {
+        let link = RuntimeTaskLink {
+            runtime_handle: json!({
+                "messages":[{
+                    "id":"provider-user", "role":"user", "clientUserMessageId":"client-user",
+                    "content":"needle\n# User-provided text attachments\nMIME Type: text/markdown",
+                }],
+                "userMessagePresentations":[{
+                    "clientUserMessageId":"client-user", "content":"needle needle",
+                    "attachments":[{"filename":"notes.md"}],
+                }],
+            }),
+            ..RuntimeTaskLink::default()
+        };
+        let messages = cached_search_messages(&link);
+        assert_eq!(
+            search_cached_transcript(&messages, "markdown", 250)["totalMatches"],
+            0
+        );
+        let result = search_cached_transcript(&messages, "needle", 250);
+        assert_eq!(result["totalMatches"], 2);
+        let response = cached_search_match_response(
+            &link,
+            result["matches"][1]["cursor"].as_str().unwrap(),
+            Some(5),
+            false,
+            false,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(response["messages"][0]["content"], "needle needle");
+    }
+
+    #[test]
+    fn cached_search_is_bounded_and_does_not_publish_stored_content() {
+        let messages = (0..300)
+            .map(|index| {
+                json!({
+                    "id": format!("assistant-{index}"), "turnId": format!("turn-{index}"),
+                    "role": "assistant", "content": "visible needle",
+                    "blocks": [{"id":"tool", "type":"tool", "content":"needle"}],
+                })
+            })
+            .collect::<Vec<_>>();
+        let result = search_cached_transcript(&messages, "NEEDLE", 250);
+        assert_eq!(result["matches"].as_array().unwrap().len(), 250);
+        assert_eq!(result["totalMatches"], 300);
+        assert_eq!(result["isCapped"], true);
+        assert_eq!(result["matches"][0]["itemId"], "assistant-0");
+        assert_eq!(
+            result["matches"][0]["cursor"],
+            "wework-cached-search:\"assistant-0\""
+        );
+        assert!(result["matches"][0].get("content").is_none());
+    }
+
+    #[test]
+    fn cached_search_ignores_hidden_context_and_keeps_user_presentation_identity() {
+        let messages = vec![json!({
+            "id":"provider-user", "clientUserMessageId":"client-user", "turnId":"turn-1",
+            "role":"user", "content":"<application_context>needle</application_context>Visible",
+        })];
+        let hidden = search_cached_transcript(&messages, "needle", 250);
+        assert_eq!(hidden["totalMatches"], 0);
+        let visible = search_cached_transcript(&messages, "Visible", 250);
+        assert_eq!(visible["matches"][0]["messageId"], "client-user");
+        assert_eq!(visible["matches"][0]["itemId"], "client-user");
+    }
+
+    #[test]
+    fn cached_search_uses_rendered_markdown_and_ignores_whitespace_queries() {
+        let messages = vec![json!({
+            "id":"assistant", "role":"assistant",
+            "content":"[needle](https://hidden.example/needle) ![needle](image.png)\u{e200}cite\u{e202}needle\u{e201}",
+        })];
+        assert_eq!(
+            search_cached_transcript(&messages, "needle", 250)["totalMatches"],
+            1
+        );
+        assert_eq!(
+            search_cached_transcript(&messages, "  ", 250)["totalMatches"],
+            0
+        );
+    }
+
+    #[test]
+    fn cached_search_hydrates_a_bounded_stable_window_for_ephemeral_codex() {
+        let mut link = RuntimeTaskLink {
+            local_task_id: "cached-task".to_owned(),
+            thread_id: Some("thread-1".to_owned()),
+            runtime: "codex".to_owned(),
+            ephemeral: true,
+            runtime_handle: json!({
+                "messages": (0..300).map(|index| json!({
+                    "id":format!("message-{index}"), "turnId":format!("turn-{index}"),
+                    "role":"assistant", "content":"other prose",
+                })).collect::<Vec<_>>(),
+                "completedTranscriptThreadId":"thread-1",
+                "completedTranscriptMessages":[{
+                    "id":"completed", "turnId":"completed-turn", "role":"assistant",
+                    "content":"needle", "blocks":[{"id":"duplicate","type":"text","content":" needle "}],
+                }],
+                "userMessagePresentations":[{
+                    "clientUserMessageId":"unrelated-prompt", "content":"unrelated", "ensureVisible":true,
+                }],
+            }),
+            ..RuntimeTaskLink::default()
+        };
+        let result = search_cached_transcript(&cached_search_messages(&link), "needle", 250);
+        assert_eq!(result["totalMatches"], 1);
+        let cursor = result["matches"][0]["cursor"].as_str().unwrap();
+        link.runtime_handle["messages"]
+            .as_array_mut()
+            .unwrap()
+            .insert(
+                0,
+                json!({
+                    "id":"new-first", "turnId":"new-turn", "role":"user", "content":"new prompt",
+                }),
+            );
+        let response = cached_search_match_response(&link, cursor, Some(3), false, false)
+            .unwrap()
+            .unwrap();
+        let messages = response["messages"].as_array().unwrap();
+        assert!(messages.len() <= 3);
+        assert!(messages.iter().any(|message| message["id"] == "completed"));
+        assert!(!messages
+            .iter()
+            .any(|message| message["id"] == "unrelated-prompt"));
+        assert_eq!(response["fullContent"], true);
+        assert_eq!(response["hasMoreBefore"], true);
+        assert_eq!(response["hasMoreAfter"], false);
+        assert!(response["turns"].as_array().unwrap().iter().any(|turn| {
+            turn["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["id"] == "completed")
+        }));
+    }
+
+    #[test]
+    fn cached_search_context_pages_continue_without_repeating_the_anchor() {
+        let link = RuntimeTaskLink {
+            runtime_handle: json!({"messages": (0..9).map(|index| json!({
+                "id":format!("message-{index}"), "role":"assistant",
+                "turnId":format!("turn-{index}"), "content":"needle",
+            })).collect::<Vec<_>>()}),
+            ..RuntimeTaskLink::default()
+        };
+        let initial = cached_search_match_response(
+            &link,
+            "wework-cached-search:\"message-4\"",
+            Some(3),
+            false,
+            false,
+        )
+        .unwrap()
+        .unwrap();
+        let ids = |page: &Value| {
+            page["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|message| message["id"].as_str().unwrap().to_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(&initial), ["message-3", "message-4", "message-5"]);
+        for (field, after, expected) in [
+            (
+                "beforeCursor",
+                false,
+                ["message-0", "message-1", "message-2"],
+            ),
+            ("afterCursor", true, ["message-6", "message-7", "message-8"]),
+        ] {
+            let page = cached_search_match_response(
+                &link,
+                initial[field].as_str().unwrap(),
+                Some(3),
+                false,
+                after,
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(ids(&page), expected);
+            assert_eq!(
+                page[if after {
+                    "hasMoreAfter"
+                } else {
+                    "hasMoreBefore"
+                }],
+                false
+            );
+        }
+    }
+}

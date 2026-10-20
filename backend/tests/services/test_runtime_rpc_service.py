@@ -362,8 +362,12 @@ async def test_runtime_rpc_service_preserves_local_device_proxy(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "method", ["runtime.capacity.get", "runtime.tasks.transcript.search"]
+)
 async def test_runtime_rpc_service_rejects_app_device_when_remote_control_is_disabled(
     monkeypatch,
+    method,
 ):
     from app.schemas.device import DeviceType
     from app.services.device import runtime_rpc_service as module
@@ -380,7 +384,7 @@ async def test_runtime_rpc_service_rejects_app_device_when_remote_control_is_dis
         await module.RuntimeRpcService().call(
             user_id=7,
             device_id="device-1",
-            method="runtime.capacity.get",
+            method=method,
             payload={},
         )
 
@@ -459,6 +463,7 @@ async def test_runtime_rpc_service_keeps_other_app_device_methods_disabled(
     "method",
     [
         "runtime.tasks.transcript",
+        "runtime.tasks.transcript.search",
         "runtime.tasks.send",
         "runtime.capacity.get",
         "runtime.files.read",
@@ -484,7 +489,7 @@ async def test_project_read_capability_does_not_grant_app_device_control(
         payload={"taskId": "runtime-1"},
         allow_app_device_task_reading=True,
     )
-    if method == "runtime.tasks.transcript":
+    if method in {"runtime.tasks.transcript", "runtime.tasks.transcript.search"}:
         assert await module.RuntimeRpcService().call(**request) == {"turns": []}
         sio_call.assert_awaited_once()
     else:

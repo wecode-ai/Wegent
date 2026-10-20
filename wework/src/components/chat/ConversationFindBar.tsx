@@ -2,13 +2,7 @@ import { ContentFindBar } from '@/components/common/ContentFindBar'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { useConversationFind } from './useConversationFind'
 
-export function ConversationFindBar({
-  find,
-  onRetryTranscript,
-}: {
-  find: ReturnType<typeof useConversationFind>
-  onRetryTranscript?: () => void
-}) {
+export function ConversationFindBar({ find }: { find: ReturnType<typeof useConversationFind> }) {
   const { t } = useTranslation('chat')
   if (!find.open) return null
   return (
@@ -32,14 +26,7 @@ export function ConversationFindBar({
       onStep={find.step}
       onEnter={find.submit}
       onClose={find.close}
-      onRetry={
-        find.historyFailed
-          ? () => {
-              onRetryTranscript?.()
-              find.retry()
-            }
-          : undefined
-      }
+      onRetry={find.historyFailed ? find.retry : undefined}
     />
   )
 }

@@ -76,6 +76,7 @@ import type {
   RuntimeTaskForkRequest,
   RuntimeTaskIMNotificationSubscriptionRequest,
   RuntimeTranscriptRequest,
+  RuntimeTranscriptSearchRequest,
   RuntimeWorkspaceOpenRequest,
   RuntimeWorkspaceRemoveRequest,
   RuntimeWorkspaceRenameRequest,
@@ -584,7 +585,7 @@ export function createHybridWorkbenchServices(
     if (cached) return cached
     const api = createRuntimeWorkApiFromIpc(
       (method, params) =>
-        method === 'runtime.tasks.transcript'
+        method === 'runtime.tasks.transcript' || method === 'runtime.tasks.transcript.search'
           ? cloudRuntimeIpc.request(
               method,
               params,
@@ -1057,6 +1058,11 @@ export function createHybridWorkbenchServices(
         })
         throw error
       }
+    },
+    searchRuntimeTranscript(data: RuntimeTranscriptSearchRequest) {
+      return (
+        data.projectSession ? cloudServices.runtimeWorkApi! : routeByAddress(data)
+      ).searchRuntimeTranscript(data)
     },
     async searchRuntimeWork(data: RuntimeWorkSearchRequest) {
       if (data.source === 'cloud') {

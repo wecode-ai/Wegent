@@ -36,6 +36,8 @@ import type {
   RuntimeTaskQueueReorderResponse,
   RuntimeTranscriptRequest,
   RuntimeTranscriptResponse,
+  RuntimeTranscriptSearchRequest,
+  RuntimeTranscriptSearchResponse,
   RuntimeWorktreeCapabilitiesRequest,
   RuntimeWorktreeCapabilitiesResponse,
   RuntimeWorktreePreflightRequest,
@@ -106,6 +108,9 @@ export interface ExecutorRuntimeClient {
   prepareDeviceWorkspace: ReturnType<typeof createRuntimeWorkApi>['prepareDeviceWorkspace']
   deleteDeviceWorkspace: ReturnType<typeof createRuntimeWorkApi>['deleteDeviceWorkspace']
   getRuntimeTranscript: (data: RuntimeTranscriptRequest) => Promise<RuntimeTranscriptResponse>
+  searchRuntimeTranscript: (
+    data: RuntimeTranscriptSearchRequest
+  ) => Promise<RuntimeTranscriptSearchResponse>
   searchRuntimeWork: (data: RuntimeWorkSearchRequest) => Promise<RuntimeWorkSearchResponse>
   searchRuntimeWorkspace: (
     data: RuntimeWorkspaceSearchRequest

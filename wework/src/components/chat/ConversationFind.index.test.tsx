@@ -41,6 +41,44 @@ afterEach(() => {
 })
 
 describe('conversation search indexing', () => {
+  test('keeps the navigation target stable while unrelated messages stream', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const matched = message('matched', 'needle')
+    const streaming = { ...message('streaming', 'hello'), status: 'streaming' as const }
+    const { result, rerender } = renderHook(
+      ({ messages }) => useConversationFind({ messages }, true),
+      { initialProps: { messages: [matched, streaming] } }
+    )
+    act(() => {
+      fireEvent.keyDown(window, { key: 'f', metaKey: true })
+      result.current.changeQuery('needle')
+    })
+    act(() => vi.advanceTimersByTime(150))
+    const firstTarget = result.current.searchTarget
+    expect(firstTarget?.messageId).toBe('matched')
+
+    rerender({ messages: [matched, { ...streaming, content: 'hello world' }] })
+    expect(result.current.searchTarget).toBe(firstTarget)
+
+    act(() => result.current.step(1))
+    const requestedTarget = result.current.searchTarget
+    expect(requestedTarget).toEqual(firstTarget)
+    expect(requestedTarget).not.toBe(firstTarget)
+    rerender({ messages: [matched, { ...streaming, content: 'hello world again' }] })
+    expect(result.current.searchTarget).toBe(requestedTarget)
+
+    rerender({ messages: [matched, { ...streaming, content: 'hello needle' }] })
+    expect(result.current.searchTarget).not.toBe(requestedTarget)
+    expect(result.current.searchTarget?.matchCounts).toEqual(
+      new Map([
+        ['matched', 1],
+        ['streaming', 1],
+      ])
+    )
+    act(() => result.current.step(1))
+    expect(result.current.searchTarget?.messageId).toBe('streaming')
+  })
+
   test('reuses unchanged message text while indexing streaming replacements and new history', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const searchText = vi.spyOn(conversationSearch, 'conversationSearchText')

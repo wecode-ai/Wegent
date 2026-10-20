@@ -15,9 +15,15 @@ const FIRST_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_FIRST'
 const FIRST_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_FIRST_COMPLETE'
 const SWITCH_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SWITCH'
 const SWITCH_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SWITCH_COMPLETE'
+const LEGACY_PROMPT = 'WEWORK_DESKTOP_E2E_LEGACY_SEARCH_TARGET'
+const LEGACY_ATTACHMENT_PREVIEW = 'WEWORK_DESKTOP_E2E_ATTACHMENT_PREVIEW_ONLY'
+const LEGACY_TURN_COUNT = 80
+const LEGACY_MATCH_TURNS = [5, 25]
 const SECOND_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SECOND'
 const SECOND_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SECOND_COMPLETE'
 const PAGED_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_PAGED'
+const PAGED_SEARCH_TERM = 'foo bar & baz'
+const PAGED_REQUEST = `${PAGED_PROMPT} foo **bar** &amp; baz`
 const PAGED_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_PAGED_COMPLETE'
 const PAGED_ITEM_COUNT = 650
 const LONG_HISTORY_ITEM_COUNT = 1_200
@@ -161,6 +167,195 @@ async function seedPaginatedTurnHistory(sqliteHome, threadId, cwd, timeoutMs) {
   } finally {
     database.close()
   }
+}
+
+async function seedLegacySearchHistory(executorHome, sqliteHome, task) {
+  const threadId = task.thread_id
+  assert.equal(typeof threadId, 'string', 'The legacy fixture has no Codex thread')
+  const path = await findRolloutPath(join(executorHome, 'codex', 'sessions'), threadId)
+  assert.ok(path, 'The legacy fixture rollout was not found')
+  const rollout = (await readFile(path, 'utf8'))
+    .split('\n')
+    .filter(Boolean)
+    .map(line => JSON.parse(line))
+  const metadata = rollout.find(record => record.type === 'session_meta')
+  assert.ok(metadata?.payload, 'The legacy fixture rollout has no session metadata')
+  metadata.payload.history_mode = 'legacy'
+  const records = []
+  for (let index = 0; index < LEGACY_TURN_COUNT; index += 1) {
+    const turnId = `legacy-search-turn-${index}`
+    const answer = `Legacy search answer ${index}`
+    const prompt = LEGACY_MATCH_TURNS.includes(index)
+      ? `${LEGACY_PROMPT} ${index}`
+      : `Legacy search prompt ${index}`
+    const attachmentTurn = index === LEGACY_MATCH_TURNS[0]
+    const events = [
+      { type: 'task_started', turn_id: turnId, model_context_window: null },
+      {
+        type: 'user_message',
+        message: attachmentTurn
+          ? `${prompt}\n\n# User-provided text attachments\nMIME Type: text/markdown\nContent: ${LEGACY_ATTACHMENT_PREVIEW}`
+          : prompt,
+        client_id: attachmentTurn ? 'legacy-attachment-user' : undefined,
+        text_elements: [],
+        local_images: [],
+      },
+      { type: 'agent_message', message: answer, phase: 'final_answer' },
+      { type: 'task_complete', turn_id: turnId, last_agent_message: answer },
+    ]
+    records.push(
+      ...events.map(payload =>
+        JSON.stringify({ timestamp: '2026-10-20T00:00:00Z', type: 'event_msg', payload })
+      )
+    )
+  }
+  await writeFile(
+    path,
+    `${[...rollout.map(record => JSON.stringify(record)), ...records].join('\n')}\n`
+  )
+  const database = new DatabaseSync(join(sqliteHome, 'state_5.sqlite'))
+  try {
+    const result = database
+      .prepare("UPDATE threads SET history_mode = 'legacy' WHERE id = ?")
+      .run(threadId)
+    assert.equal(Number(result.changes), 1, 'The legacy fixture thread metadata was not updated')
+  } finally {
+    database.close()
+  }
+  delete task.runtime_handle?.completedTranscriptMessages
+  delete task.runtime_handle?.completedTranscriptThreadId
+  task.runtime_handle.userMessagePresentations ??= []
+  task.runtime_handle.userMessagePresentations.push({
+    clientUserMessageId: 'legacy-attachment-user',
+    turnId: `legacy-search-turn-${LEGACY_MATCH_TURNS[0]}`,
+    content: `${LEGACY_PROMPT} ${LEGACY_MATCH_TURNS[0]}`,
+    attachments: [{ filename: 'notes.md', mime_type: 'text/markdown' }],
+  })
+}
+
+async function assertFindInputFocus(control, findInput) {
+  await control.command('waitFor', `${findInput}:focus`)
+  for (const property of ['outline-style', 'box-shadow']) {
+    assert.equal(
+      await control.command('getComputedStyleValue', findInput, { value: property }),
+      'none',
+      `The focused find input unexpectedly rendered ${property}`
+    )
+  }
+}
+
+async function waitForHighlightedSearchTarget(control, text, afterSequence, timeoutMs) {
+  const content = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="user-message-content"]`
+  await control.command('waitFor', content, { text })
+  const marker = 'legacy-search-current-target'
+  await control.command('markElementWithText', content, { text, value: marker })
+  const target = `${ACTIVE_WORKBENCH_SELECTOR} [data-e2e-anchor-id="${marker}"]`
+  const scroller = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-scroll-area"]`
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const [element] = JSON.parse(await control.command('getElementMetrics', target))
+    const [viewport] = JSON.parse(await control.command('getElementMetrics', scroller))
+    const diagnostics = JSON.parse(
+      await control.command('getConversationDiagnosticsSnapshot', 'body')
+    )
+    const highlights = diagnostics?.events.findLast(
+      event =>
+        event.sequence > afterSequence &&
+        event.name === 'search-highlights' &&
+        event.details.matchCount > 0
+    )
+    if (element.top >= viewport.top && element.bottom <= viewport.bottom && highlights) {
+      return diagnostics.events.at(-1).sequence
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error('The selected historical match was not highlighted and scrolled into view')
+}
+
+async function assertLegacyContext(control, first, last) {
+  const users = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="user-message-content"]`
+  const answers = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`
+  for (let index = first; index <= last; index += 1) {
+    await control.command('waitFor', users, {
+      text: LEGACY_MATCH_TURNS.includes(index)
+        ? `${LEGACY_PROMPT} ${index}`
+        : `Legacy search prompt ${index}`,
+    })
+    await control.command('waitFor', answers, { text: `Legacy search answer ${index}` })
+  }
+}
+
+async function verifyLegacySearch(control, timeoutMs) {
+  const findInput = '[data-testid="conversation-find-input"]'
+  const settledCount =
+    '[data-testid="conversation-find-bar"]:has([data-testid="conversation-find-input"]:not([aria-busy="true"])) [data-testid="conversation-find-count"]'
+  const loadOlder = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-older-runtime-transcript-button"]`
+  const loadNewer = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-newer-runtime-transcript-button"]`
+  await control.command('waitFor', loadOlder, { timeoutMs })
+  await control.command('waitFor', '[data-testid="assistant-message-content"]', {
+    text: `Legacy search answer ${LEGACY_TURN_COUNT - 1}`,
+  })
+  const original = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).pane
+  await control.command('nativePress', COMPOSER_SELECTOR, {
+    key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
+  })
+  await assertFindInputFocus(control, findInput)
+  await control.command('fill', findInput, { value: LEGACY_ATTACHMENT_PREVIEW })
+  await control.command('waitFor', settledCount, { text: '0 / 0' })
+  assert.equal(
+    Number(await control.command('getElementCount', '[data-testid="conversation-find-retry"]')),
+    0,
+    'Searching injected attachment metadata created an unresolvable history match'
+  )
+  await control.command('fill', findInput, { value: LEGACY_PROMPT })
+  await control.command('waitFor', settledCount, { text: '1 / 2' })
+  assert.equal(
+    Number(await control.command('getElementCount', '[data-testid="conversation-find-retry"]')),
+    0,
+    'Legacy conversation search failed through the unsupported native search API'
+  )
+  const sequence = await waitForHighlightedSearchTarget(
+    control,
+    `${LEGACY_PROMPT} ${LEGACY_MATCH_TURNS[0]}`,
+    0,
+    timeoutMs
+  )
+  await assertLegacyContext(control, LEGACY_MATCH_TURNS[0] - 1, LEGACY_MATCH_TURNS[0] + 1)
+  await control.command('clickWhenEnabled', '[data-testid="conversation-find-next-button"]')
+  await control.command('waitFor', settledCount, { text: '2 / 2' })
+  await waitForHighlightedSearchTarget(
+    control,
+    `${LEGACY_PROMPT} ${LEGACY_MATCH_TURNS[1]}`,
+    sequence,
+    timeoutMs
+  )
+  await assertLegacyContext(control, LEGACY_MATCH_TURNS[1] - 1, LEGACY_MATCH_TURNS[1] + 1)
+  await control.command('scrollIntoView', loadNewer)
+  await control.command('clickWhenEnabled', loadNewer)
+  await assertLegacyContext(control, LEGACY_MATCH_TURNS[1] - 1, LEGACY_MATCH_TURNS[1] + 2)
+  await control.command('scrollIntoView', loadOlder)
+  await control.command('clickWhenEnabled', loadOlder)
+  await assertLegacyContext(control, LEGACY_MATCH_TURNS[1] - 2, LEGACY_MATCH_TURNS[1] + 2)
+  await control.command('waitFor', settledCount, { text: '2 / 2' })
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        `${ACTIVE_WORKBENCH_SELECTOR} [role="alert"], [data-testid="conversation-find-retry"]`
+      )
+    ),
+    0,
+    'Browsing either side of a historical search match reported a history failure'
+  )
+  await control.command('nativePress', findInput, { key: 'Escape' })
+  await control.command('waitFor', loadOlder)
+  await control.command('waitFor', '[data-testid="assistant-message-content"]', {
+    text: `Legacy search answer ${LEGACY_TURN_COUNT - 1}`,
+  })
+  const restored = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).pane
+  assert.deepEqual(restored.transcript, original.transcript, 'Search changed live pagination')
+  assert.deepEqual(restored.messageSummary, original.messageSummary, 'Search changed live messages')
+  assert.equal(Number(await control.command('getElementCount', loadNewer)), 0)
 }
 
 async function assertLargeHistoryTransfer(executorHome, taskId, threadId) {
@@ -484,6 +679,11 @@ export function createDesktopScenario({
         const longHistory = appendLongRunningHistory(rollout, threadId)
         await appendFile(threadPath, `${longHistory}\n`, 'utf8')
         task.runtime_handle.cloudTranscript ??= {}
+        const legacyTask = Object.values(index.tasks ?? {}).find(
+          candidate => candidate.local_task_id === switchTaskId
+        )
+        assert.ok(legacyTask, 'The legacy search task was missing from the runtime index')
+        await seedLegacySearchHistory(executorHome, codexSqliteHome, legacyTask)
         await writeFile(indexPath, `${JSON.stringify(index)}\n`, 'utf8')
       })
       await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
@@ -511,6 +711,14 @@ export function createDesktopScenario({
         'The restored conversation did not include the complete long tool history'
       )
       await assertLargeHistoryTransfer(executorHome, taskId, moved.address.threadId)
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: FIRST_COMPLETION,
+        timeoutMs: uiTimeoutMs,
+      })
+
+      await control.command('click', switchTaskRow)
+      await verifyLegacySearch(control, uiTimeoutMs)
+      await control.command('click', taskRow)
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: FIRST_COMPLETION,
         timeoutMs: uiTimeoutMs,
@@ -545,7 +753,7 @@ export function createDesktopScenario({
       )
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
-      await control.command('fill', COMPOSER_SELECTOR, { value: PAGED_PROMPT })
+      await control.command('fill', COMPOSER_SELECTOR, { value: PAGED_REQUEST })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
       const pagedRowId = await waitForNewTaskRow(control, rowsBeforePagedTask, uiTimeoutMs)
       const pagedTaskId = pagedRowId.replace('runtime-local-task-row-', '')
@@ -559,6 +767,15 @@ export function createDesktopScenario({
         pagedAddress.workspacePath,
         uiTimeoutMs
       )
+      const persistedSearch = await requestExecutor(
+        control,
+        'runtime.tasks.transcript.search',
+        { address: pagedAddress, query: PAGED_SEARCH_TERM },
+        uiTimeoutMs
+      )
+      assert.equal(persistedSearch.totalMatches, 1, 'Persisted search missed rendered user text')
+      assert.equal(persistedSearch.matches.length, 1)
+      assert.ok(persistedSearch.matches[0].cursor?.startsWith('wework-codex-search:'))
       const pageRequest = { address: pagedAddress, limit: 50 }
       const nativePage = await requestExecutor(
         control,
@@ -616,19 +833,62 @@ export function createDesktopScenario({
       await control.command('click', `[data-testid="${pagedRowId}"]`)
       const loadOlder = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-older-runtime-transcript-button"]`
       await control.command('waitFor', loadOlder, { timeoutMs: uiTimeoutMs })
-      for (let page = 0; page < 2; page += 1) {
-        await control.command('click', loadOlder)
-        await waitForTranscriptState(
-          control,
-          snapshot => snapshot.pane?.transcript?.loadingMoreBefore === false,
-          'Native item pagination did not finish',
-          uiTimeoutMs
-        )
-      }
+      const findInput = '[data-testid="conversation-find-input"]'
+      const settledCount =
+        '[data-testid="conversation-find-bar"]:has([data-testid="conversation-find-input"]:not([aria-busy="true"])) [data-testid="conversation-find-count"]'
+      await control.command('nativePress', COMPOSER_SELECTOR, {
+        key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
+      })
+      await assertFindInputFocus(control, findInput)
+      await control.command('fill', findInput, { value: `${PAGED_PROMPT}_NO_MATCH` })
+      await control.command('waitFor', settledCount, {
+        text: '0 / 0',
+      })
+      assert.equal(
+        Number(
+          await control.command('getElementCount', '[data-testid="conversation-find-loading-icon"]')
+        ),
+        0,
+        'An unsuccessful history search did not settle'
+      )
+      await control.command('fill', findInput, { value: PAGED_SEARCH_TERM })
+      await control.command('waitFor', settledCount, {
+        text: '1 / 1',
+      })
+      assert.equal(
+        (await control.command('getText', '[data-testid="conversation-find-count"]')).trim(),
+        '1 / 1',
+        'Conversation search must find exactly one historical prompt'
+      )
+      assert.equal(
+        Number(await control.command('getElementCount', '[data-testid="conversation-find-retry"]')),
+        0,
+        'Conversation search reported a history failure after native item pagination'
+      )
+      assert.equal(
+        Number(
+          await control.command('getElementCount', '[data-testid="conversation-find-loading-icon"]')
+        ),
+        0,
+        'Conversation search kept loading after locating the historical match'
+      )
+      await control.command('waitFor', '[data-testid="user-message-content"]', {
+        text: `${PAGED_PROMPT} ${PAGED_SEARCH_TERM}`,
+      })
       const pagedSnapshot = JSON.parse(await control.command('performanceSnapshot', 'body'))
       assert.ok(
-        pagedSnapshot.runtimeAssistantDisplayItemCount >= PAGED_ITEM_COUNT,
-        'The UI did not restore the middle of the running native turn'
+        pagedSnapshot.runtimeAssistantDisplayItemCount < PAGED_ITEM_COUNT,
+        'Conversation search materialized the entire native turn'
+      )
+      await control.command('nativePress', findInput, { key: 'Escape' })
+      await control.command('waitFor', loadOlder)
+      await waitForTranscriptState(
+        control,
+        snapshot =>
+          snapshot.pane?.transcript?.hasMoreBefore === true &&
+          snapshot.pane?.transcript?.loadingMoreBefore === false,
+        'Search changed the original conversation pagination state',
+        uiTimeoutMs
       )
       releasePagedResponseResolve()
       await control.command('waitFor', '[data-testid="message-assistant"]', {

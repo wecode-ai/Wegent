@@ -26,9 +26,12 @@ fn cached_transcript_response(
         context_usage,
         running,
         pagination: if runtime_has_provider_transcript_reader(&link.runtime) {
-            let (before_cursor, after_cursor) = transcript_snapshot_pagination(link)
-                .unwrap_or((None, None));
-            TranscriptPagination::Opaque { before_cursor, after_cursor }
+            let (before_cursor, after_cursor) =
+                transcript_snapshot_pagination(link).unwrap_or((None, None));
+            TranscriptPagination::Opaque {
+                before_cursor,
+                after_cursor,
+            }
         } else {
             transcript_pagination(
                 &link.runtime,
@@ -108,15 +111,7 @@ pub(super) fn remove_superseded_transcript_turns(
     messages: &mut Vec<Value>,
     runtime_handle: &Value,
 ) {
-    let superseded_turn_ids = runtime_handle
-        .get("supersededTranscriptTurnIds")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(str::trim)
-        .filter(|turn_id| !turn_id.is_empty())
-        .collect::<Vec<_>>();
+    let superseded_turn_ids = superseded_transcript_turn_ids(runtime_handle);
     if superseded_turn_ids.is_empty() {
         return;
     }
@@ -126,10 +121,21 @@ pub(super) fn remove_superseded_transcript_turns(
             .or_else(|| string_field(message, "turn_id"))
             .or_else(|| string_field(message, "subtaskId"))
             .or_else(|| string_field(message, "subtask_id"))
-            .map_or(true, |turn_id| {
-                !superseded_turn_ids.contains(&turn_id.as_str())
-            })
+            .map_or(true, |turn_id| !superseded_turn_ids.contains(&turn_id))
     });
+}
+
+fn superseded_transcript_turn_ids(runtime_handle: &Value) -> HashSet<String> {
+    runtime_handle
+        .get("supersededTranscriptTurnIds")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .filter(|turn_id| !turn_id.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 fn merge_latest_completed_transcript_messages(
@@ -149,19 +155,32 @@ fn merge_latest_completed_transcript_messages(
         {
             // Exit snapshots are authoritative; running commands use their live event buffer.
             visit_transcript_blocks_mut(&mut completed, |block| {
-                if block.pointer("/render_payload/kind").and_then(Value::as_str)
+                if block
+                    .pointer("/render_payload/kind")
+                    .and_then(Value::as_str)
                     != Some("command_execution")
                 {
                     return;
                 }
-                if let Some(native) = existing.get("blocks").and_then(Value::as_array)
-                    .into_iter().flatten().find(|native| {
+                if let Some(native) = existing
+                    .get("blocks")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .find(|native| {
                         native.get("id") == block.get("id")
-                            && native.pointer("/render_payload/kind").and_then(Value::as_str) == Some("command_execution")
-                            && matches!(native.get("status").and_then(Value::as_str), Some("done" | "error"))
+                            && native
+                                .pointer("/render_payload/kind")
+                                .and_then(Value::as_str)
+                                == Some("command_execution")
+                            && matches!(
+                                native.get("status").and_then(Value::as_str),
+                                Some("done" | "error")
+                            )
                     })
                 {
-                    if let (Some(block), Some(native)) = (block.as_object_mut(), native.as_object()) {
+                    if let (Some(block), Some(native)) = (block.as_object_mut(), native.as_object())
+                    {
                         block.extend(native.clone());
                     }
                 }
@@ -832,16 +851,8 @@ fn attach_user_message_presentations_for_page(
         let attachments = normalized_attachments(presentation.get("attachments"));
         // Provider input is an execution projection, not the user's presentation.
         // Restore native references even when the host routes a plugin to CLI text.
-        let restore_content = !attachments.is_empty()
-            || local_presentation_reference_descriptors(&presentation_content)
-                .iter()
-                .any(|reference| {
-                    reference["href"].as_str().is_some_and(|href| {
-                        is_local_path_reference(href)
-                            || href.starts_with("app://")
-                            || href.starts_with("plugin://")
-                    })
-                });
+        let restore_content =
+            user_presentation_restores_content(&presentation_content, !attachments.is_empty());
         let references = presentation
             .get("references")
             .and_then(Value::as_array)
@@ -867,6 +878,19 @@ fn attach_user_message_presentations_for_page(
             }
         }
     }
+}
+
+fn user_presentation_restores_content(content: &str, has_attachments: bool) -> bool {
+    has_attachments
+        || local_presentation_reference_descriptors(content)
+            .iter()
+            .any(|reference| {
+                reference["href"].as_str().is_some_and(|href| {
+                    is_local_path_reference(href)
+                        || href.starts_with("app://")
+                        || href.starts_with("plugin://")
+                })
+            })
 }
 
 fn presentation_belongs_to_transcript_page(
