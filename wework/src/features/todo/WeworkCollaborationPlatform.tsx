@@ -6,6 +6,7 @@ export { createLocalWorkspaceApi, createWeworkPlatformApi }
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -1278,6 +1279,23 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
   const pendingNavigationProjectIdRef = useRef<string | null | undefined>(undefined)
   const navigationRequestRevisionRef = useRef(0)
   const resolvedWorkspaceProjectRef = useRef<string | null>(null)
+
+  // An external route supersedes an internal project's pending lookup, even
+  // when it only selects another Issue or comment in the same project.
+  useLayoutEffect(() => {
+    navigationRequestRevisionRef.current += 1
+    pendingNavigationProjectIdRef.current = undefined
+    return () => {
+      navigationRequestRevisionRef.current += 1
+    }
+  }, [
+    activeProject?.projectId,
+    activeProject?.projectStore,
+    platformApi,
+    props.focusedCommentId,
+    props.focusedCommentRequestKey,
+    props.focusedItemId,
+  ])
 
   useEffect(() => {
     const activeProjectId = activeProject ? String(activeProject.projectId) : null
