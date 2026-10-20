@@ -25,6 +25,7 @@ from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
 from app.services import collaboration_manager_decisions
+from app.services.issue_assignments import issue_assignment_service
 from tests.utils.collaboration import authorize_project, authorize_project_agent
 
 
@@ -342,7 +343,7 @@ def test_project_details_expose_assignable_members(
     assert details["groups"] == []
 
 
-async def test_manager_mcp_assignment_to_human_returns_plain_issue(
+async def test_manager_mcp_assignment_to_human_exposes_task_identity_before_start(
     test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project = _project(test_db, test_user, provider="local")
@@ -371,12 +372,22 @@ async def test_manager_mcp_assignment_to_human_returns_plain_issue(
     )
 
     assert assigned["assignee_user_id"] == test_user.id
-    assert assigned["human_work"]["assignee_user_id"] == test_user.id
-    assert assigned["human_work"]["state"] == "none"
-    assert assigned["human_work"]["can_start"] is True
-    assert assigned["human_work"]["ai_task_binding"]["assignmentId"] == (
-        assigned["human_work"]["assignment_id"]
-    )
+    assert assigned["status"] == "pending"
+    assert "human_work" not in assigned
+    assignments = issue_assignment_service.active_for_issue(test_db, assigned["id"])
+    assert len(assignments) == 1
+    assignment_id = assignments[0].id
+    assert assigned["human_task_binding"] == {
+        "humanAssignmentId": str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"wegent:direct-human:{assigned['id']}:{assignment_id}",
+            )
+        ),
+        "dispatchId": f"direct-human:{assignment_id}",
+        "dispatchRoundId": "direct",
+        "assignmentId": assignment_id,
+    }
 
 
 async def test_external_project_tools_route_list_read_and_assignment_to_provider(

@@ -8,13 +8,14 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from fastapi import FastAPI
+
 from app.api.endpoints import users as users_endpoint
 from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.services.adapters.team_kinds import team_kinds_service
 from app.stores.tasks import task_store
-from fastapi import FastAPI
 
 
 class _FakeQuery:

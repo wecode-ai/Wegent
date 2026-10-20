@@ -27,7 +27,6 @@ import {
   formatIssueTimestamp,
   IssueStatusHistoryList,
   humanDispatchAssignment,
-  issueCommentBody,
   type HumanDispatchAssignment,
   type SharedIssueStatusHistoryEntry,
   type IssueActivityThreadModel,
@@ -36,7 +35,7 @@ import type { CollaborationAgent, CollaborationMember } from '@wegent/collaborat
 import { IssueActivityTools } from '@wegent/collaboration/issue-detail/IssueActivityTools'
 import { canApproveIssueExecution } from '@wegent/collaboration/issue-detail/activityApproval'
 import { copyTextToClipboard } from '@/lib/clipboard'
-import { prepareCloudAttachments } from '@/lib/cloud-attachments'
+import { createTaskCommentPreparer } from './prepareTaskComment'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   ProjectChatClient,
@@ -279,6 +278,24 @@ export function TaskActivityView({
       chatStream: services.chatStream,
     }),
     [projectDeliveryApi, services.chatStream]
+  )
+  const prepareComment = useMemo(
+    () =>
+      createTaskCommentPreparer({
+        local: projectLocation === 'local',
+        importAttachments: projectDeliveryApi
+          ? files => projectDeliveryApi.importLoopItemAttachments(task.id, files)
+          : undefined,
+        uploadLocalAttachmentToCloud: services.attachmentApi?.uploadLocalAttachmentToCloud,
+        persistFailedText: t('workbench.task_activity_attachment_persist_failed'),
+      }),
+    [
+      task.id,
+      projectLocation,
+      projectDeliveryApi,
+      services.attachmentApi?.uploadLocalAttachmentToCloud,
+      t,
+    ]
   )
   // The code project shown on the task page: the runtime code task bound to
   // this board task. Used as the default parent-comment execution project.
@@ -833,28 +850,14 @@ export function TaskActivityView({
     setSending(true)
     let persisted = false
     try {
+      const prepared = await prepareComment(reply.content, reply.attachments ?? [])
       const dispatch = humanDispatchForCard(card)
       if (dispatch && onStartHumanTaskFromReply) {
-        const attachments = reply.attachments ?? []
-        let text = reply.content
-        if (projectLocation !== 'local' && attachments.length) {
-          if (!projectDeliveryApi) {
-            throw new Error(t('workbench.task_activity_attachment_persist_failed'))
-          }
-          const cloud = await prepareCloudAttachments(
-            attachments,
-            services.attachmentApi?.uploadLocalAttachmentToCloud
-          )
-          text = issueCommentBody(
-            reply.content,
-            await projectDeliveryApi.importLoopItemAttachments(task.id, cloud.attachments)
-          )
-        }
         const message = await client.send({
           projectId: project.id,
           taskId: task.id,
           clientMessageId: reply.id,
-          text,
+          text: prepared.text,
           mentions: (reply.mentions ?? []).filter(mention => mention.type === 'user'),
           replyToMessageId: card.root.messageId,
           model: null,
@@ -879,7 +882,8 @@ export function TaskActivityView({
         selfManagedExecution,
         card,
         sessionAddress: boundCardSessionAddress(card, taskBindings),
-        reply,
+        reply: { ...reply, attachments: prepared.attachments },
+        prepareComment: async () => prepared.text,
         messages,
         executionProject: null,
         models: availableModels,
@@ -925,6 +929,7 @@ export function TaskActivityView({
     setSending(true)
     setError(null)
     try {
+      const prepared = await prepareComment(text, attachments)
       const executionProject = effectiveCommentProject
       const explicitMentions = commentAgentMentions(text, agents)
       const activeMentions: ProjectChatMention[] = [
@@ -939,7 +944,7 @@ export function TaskActivityView({
         projectId: project.id,
         taskId: task.id,
         clientMessageId: crypto.randomUUID(),
-        text,
+        text: prepared.text,
         mentions: activeMentions,
         replyToMessageId: null,
         model: client.executeTaskComment ? null : (selectedModel?.name ?? null),
@@ -958,7 +963,7 @@ export function TaskActivityView({
           projectId: project.id,
           taskId: task.id,
           triggerMessageId: message.messageId,
-          attachmentIds: attachments.map(file => Number(file.id)),
+          attachmentIds: prepared.attachments.map(file => file.id),
         })
         setMessages(current => mergeProjectChatMessages(current, incoming))
       } else if (assignedAgent && !selfManagedExecution) {
@@ -973,7 +978,7 @@ export function TaskActivityView({
           prompt: text,
           trigger: message,
           messages,
-          attachments,
+          attachments: prepared.attachments,
           models: availableModels,
           selectedModel,
           selectedModelOptions,

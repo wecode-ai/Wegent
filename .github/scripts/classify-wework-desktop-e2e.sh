@@ -22,6 +22,7 @@ core_segments=(
   collaboration-human-round-resume
   collaboration-local-group-cancellation
   collaboration-issue-comment-mention
+  collaboration-issue-comment-attachments
   collaboration-issue-comment-notification
   collaboration-issue-mcp-comments
   cloud-space-mention
@@ -56,6 +57,7 @@ core_segments=(
   runtime-task-queue
   codex-invalid-launch-cwd
   running-conversation-history
+  latest-conversation-history
   running-plan-history
   running-sidebar-state
   codex-notification-isolation
@@ -181,10 +183,10 @@ core_shards=(
   project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,stand-in,collaboration-local-group-coordinate,collaboration-human-round-resume
   resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-task-discovery,collaboration-app-queue-identity,collaboration-issue-archive,collaboration-local-group-cancellation
   workspace-attachments,automation-lifecycle,drawing-attachment
-  project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention
+  project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention,collaboration-issue-comment-attachments
   rendering-extensions,transcript-sync,background-terminals
   runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
-  local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification,collaboration-issue-mcp-comments
+  local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification,collaboration-issue-mcp-comments,latest-conversation-history
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,model-overload-recovery
   model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy
   collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details,stand-in-cloud
@@ -742,6 +744,10 @@ classify_wework_path() {
       select_target "core:collaboration-issue-comment-mention"
       return
       ;;
+    wework/e2e/desktop/scenarios/collaboration-issue-comment-attachments.scenario.mjs)
+      select_target "core:collaboration-issue-comment-attachments"
+      return
+      ;;
     wework/e2e/desktop/scenarios/collaboration-issue-comment-notification.scenario.mjs)
       select_target "core:collaboration-issue-comment-notification"
       return
@@ -1075,6 +1081,11 @@ classify_wework_path() {
       return
       ;;
 
+    wework/e2e/desktop/scenarios/latest-conversation-history.scenario.mjs)
+      select_target "core:latest-conversation-history"
+      return
+      ;;
+
     # Assistant/tool rendering and desktop extension surfaces.
     wework/src/components/chat/blocks/* | \
       wework/src/components/chat/AttachmentImagePreview* | \
@@ -1299,6 +1310,7 @@ classify_path() {
       select_target "core:collaboration-group-onboarding"
       select_collaboration_dispatch_checkpoints
       select_target "core:collaboration-issue-comment-mention"
+      select_target "core:collaboration-issue-comment-attachments"
       select_target "core:collaboration-issue-comment-notification"
       ;;
     executor/src/server/codex_model_catalog*.rs)

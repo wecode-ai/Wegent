@@ -4,12 +4,13 @@ import uuid
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import HTTPException
+
 from app.core.security import create_access_token
 from app.models.user import User
 from app.services.cloud_projects.responses import project_response
 from app.services.cloud_projects.service import cloud_project_service
 from app.services.collaboration_permissions import collaboration_permission_service
-from fastapi import HTTPException
 
 
 def read_project(test_db, project_id, user):
@@ -100,9 +101,7 @@ def test_cp02_cp03_cp05_role_union_and_restricted_projects(
     inherited = (
         "Maintainer"
         if space_role in {"Owner", "Maintainer"}
-        else space_role
-        if mode == "inherit"
-        else None
+        else space_role if mode == "inherit" else None
     )
     if inherited:
         expected_sources.append(inherited)
@@ -199,6 +198,35 @@ def test_cp07_cp08_cp20_viewer_and_membership_provenance(test_client, scope):
             json={"title": "Forbidden"},
         ).status_code
         == 403
+    )
+
+
+@pytest.mark.parametrize("target_status", ["in_progress", "in_review", "completed"])
+def test_cp07_viewer_cannot_change_issue_status(test_client, scope, target_status):
+    invite(test_client, scope, "Viewer")
+    pid = scope["project"]["id"]
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{pid}/loop-items",
+        headers=scope["owner"],
+        json={"title": "Status permission contract"},
+    )
+    assert created.status_code == 201, created.text
+    issue = created.json()
+    changed = test_client.patch(
+        f"/api/v1/loop-items/{issue['id']}",
+        headers=scope["member"],
+        json={
+            "version": issue["version"],
+            "status": target_status,
+        },
+    )
+    assert changed.status_code == 403, changed.text
+    current = test_client.get(
+        f"/api/v1/loop-items/{issue['id']}", headers=scope["owner"]
+    ).json()
+    assert (current["status"], current["version"]) == (
+        issue["status"],
+        issue["version"],
     )
 
 
