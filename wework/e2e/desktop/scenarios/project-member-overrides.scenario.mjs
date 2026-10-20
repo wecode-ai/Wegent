@@ -272,6 +272,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
   async function assertViewerDenials() {
     const issuePath = `/api/v1/loop-items/${issue.id}`
     const current = await request(member, issuePath)
+    const commentsBefore = await ownerRequest(`${issuePath}/comments`)
+    const assignmentsBefore = await ownerRequest(`${issuePath}/assignments`)
     await request(
       member,
       issuePath,
@@ -313,8 +315,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       403
     )
     assert.equal((await ownerRequest(issuePath)).title, issue.title)
-    assert.deepEqual(await ownerRequest(`${issuePath}/comments`), [])
-    assert.deepEqual((await ownerRequest(`${issuePath}/assignments`)).items, [])
+    assert.deepEqual(await ownerRequest(`${issuePath}/comments`), commentsBefore)
+    assert.deepEqual(await ownerRequest(`${issuePath}/assignments`), assignmentsBefore)
     await assertCannotManage(member)
     verifiedCases.push('viewer-cannot-edit-comment-assign-create-or-execute-even-as-issue-creator')
   }
