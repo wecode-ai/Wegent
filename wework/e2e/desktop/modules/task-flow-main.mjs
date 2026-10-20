@@ -4643,10 +4643,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       }
     }
     await runTeardownStep('desktop application', async () => stopDesktopAppProcess(app))
+    // Scenario fixtures can still need the controller, proxies, and backend during cleanup.
+    await runTeardownStep('desktop scenario', async () => desktopScenario?.cleanup?.())
     await runTeardownStep('desktop controller', async () => control.close())
     await runTeardownStep('blocking network proxy', async () => blockingNetworkProxy?.stop())
     await runTeardownStep('cloud environment', async () => cloudEnvironment?.stop())
-    await runTeardownStep('desktop scenario', async () => desktopScenario?.cleanup?.())
     await runTeardownStep('Codex SQLite home', async () =>
       rm(codexSqliteHome, {
         recursive: true,
@@ -4676,10 +4677,10 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         cleanupError ??= error
       }
     }
+    for (const failure of teardownFailures) {
+      console.error(`[desktop-e2e] ${failure.label} teardown failed:`, failure.error)
+    }
     if (testFailed) {
-      for (const failure of teardownFailures) {
-        console.error(`[desktop-e2e] ${failure.label} teardown failed: ${String(failure.error)}`)
-      }
       if (cleanupError) {
         console.error(`[desktop-e2e] result cleanup failed: ${String(cleanupError)}`)
       }
