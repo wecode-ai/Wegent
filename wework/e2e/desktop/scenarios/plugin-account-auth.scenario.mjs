@@ -401,15 +401,6 @@ export async function createDesktopScenario({
             command = `python3 ${quote(join(cloudRoot, 'scripts/cli.py'))} read`
             await invokeCloud('plugin_auth_device_not_granted')
             assert.equal((await localAuth('health')).status, 'need_login')
-            await control.command('click', '[data-testid="plugins-button"]')
-            await control.command(
-              'waitFor',
-              `[data-testid="plugins-installed-strip-item-${installedId}"]`
-            )
-            await control.command(
-              'click',
-              `[data-testid="plugins-installed-strip-item-${installedId}"]`
-            )
             await control.command('waitFor', '[data-testid="plugin-connection-manage-group:sites"]')
             await control.command('click', '[data-testid="plugin-connection-manage-group:sites"]')
             await control.command('fill', '[data-testid="plugin-connector-source-select"]', {
