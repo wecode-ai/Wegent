@@ -407,13 +407,18 @@ pub fn task_by_id_owned_statement(table: &str) -> String {
 /// id. `json_delete_filter` adds the base store's `text()` JSON deletion
 /// predicate, which the sharded store applies in Rust instead; `client_origin`
 /// adds the endpoint's optional origin filter.
+///
+/// Project `json` as UTF-8 text so task documents larger than MySQL's 16 MiB
+/// protocol-packet boundary are decoded from the complete textual value rather
+/// than the native JSON result representation.
 pub fn active_task_by_id_statement(
     table: &str,
     json_delete_filter: bool,
     client_origin: bool,
 ) -> String {
     let mut sql = format!(
-        "SELECT id, user_id, kind, name, namespace, json, is_active,
+        "SELECT id, user_id, kind, name, namespace,
+                CAST(json AS CHAR CHARACTER SET utf8mb4) AS json, is_active,
                 created_at, updated_at, project_id, client_origin, is_group_chat
          FROM {table}
          WHERE id = ? AND kind = 'Task' AND is_active IN (1, 2)"

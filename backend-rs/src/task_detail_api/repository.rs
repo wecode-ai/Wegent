@@ -88,6 +88,9 @@ pub(crate) fn json_status_is_delete(payload: &Value) -> bool {
 
 /// `is_member`'s approved member-row check (only reached when the requesting
 /// user is not the task owner).
+///
+/// Only row presence matters here. Keeping the driver row intact also avoids
+/// coupling this probe to SQLAlchemy's labeled projection name.
 pub(crate) async fn is_approved_member<M>(
     mysql: &M,
     task_id: i64,
@@ -96,12 +99,7 @@ pub(crate) async fn is_approved_member<M>(
 where
     M: brz_mysql::Mysql,
 {
-    #[derive(FromMysqlRow)]
-    struct MemberId {
-        #[allow(dead_code)]
-        id: i64,
-    }
-    let row: Option<MemberId> = mysql
+    let row: Option<MysqlRow> = mysql
         .fetch_optional(
             "SELECT resource_members.id AS resource_members_id \nFROM resource_members \n\
              WHERE resource_members.resource_type = 'Task' AND resource_members.resource_id = ? \
@@ -312,5 +310,23 @@ mod tests {
         assert!(!json_status_is_delete(&serde_json::json!({
             "status": {"status": "PENDING"}
         })));
+    }
+
+    #[tokio::test]
+    async fn approved_member_probe_checks_the_labeled_projection_by_presence() {
+        let mysql = crate::sql_test_support::KindQueryCapture::default();
+
+        let is_member = is_approved_member(&mysql, 42, 7).await.unwrap();
+
+        assert!(!is_member);
+        let queries = mysql.queries();
+        assert_eq!(queries.len(), 1);
+        assert_eq!(queries[0].args, 2);
+        assert_eq!(queries[0].first_integer, Some(42));
+        assert!(
+            queries[0]
+                .sql
+                .starts_with("SELECT resource_members.id AS resource_members_id")
+        );
     }
 }

@@ -89,6 +89,24 @@ fn ownerless_active_task_statement_covers_both_active_states() {
     assert!(!sql.contains("client_origin = ?"), "{sql}");
 }
 
+/// Large native JSON values can cross MySQL's 16 MiB protocol-packet boundary.
+/// The detail endpoints read the payload through a text projection so the
+/// driver receives one complete textual JSON value, while predicates still
+/// operate on the native JSON column.
+#[test]
+fn active_task_detail_statement_projects_json_as_utf8mb4_text() {
+    let sql = active_task_by_id_statement(TASKS_TABLE, true, false);
+
+    assert!(
+        sql.contains("CAST(json AS CHAR CHARACTER SET utf8mb4) AS json"),
+        "{sql}"
+    );
+    assert!(
+        sql.contains("JSON_EXTRACT(json, '$.status.status')"),
+        "{sql}"
+    );
+}
+
 /// The update clears the project link and rewrites the JSON, ordered the way
 /// SQLAlchemy flushes the dirty columns (the mapper's column order:
 /// `json`, `updated_at`, `project_id`).

@@ -146,31 +146,6 @@ async fn get_workspace_by_ref(
     Ok(())
 }
 
-/// `SqlAlchemyTaskAccessStore.is_member` member-row check (only reached
-/// when the requesting user is not the task owner).
-async fn is_approved_member(
-    state: &AppState<impl Mysql, impl brz_redis::Redis>,
-    task_id: i64,
-    user_id: i64,
-) -> anyhow::Result<bool> {
-    #[derive(brz_mysql::FromMysqlRow)]
-    struct MemberId {
-        #[allow(dead_code)]
-        id: i64,
-    }
-    let row: Option<MemberId> = Mysql::fetch_optional(
-        &state.mysql,
-        "SELECT resource_members.id AS resource_members_id \nFROM resource_members \n\
-         WHERE resource_members.resource_type = 'Task' AND resource_members.resource_id = ? \
-         AND resource_members.entity_type = 'user' AND resource_members.entity_id = ? \
-         AND resource_members.status = 'approved' AND resource_members.copied_resource_id = 0 \n\
-         LIMIT 1",
-        (task_id, user_id.to_string()),
-    )
-    .await?;
-    Ok(row.is_some())
-}
-
 /// Full task-detail load for `get_status`; produces the source dependency
 /// call sequence and returns the task payload plus the resolved subtasks
 /// (the executor bindings and bot ids the status flow consumes).
@@ -187,7 +162,10 @@ pub async fn load_task_detail(
     if accessible_owner.is_none() {
         anyhow::bail!(TaskNotFound);
     }
-    if task.user_id != user_id && !is_approved_member(state, task_id, user_id).await? {
+    if task.user_id != user_id
+        && !crate::task_detail_api::repository::is_approved_member(&state.mysql, task_id, user_id)
+            .await?
+    {
         anyhow::bail!(TaskNotFound);
     }
 
