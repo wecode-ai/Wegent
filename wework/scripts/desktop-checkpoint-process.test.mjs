@@ -7,7 +7,7 @@ const scriptDir = '/isolated/wework/e2e/desktop'
 const executable = '/tools/node'
 const environment = { WEWORK_E2E_ISOLATED_XVFB: 'true' }
 
-test('starts the native accessibility session inside Xvfb before the window manager and app', () => {
+test('starts Openbox before native accessibility so Xvfb retains the bus property', () => {
   const launch = resolveCheckpointProcess({
     args: ['--segment', 'native-directory-picker'],
     scriptDir,
@@ -21,9 +21,9 @@ test('starts the native accessibility session inside Xvfb before the window mana
     'dbus-run-session',
     '--',
     'sh',
-    join(scriptDir, 'run-with-native-accessibility.sh'),
-    'sh',
     join(scriptDir, 'run-with-openbox.sh'),
+    'sh',
+    join(scriptDir, 'run-with-native-accessibility.sh'),
   ])
   assert.deepEqual(launch.args.slice(8), [
     executable,

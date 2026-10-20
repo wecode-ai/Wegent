@@ -20,11 +20,11 @@ export function resolveCheckpointProcess({
     args: [
       '-a',
       '--server-args=-screen 0 1280x720x24',
-      ...(nativeAccessibility
-        ? ['dbus-run-session', '--', 'sh', join(scriptDir, 'run-with-native-accessibility.sh')]
-        : []),
+      ...(nativeAccessibility ? ['dbus-run-session', '--'] : []),
       'sh',
       join(scriptDir, 'run-with-openbox.sh'),
+      // Keep an X11 client connected so Xvfb cannot reset the AT-SPI root property.
+      ...(nativeAccessibility ? ['sh', join(scriptDir, 'run-with-native-accessibility.sh')] : []),
       executable,
       ...taskArgs,
     ],
