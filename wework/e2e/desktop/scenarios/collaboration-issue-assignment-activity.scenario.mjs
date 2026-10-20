@@ -167,7 +167,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     const localIssueId = activityId.slice('cloud-task-activity-'.length)
     await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
     await reloadMainWindow(control, 'The desktop did not reconnect after local assignment reload')
-    const card = scoped(`[data-testid="collaboration-issue-${localIssueId}"]`)
+    const card = scoped(`[data-testid="cloud-todo-card-${localIssueId}"]`)
     await control.command('waitFor', card, { text: LOCAL_ISSUE, timeoutMs: uiTimeoutMs })
     await control.command('click', card)
     await control.command('waitFor', title, { timeoutMs: uiTimeoutMs })
