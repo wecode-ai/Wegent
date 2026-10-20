@@ -212,6 +212,24 @@ async function downloadableRuntimeFixture() {
 }
 
 describe('downloadable DSH runtimes', () => {
+  test('downloads legacy runtimes when source development resources share the runtime cache', async () => {
+    const f = await downloadableRuntimeFixture()
+    vi.stubGlobal('fetch', f.fetchImpl)
+    const command = await resolveWorkbenchProjectPnpmCommand({
+      runtimeRoot: f.resources,
+      versionRequirement: f.legacy.dshVersion,
+      environment: { WEWORK_HARNESS_RESOURCE_ROOT: f.resources },
+    })
+    expect(command.argsPrefix).toContain(
+      join(f.resources, f.legacy.sourceFingerprint, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')
+    )
+    await resolveWorkbenchProjectPnpmCommand({
+      runtimeRoot: f.resources,
+      versionRequirement: f.legacy.dshVersion,
+      environment: { WEWORK_HARNESS_RESOURCE_ROOT: f.resources },
+    })
+    expect(f.fetchImpl).toHaveBeenCalledTimes(1)
+  })
   test('prepares legacy runtimes for project scripts through the shared Workbench resolver', async () => {
     const f = await downloadableRuntimeFixture()
     vi.stubGlobal('fetch', f.fetchImpl)

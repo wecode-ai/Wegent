@@ -2361,9 +2361,10 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
     environment: {
       ...nodeRuntime.environment,
       WEWORK_HARNESS_RUNTIME_ROOT: runtimeRoot,
+      WEWORK_HARNESS_RESOURCE_ROOT:
+        components?.coreDsh ?? join(componentResourcesRoot, 'harness-runtime'),
       ...(components
         ? {
-            WEWORK_HARNESS_RESOURCE_ROOT: components.coreDsh,
             WEWORK_CORE_PLUGIN_ROOT: components.weworkCorePlugins,
             WEWORK_CORE_PLUGINS_SHA256: components.contentSha256.weworkCorePlugins,
           }
