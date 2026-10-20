@@ -125,6 +125,7 @@ logger = logging.getLogger(__name__)
 
 RUNTIME_LIST_TIMEOUT_SECONDS = 30
 RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS = 30
+RUNTIME_TRANSCRIPT_SEARCH_TIMEOUT_SECONDS = 120
 RUNTIME_SEARCH_TIMEOUT_SECONDS = 30
 RUNTIME_SEND_TIMEOUT_SECONDS = 600
 RUNTIME_CONTROL_TIMEOUT_SECONDS = 30
@@ -541,7 +542,7 @@ async def search_runtime_transcript(
             device_id=address.device_id,
             method="runtime.tasks.transcript.search",
             payload=_runtime_transcript_search_payload(request, address),
-            timeout_seconds=RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS,
+            timeout_seconds=RUNTIME_TRANSCRIPT_SEARCH_TIMEOUT_SECONDS,
             **(
                 {"allow_app_device_task_reading": True}
                 if request.project_session is not None

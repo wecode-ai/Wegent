@@ -647,7 +647,21 @@ async def test_device_runtime_events_preserve_socket_order(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_runtime_request_relays_to_device_runtime_rpc(monkeypatch):
+@pytest.mark.parametrize(
+    "method,params,requested_timeout,expected_timeout",
+    [
+        ("runtime.tasks.create", {"message": "hello"}, None, 75),
+        (
+            "runtime.tasks.transcript.search",
+            {"taskId": "runtime-1", "query": "needle"},
+            120,
+            120,
+        ),
+    ],
+)
+async def test_runtime_request_relays_to_device_runtime_rpc(
+    monkeypatch, method, params, requested_timeout, expected_timeout
+):
     namespace = WeworkRuntimeNamespace()
     runtime_rpc = AsyncMock(return_value={"accepted": True})
     monkeypatch.setattr(
@@ -666,8 +680,13 @@ async def test_runtime_request_relays_to_device_runtime_rpc(monkeypatch):
         {
             "id": "req-1",
             "device_id": "cloud-device",
-            "method": "runtime.tasks.create",
-            "params": {"message": "hello"},
+            "method": method,
+            "params": params,
+            **(
+                {"timeout_seconds": requested_timeout}
+                if requested_timeout is not None
+                else {}
+            ),
         },
     )
 
@@ -675,9 +694,9 @@ async def test_runtime_request_relays_to_device_runtime_rpc(monkeypatch):
     runtime_rpc.assert_awaited_once_with(
         user_id=7,
         device_id="cloud-device",
-        method="runtime.tasks.create",
-        payload={"message": "hello"},
-        timeout_seconds=75,
+        method=method,
+        payload=params,
+        timeout_seconds=expected_timeout,
     )
 
 

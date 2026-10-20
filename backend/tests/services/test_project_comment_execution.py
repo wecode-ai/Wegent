@@ -6,11 +6,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
-from tests.utils.collaboration import (
-    authorize_project,
-    authorize_project_agent,
-    authorize_resource,
-)
 
 from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
 from app.models.kind import Kind
@@ -22,6 +17,11 @@ from app.schemas.base_role import BaseRole
 from app.schemas.project_chat import ProjectChatCommentExecution, ProjectChatSend
 from app.services.project_chat.comment_execution import execute_comment
 from app.services.project_chat.service import project_chat_service
+from tests.utils.collaboration import (
+    authorize_project,
+    authorize_project_agent,
+    authorize_resource,
+)
 
 
 @pytest.fixture
@@ -593,7 +593,7 @@ async def test_member_searches_only_bound_transcript_using_original_owner(
             "query": "needle",
             "limit": 250,
         },
-        timeout_seconds=30,
+        timeout_seconds=120,
         allow_app_device_task_reading=True,
     )
 

@@ -585,7 +585,7 @@ export function createHybridWorkbenchServices(
     if (cached) return cached
     const api = createRuntimeWorkApiFromIpc(
       (method, params) =>
-        method === 'runtime.tasks.transcript' || method === 'runtime.tasks.transcript.search'
+        method === 'runtime.tasks.transcript'
           ? cloudRuntimeIpc.request(
               method,
               params,
