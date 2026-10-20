@@ -6,9 +6,10 @@ import json
 from typing import Any
 
 import pytest
-from app.core.config import settings
 from fastapi.testclient import TestClient
 from pytest_httpx import HTTPXMock
+
+from app.core.config import settings
 
 SITES_API_BASE_URL = "https://sites.example.test"
 

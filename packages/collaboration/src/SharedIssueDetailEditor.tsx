@@ -84,7 +84,7 @@ import type {
   CollaborationStatus,
 } from "./types";
 import { markdownAttachmentRows } from "./issue-detail/attachmentMarkdown";
-import { TagEditor } from "./issue-detail/TagEditor";
+import { TagEditor, type TagEditorHandle } from "./issue-detail/TagEditor";
 import { IssuePropertiesPopover } from "./issue-detail/IssuePropertiesPopover";
 import { IssuePropertyRow as RailProp } from "./issue-detail/IssuePropertyRow";
 import { IssueAssignmentHistoryDisclosure } from "./issue-detail/IssueAssignmentHistoryDisclosure";
@@ -915,29 +915,34 @@ export function TodoEditor(props: TodoEditorProps) {
   const detailScrollRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLTextAreaElement>(null);
   const descriptionCollapseRef = useRef<HTMLDivElement>(null);
+  const propertyTagsRef = useRef<TagEditorHandle>(null);
+  const pendingContentFocusRef = useRef<"title" | "description" | null>(null);
 
   const beginContentEditing = useCallback(
     (target: "title" | "description") => {
       if (!readFirst || !editable || editingContent) return;
+      pendingContentFocusRef.current = target;
       setDescriptionExpanded(true);
       setEditingContent(true);
-      window.requestAnimationFrame(() => {
-        if (target === "title") {
-          const titleElement = titleRef.current;
-          if (!titleElement) return;
-          titleElement.focus();
-          titleElement.setSelectionRange(title.length, title.length);
-          return;
-        }
-        const editorElement =
-          descriptionCollapseRef.current?.querySelector<HTMLElement>(
-            '[contenteditable="true"], textarea',
-          );
-        editorElement?.focus();
-      });
     },
-    [editable, editingContent, readFirst, title],
+    [editable, editingContent, readFirst],
   );
+
+  useLayoutEffect(() => {
+    const target = pendingContentFocusRef.current;
+    if (!editingContent || !target) return;
+    pendingContentFocusRef.current = null;
+    if (target === "title") {
+      const titleElement = titleRef.current;
+      if (!titleElement) return;
+      titleElement.focus();
+      titleElement.setSelectionRange(title.length, title.length);
+      return;
+    }
+    descriptionCollapseRef.current
+      ?.querySelector<HTMLElement>('[contenteditable="true"], textarea')
+      ?.focus();
+  }, [editingContent, title]);
 
   const editItemId = item?.id ?? null;
   const editProjectId = item?.cloud_project_id ?? null;
@@ -2620,6 +2625,7 @@ export function TodoEditor(props: TodoEditorProps) {
           >
             <span className="task-detail-workspace-tags w-full">
               <TagEditor
+                ref={propertyTagsRef}
                 testIdPrefix="cloud-todo-detail-tag"
                 tags={tags}
                 onChange={setTags}
@@ -2739,6 +2745,7 @@ export function TodoEditor(props: TodoEditorProps) {
           {workspacePanel && item ? (
             <IssuePropertiesPopover
               label={t("todo.more_properties", "更多信息")}
+              onClose={() => propertyTagsRef.current?.commitDraft()}
             >
               {workspaceProperties}
               {editable && props.onDelete ? (
@@ -4272,7 +4279,9 @@ export function TodoEditor(props: TodoEditorProps) {
           </>
         ) : null}
       </section>
-      {!workspacePanel && assignmentChainOpen && item?.assignment_history?.length
+      {!workspacePanel &&
+      assignmentChainOpen &&
+      item?.assignment_history?.length
         ? (extensions?.renderAssignmentHistory?.({
             anchor: assignmentChainTriggerRef.current,
             entries: item.assignment_history,

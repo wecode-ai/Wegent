@@ -10,13 +10,14 @@ calling it, including the re-check of tokens issued before a policy flip.
 """
 
 import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+
 from app.api.endpoints.adapter import attachments
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
 from app.models.user import User
 from app.services.context import context_service
-from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
 
 ORIGINAL_BYTES = b"original-document-bytes"
 

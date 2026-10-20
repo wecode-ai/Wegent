@@ -5,6 +5,9 @@
 """Exercise external document preview through the real HTTP and storage paths."""
 
 import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+
 from app.core.security import create_access_token
 from app.models.knowledge import (
     DocumentIndexStatus,
@@ -16,8 +19,6 @@ from app.models.user import User
 from app.schemas.knowledge import KnowledgeBaseCreate
 from app.services.context import context_service
 from app.services.knowledge.knowledge_service import KnowledgeService
-from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
 
 BODY = "# 原文\n索引失败仍然可读。"
 

@@ -5,6 +5,9 @@
 from types import SimpleNamespace
 
 import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+
 from app.core.security import create_access_token, get_password_hash
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
 from app.models.subtask_context import SubtaskContext
@@ -19,8 +22,6 @@ from app.schemas.knowledge import (
 from app.services.knowledge.folder_service import KnowledgeFolderService
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.knowledge.orchestrator import knowledge_orchestrator
-from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
 
 
 def _api_key_headers(raw_key: str) -> dict[str, str]:

@@ -7,14 +7,15 @@
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+
 from app.api.dependencies import get_db
 from app.api.endpoints.devices import router as devices_router
 from app.api.endpoints.users import router as users_router
 from app.core import security
 from app.models.user import User
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
 
 
 @pytest.fixture

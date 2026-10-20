@@ -1783,15 +1783,6 @@ async function configureDesktopRuntime(): Promise<void> {
       runtimeRoot,
       environment,
       runtimeHost: smartAppRuntimeHost,
-      ensureWorkbenchRuntime:
-        packagedApplication && !process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
-          ? async () => {
-              const paths = packagedHarnessRuntimePaths()
-              const resources = environment.WEWORK_HARNESS_RESOURCE_ROOT?.trim()
-              if (!resources) throw new Error('DSH runtime resources are unavailable')
-              await materializeBundledRuntimes(resources, paths.cache, ['workbench'])
-            }
-          : undefined,
     })
   }
   desktopRuntime = new DesktopRuntime({
@@ -2370,9 +2361,10 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
     environment: {
       ...nodeRuntime.environment,
       WEWORK_HARNESS_RUNTIME_ROOT: runtimeRoot,
+      WEWORK_HARNESS_RESOURCE_ROOT:
+        components?.coreDsh ?? join(componentResourcesRoot, 'harness-runtime'),
       ...(components
         ? {
-            WEWORK_HARNESS_RESOURCE_ROOT: components.coreDsh,
             WEWORK_CORE_PLUGIN_ROOT: components.weworkCorePlugins,
             WEWORK_CORE_PLUGINS_SHA256: components.contentSha256.weworkCorePlugins,
           }

@@ -16,6 +16,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import aiohttp
 import pytest
+from fastapi.testclient import TestClient
+from openpyxl import Workbook
+from sqlalchemy.orm import Session
+
 from app.models.dingtalk_doc import DingTalkNodeSource, DingtalkSyncedNode
 from app.models.knowledge import DocumentIndexStatus
 from app.models.user import User
@@ -34,9 +38,6 @@ from app.services.knowledge.external_document_providers import (
     ExternalDocumentImportError,
 )
 from app.services.knowledge.knowledge_service import KnowledgeService
-from fastapi.testclient import TestClient
-from openpyxl import Workbook
-from sqlalchemy.orm import Session
 
 McpFixture = tuple[dict[str, Any], MagicMock]
 
@@ -707,9 +708,7 @@ async def test_manual_refresh_makes_online_document_importable_in_place(
         raw_metadata=(
             None
             if cached_extension is None
-            else {"extension": cached_extension}
-            if cached_extension
-            else {}
+            else {"extension": cached_extension} if cached_extension else {}
         ),
         last_synced_at=datetime.now(),
     )

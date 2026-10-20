@@ -8,8 +8,9 @@ import tomllib
 from pathlib import Path
 
 import pytest
-from app.api.api import api_router
 from fastapi.routing import APIRoute
+
+from app.api.api import api_router
 
 ROUTES_FILE = Path(__file__).resolve().parents[4] / "backend-rs/config/routes.toml"
 

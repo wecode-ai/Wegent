@@ -4,6 +4,8 @@ from datetime import datetime
 from unittest.mock import Mock
 
 import pytest
+from fastapi import HTTPException
+
 from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
@@ -14,8 +16,6 @@ from app.services.collaboration_revocation import (
     sweep_revoked_work,
 )
 from app.services.loop_item_executions.service import loop_item_execution_service
-from fastapi import HTTPException
-
 from tests.api.test_collaboration_permission_contract import invite
 from tests.api.test_collaboration_permission_contract import scope as scope
 from tests.api.test_workspace_shared_agents import _native_team

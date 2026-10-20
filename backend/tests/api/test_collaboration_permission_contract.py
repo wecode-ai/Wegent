@@ -4,12 +4,13 @@ import uuid
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import HTTPException
+
 from app.core.security import create_access_token
 from app.models.user import User
 from app.services.cloud_projects.responses import project_response
 from app.services.cloud_projects.service import cloud_project_service
 from app.services.collaboration_permissions import collaboration_permission_service
-from fastapi import HTTPException
 
 
 def read_project(test_db, project_id, user):
@@ -100,9 +101,7 @@ def test_cp02_cp03_cp05_role_union_and_restricted_projects(
     inherited = (
         "Maintainer"
         if space_role in {"Owner", "Maintainer"}
-        else space_role
-        if mode == "inherit"
-        else None
+        else space_role if mode == "inherit" else None
     )
     if inherited:
         expected_sources.append(inherited)
