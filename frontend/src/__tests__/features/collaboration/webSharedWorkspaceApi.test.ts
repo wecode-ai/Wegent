@@ -334,7 +334,8 @@ describe('createWebSharedWorkspaceApi', () => {
     ])
     expect(client.get).toHaveBeenCalledWith('/v1/cloud-projects/project-1/execution-environments')
     expect(client.get).toHaveBeenCalledWith(
-      '/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework'
+      '/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework',
+      { signal: expect.any(AbortSignal) }
     )
     expect(client.get).toHaveBeenCalledWith('/plugins/installed?device_id=device-cloud')
   })

@@ -348,7 +348,8 @@ describe('createAgentResourceApi', () => {
     await expect(api.listModels()).resolves.toEqual([{ name: 'gpt-5.4', type: 'public' }])
 
     expect(client.get).toHaveBeenCalledWith(
-      '/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework'
+      '/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework',
+      { signal: expect.any(AbortSignal) }
     )
   })
 
