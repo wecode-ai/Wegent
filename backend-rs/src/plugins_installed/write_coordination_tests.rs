@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use brz_http_server::{EphemeralBytesArena, IntoHttpError, ResponseBody, ResponseCors, StatusCode};
 use brz_mysql::{FromMysqlRow, MysqlArgs, MysqlExecution};
 use brz_redis::{
     Cmd, EncodeRedisArg, EncodeRedisArgs, FromRedisBulk, FromRedisValue, RedisResult, RedisValues,
@@ -10,6 +11,50 @@ use brz_redis::{
 };
 use std::collections::HashMap;
 use std::sync::Mutex;
+
+#[test]
+fn coordination_failures_keep_the_service_unavailable_response_contract() {
+    for code in [
+        "plugin_write_busy",
+        "plugin_write_unavailable",
+        "plugin_write_lease_lost",
+    ] {
+        let response =
+            http_error(coordination_error(code)).into_http_error(&EphemeralBytesArena::new(256));
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response.cors_policy(), ResponseCors::Apply);
+        let ResponseBody::Arena(body) = response.body() else {
+            panic!("expected JSON coordination failure")
+        };
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(body.as_ref()).unwrap(),
+            serde_json::json!({"detail": code})
+        );
+    }
+}
+
+#[test]
+fn database_failures_match_the_python_unhandled_exception_contract() {
+    for error in [
+        MysqlError::QueryTimedOut,
+        MysqlError::Database {
+            code: Some(1205),
+            sql_state: Some("HY000".to_string()),
+            message: "synthetic lock wait timeout".to_string(),
+        },
+    ] {
+        let response = http_error(error).into_http_error(&EphemeralBytesArena::new(256));
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(response.cors_policy(), ResponseCors::Skip);
+        let ResponseBody::Arena(body) = response.body() else {
+            panic!("expected JSON unhandled failure")
+        };
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(body.as_ref()).unwrap(),
+            serde_json::json!({"error_code": 500, "detail": "Internal server error"})
+        );
+    }
+}
 
 #[derive(Default)]
 struct LeaseRedis {

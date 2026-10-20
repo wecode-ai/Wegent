@@ -180,7 +180,7 @@ pub(super) fn http_error(error: MysqlError) -> FastApiError {
         db_errno = error.database_code(),
         "plugin auto update transaction failed"
     );
-    FastApiError::internal()
+    FastApiError::unhandled()
 }
 
 #[cfg(test)]
