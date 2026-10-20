@@ -146,3 +146,15 @@ def test_board_creation_endpoints_document_jwt_and_api_key_authentication(
         security = paths[path]["post"]["security"]
         assert {"OAuth2PasswordBearer": []} in security
         assert {"APIKeyHeader": []} in security
+
+
+def test_legacy_project_get_preserves_openapi_operation_id(
+    test_client: TestClient,
+) -> None:
+    operation = test_client.app.openapi()["paths"]["/api/v1/projects/{project_id}"][
+        "get"
+    ]
+
+    assert (
+        operation["operationId"] == "get_cloud_project_api_v1_projects__project_id__get"
+    )
