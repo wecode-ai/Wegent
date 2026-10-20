@@ -35,6 +35,7 @@ test('injects the same-origin DSH application runtime configuration', () => {
     WEWORK_E2E_CONTROL_TOKEN: 'control-token',
     WEWORK_E2E_CONTROL_URL: 'http://127.0.0.1:43111',
     WEWORK_E2E_LOCAL_MODELS_CATALOG_READY: 'false',
+    WEWORK_E2E_NATIVE_DIRECTORY_PICKER: 'true',
     WEWORK_E2E_POSTHOG_KEY: 'posthog-test-key',
     WEWORK_E2E_SEED_LOCAL_MODELS: 'true',
     WEWORK_E2E_TRANSCRIPT_PAGE_SIZE: '20',
@@ -52,6 +53,7 @@ test('injects the same-origin DSH application runtime configuration', () => {
   assert.ok(html.includes('"controlUrl":"http://127.0.0.1:43111"'))
   assert.ok(html.includes('"posthogKey":"posthog-test-key"'))
   assert.ok(html.includes('"localModelsCatalogReady":false'))
+  assert.ok(html.includes('"nativeDirectoryPicker":true'))
   assert.ok(html.includes('"seedLocalModels":true'))
   assert.ok(html.includes('"transcriptPageSize":20'))
   assert.ok(html.includes('"worktreeCreationDelayMs":1500'))

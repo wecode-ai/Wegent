@@ -380,7 +380,7 @@ jobs:
           setup-toolchain: "false"
 
       - name: Install Electron for native startup and schema verification
-        if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')
+        if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup') || contains(matrix.segments, 'native-directory-picker')
         run: |
           pnpm --dir wework/electron install --frozen-lockfile
           pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
@@ -698,7 +698,7 @@ jobs:
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Install Electron for native startup and schema verification
-        if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')
+        if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup') || contains(matrix.segments, 'native-directory-picker')
         run: |
           pnpm --dir wework/electron install --frozen-lockfile
           pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"

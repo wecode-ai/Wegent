@@ -22,6 +22,7 @@ const CHECKPOINT_RESOURCES = new Map([
   // These macOS checkpoints move native windows and require a foreground renderer for cursor arrival.
   ['browser-toolbar-actions', ['macos-inspector-foreground']],
   ['tray-lifecycle', ['macos-inspector-foreground']],
+  ['native-directory-picker', ['macos-inspector-foreground']],
   ['browser-annotation-design', ['macos-inspector-foreground']],
   ['project-assignment-notification', ['macos-inspector-foreground']],
   // Fresh packaged runtime extraction contends when these cloud checkpoints share a runner.
@@ -93,6 +94,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'component-update': './scenarios/component-update.scenario.mjs',
   'native-window-startup': './scenarios/native-window-startup.scenario.mjs',
   'native-window-chrome': './scenarios/native-window-chrome.scenario.mjs',
+  'native-directory-picker': './scenarios/native-directory-picker.scenario.mjs',
   'renderer-storage': './scenarios/renderer-storage.scenario.mjs',
   'application-menu': './scenarios/application-menu.scenario.mjs',
   'tray-lifecycle': './scenarios/tray-lifecycle.scenario.mjs',
@@ -200,6 +202,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'component-update',
   'native-window-startup',
   'native-window-chrome',
+  'native-directory-picker',
   'renderer-storage',
   'application-menu',
   'tray-lifecycle',

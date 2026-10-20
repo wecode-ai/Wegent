@@ -168,6 +168,7 @@ export function isWeworkAutomationEnabled(): boolean {
 export function shouldUseNativeProjectDirectoryPicker(): boolean {
   return (
     !isWeworkAutomationEnabled() ||
+    getDesktopE2ERuntimeConfig().nativeDirectoryPicker === true ||
     import.meta.env.VITE_WEWORK_E2E_NATIVE_DIRECTORY_PICKER === 'true'
   )
 }
