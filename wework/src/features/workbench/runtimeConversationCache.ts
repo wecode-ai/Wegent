@@ -23,6 +23,7 @@ import type {
   RuntimeTaskAddress,
 } from '@/types/api'
 import { getWorkbenchDeviceIds } from '@/lib/workbench-device'
+import { summarizeRuntimeQueue } from '@/lib/runtime-create-diagnostics'
 import type {
   ProcessingBlock,
   RuntimeConversationTurn,
@@ -81,7 +82,23 @@ const terminalConversationEvictionTimers = new Map<
 >()
 const goalSnapshotVersionsByConversation = new Map<string, number>()
 const canonicalDeviceIdByAlias = new Map<string, string>()
+const pendingConversationOperations = new Set<{
+  address: RuntimeTaskAddress
+  current: boolean
+}>()
 let nextRuntimeGoalSnapshotVersion = 1
+
+export function beginRuntimeConversationOperation(address: RuntimeTaskAddress) {
+  const operation = { address, current: true }
+  pendingConversationOperations.add(operation)
+  return {
+    isCurrent: () => operation.current,
+    dispose: () => {
+      operation.current = false
+      pendingConversationOperations.delete(operation)
+    },
+  }
+}
 
 export interface RuntimeConversationMetadata {
   goal: RuntimeGoal | null
@@ -521,6 +538,21 @@ export function getRuntimeConversationQueuedMessagesByKey(key: string): RuntimeP
   return touchEntry(queuedMessagesByConversation, key) ?? []
 }
 
+export function getRuntimeConversationQueueDiagnosticSnapshotByKey(
+  key: string,
+  messageId?: string
+) {
+  // Observing a queue must not change its cache eviction priority.
+  const messages = queuedMessagesByConversation.get(key) ?? []
+  return {
+    paused: queuedMessagesPausedByConversation.get(key) ?? false,
+    ...summarizeRuntimeQueue(messages),
+    ...(messageId === undefined
+      ? {}
+      : { queueMessagePresent: messages.some(message => message.id === messageId) }),
+  }
+}
+
 export function cacheRuntimeConversationQueuedMessages(
   address: RuntimeTaskAddress,
   messages: RuntimePaneQueuedMessage[]
@@ -535,10 +567,12 @@ export function cacheRuntimeConversationQueuedMessagesByKey(
   if (messages.length === 0) {
     queuedMessagesByConversation.delete(key)
     scheduleTerminalConversationEviction(key)
+    notifyRuntimeConversation(key)
     return
   }
   cancelTerminalConversationEviction(key)
   cacheBoundedEntry(queuedMessagesByConversation, key, messages)
+  notifyRuntimeConversation(key)
 }
 
 export function settleRuntimeConversationAcceptedMessage(
@@ -557,7 +591,6 @@ export function settleRuntimeConversationAcceptedMessage(
   if (nextQueuedMessages.length === queuedMessages.length) return
 
   cacheRuntimeConversationQueuedMessagesByKey(key, nextQueuedMessages)
-  notifyRuntimeConversation(key)
 }
 
 export function reconcileRuntimeConversationQueueAfterTransportReplacement(
@@ -598,7 +631,6 @@ export function reconcileRuntimeConversationQueueAfterTransportReplacement(
   }
 
   cacheRuntimeConversationQueuedMessagesByKey(key, nextQueuedMessages)
-  notifyRuntimeConversation(key)
 }
 
 export function takeAppliedRuntimeConversationGuidance(
@@ -950,7 +982,14 @@ function shortRuntimeAgentId(agentId: string): string {
 }
 
 export function evictRuntimeConversation(address: RuntimeTaskAddress) {
-  evictRuntimeConversationKey(runtimeConversationKey(address))
+  const key = runtimeConversationKey(address)
+  // Explicit archival invalidates pending work; ordinary LRU/idle eviction does not.
+  for (const operation of pendingConversationOperations) {
+    if (runtimeConversationKey(operation.address) !== key) continue
+    operation.current = false
+    pendingConversationOperations.delete(operation)
+  }
+  evictRuntimeConversationKey(key)
 }
 
 function evictRuntimeConversationKey(key: string) {
@@ -975,6 +1014,10 @@ export function getRuntimeConversationCacheStats() {
 }
 
 export function clearRuntimeConversationCacheForTests() {
+  pendingConversationOperations.forEach(operation => {
+    operation.current = false
+  })
+  pendingConversationOperations.clear()
   pendingStreamingNotifications.forEach(cancel => cancel())
   pendingStreamingNotifications.clear()
   terminalConversationEvictionTimers.forEach(timer => globalThis.clearTimeout(timer))
