@@ -50,8 +50,10 @@ test('ignores a late response after switching plugins', async () => {
         })
     )
     .mockImplementationOnce(() => new Promise(() => undefined))
+  const onSuccess = vi.fn()
+  const onError = vi.fn()
   const { result, rerender } = renderHook(
-    ({ plugin }) => useInstalledPluginDetail(plugin, read, vi.fn()),
+    ({ plugin }) => useInstalledPluginDetail(plugin, read, onError, 0, onSuccess),
     {
       initialProps: { plugin: first },
     }
@@ -60,4 +62,47 @@ test('ignores a late response after switching plugins', async () => {
   await act(async () => resolveFirst(first.raw))
   expect(result.current?.id).toBe('second')
   expect(result.current?.raw.spec.components.connectors).toEqual([])
+  expect(onSuccess).not.toHaveBeenCalled()
+  expect(onError).not.toHaveBeenCalled()
+})
+
+test('reports successful recovery only when the current detail request completes', async () => {
+  const plugin = summary('first')
+  const failure = new Error('Detail source unavailable')
+  const read = vi.fn().mockRejectedValueOnce(failure).mockResolvedValueOnce(plugin.raw)
+  const onError = vi.fn()
+  const onSuccess = vi.fn()
+  const { rerender } = renderHook(
+    ({ revision }) => useInstalledPluginDetail(plugin, read, onError, revision, onSuccess),
+    { initialProps: { revision: 0 } }
+  )
+  await waitFor(() => expect(onError).toHaveBeenCalledWith('first', failure))
+  expect(onSuccess).not.toHaveBeenCalled()
+  rerender({ revision: 1 })
+  await waitFor(() => expect(onSuccess).toHaveBeenCalledExactlyOnceWith('first'))
+})
+
+test('does not report a superseded successful request over a newer failure for the same plugin', async () => {
+  const plugin = summary('first')
+  let resolveFirst!: (value: unknown) => void
+  const failure = new Error('Current detail request failed')
+  const read = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          resolveFirst = resolve
+        })
+    )
+    .mockRejectedValueOnce(failure)
+  const onError = vi.fn()
+  const onSuccess = vi.fn()
+  const { rerender } = renderHook(
+    ({ revision }) => useInstalledPluginDetail(plugin, read, onError, revision, onSuccess),
+    { initialProps: { revision: 0 } }
+  )
+  rerender({ revision: 1 })
+  await waitFor(() => expect(onError).toHaveBeenCalledExactlyOnceWith('first', failure))
+  await act(async () => resolveFirst(plugin.raw))
+  expect(onSuccess).not.toHaveBeenCalled()
 })

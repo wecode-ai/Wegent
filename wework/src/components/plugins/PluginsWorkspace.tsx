@@ -354,6 +354,7 @@ export function PluginsWorkspace({
   const [pluginDetailActionError, setPluginDetailActionError] = useState<{
     pluginId: string | number
     message: string
+    source?: 'detail-read'
   } | null>(null)
   const [marketplaceDetailLoadError, setMarketplaceDetailLoadError] = useState<string | null>(null)
   const [marketplaceDetailRevision, setMarketplaceDetailRevision] = useState(0)
@@ -4281,8 +4282,15 @@ export function PluginsWorkspace({
       setPluginDetailActionError({
         pluginId,
         message: getErrorMessage(error, 'Unable to load plugin details'),
+        source: 'detail-read',
       }),
-    reconciliationRevision
+    reconciliationRevision,
+    pluginId =>
+      setPluginDetailActionError(current =>
+        current?.source === 'detail-read' && String(current.pluginId) === String(pluginId)
+          ? null
+          : current
+      )
   )
 
   useEffect(() => {

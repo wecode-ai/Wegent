@@ -25,6 +25,7 @@ import '@/i18n'
 import { PluginsWorkspace } from './PluginsWorkspace'
 import * as refreshReconciliation from '@/features/plugins/pluginRefreshReconciliation'
 import { CodexAuthorizationTimeoutError } from '@/features/plugins/codexConnectorAuthorization'
+import * as marketplaceWorkspaceHelpers from './workspace/marketplaceWorkspaceHelpers'
 
 const telemetryMocks = vi.hoisted(() => ({
   track: vi.fn(),
@@ -5844,6 +5845,106 @@ describe('PluginsWorkspace', () => {
     )
     expect(await screen.findByTestId('plugin-connection-manage-group:sites')).toBeInTheDocument()
     expectCodexAppServerRequest('plugin/read', { pluginName: 'documents' })
+  })
+
+  test('clears a personal detail read error after reopening successfully without remounting', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockEmptyCloudPluginApis()
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      marketplaces: [
+        {
+          name: 'wework-personal',
+          path: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
+          plugins: [{ id: 'documents-local-id', name: 'documents', displayName: 'Documents' }],
+        },
+      ],
+      installedPluginNames: ['documents'],
+    })
+    const previous = vi.mocked(requestLocalExecutor).getMockImplementation()
+    let readFailed = false
+    vi.mocked(requestLocalExecutor).mockImplementation((command: string, args?: unknown) => {
+      if (
+        command === 'codex.app_server_request' &&
+        (args as { method?: string }).method === 'plugin/read' &&
+        !readFailed
+      ) {
+        readFailed = true
+        return Promise.reject(new Error('Personal detail source unavailable'))
+      }
+      return previous?.(command, args) as Promise<unknown>
+    })
+    render(<PluginsWorkspace />)
+    await userEvent.click(
+      await screen.findByTestId('plugins-installed-strip-item-documents-local-id')
+    )
+    expect(await screen.findByTestId('plugin-detail-action-error')).toHaveTextContent(
+      'Personal detail source unavailable'
+    )
+    await userEvent.click(screen.getByTestId('plugin-detail-back-button'))
+    await userEvent.click(
+      await screen.findByTestId('plugins-installed-strip-item-documents-local-id')
+    )
+    expect(await screen.findByText('Documents App')).toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.queryByTestId('plugin-detail-action-error')).not.toBeInTheDocument()
+    )
+  })
+
+  test('keeps a plugin operation error when its pending detail read succeeds', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockEmptyCloudPluginApis()
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      marketplaces: [
+        {
+          name: 'wework-personal',
+          path: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
+          plugins: [{ id: 'documents-local-id', name: 'documents', displayName: 'Documents' }],
+        },
+      ],
+      installedPluginNames: ['documents'],
+    })
+    const previous = vi.mocked(requestLocalExecutor).getMockImplementation()
+    let resolveRead!: (value: unknown) => void
+    vi.mocked(requestLocalExecutor).mockImplementation((command: string, args?: unknown) => {
+      if (
+        command === 'codex.app_server_request' &&
+        (args as { method?: string }).method === 'plugin/read'
+      ) {
+        return new Promise(resolve => {
+          resolveRead = resolve
+        })
+      }
+      return previous?.(command, args) as Promise<unknown>
+    })
+    const trial = vi.spyOn(marketplaceWorkspaceHelpers, 'tryPluginInChat').mockReturnValue(false)
+    try {
+      render(<PluginsWorkspace />)
+      await userEvent.click(
+        await screen.findByTestId('plugins-installed-strip-item-documents-local-id')
+      )
+      await waitFor(() => expect(resolveRead).toBeTypeOf('function'))
+      await userEvent.click(screen.getByTestId('plugin-detail-toggle-documents-local-id'))
+      expect(await screen.findByTestId('plugin-detail-action-error')).toHaveTextContent(
+        '这个插件没有可试用的技能'
+      )
+      await act(async () =>
+        resolveRead({
+          plugin: codexPluginDetail('wework-personal', {
+            id: 'documents-local-id',
+            name: 'documents',
+            displayName: 'Documents',
+          }),
+        })
+      )
+      expect(await screen.findByText('Documents App')).toBeInTheDocument()
+      expect(screen.getByTestId('plugin-detail-action-error')).toHaveTextContent(
+        '这个插件没有可试用的技能'
+      )
+    } finally {
+      trial.mockRestore()
+    }
   })
 
   test('keeps local uninstall settled when cloud-link cleanup fails', async () => {
