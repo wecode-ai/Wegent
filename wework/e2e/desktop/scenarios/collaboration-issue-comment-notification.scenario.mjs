@@ -152,12 +152,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
   async function waitForBrowserPage(control, label, expectedUrl) {
     const deadline = Date.now() + Math.max(uiTimeoutMs, 30_000)
     let latest = null
+    let latestError = null
     while (Date.now() < deadline) {
       try {
         latest = JSON.parse(
           await control.command('getEmbeddedBrowserPageState', 'body', { value: label })
         )
-      } catch {
+      } catch (error) {
+        latestError = error instanceof Error ? error.message : String(error)
         await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
         continue
       }
@@ -177,7 +179,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       }
       await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
     }
-    assert.fail(`The Wework browser did not open ${expectedUrl}: ${JSON.stringify(latest)}`)
+    assert.fail(
+      `The Wework browser did not open ${expectedUrl}: ${JSON.stringify(latest)}${
+        latestError ? ` (${latestError})` : ''
+      }`
+    )
   }
 
   async function verifyCommentLinks(control, activeSurface) {
@@ -196,7 +202,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     const routeBeforeClick = await control.command('getRoute')
     for (const [selector, browserLabel, expectedUrl] of [
       [githubLink, 'workspace-browser', COMMENT_LINK],
-      [documentLink, 'workspace-browser-2', commentDocumentLink],
+      [documentLink, 'workspace-browser', commentDocumentLink],
     ]) {
       await control.command('click', selector, { visible: true })
       await waitForBrowserPage(control, browserLabel, expectedUrl)

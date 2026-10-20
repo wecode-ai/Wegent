@@ -31,6 +31,7 @@ import {
   type WorkspaceRuntimeTaskAddress,
   type WorkspaceTaskBinding,
 } from '@wegent/collaboration'
+import { MarkdownServicesProvider } from '@wegent/collaboration/markdown'
 import {
   DEFAULT_WORK_ITEM_PROJECT_ID,
   type CloudLoopItem,
@@ -39,6 +40,7 @@ import {
 } from '@/api/deliveries'
 import { loopItemLocalProject } from '@/api/localProjectAssociation'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useDesktopMarkdownServices } from '@/components/chat/useDesktopMarkdownServices'
 import { AddCloudDeviceDialog } from '@/components/settings/AddCloudDeviceDialog'
 import { TransientNotice } from '@/components/common/TransientNotice'
 import { resolveDeviceResourceSettingsOptions } from './deviceResourceSettings'
@@ -101,6 +103,7 @@ import {
   type RuntimeTaskConversationStatus,
 } from './runtimeTaskConversationStatus'
 import { TodoEditor } from './TodoEditor'
+import { WeworkCollaborationEmbeddedBrowserHost } from './WeworkCollaborationEmbeddedBrowserHost'
 import { updateIssueWhenPersonalTaskStarts, workItemComposerReference } from './workItemTaskInput'
 import {
   loadProjectSpaceCodeWorkspacePreference,
@@ -1172,6 +1175,15 @@ export function WeworkSharedProject({
 }
 
 export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformProps) {
+  const markdownServices = useDesktopMarkdownServices()
+  return (
+    <MarkdownServicesProvider value={markdownServices}>
+      <WeworkCollaborationPlatformContent {...props} />
+    </MarkdownServicesProvider>
+  )
+}
+
+function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformProps) {
   const { i18n } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
   const [cloudLoginOpen, setCloudLoginOpen] = useState(false)
@@ -1706,6 +1718,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
           )
         }}
       />
+      <WeworkCollaborationEmbeddedBrowserHost />
     </div>
   )
 }
