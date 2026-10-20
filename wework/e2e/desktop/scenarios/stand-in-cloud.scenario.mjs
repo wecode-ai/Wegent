@@ -188,6 +188,7 @@ export function createDesktopScenario({
         const historical = await createIssue('启用云端替身前已分配')
         await control.command('click', `${CONTENT} [data-testid="collaboration-tab-board"]`)
         await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
         await control.command('waitFor', '[data-testid="stand-in-device"]')
         const currentDevice = await control.command('getValue', '[data-testid="stand-in-device"]')
         assert.ok(currentDevice)
@@ -196,6 +197,7 @@ export function createDesktopScenario({
           value: REMOTE_DOCKER_DEVICE_ID,
         })
         await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="false"]')
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
         await control.command(
           'waitFor',
           `[data-testid="stand-in-agent"] option[value="${agent.id}"]`
@@ -203,7 +205,6 @@ export function createDesktopScenario({
         await control.command('select', '[data-testid="stand-in-agent"]', {
           value: String(agent.id),
         })
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
         await control.command('fill', '[data-testid="stand-in-prompt"]', { value: MARKER })
         await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
         await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })

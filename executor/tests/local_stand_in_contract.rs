@@ -104,3 +104,28 @@ fn cloud_settings_need_no_local_project_mirror_and_preserve_enable_time_on_edit(
         .unwrap();
     assert!(store.enabled_stand_in_settings().unwrap().is_empty());
 }
+
+#[test]
+fn workspace_settings_round_trip_and_reject_invalid_modes() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(&directory.path().join("tasks.sqlite")).unwrap();
+    let mut settings = json!({"projectStore":"cloud","enabled":false,"prompt":"","executionDeviceId":"mac","version":0,
+        "workspace":{"projectKey":"repo","workspacePath":"/repo","executionMode":"git_worktree","branch":"develop"}});
+    let saved = store
+        .save_stand_in_settings("project", 7, settings.clone())
+        .unwrap();
+    assert_eq!(
+        store.stand_in_settings("project", 7, "default").unwrap()["workspace"],
+        settings["workspace"]
+    );
+    settings["version"] = saved["version"].clone();
+    settings["workspace"]["executionMode"] = json!("unknown");
+    assert!(store
+        .save_stand_in_settings("project", 7, settings.clone())
+        .is_err());
+    settings["workspace"]["executionMode"] = json!("current_workspace");
+    settings["workspace"]["projectKey"] = json!("");
+    assert!(store
+        .save_stand_in_settings("project", 7, settings)
+        .is_err());
+}

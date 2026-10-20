@@ -1,6 +1,8 @@
+import type { StandInProjectSettings } from '@/api/standIn'
+import { StandInComposer } from './StandInComposer'
 import { StandInIcon } from './StandInIcon'
 import * as Popover from '@radix-ui/react-popover'
-import { Monitor, X } from 'lucide-react'
+import { Bot, ChevronDown, Monitor } from 'lucide-react'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import type {
   CollaborationProject,
@@ -10,7 +12,7 @@ import type {
 } from '@wegent/collaboration'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import type { DeviceInfo } from '@/types/api'
+import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
 
 const emptySettings: WorkspaceStandInSettings = {
   enabled: false,
@@ -24,7 +26,25 @@ export function StandInPopover({
   project,
   devices = [],
   readLocalIdentity,
+  services,
+  initialDeviceId,
+  initialProfileId = 'default',
+  onSaved,
+  onSavingChange,
+  onCancel,
+  embedded = false,
+  userId,
+  projects = [],
 }: {
+  userId?: number
+  projects?: CollaborationProject[]
+  embedded?: boolean
+  services?: WorkbenchServices
+  initialProfileId?: string
+  initialDeviceId?: string
+  onSaved?(settings: WorkspaceStandInSettings): void
+  onSavingChange?(saving: boolean): void
+  onCancel?(): void
   api: SharedWorkspaceApi
   project: CollaborationProject
   devices?: DeviceInfo[]
@@ -32,19 +52,37 @@ export function StandInPopover({
 }) {
   const { t } = useTranslation('common')
   const promptId = useId()
-  const titleId = useId()
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(embedded)
+  const [profileId, setProfileId] = useState(initialProfileId)
+  const [profiles, setProfiles] = useState<StandInProjectSettings[]>([])
+  const [reuseNotice, setReuseNotice] = useState(false)
   const [saved, setSaved] = useState(emptySettings)
   const [draft, setDraft] = useState(emptySettings)
   const deviceLoad = useRef(0)
-  const selectedDevice = useRef('')
+  const selectedDevice = useRef(initialDeviceId ?? '')
   const [currentDeviceId, setCurrentDeviceId] = useState('')
   const [loading, setLoading] = useState(true)
   const [loaded, setLoaded] = useState(false)
+  const [composerValid, setComposerValid] = useState(false)
   const [saving, setSaving] = useState(false)
+  useEffect(() => {
+    onSavingChange?.(saving)
+  }, [saving, onSavingChange])
   const [error, setError] = useState<string | null>(null)
   const [agents, setAgents] = useState<WorkspaceProjectAgent[]>([])
   const [agentError, setAgentError] = useState<string | null>(null)
+  const [workspaceResult, setWorkspaceResult] = useState<{
+    deviceId: string
+    work: RuntimeWorkListResponse | null
+    error: string | null
+  } | null>(null)
+  const currentWorkspace =
+    workspaceResult?.deviceId === draft.executionDeviceId ? workspaceResult : null
+  const runtimeWork = currentWorkspace?.work ?? null
+  const workspaceError = currentWorkspace?.error ?? null
+  const workspaceLoading = Boolean(
+    services?.runtimeWorkApi && draft.executionDeviceId && !currentWorkspace
+  )
   const [notice, setNotice] = useState<string | null>(null)
   const canConfigure =
     project.project_store === 'local' ||
@@ -59,7 +97,11 @@ export function StandInPopover({
           current = identity?.deviceId ?? ''
           setCurrentDeviceId(current)
           selectedDevice.current ||= current
-          return api.standIn!.get(project.id, selectedDevice.current || undefined)
+          return api.standIn!.get(
+            project.id,
+            selectedDevice.current || undefined,
+            ...(profileId === 'default' ? [] : [profileId])
+          )
         })
         .then(settings => {
           if (signal.cancelled || !settings) return
@@ -75,7 +117,7 @@ export function StandInPopover({
           if (!signal.cancelled) setLoading(false)
         })
     },
-    [api, project.id, readLocalIdentity]
+    [api, project.id, readLocalIdentity, profileId]
   )
   useEffect(() => {
     const signal = { cancelled: false }
@@ -116,7 +158,11 @@ export function StandInPopover({
     setLoaded(false)
     setError(null)
     try {
-      const settings = await api.standIn!.get(project.id, deviceId)
+      const settings = await api.standIn!.get(
+        project.id,
+        deviceId,
+        ...(profileId === 'default' ? [] : [profileId])
+      )
       if (revision !== deviceLoad.current) return
       setSaved(settings)
       setDraft({ ...settings, executionDeviceId: deviceId })
@@ -126,6 +172,44 @@ export function StandInPopover({
         setError(cause instanceof Error ? cause.message : String(cause))
     }
   }
+
+  useEffect(() => {
+    if (!open || !services?.runtimeWorkApi || !draft.executionDeviceId) return
+    let active = true
+    const deviceId = draft.executionDeviceId
+    void services.runtimeWorkApi
+      .listRuntimeWork({ deviceId: draft.executionDeviceId })
+      .then(work => {
+        if (active) setWorkspaceResult({ deviceId, work, error: null })
+      })
+      .catch(cause => {
+        if (active)
+          setWorkspaceResult({
+            deviceId,
+            work: null,
+            error: cause instanceof Error ? cause.message : String(cause),
+          })
+      })
+    return () => {
+      active = false
+    }
+  }, [open, services, draft.executionDeviceId])
+
+  useEffect(() => {
+    if (!open || !services?.standInApi || userId == null || !draft.executionDeviceId) return
+    let active = true
+    void services.standInApi
+      .list(userId, draft.executionDeviceId, true)
+      .then(rows => {
+        if (active) setProfiles(rows)
+      })
+      .catch(cause => {
+        if (active) setError(cause instanceof Error ? cause.message : String(cause))
+      })
+    return () => {
+      active = false
+    }
+  }, [open, services, userId, draft.executionDeviceId, saved.version])
 
   if (!api.standIn) return null
   const availableDevices: Pick<DeviceInfo, 'device_id' | 'app_device_id' | 'name' | 'status'>[] =
@@ -152,175 +236,169 @@ export function StandInPopover({
       [device.device_id, device.app_device_id].includes(draft.executionDeviceId)
     )
   )
-  const save = async () => {
+  const save = async (prompt: string) => {
     if (!api.standIn || !loaded || loading || saving || !canConfigure) return
     setSaving(true)
     setError(null)
     try {
-      const result = await api.standIn.save(project.id, draft)
+      const result = await api.standIn.save(project.id, { ...draft, prompt })
       setSaved(result)
-      setOpen(false)
+      setDraft(result)
+      onSaved?.(result)
+      if (!embedded) setOpen(false)
       setNotice(t('standIn.saved'))
+      return true
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
+      return false
     } finally {
       setSaving(false)
     }
   }
 
-  return (
-    <Popover.Root
-      open={open}
-      onOpenChange={next => {
-        if (!saving) {
-          deviceLoad.current += 1
-          setOpen(next)
-          setNotice(null)
-          if (next) {
-            setLoading(true)
-            setLoaded(false)
-            setError(null)
-          }
-        }
-      }}
-    >
-      <Popover.Trigger asChild>
+  const projectStore = project.project_store === 'local' ? 'local' : 'cloud'
+  const sameProjectProfiles = profiles.filter(
+    row => row.projectId === project.id && row.projectStore === projectStore
+  )
+  const reuseProfiles = profiles.filter(
+    row => row.projectId !== project.id || row.projectStore !== projectStore
+  )
+  const agentMissing = Boolean(draft.agentId && !agents.some(agent => agent.id === draft.agentId))
+  const editor = (
+    <>
+      <div className="p-4">
         <button
           type="button"
-          data-testid="stand-in-open"
-          aria-label={t('standIn.title')}
-          title={t(saved.enabled ? 'standIn.enabled' : 'standIn.title')}
-          className="relative inline-flex h-8 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-background text-text-primary hover:bg-muted"
+          role="switch"
+          aria-checked={draft.enabled}
+          aria-label={t('standIn.auto')}
+          data-testid="stand-in-auto"
+          disabled={saving || !canConfigure || !loaded}
+          onClick={() => setDraft(current => ({ ...current, enabled: !current.enabled }))}
+          className={`flex w-full items-center justify-between gap-4 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-40 ${draft.enabled ? 'mb-3' : ''}`}
         >
-          <StandInIcon enabled={open ? draft.enabled : saved.enabled} />
-          {saved.enabled && (
+          <span className="min-w-0">
+            <span className="text-sm font-medium text-text-primary">{t('standIn.auto')}</span>
+            <span className="mt-1 block text-xs text-text-muted">
+              {t('standIn.auto_description')}
+            </span>
+          </span>
+          <span
+            aria-hidden="true"
+            className={`inline-flex h-6 w-10 shrink-0 items-center rounded-full p-0.5 transition-colors ${draft.enabled ? 'bg-text-primary' : 'bg-border'}`}
+          >
             <span
-              data-testid="stand-in-enabled"
-              className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-text-primary"
+              className={`h-5 w-5 rounded-full bg-background shadow-sm transition-transform ${draft.enabled ? 'translate-x-4' : ''}`}
             />
-          )}
+          </span>
         </button>
-      </Popover.Trigger>
-      {notice && (
-        <span role="status" className="text-xs text-text-muted">
-          {notice}
-        </span>
-      )}
-      <Popover.Portal>
-        <Popover.Content
-          aria-labelledby={titleId}
-          align="start"
-          sideOffset={8}
-          collisionPadding={12}
-          className="z-50 w-[370px] max-w-[calc(100vw-24px)] rounded-xl border border-border bg-background text-sm text-text-primary shadow-lg"
-          data-testid="stand-in-settings"
-          onEscapeKeyDown={event => {
-            if (saving) event.preventDefault()
-          }}
-          onInteractOutside={event => {
-            if (saving) event.preventDefault()
-          }}
-        >
-          <div className="flex items-start gap-3 border-b border-border p-4">
-            <StandInIcon enabled={draft.enabled} />
-            <div className="min-w-0 flex-1">
-              <h2 id={titleId} className="font-semibold">
-                {t('standIn.title')}
-              </h2>
-              <p className="mt-1 text-xs text-text-muted">{project.name}</p>
-            </div>
-            <Popover.Close asChild>
-              <button
-                type="button"
-                disabled={saving}
-                data-testid="stand-in-close"
-                aria-label={t('standIn.close')}
-                className="rounded p-0.5 text-text-muted hover:bg-muted"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </Popover.Close>
-          </div>
-          <div className="p-4">
-            <p className="mb-4 leading-relaxed text-text-secondary">{t('standIn.description')}</p>
-            {loading ? (
-              <p role="status" className="text-text-muted">
-                {t('standIn.loading')}
-              </p>
-            ) : (
-              <>
-                <div className="mb-6 flex items-center justify-between gap-4">
-                  <span id={`${titleId}-auto`}>{t('standIn.auto')}</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-labelledby={`${titleId}-auto`}
-                    aria-checked={draft.enabled}
-                    disabled={!canConfigure || saving || !loaded}
-                    data-testid="stand-in-auto"
-                    onClick={() => setDraft(current => ({ ...current, enabled: !current.enabled }))}
-                    className={`inline-flex h-6 w-11 shrink-0 rounded-full p-0.5 transition disabled:opacity-50 ${draft.enabled ? 'bg-text-primary' : 'bg-border'}`}
-                  >
-                    <span
-                      className={`h-5 w-5 rounded-full bg-background shadow-sm transition-transform ${draft.enabled ? 'translate-x-5' : ''}`}
-                    />
-                  </button>
-                </div>
-                <label htmlFor={`${promptId}-agent`} className="mb-2 block text-text-secondary">
-                  {t('standIn.agent')}
-                </label>
-                <select
-                  id={`${promptId}-agent`}
-                  data-testid="stand-in-agent"
-                  value={draft.agentId ?? ''}
-                  disabled={saving || !canConfigure || !loaded}
-                  onChange={event =>
-                    setDraft(current => ({ ...current, agentId: event.target.value || null }))
-                  }
-                  className="mb-4 w-full rounded-lg border border-border bg-background p-2 outline-none focus:border-focus"
-                >
-                  <option value="">{t('standIn.default_agent')}</option>
-                  {draft.agentId && !agents.some(agent => agent.id === draft.agentId) && (
-                    <option value={draft.agentId}>{t('standIn.agent_unavailable')}</option>
-                  )}
-                  {agents.map(agent => (
-                    <option key={agent.id} value={agent.id}>
-                      {agent.name}
-                    </option>
-                  ))}
-                </select>
-                {agentError && (
-                  <p role="alert" className="mb-3 text-xs text-error">
-                    {t('standIn.agent_load_failed')} {agentError}
-                  </p>
-                )}
-                <label htmlFor={promptId} className="mb-2 block text-text-secondary">
-                  {t('standIn.prompt')}
-                </label>
-                <textarea
-                  id={promptId}
-                  data-testid="stand-in-prompt"
-                  maxLength={8000}
-                  disabled={saving || !canConfigure || !loaded}
-                  value={draft.prompt}
-                  onChange={event =>
-                    setDraft(current => ({ ...current, prompt: event.target.value }))
-                  }
-                  placeholder={t('standIn.prompt_placeholder')}
-                  className="h-24 w-full resize-y rounded-lg border border-border bg-background p-3 outline-none focus:border-focus"
-                />
-                <div className="mt-3 flex items-center gap-2">
+        {draft.enabled && sameProjectProfiles.some(row => row.id && row.id !== 'default') && (
+          <label className="mb-3 flex items-center gap-2 text-sm text-text-secondary">
+            {t('standIn.existing_profile')}
+            <select
+              data-testid="stand-in-profile-select"
+              value={profileId}
+              disabled={saving}
+              onChange={event => {
+                setLoading(true)
+                setLoaded(false)
+                setProfileId(event.target.value)
+              }}
+              className="min-h-11 min-w-0 flex-1 rounded-md border border-border bg-background px-2 md:min-h-8"
+            >
+              <option value="default">{t('standIn.default_profile')}</option>
+              {sameProjectProfiles
+                .filter(row => row.id !== 'default')
+                .map(row => (
+                  <option key={row.id} value={row.id}>
+                    {row.name || row.id}
+                  </option>
+                ))}
+            </select>
+          </label>
+        )}
+        {draft.enabled && reuseProfiles.length > 0 && (
+          <label className="mb-3 flex items-center gap-2 text-sm text-text-secondary">
+            {t('standIn.copy_from')}
+            <select
+              data-testid="stand-in-reuse-select"
+              value=""
+              disabled={saving || !loaded || !canConfigure}
+              onChange={event => {
+                const source = reuseProfiles[Number(event.target.value)]
+                if (!source) return
+                setDraft(current => ({
+                  ...current,
+                  prompt: source.prompt,
+                  model: source.model,
+                  modelOptions: source.modelOptions,
+                  workspace: source.workspace,
+                  goalMode: source.goalMode,
+                  agentId: source.agentId,
+                  name: source.name,
+                }))
+                setReuseNotice(true)
+              }}
+              className="min-h-11 min-w-0 flex-1 rounded-md border border-border bg-background px-2 md:min-h-8"
+            >
+              <option value="">{t('standIn.choose_existing')}</option>
+              {reuseProfiles.map((row, index) => (
+                <option key={`${row.projectStore}:${row.projectId}:${row.id}`} value={index}>
+                  {projects.find(
+                    project =>
+                      project.id === row.projectId &&
+                      (project.project_store === 'local' ? 'local' : 'cloud') === row.projectStore
+                  )?.name ?? row.projectId}{' '}
+                  · {row.name || t('standIn.default_profile')}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {draft.enabled && reuseNotice && (
+          <p role="status" className="mb-3 text-xs text-text-muted">
+            {t(agentMissing ? 'standIn.copy_agent_required' : 'standIn.copied')}
+          </p>
+        )}
+
+        {loading ? (
+          <p role="status" className="text-text-muted">
+            {t('standIn.loading')}
+          </p>
+        ) : draft.enabled ? (
+          <>
+            <StandInComposer
+              draft={draft}
+              onChange={setDraft}
+              onSave={save}
+              onValidityChange={setComposerValid}
+              disabled={saving || !canConfigure || !loaded}
+              submitDisabled={
+                loading ||
+                agentMissing ||
+                workspaceLoading ||
+                Boolean(workspaceError) ||
+                !draft.executionDeviceId ||
+                selectionMissing
+              }
+              runtimeWork={runtimeWork}
+              devices={devices}
+              services={services}
+              deviceControl={
+                <div className="inline-flex h-8 min-w-0 shrink-0 items-center gap-1.5 rounded-lg px-1.5 text-sm text-text-secondary hover:bg-muted">
                   <Monitor className="h-4 w-4" />
-                  <label htmlFor={`${promptId}-device`}>{t('standIn.device')}</label>
+                  <label className="sr-only" htmlFor={`${promptId}-device`}>
+                    {t('standIn.device')}
+                  </label>
                   <select
                     id={`${promptId}-device`}
                     data-testid="stand-in-device"
                     disabled={saving || !canConfigure}
                     value={draft.executionDeviceId}
                     onChange={event => void selectDevice(event.target.value)}
-                    className="min-w-0 flex-1 rounded bg-background p-1 outline-none"
+                    className="h-8 min-w-0 max-w-44 cursor-pointer appearance-none bg-transparent text-sm outline-none"
                   >
-                    <option value="">{t('standIn.select_device')}</option>
+                    {!currentDeviceId && <option value="">{t('standIn.select_device')}</option>}
                     {selectionMissing && (
                       <option value={draft.executionDeviceId}>
                         {t('standIn.device_unavailable')}
@@ -345,62 +423,174 @@ export function StandInPopover({
                       </option>
                     ))}
                   </select>
+                  <ChevronDown className="h-4 w-4 shrink-0" />
                 </div>
-              </>
-            )}
-            {!canConfigure && (
-              <p className="mt-3 text-xs text-text-muted">{t('standIn.no_permission')}</p>
-            )}
-            {error && (
-              <div role="alert" className="mt-3 text-xs text-error">
-                <p>{error}</p>
-                <button
-                  type="button"
-                  data-testid="stand-in-reload"
-                  onClick={() => {
-                    if (draft.executionDeviceId) void selectDevice(draft.executionDeviceId)
-                    else {
-                      setLoading(true)
-                      setLoaded(false)
-                      setError(null)
-                      void load({ cancelled: false })
+              }
+              selectedAgent={agents.find(agent => agent.id === draft.agentId)}
+              controls={
+                <div className="inline-flex h-8 min-w-0 shrink-0 items-center gap-1.5 rounded-lg px-1.5 text-sm text-text-secondary hover:bg-muted">
+                  <Bot className="h-4 w-4 shrink-0" />
+                  <select
+                    aria-label={t('standIn.agent')}
+                    data-testid="stand-in-agent"
+                    value={draft.agentId ?? ''}
+                    disabled={saving || !canConfigure || !loaded}
+                    onChange={event =>
+                      setDraft(current => ({
+                        ...current,
+                        agentId: event.target.value || null,
+                        model: null,
+                      }))
                     }
-                  }}
-                  className="mt-1 underline"
-                >
-                  {t('standIn.reload')}
-                </button>
-              </div>
+                    className="h-8 min-w-0 max-w-40 cursor-pointer appearance-none bg-transparent text-sm outline-none"
+                  >
+                    <option value="">{t('standIn.default_agent')}</option>
+                    {draft.agentId && !agents.some(agent => agent.id === draft.agentId) && (
+                      <option value={draft.agentId}>{t('standIn.agent_unavailable')}</option>
+                    )}
+                    {agents.map(agent => (
+                      <option key={agent.id} value={agent.id}>
+                        {agent.name}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="h-4 w-4 shrink-0" />
+                </div>
+              }
+            />
+            {(agentError || workspaceError) && (
+              <p role="alert" className="mt-2 text-xs text-error">
+                {agentError || workspaceError}
+              </p>
             )}
-            <div className="mt-6 flex items-center gap-2">
-              <p className="mr-auto text-xs text-text-muted">{t('standIn.future_only')}</p>
-              <Popover.Close asChild>
-                <button
-                  type="button"
-                  disabled={saving}
-                  data-testid="stand-in-cancel"
-                  className="rounded-lg border border-border px-4 py-2"
-                >
-                  {t('standIn.cancel')}
-                </button>
-              </Popover.Close>
-              <button
-                type="button"
-                disabled={
-                  !loaded ||
-                  loading ||
-                  saving ||
-                  !canConfigure ||
-                  (draft.enabled && (!draft.executionDeviceId || selectionMissing))
+          </>
+        ) : null}
+        {!canConfigure && (
+          <p className="mt-3 text-xs text-text-muted">{t('standIn.no_permission')}</p>
+        )}
+        {error && (
+          <div role="alert" className="mt-3 text-xs text-error">
+            <p>{error}</p>
+            <button
+              type="button"
+              data-testid="stand-in-reload"
+              onClick={() => {
+                if (draft.executionDeviceId) void selectDevice(draft.executionDeviceId)
+                else {
+                  setLoading(true)
+                  setLoaded(false)
+                  setError(null)
+                  void load({ cancelled: false })
                 }
-                data-testid="stand-in-save"
-                onClick={() => void save()}
-                className="rounded-lg bg-text-primary px-4 py-2 text-background disabled:opacity-40"
-              >
-                {t(saving ? 'standIn.saving' : 'standIn.save')}
-              </button>
-            </div>
+              }}
+              className="mt-1 underline"
+            >
+              {t('standIn.reload')}
+            </button>
           </div>
+        )}
+        {(draft.enabled || saved.enabled || embedded) && (
+          <div className="mt-4 flex items-center justify-end gap-2">
+            <button
+              type="button"
+              disabled={saving}
+              data-testid="stand-in-cancel"
+              onClick={() => {
+                setDraft(saved)
+                if (embedded) onCancel?.()
+                else setOpen(false)
+              }}
+              className="min-h-8 rounded-md px-3 text-sm text-text-secondary hover:bg-muted"
+            >
+              {t('standIn.cancel')}
+            </button>
+            <button
+              type="button"
+              data-testid="stand-in-save"
+              disabled={
+                !loaded ||
+                loading ||
+                saving ||
+                !canConfigure ||
+                (draft.enabled && (!composerValid || !draft.executionDeviceId || selectionMissing))
+              }
+              onClick={() => void save(draft.prompt)}
+              className="min-h-8 rounded-md bg-text-primary px-3 text-sm font-medium text-background disabled:opacity-40"
+            >
+              {t(saving ? 'standIn.saving' : 'standIn.save')}
+            </button>
+          </div>
+        )}
+      </div>
+    </>
+  )
+  if (embedded)
+    return (
+      <section data-testid="stand-in-settings" className="w-full text-sm text-text-primary">
+        {editor}
+        {notice && (
+          <p role="status" className="px-4 text-xs text-text-muted">
+            {notice}
+          </p>
+        )}
+      </section>
+    )
+
+  return (
+    <Popover.Root
+      open={open}
+      onOpenChange={next => {
+        if (!saving) {
+          deviceLoad.current += 1
+          setOpen(next)
+          setNotice(null)
+          if (next) {
+            setLoading(true)
+            setLoaded(false)
+            setError(null)
+          }
+        }
+      }}
+    >
+      <Popover.Trigger asChild>
+        <button
+          type="button"
+          data-testid="stand-in-open"
+          aria-label={t('standIn.action_label')}
+          title={t(saved.enabled ? 'standIn.enabled' : 'standIn.action_label')}
+          className="relative z-10 inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-text-secondary hover:bg-muted"
+        >
+          <StandInIcon enabled={open ? draft.enabled : saved.enabled} />
+          <span>{t('standIn.action_label')}</span>
+          {saved.enabled && (
+            <span
+              data-testid="stand-in-enabled"
+              className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-text-primary"
+            />
+          )}
+        </button>
+      </Popover.Trigger>
+      {notice && (
+        <span role="status" className="text-xs text-text-muted">
+          {notice}
+        </span>
+      )}
+      <Popover.Portal>
+        <Popover.Content
+          aria-label={t('standIn.action_label')}
+          align="end"
+          sideOffset={8}
+          collisionPadding={12}
+          className={`z-popover max-w-[calc(100vw-24px)] rounded-xl border border-border bg-background text-sm text-text-primary shadow-lg ${draft.enabled || saved.enabled ? 'w-[560px]' : 'w-[360px]'}`}
+          data-testid="stand-in-settings"
+          onEscapeKeyDown={event => {
+            if (saving) event.preventDefault()
+          }}
+          onInteractOutside={event => {
+            if (saving) event.preventDefault()
+          }}
+        >
+          {editor}
           <Popover.Arrow className="fill-background" />
         </Popover.Content>
       </Popover.Portal>

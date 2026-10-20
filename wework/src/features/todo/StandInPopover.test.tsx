@@ -48,17 +48,30 @@ function fixture() {
 }
 
 describe('StandInPopover', () => {
+  it('keeps the stand-in popover open while searching its local project menu', async () => {
+    const { props } = fixture()
+    const user = userEvent.setup()
+    render(<StandInPopover {...props} />)
+    await user.click(screen.getByTestId('stand-in-open'))
+    await user.click(await screen.findByTestId('stand-in-auto'))
+    await user.click(screen.getByTestId('project-work-button'))
+    const search = await screen.findByTestId('project-search-input')
+    await user.type(search, 'Wegent')
+    expect(search).toHaveValue('Wegent')
+    expect(screen.getByTestId('stand-in-settings')).toBeInTheDocument()
+    expect(screen.getByTestId('stand-in-prompt')).toBeInTheDocument()
+  })
   it('does not call an empty device selection the current device', async () => {
     const { props } = fixture()
     const user = userEvent.setup()
     render(<StandInPopover {...props} readLocalIdentity={async () => null} />)
     await user.click(screen.getByTestId('stand-in-open'))
+    await user.click(await screen.findByTestId('stand-in-auto'))
     const device = await screen.findByTestId('stand-in-device')
     expect(device).toHaveValue('')
     expect(device).toHaveAccessibleName(/在哪里处理|Where to work/)
     expect(screen.getByRole('option', { name: 'MacBook' })).toBeInTheDocument()
     expect(screen.queryByText(/当前设备|Current device/)).not.toBeInTheDocument()
-    await user.click(screen.getByTestId('stand-in-auto'))
     expect(screen.getByTestId('stand-in-save')).toBeDisabled()
   })
 
@@ -67,15 +80,17 @@ describe('StandInPopover', () => {
     const user = userEvent.setup()
     render(<StandInPopover {...props} />)
     await user.click(screen.getByTestId('stand-in-open'))
+    expect(screen.queryByTestId('stand-in-prompt')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('stand-in-save')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('stand-in-cancel')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('stand-in-auto')).toHaveAttribute('aria-checked', 'false')
+    await user.click(screen.getByTestId('stand-in-auto'))
     await waitFor(() => expect(screen.getByTestId('stand-in-device')).toHaveValue('current'))
     expect(
       screen.getByRole('option', { name: /MacBook.*当前设备|MacBook.*Current device/ })
     ).toBeInTheDocument()
-    expect(screen.getByTestId('stand-in-auto')).toHaveAttribute('aria-checked', 'false')
-    expect(screen.getByTestId('stand-in-open').querySelectorAll('circle')).toHaveLength(0)
-    await user.click(screen.getByTestId('stand-in-auto'))
     expect(screen.getByTestId('stand-in-open').querySelectorAll('circle')).toHaveLength(2)
-    expect(screen.getByTestId('stand-in-settings').querySelectorAll('circle')).toHaveLength(2)
+    expect(screen.getByTestId('stand-in-auto')).toHaveAttribute('aria-checked', 'true')
     await user.type(screen.getByTestId('stand-in-prompt'), 'Check the evidence')
     expect(save).not.toHaveBeenCalled()
     await user.click(screen.getByTestId('stand-in-save'))
@@ -99,10 +114,10 @@ describe('StandInPopover', () => {
     const user = userEvent.setup()
     render(<StandInPopover {...props} />)
     await user.click(screen.getByTestId('stand-in-open'))
+    await user.click(await screen.findByTestId('stand-in-auto'))
     await screen.findByRole('option', { name: 'Reviewer' })
     await user.selectOptions(screen.getByTestId('stand-in-agent'), 'reviewer')
     await user.type(screen.getByTestId('stand-in-prompt'), 'Check regressions')
-    await user.click(screen.getByTestId('stand-in-auto'))
     await user.click(screen.getByTestId('stand-in-save'))
     await waitFor(() =>
       expect(save).toHaveBeenCalledWith(
@@ -115,7 +130,7 @@ describe('StandInPopover', () => {
   it('loads the selected device configuration and version before saving', async () => {
     const { props, get, save } = fixture()
     get.mockImplementation(async (_project?: string, device?: string) => ({
-      enabled: false,
+      enabled: true,
       prompt: device === 'cloud' ? 'Cloud prompt' : '',
       executionDeviceId: device || 'current',
       version: device === 'cloud' ? 9 : 1,
@@ -130,7 +145,9 @@ describe('StandInPopover', () => {
     await user.click(screen.getByTestId('stand-in-open'))
     await screen.findByTestId('stand-in-device')
     await user.selectOptions(screen.getByTestId('stand-in-device'), 'cloud')
-    await waitFor(() => expect(screen.getByTestId('stand-in-prompt')).toHaveValue('Cloud prompt'))
+    await waitFor(() =>
+      expect(screen.getByTestId('stand-in-prompt')).toHaveTextContent('Cloud prompt')
+    )
     expect(get).toHaveBeenLastCalledWith('project', 'cloud')
     await user.click(screen.getByTestId('stand-in-save'))
     await waitFor(() =>
@@ -142,7 +159,7 @@ describe('StandInPopover', () => {
     await waitFor(() => expect(screen.queryByTestId('stand-in-settings')).not.toBeInTheDocument())
     await user.click(screen.getByTestId('stand-in-open'))
     await waitFor(() => expect(screen.getByTestId('stand-in-device')).toHaveValue('cloud'))
-    expect(screen.getByTestId('stand-in-prompt')).toHaveValue('Cloud prompt')
+    expect(screen.getByTestId('stand-in-prompt')).toHaveTextContent('Cloud prompt')
   })
 
   it('blocks edits until the selected device settings finish loading', async () => {
@@ -154,7 +171,7 @@ describe('StandInPopover', () => {
     get.mockImplementation(async (_project?: string, device?: string) =>
       device === 'cloud'
         ? pending
-        : { enabled: false, prompt: '', executionDeviceId: 'current', version: 0 }
+        : { enabled: true, prompt: '', executionDeviceId: 'current', version: 0 }
     )
     const user = userEvent.setup()
     render(
@@ -167,11 +184,11 @@ describe('StandInPopover', () => {
     await screen.findByTestId('stand-in-device')
     await user.selectOptions(screen.getByTestId('stand-in-device'), 'cloud')
     expect(screen.getByTestId('stand-in-auto')).toBeDisabled()
-    expect(screen.getByTestId('stand-in-agent')).toBeDisabled()
-    expect(screen.getByTestId('stand-in-prompt')).toBeDisabled()
-    finishLoad({ enabled: false, prompt: 'Loaded', executionDeviceId: 'cloud', version: 1 })
+    expect(screen.queryByTestId('stand-in-agent')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('stand-in-prompt')).not.toBeInTheDocument()
+    finishLoad({ enabled: true, prompt: 'Loaded', executionDeviceId: 'cloud', version: 1 })
     await waitFor(() => expect(screen.getByTestId('stand-in-auto')).toBeEnabled())
-    expect(screen.getByTestId('stand-in-prompt')).toHaveValue('Loaded')
+    expect(screen.getByTestId('stand-in-prompt')).toHaveTextContent('Loaded')
   })
 
   it('discards edits on cancel and Escape without calling save', async () => {
@@ -179,11 +196,13 @@ describe('StandInPopover', () => {
     const user = userEvent.setup()
     render(<StandInPopover {...props} />)
     await user.click(screen.getByTestId('stand-in-open'))
+    await user.click(await screen.findByTestId('stand-in-auto'))
     await screen.findByTestId('stand-in-prompt')
     await user.type(screen.getByTestId('stand-in-prompt'), 'Unsaved')
     await user.click(screen.getByTestId('stand-in-cancel'))
     await user.click(screen.getByTestId('stand-in-open'))
-    await waitFor(() => expect(screen.getByTestId('stand-in-prompt')).toHaveValue(''))
+    await user.click(await screen.findByTestId('stand-in-auto'))
+    await waitFor(() => expect(screen.getByTestId('stand-in-prompt')).toHaveTextContent(''))
     await user.keyboard('{Escape}')
     expect(save).not.toHaveBeenCalled()
     expect(screen.queryByTestId('stand-in-settings')).not.toBeInTheDocument()
@@ -195,16 +214,18 @@ describe('StandInPopover', () => {
     const user = userEvent.setup()
     const view = render(<StandInPopover {...props} />)
     await user.click(screen.getByTestId('stand-in-open'))
+    await user.click(await screen.findByTestId('stand-in-auto'))
     await screen.findByTestId('stand-in-prompt')
     await user.type(screen.getByTestId('stand-in-prompt'), 'Keep this draft')
     await user.click(screen.getByTestId('stand-in-save'))
     expect(await screen.findByRole('alert')).toHaveTextContent('Save failed')
-    expect(screen.getByTestId('stand-in-prompt')).toHaveValue('Keep this draft')
+    expect(screen.getByTestId('stand-in-prompt')).toHaveTextContent('Keep this draft')
     view.unmount()
     get.mockRejectedValue(new Error('Load failed'))
     render(<StandInPopover {...props} />)
     await user.click(screen.getByTestId('stand-in-open'))
     expect(await screen.findByRole('alert')).toHaveTextContent('Load failed')
-    expect(screen.getByTestId('stand-in-save')).toBeDisabled()
+    expect(screen.queryByTestId('stand-in-save')).not.toBeInTheDocument()
+    expect(screen.getByTestId('stand-in-auto')).toBeDisabled()
   })
 })
