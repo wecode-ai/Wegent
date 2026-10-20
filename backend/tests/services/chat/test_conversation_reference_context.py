@@ -123,12 +123,19 @@ async def test_conversation_reference_is_injected_as_untrusted_context(
         model_config={},
     )
 
-    assert isinstance(result.final_message, str)
-    assert "untrusted background context" in result.final_message
-    assert 'title="Launch checklist"' in result.final_message
-    assert "[user]\nRemember the launch code ORBIT-42." in result.final_message
-    assert "[assistant]\nThe launch code is ORBIT-42." in result.final_message
-    assert result.final_message.endswith("Continue this work.")
+    assert isinstance(result.final_message, list)
+    reference_block, user_block = result.final_message
+    assert reference_block["type"] == "input_text"
+    assert reference_block["text"].startswith("<referenced_conversations>")
+    assert reference_block["text"].endswith("</referenced_conversations>")
+    assert "explicitly referenced the following earlier conversations" in (
+        reference_block["text"]
+    )
+    assert "interpret it as continuing that work" in reference_block["text"]
+    assert 'title="Launch checklist"' in reference_block["text"]
+    assert "[user]\nRemember the launch code ORBIT-42." in reference_block["text"]
+    assert "[assistant]\nThe launch code is ORBIT-42." in reference_block["text"]
+    assert user_block == {"type": "input_text", "text": "Continue this work."}
 
 
 def test_conversation_reference_requires_task_access(

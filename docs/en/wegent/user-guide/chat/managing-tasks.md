@@ -215,7 +215,7 @@ To stop future messages from using a knowledge base, open the task/group managem
 
 Type `@` in the chat composer to list previous tasks you can access. The menu is ordered by most recent update. Keep typing a task title to search for older tasks that are not in the currently loaded list.
 
-Selecting a task adds a "Previous task" badge to the composer. When you send the next message, Wegent reads that task's recent conversation and provides it to the agent as untrusted background material so it can continue the earlier work in the current conversation. This does not switch to or modify the original task, and it does not paste the full transcript into the visible composer.
+Selecting a task adds a "Previous task" badge to the composer. When you send the next message, Wegent reads that task's recent conversation and passes it to the agent as handoff context: its task state, decisions, and unfinished steps become the working background for the current request, and a short or ambiguous message is read as "continue that work". The transcript stays quoted data, so instructions inside it are never treated as system instructions. This does not switch to or modify the original task, and the transcript never appears in your message bubble or the composer.
 
 - You can reference only tasks you can access. The current task is excluded from the menu.
 - Each referenced task contributes at most its latest 100 messages and about 100,000 characters. Older or longer content is omitted.

@@ -432,7 +432,11 @@ def _build_user_message_content(
             SubtaskContext.subtask_id == subtask.id,
             SubtaskContext.status == ContextStatus.READY.value,
             SubtaskContext.context_type.in_(
-                [ContextType.ATTACHMENT.value, ContextType.KNOWLEDGE_BASE.value]
+                [
+                    ContextType.ATTACHMENT.value,
+                    ContextType.KNOWLEDGE_BASE.value,
+                    ContextType.CONVERSATION.value,
+                ]
             ),
         )
         .order_by(SubtaskContext.created_at)
@@ -452,6 +456,9 @@ def _build_user_message_content(
     ]
     kb_contexts = [
         c for c in all_contexts if c.context_type == ContextType.KNOWLEDGE_BASE.value
+    ]
+    conversation_contexts = [
+        c for c in all_contexts if c.context_type == ContextType.CONVERSATION.value
     ]
 
     # Process attachments first (they have priority)
@@ -599,14 +606,42 @@ def _build_user_message_content(
     #
     # When extra_blocks is empty (old format), rebuild a system-reminder
     # from the DB context records.
+    reference_blocks: list[dict[str, Any]] = []
+    if conversation_contexts:
+        from app.services.chat.preprocessing.conversation_references import (
+            build_conversation_references_prompt,
+        )
+
+        try:
+            reference_prompt = build_conversation_references_prompt(
+                db,
+                contexts=conversation_contexts,
+                user_id=subtask.user_id,
+            )
+        except HTTPException:
+            # A referenced task may have been deleted since the message was
+            # sent; replaying history must still succeed without it.
+            logger.warning(
+                "[history] Skipping unavailable conversation reference: subtask_id=%s",
+                subtask.id,
+            )
+            reference_prompt = ""
+        if reference_prompt:
+            reference_blocks.append({"type": "text", "text": reference_prompt})
+
     if extra_blocks:
         if vision_parts:
             return [
+                *reference_blocks,
                 {"type": "text", "text": text_content},
                 *vision_parts,
                 *extra_blocks,
             ]
-        return [{"type": "text", "text": text_content}, *extra_blocks]
+        return [
+            *reference_blocks,
+            {"type": "text", "text": text_content},
+            *extra_blocks,
+        ]
 
     # Old format fallback: rebuild system-reminder from DB context records.
     context_parts: list[str] = []
@@ -627,15 +662,26 @@ def _build_user_message_content(
         }
         if vision_parts:
             return [
+                *reference_blocks,
                 {"type": "text", "text": text_content},
                 *vision_parts,
                 reminder_block,
             ]
-        return [{"type": "text", "text": text_content}, reminder_block]
+        return [
+            *reference_blocks,
+            {"type": "text", "text": text_content},
+            reminder_block,
+        ]
 
     # No context at all
     if vision_parts:
-        return [{"type": "text", "text": text_content}, *vision_parts]
+        return [
+            *reference_blocks,
+            {"type": "text", "text": text_content},
+            *vision_parts,
+        ]
+    if reference_blocks:
+        return [*reference_blocks, {"type": "text", "text": text_content}]
     if is_structured_prompt:
         return [{"type": "text", "text": text_content}]
     return text_content

@@ -86,6 +86,21 @@ class TestExtractUserText:
         ]
         assert _extract_user_text(content) == "user question"
 
+    def test_skips_referenced_conversations_block(self):
+        content = [
+            {
+                "type": "text",
+                "text": "<referenced_conversations>old transcript"
+                "</referenced_conversations>",
+            },
+            {"type": "text", "text": "user question"},
+            {
+                "type": "text",
+                "text": "<system-reminder><CurrentTime>now</CurrentTime></system-reminder>",
+            },
+        ]
+        assert _extract_user_text(content) == "user question"
+
     def test_skips_system_reminder_block(self):
         content = [
             {"type": "text", "text": "user question"},
