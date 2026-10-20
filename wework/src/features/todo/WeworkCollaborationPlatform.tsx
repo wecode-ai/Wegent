@@ -541,8 +541,10 @@ export function WeworkSharedProject({
           }
         : {}),
       projectAgentConfiguration: createWeworkProjectAgentConfigurationHost(
+        services.agentResourceApi,
         project.project_store === 'local' ? services.localProjectChatAgentApi : undefined,
         project.project_store === 'local' ? detailServices?.modelApi : undefined,
+        services.pluginApi,
         services.deviceApi
       ),
     }),

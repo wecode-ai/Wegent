@@ -170,6 +170,14 @@ export function createDesktopScenario({
           modelResponseTimeoutMs,
           remote.id
         )
+        const authorized = await request(`/v1/cloud-projects/${project.id}/execution-environments`)
+        assert.ok(
+          authorized.items.some(
+            row =>
+              row.can_use && [row.device_key, row.app_device_id].includes(REMOTE_DOCKER_DEVICE_ID)
+          ),
+          `Remote device must have an active project authorization: ${JSON.stringify(authorized.items.map(row => ({ device_key: row.device_key, app_device_id: row.app_device_id, can_use: row.can_use, status: row.status })))}`
+        )
         const agent = await request(`/v1/cloud-projects/${project.id}/chat-agents`, {
           name: '云端替身助手',
           runtime: 'codex',
