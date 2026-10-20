@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { createServer, request as httpRequest } from 'node:http'
 
 /** Loopback transport faults only: never fabricate a plugin API response. */
@@ -11,6 +12,8 @@ export class PluginFaultProxy {
     this.sockets = new Set()
     this.upstreams = new Set()
     this.websockets = new Set()
+    this.delayedResponses = new Map()
+    this.nextDelayedResponseId = 1
     this.rule = () => null
     this.paused = false
     this.server = createServer((request, response) => this.forward(request, response))
@@ -38,7 +41,14 @@ export class PluginFaultProxy {
     const url = new URL(request.url, this.target)
     // Retain no headers, tokens, request bodies or device query strings.
     const entry = { method: request.method, path: url.pathname, unscoped: !url.search }
+    const requestId = request.headers['x-request-id']
+    if (typeof requestId === 'string') {
+      entry.requestIdFingerprint = createHash('sha256').update(requestId).digest('hex')
+    }
     this.requests.push(entry)
+    response.once('finish', () => {
+      entry.responseCompleted = true
+    })
     const fault = this.rule(entry)
     entry.fault = fault
     if (fault === 'disconnect') {
@@ -53,10 +63,35 @@ export class PluginFaultProxy {
     }
     const upstream = httpRequest(this.options(request), incoming => {
       entry.status = incoming.statusCode
-      if (fault === 'hold-response') {
+      if (fault === 'delay-response') {
+        const chunks = []
+        incoming.on('data', chunk => chunks.push(chunk))
+        incoming.once('end', () => {
+          if (response.destroyed) return
+          entry.delayedResponseId = this.nextDelayedResponseId++
+          entry.delayedResponseReady = true
+          this.delayedResponses.set(entry.delayedResponseId, {
+            entry,
+            response,
+            status: incoming.statusCode,
+            headers: incoming.headers,
+            body: Buffer.concat(chunks),
+          })
+        })
+        response.once('close', () => {
+          if (entry.delayedResponseId) this.delayedResponses.delete(entry.delayedResponseId)
+        })
+        return
+      }
+      if (fault === 'hold-response' || fault === 'drop-response') {
         incoming.resume()
         incoming.once('end', () => {
-          entry.committedResponseHeld = true
+          if (fault === 'drop-response') {
+            entry.committedResponseDropped = true
+            response.destroy()
+          } else {
+            entry.committedResponseHeld = true
+          }
         })
         return
       }
@@ -112,6 +147,21 @@ export class PluginFaultProxy {
     }
   }
 
+  /** Release exact completed upstream replies; never reissue their requests. */
+  releaseDelayedResponses(predicate = () => true) {
+    let released = 0
+    for (const [id, delayed] of this.delayedResponses) {
+      if (!predicate(delayed.entry)) continue
+      this.delayedResponses.delete(id)
+      if (delayed.response.destroyed) continue
+      delayed.entry.delayedResponseReleased = true
+      delayed.response.writeHead(delayed.status, delayed.headers)
+      delayed.response.end(delayed.body)
+      released += 1
+    }
+    return released
+  }
+
   async start() {
     await new Promise((resolve, reject) => {
       this.server.once('error', reject)
@@ -122,6 +172,8 @@ export class PluginFaultProxy {
   }
 
   async stop() {
+    for (const { response } of this.delayedResponses.values()) response.destroy()
+    this.delayedResponses.clear()
     for (const request of this.upstreams) request.destroy()
     for (const socket of this.sockets) socket.destroy()
     await new Promise((resolve, reject) =>

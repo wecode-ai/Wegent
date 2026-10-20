@@ -83,6 +83,17 @@ export async function inventory(control) {
   return JSON.parse(await control.command('getComposerPluginInventoryDiagnostics', 'body'))
 }
 
+export async function openComposerPluginPicker(control) {
+  const button = testId('composer-plugin-picker-button')
+  await control.command('waitFor', button, { visible: true, enabled: true, stableMs: 250 })
+  const expanded = await control.command('getAttribute', button, {
+    value: 'aria-expanded',
+    visible: true,
+  })
+  if (expanded !== 'true') await control.command('click', button, { visible: true })
+  await control.command('waitFor', testId('composer-plugin-picker'), { visible: true })
+}
+
 export async function assertInventory(control, slug, present) {
   await until(
     () => inventory(control),
@@ -103,15 +114,14 @@ export async function assertSurfaces(control, fixture, present) {
   const manager = await control.command('getText', testId('plugin-management-page-content'))
   assert.equal(manager.includes(fixture.slug), present, 'Manager disagrees with account membership')
   await control.command('click', testId('new-chat-button'))
-  await control.command('click', testId('composer-plugin-picker-button'))
-  await control.command('waitFor', testId('composer-plugin-picker'))
+  await openComposerPluginPicker(control)
   await control.command('fill', testId('composer-plugin-picker-search'), { value: fixture.slug })
   const picker = JSON.parse(await control.command('snapshot', testId('composer-plugin-picker')))
   assert.equal(
     picker.testIds.includes(`composer-plugin-picker-item-plugin:${fixture.slug}`),
     present
   )
-  await control.command('click', testId('composer-plugin-picker-button'))
+  await control.command('click', testId('composer-plugin-picker-button'), { visible: true })
 }
 
 export async function installFixture(cloud, control, slug, deviceId, timeoutMs) {
@@ -136,14 +146,13 @@ export async function installFixture(cloud, control, slug, deviceId, timeoutMs) 
   // Composer plugin catalogs load on demand. Exercise the real picker path
   // before asserting that the installed plugin reached the composer projection.
   await control.command('click', testId('new-chat-button'))
-  await control.command('click', testId('composer-plugin-picker-button'))
-  await control.command('waitFor', testId('composer-plugin-picker'), { timeoutMs })
+  await openComposerPluginPicker(control)
   await until(
     () => inventory(control),
     state => state.composerApps.some(item => item.pluginKey === slug),
     'Installed fixture is missing from composer',
     timeoutMs
   )
-  await control.command('click', testId('composer-plugin-picker-button'))
+  await control.command('click', testId('composer-plugin-picker-button'), { visible: true })
   return fixture
 }

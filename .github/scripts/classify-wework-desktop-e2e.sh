@@ -1150,6 +1150,12 @@ classify_path() {
     wework/e2e/desktop/scenarios/plugin-uninstall-resilience.scenario.mjs | \
       wework/e2e/desktop/modules/plugin-catalog-boundaries.mjs | \
       wework/e2e/desktop/modules/plugin-source-continuation.mjs | \
+      wework/e2e/desktop/modules/plugin-install-update-resilience.mjs | \
+      wework/e2e/desktop/modules/plugin-late-response-resilience.mjs | \
+      wework/e2e/desktop/modules/plugin-scope-boundaries.mjs | \
+      wework/e2e/desktop/modules/plugin-detail-resilience.mjs | \
+      wework/e2e/desktop/modules/plugin-partial-inventory-resilience.mjs | \
+      wework/e2e/desktop/modules/real-plugin-object-storage.mjs | \
       wework/scripts/plugin-fault-proxy.test.mjs | \
       wework/e2e/desktop/modules/plugin-fault-proxy*)
       select_target "cloud:plugin-uninstall-resilience"

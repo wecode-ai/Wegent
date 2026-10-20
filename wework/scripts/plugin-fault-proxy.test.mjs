@@ -36,12 +36,22 @@ test(
   async t => {
     const { proxy, received } = await fixture(t)
     const response = await fetch(`${proxy.url}/api/plugins/installed?device_id=private`, {
-      headers: { Authorization: 'Bearer secret' },
+      headers: { Authorization: 'Bearer secret', 'X-Request-ID': 'private-logical-id' },
     })
     assert.equal(await response.text(), 'real-upstream-body')
     assert.equal(received.length, 1)
     assert.equal(proxy.requests[0].unscoped, false)
     assert.ok(!JSON.stringify(proxy.requests).includes('secret'))
+    assert.ok(!JSON.stringify(proxy.requests).includes('private'))
+    assert.match(proxy.requests[0].requestIdFingerprint, /^[a-f0-9]{64}$/)
+    await fetch(`${proxy.url}/api/plugins/installed`, {
+      headers: { 'X-Request-ID': 'private-logical-id' },
+    })
+    await fetch(`${proxy.url}/api/plugins/installed`, {
+      headers: { 'X-Request-ID': 'another-private-logical-id' },
+    })
+    assert.equal(proxy.requests[0].requestIdFingerprint, proxy.requests[1].requestIdFingerprint)
+    assert.notEqual(proxy.requests[0].requestIdFingerprint, proxy.requests[2].requestIdFingerprint)
     assert.ok(!JSON.stringify(proxy.requests).includes('private'))
   }
 )
@@ -95,6 +105,108 @@ test(
       'real-upstream-body'
     )
     assert.equal(received.filter(request => request.method === 'DELETE').length, 1)
+  }
+)
+
+test(
+  'lost mutation response fails after the real upstream commit without replaying the request',
+  { timeout: 5000 },
+  async t => {
+    const { proxy, received } = await fixture(t)
+    proxy.rule = request => (request.method === 'POST' ? 'drop-response' : null)
+    await assert.rejects(
+      fetch(`${proxy.url}/api/plugins/marketplace/1/install`, {
+        method: 'POST',
+        body: 'real-install-request',
+        signal: AbortSignal.timeout(2000),
+      }),
+      /fetch failed/
+    )
+    assert.equal(proxy.requests[0].status, 200)
+    assert.equal(proxy.requests[0].committedResponseDropped, true)
+    assert.equal(received.filter(request => request.method === 'POST').length, 1)
+    assert.equal(
+      await (await fetch(`${proxy.url}/api/plugins/installed`)).text(),
+      'real-upstream-body'
+    )
+    proxy.rule = () => null
+    await fetch(`${proxy.url}/api/plugins/marketplace/1/install`, { method: 'POST' })
+    assert.equal(received.filter(request => request.method === 'POST').length, 2)
+  }
+)
+
+test(
+  'delays a completed real reply, allows a newer read, then releases the original bytes',
+  { timeout: 5000 },
+  async t => {
+    const { proxy, received, server } = await fixture(t)
+    server.removeAllListeners('request')
+    let version = 'older-real-body'
+    server.on('request', (request, response) => {
+      received.push({ method: request.method, url: request.url })
+      response.writeHead(200, { 'Content-Type': 'application/octet-stream' })
+      response.end(version)
+    })
+    proxy.rule = () => 'delay-response'
+    let settled = false
+    const older = fetch(`${proxy.url}/api/plugins/installed`).then(async response => {
+      settled = true
+      return { contentType: response.headers.get('content-type'), body: await response.text() }
+    })
+    await until(
+      () => proxy.requests[0]?.delayedResponseReady,
+      Boolean,
+      'Real response was not retained before release',
+      2000
+    )
+    assert.equal(settled, false)
+    assert.equal(proxy.requests[0].status, 200)
+    assert.notEqual(proxy.requests[0].responseCompleted, true)
+    version = 'newer-real-body'
+    proxy.rule = () => null
+    assert.equal(await (await fetch(`${proxy.url}/api/plugins/installed`)).text(), version)
+    assert.equal(
+      proxy.releaseDelayedResponses(entry => entry === proxy.requests[0]),
+      1
+    )
+    assert.deepEqual(await older, {
+      contentType: 'application/octet-stream',
+      body: 'older-real-body',
+    })
+    assert.equal(proxy.requests[0].delayedResponseReleased, true)
+    assert.equal(proxy.requests[0].responseCompleted, true)
+    assert.equal(received.length, 2, 'Releasing a reply must not replay an upstream request')
+    assert.equal(proxy.releaseDelayedResponses(), 0)
+    assert.ok(!JSON.stringify(proxy.requests).includes('real-body'))
+  }
+)
+
+test(
+  'a canceled delayed reply is discarded without replaying the request',
+  { timeout: 5000 },
+  async t => {
+    const { proxy, received } = await fixture(t)
+    proxy.rule = () => 'delay-response'
+    const controller = new AbortController()
+    const rejected = assert.rejects(
+      fetch(`${proxy.url}/api/plugins/installed`, { signal: controller.signal })
+    )
+    await until(
+      () => proxy.requests[0]?.delayedResponseReady,
+      Boolean,
+      'Real response was not retained',
+      2000
+    )
+    controller.abort()
+    await rejected
+    await until(
+      () => proxy.delayedResponses.size,
+      count => count === 0,
+      'Canceled response was retained',
+      2000
+    )
+    assert.equal(proxy.releaseDelayedResponses(), 0)
+    assert.equal(received.length, 1)
   }
 )
 

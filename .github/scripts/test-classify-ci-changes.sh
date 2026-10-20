@@ -521,6 +521,21 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/modules/plugin-source-continuation.mjs"
 
+assert_desktop_case "plugin install and update faults retain real desktop coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-uninstall-resilience"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/modules/plugin-install-update-resilience.mjs" \
+  "wework/e2e/desktop/modules/plugin-late-response-resilience.mjs" \
+  "wework/e2e/desktop/modules/plugin-scope-boundaries.mjs" \
+  "wework/e2e/desktop/modules/plugin-detail-resilience.mjs" \
+  "wework/e2e/desktop/modules/plugin-partial-inventory-resilience.mjs" \
+  "wework/e2e/desktop/modules/real-plugin-object-storage.mjs"
+
 assert_desktop_case "long plugin list selects its independent cloud checkpoint" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=false
