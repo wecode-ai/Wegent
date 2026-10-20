@@ -1,10 +1,14 @@
 import type { App } from 'electron'
+import { join } from 'node:path'
 
 import { migrateWorkbenchDesktopData, prepareDesktopDataSource } from './workbench-desktop-data.js'
 import type { WorkbenchMigrationLockAdapter } from './workbench-migration-lock.js'
 
 interface DesktopDataStartupOptions {
-  app: Pick<App, 'getPath' | 'setPath' | 'requestSingleInstanceLock' | 'releaseSingleInstanceLock'>
+  app: Pick<
+    App,
+    'getName' | 'getPath' | 'setPath' | 'requestSingleInstanceLock' | 'releaseSingleInstanceLock'
+  >
   source: string
   desktop: string
   additionalData: Record<string, unknown>
@@ -44,10 +48,15 @@ function initializeUnderMigrationLock(
   // Windows opens userData/lockfile without FILE_SHARE_DELETE, preventing its parent rename.
   if (platform === 'win32') app.releaseSingleInstanceLock()
   try {
+    // Electron's macOS getPath('logs') creates a missing directory, preventing alias recovery.
+    const logs =
+      platform === 'darwin'
+        ? join(app.getPath('home'), 'Library', 'Logs', app.getName())
+        : app.getPath('logs')
     const migrated = migrateWorkbenchDesktopData({
       source,
       desktop,
-      logs: app.getPath('logs'),
+      logs,
     })
     // Retain the legacy lexical path as the singleton identity, including for older builds.
     // If an older build started during the handoff, notify it and stop before opening stores.

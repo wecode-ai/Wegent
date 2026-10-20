@@ -379,7 +379,10 @@ async fn space_mcp_routes_board_operations_through_backend() {
                     "/api/v1/loop-items/GL-11",
                     get(get_board_item).patch(update_board_item),
                 )
-                .route("/api/v1/loop-items/GL-11/comments", post(add_comment))
+                .route(
+                    "/api/v1/cloud-projects/9001/loop-items/GL-11/activity-comments",
+                    post(add_comment),
+                )
                 .route(
                     "/api/v1/loop-items/GL-11/attachments",
                     get(list_attachments),
