@@ -159,11 +159,20 @@ suite-level parallelism across runners. Shards are balanced from observed CI
 durations and capped to bound the complete suite's critical path; a new or
 materially slower checkpoint requires rebalancing instead of
 removing coverage or rerunning failures.
-Parallel CI measurements place account authentication and the 24-plugin composer
-list on separate Cloud runners, with device lifecycle and uninstall recovery in
-another shard. Core rendering also runs apart from terminals and transcript sync.
-These shards reuse the same build artifact while reducing CPU contention between
-heavy workflows on one runner.
+Long scenarios are split into independent checkpoints as well as balanced shards:
+
+- `plugin-account-auth` expands into password sync, exclusive credential transfer, OAuth, DWS accounts, conversation QR, and GitHub checkpoints.
+- `plugin-uninstall-resilience` expands into lost response, unknown result, restart recovery, and reinstall race checkpoints.
+- `harness-apps` expands into development and installation/runtime lifecycle checkpoints.
+- `streaming-text` expands into content, tool details, timers, scrolling, message order, and subagent checkpoints.
+
+Each checkpoint establishes its own prerequisites in an isolated environment. The
+group names remain valid for `--segment`; `--from-segment` starts at the group's
+first checkpoint. CI schedules the individual checkpoints directly. Shards reuse
+the same build artifact while reducing CPU contention between heavy workflows.
+The long list still checks all 24 plugins, scrolling, and last-item selection.
+`plugin-toggle-persistence` independently checks enable/disable persistence across
+two restarts with one plugin, avoiding repeated synchronization of the whole list.
 Linux Core/Cloud tests emit `[runner-resources]` JSON records at startup, completion,
 and every 15 seconds, also saved as `runner-resources.jsonl` in the diagnostic
 artifact. Records include CPU utilization, load average, memory, available disk

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { DESKTOP_CHECKPOINTS } from './checkpoints.mjs'
+import { DESKTOP_CHECKPOINTS, DESKTOP_CHECKPOINT_GROUPS } from './checkpoints.mjs'
 import { runWithCheckpointResources } from './checkpoint-scheduler.mjs'
 import { resolveDesktopCodexBinary } from './modules/desktop-build-flows.mjs'
 import {
@@ -26,13 +26,24 @@ const CHECKPOINT_RESOURCES = new Map([
   ['project-assignment-notification', ['macos-inspector-foreground']],
 ])
 const CHECKPOINT_SCENARIO_MODULES = {
+  'plugin-toggle-persistence': './scenarios/plugin-toggle-persistence.scenario.mjs',
   'goal-state-sync': './scenarios/goal-state-sync.scenario.mjs',
   'collaboration-worktree-policy': './scenarios/collaboration-worktree-policy.scenario.mjs',
   'cloud-model-recovery': './scenarios/cloud-model-recovery.scenario.mjs',
   'task-model-deletion': './scenarios/task-model-deletion.scenario.mjs',
   'cloud-model-presets': './scenarios/cloud-model-presets.scenario.mjs',
-  'plugin-account-auth': './scenarios/plugin-account-auth.scenario.mjs',
-  'plugin-uninstall-resilience': './scenarios/plugin-uninstall-resilience.scenario.mjs',
+  'plugin-account-auth-password': './scenarios/plugin-account-auth.scenario.mjs',
+  'plugin-account-auth-transfer': './scenarios/plugin-account-auth.scenario.mjs',
+  'plugin-account-auth-oauth': './scenarios/plugin-account-auth.scenario.mjs',
+  'plugin-account-auth-dws': './scenarios/plugin-account-auth.scenario.mjs',
+  'plugin-account-auth-conversation': './scenarios/plugin-account-auth.scenario.mjs',
+  'plugin-account-auth-github': './scenarios/plugin-account-auth.scenario.mjs',
+
+  'plugin-uninstall-lost-response': './scenarios/plugin-uninstall-resilience.scenario.mjs',
+  'plugin-uninstall-unknown-result': './scenarios/plugin-uninstall-resilience.scenario.mjs',
+  'plugin-uninstall-restart-recovery': './scenarios/plugin-uninstall-resilience.scenario.mjs',
+  'plugin-uninstall-reinstall-race': './scenarios/plugin-uninstall-resilience.scenario.mjs',
+
   'plugin-composer-long-list': './scenarios/plugin-composer-long-list.scenario.mjs',
   'codex-account-login': './scenarios/codex-account-login.scenario.mjs',
   'cloud-space-mention': './scenarios/cloud-space-mention.scenario.mjs',
@@ -44,13 +55,21 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'claude-runtime': './scenarios/claude-runtime.scenario.mjs',
   'local-file-preview': './scenarios/local-file-preview.scenario.mjs',
   'local-harness': './scenarios/local-terminal.scenario.mjs',
-  'harness-apps': './scenarios/harness-apps.scenario.mjs',
+  'harness-app-development': './scenarios/harness-apps.scenario.mjs',
+  'harness-app-lifecycle': './scenarios/harness-apps.scenario.mjs',
+
   'browser-multi-tabs': './scenarios/embedded-browser-multi-tabs.scenario.mjs',
   'browser-toolbar-actions': './scenarios/embedded-browser-toolbar-actions.scenario.mjs',
   'browser-annotation-core': './scenarios/embedded-browser-annotation.scenario.mjs',
   'browser-annotation-anchors': './scenarios/embedded-browser-annotation.scenario.mjs',
   'browser-annotation-design': './scenarios/embedded-browser-annotation.scenario.mjs',
-  'rendering-extensions': './scenarios/streaming-text.scenario.mjs',
+  'streaming-content': './scenarios/streaming-text.scenario.mjs',
+  'streaming-tools': './scenarios/streaming-text.scenario.mjs',
+  'streaming-timers': './scenarios/streaming-text.scenario.mjs',
+  'streaming-scroll': './scenarios/streaming-text.scenario.mjs',
+  'streaming-message-order': './scenarios/streaming-text.scenario.mjs',
+  'streaming-subagents': './scenarios/streaming-text.scenario.mjs',
+
   'runtime-task-queue': './scenarios/runtime-task-queue.scenario.mjs',
   'codex-invalid-launch-cwd': './scenarios/codex-invalid-launch-cwd.scenario.mjs',
   'executor-stream-recovery': './scenarios/executor-stream-recovery.scenario.mjs',
@@ -123,6 +142,14 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  'plugin-toggle-persistence',
+  'streaming-content',
+  'streaming-tools',
+  'streaming-timers',
+  'streaming-scroll',
+  'streaming-message-order',
+  'streaming-subagents',
+
   'goal-state-sync',
   'model-settings',
   'codex-native-catalog',
@@ -132,8 +159,18 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'cloud-model-recovery',
   'task-model-deletion',
   'cloud-model-presets',
-  'plugin-account-auth',
-  'plugin-uninstall-resilience',
+  'plugin-account-auth-password',
+  'plugin-account-auth-transfer',
+  'plugin-account-auth-oauth',
+  'plugin-account-auth-dws',
+  'plugin-account-auth-conversation',
+  'plugin-account-auth-github',
+
+  'plugin-uninstall-lost-response',
+  'plugin-uninstall-unknown-result',
+  'plugin-uninstall-restart-recovery',
+  'plugin-uninstall-reinstall-race',
+
   'plugin-composer-long-list',
   'codex-account-login',
   'cloud-space-mention',
@@ -142,7 +179,9 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'claude-runtime',
   'local-file-preview',
   'local-harness',
-  'harness-apps',
+  'harness-app-development',
+  'harness-app-lifecycle',
+
   'offline-local-project-space',
   'cloud-context-resilience',
   'cloud-login-proxy',
@@ -213,22 +252,7 @@ const CLOUD_ONLY_CHECKPOINTS = new Set([
   'cloud-worktree-tools',
   'cloud-worktree-archive-restore',
 ])
-const COMPOSITE_CHECKPOINTS = new Map([
-  [
-    'browser-annotation',
-    ['browser-annotation-core', 'browser-annotation-anchors', 'browser-annotation-design'],
-  ],
-  [
-    'cloud-git-worktree',
-    [
-      'cloud-worktree-capability',
-      'cloud-worktree-create',
-      'cloud-worktree-queued-cancel',
-      'cloud-worktree-tools',
-      'cloud-worktree-archive-restore',
-    ],
-  ],
-])
+const COMPOSITE_CHECKPOINTS = DESKTOP_CHECKPOINT_GROUPS
 const DEFAULT_DESKTOP_CHECKPOINTS = DESKTOP_CHECKPOINTS.filter(
   checkpoint => !COMPOSITE_CHECKPOINTS.has(checkpoint)
 )

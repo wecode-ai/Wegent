@@ -838,7 +838,7 @@ jobs:
           gh --version
 
       - name: Prepare the pinned native DWS compiler for account authentication E2E
-        if: contains(matrix.segments, 'plugin-account-auth')
+        if: contains(matrix.segments, 'plugin-account-auth-dws')
         uses: actions/setup-go@v6
         with:
           go-version: "1.25.9"
@@ -864,7 +864,7 @@ jobs:
           test -x "$WEWORK_E2E_CODEX_BIN"
 
           dws_pid=""
-          if [[ "$WEWORK_E2E_SEGMENTS" == *plugin-account-auth* ]]; then
+          if [[ "$WEWORK_E2E_SEGMENTS" == *plugin-account-auth-dws* ]]; then
             rm -rf "$WEWORK_E2E_DWS_FIXTURE_DIR"
             mkdir -p "$WEWORK_E2E_DWS_FIXTURE_DIR"
             (

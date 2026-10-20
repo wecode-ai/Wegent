@@ -151,9 +151,18 @@ macOS 中需要争用原生桌面前台的 checkpoint 仍通过资源锁保持�
 各 Core/Cloud matrix job 还提供跨 runner 的套件级并行。分片按 CI 实测耗时平衡并设定
 上限，以控制完整套件的关键路径；新增或明显变慢的 checkpoint
 必须重新校准分片，不能靠删覆盖或重跑失败用例来缩短关键路径。
-按并行运行的实测记录，账号认证与 24 插件长列表各使用独立 Cloud 分片，
-设备生命周期与卸载恢复组成另一分片；Core 渲染流程也与终端、转录同步拆开。
-这些分片复用同一份构建产物，减少重型流程在同一 runner 上的 CPU 争抢。
+长场景按独立行为拆成 checkpoint，而不是只调整分片：
+
+- `plugin-account-auth` 展开为密码同步、独占凭据迁移、OAuth、钉钉账号、对话扫码和 GitHub 六个 checkpoint。
+- `plugin-uninstall-resilience` 展开为响应丢失、结果未知、重启恢复和重装竞态四个 checkpoint。
+- `harness-apps` 展开为开发流程与安装运行生命周期两个 checkpoint。
+- `streaming-text` 展开为内容、工具详情、计时、滚动、消息顺序和子智能体六个 checkpoint。
+
+每个 checkpoint 都从隔离环境建立自己的前置数据。上述组名仍可用于 `--segment`，
+`--from-segment` 从该组第一个 checkpoint 开始；CI 则直接调度各独立 checkpoint。
+各分片复用同一份构建产物，减少重型流程在同一 runner 上的 CPU 争抢。
+24 插件长列表仍验证全部条目、滚动和末项选择；启停及两次重启后的持久化改由
+`plugin-toggle-persistence` 使用一个插件独立验证，避免重复同步整个长列表。
 Linux Core/Cloud 测试在开始、结束和每 15 秒输出 `[runner-resources]` JSON 记录，
 并保存到诊断产物中的 `runner-resources.jsonl`。记录包含 CPU 使用率、load average、
 内存、磁盘可用空间、Linux CPU/内存/I/O 压力及 cgroup CPU 限额、内存峰值和 OOM 计数；

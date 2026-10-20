@@ -21,6 +21,7 @@ import {
 // Real MySQL, Python API, gateway, Executor and Electron. Only the network
 // transport is faulted; no plugin responses or cache state are synthesized.
 export async function createDesktopScenario({
+  checkpoint,
   captureScreenshot,
   resultDir,
   workbenchReadyTimeoutMs,
@@ -271,10 +272,15 @@ export async function createDesktopScenario({
         'Remote device bypassed fault proxy'
       )
       try {
-        await lostResponse(control)
-        await unknownResult(control)
-        await restartRecovery(control)
-        await reinstallRace(control)
+        const checks = new Map([
+          ['plugin-uninstall-lost-response', lostResponse],
+          ['plugin-uninstall-unknown-result', unknownResult],
+          ['plugin-uninstall-restart-recovery', restartRecovery],
+          ['plugin-uninstall-reinstall-race', reinstallRace],
+        ])
+        const check = checks.get(checkpoint)
+        assert.ok(check, `Unknown uninstall checkpoint: ${checkpoint}`)
+        await check(control)
         await captureScreenshot(control, 'plugin-uninstall-resilience.png', 'body')
       } finally {
         apiProxy.rule = () => null
