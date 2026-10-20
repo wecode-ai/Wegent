@@ -21,7 +21,16 @@ export async function readBasicCloudDefault(control, prefix, dialogId, timeoutMs
   assert.equal(value, await control.command('getAttribute', options, { value: 'value' }))
   const identity = JSON.parse(value)
   assert.equal(identity[1], 'cloud', 'Creation must default to the first cloud model')
-  return { value, name: identity.at(-1) }
+  return {
+    value,
+    runtime: identity[0],
+    reference: {
+      type: identity[2],
+      namespace: identity[3],
+      resource_user_id: identity[4],
+      name: identity[5],
+    },
+  }
 }
 
 export async function assertSavedCloudRouting(request, agent, model, executionPolicy) {
@@ -35,8 +44,8 @@ export async function assertSavedCloudRouting(request, agent, model, executionPo
   })
   assert.equal(bot.model_policy.mode, 'fixed')
   assert.equal(bot.model_policy.model.source, 'cloud')
-  assert.equal(bot.model_policy.model.cloud_model.name, model.name)
-  assert.equal(bot.agent_config.bind_model, model.name)
+  assert.equal(bot.model_policy.model.runtime, model.runtime)
+  assert.deepEqual(bot.model_policy.model.cloud_model, model.reference)
 }
 
 /** These transport faults still forward to the real Backend; no catalog is fabricated. */
