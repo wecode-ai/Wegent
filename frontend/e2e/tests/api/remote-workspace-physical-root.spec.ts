@@ -1,8 +1,8 @@
-import { expect, test } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 import { ADMIN_USER } from '../../config/test-users'
+import { expect, test } from '../../fixtures/test-fixtures'
 import { createApiClient } from '../../utils/api-client'
 
 type TreeEntry = {
@@ -28,33 +28,61 @@ const outsideContent = 'outside-workspace-must-not-leak'
 
 test('Rust workspace API browses a real Executor repository using returned physical paths', async ({
   request,
+  testPrefix,
 }, testInfo) => {
   test.setTimeout(120_000)
   const api = createApiClient(request)
   const login = await api.login(ADMIN_USER.username, ADMIN_USER.password, 1)
   expect(login.status).toBe(200)
+  const modelName = `${testPrefix}-workspace-model`
+  const teamName = `${testPrefix}-workspace-team`
+  let modelCreated = false
+  let botId: number | undefined
+  let teamId: number | undefined
   let taskId: number | undefined
   let executorName: string | undefined
 
   try {
-    const teams = await api.get<{ items: Array<{ id: number; bots: unknown[] }> }>(
-      '/api/teams?page=1&limit=100&scope=all'
-    )
-    expect(teams.status).toBe(200)
-    const team = teams.data?.items.find(item => item.bots.length > 0)
-    expect(team).toBeTruthy()
+    // Own every fixture so parallel catalog tests cannot delete this task's team.
+    const model = await api.post('/api/v1/namespaces/default/models', {
+      apiVersion: 'agent.wecode.io/v1',
+      kind: 'Model',
+      metadata: { name: modelName, namespace: 'default' },
+      spec: { modelConfig: {}, isCustomConfig: true },
+    })
+    expect(model.status, JSON.stringify(model.data)).toBe(201)
+    modelCreated = true
+    const bot = await api.post<{ id: number }>('/api/bots', {
+      name: `${testPrefix}-workspace-bot`,
+      shell_name: 'Chat',
+      agent_config: { bind_model: modelName, bind_model_type: 'user' },
+      system_prompt: 'Physical remote workspace fixture; no model is invoked.',
+      namespace: 'default',
+    })
+    expect(bot.status, JSON.stringify(bot.data)).toBe(201)
+    botId = bot.data!.id
+    const team = await api.post<{ id: number }>('/api/teams', {
+      name: teamName,
+      bots: [{ bot_id: botId, role: 'leader', bot_prompt: '' }],
+      bind_mode: ['code'],
+      namespace: 'default',
+      requires_workspace: true,
+    })
+    expect(team.status, JSON.stringify(team.data)).toBe(201)
+    teamId = team.data!.id
     const reserved = await api.post<{ task_id: number }>('/api/tasks')
     expect(reserved.status).toBe(200)
-    taskId = reserved.data!.task_id
-    const created = await api.post(`/api/tasks/${taskId}`, {
+    const reservedTaskId = reserved.data!.task_id
+    const created = await api.post(`/api/tasks/${reservedTaskId}`, {
       prompt: 'physical remote workspace E2E',
-      team_id: team!.id,
+      team_id: teamId,
       type: 'offline',
       task_type: 'code',
       auto_delete_executor: 'false',
       source: 'web',
     })
-    expect(created.status).toBe(201)
+    expect(created.status, JSON.stringify(created.data)).toBe(201)
+    taskId = reservedTaskId
     const detail = await api.get<{ subtasks: Array<{ id: number; role: string }> }>(
       `/api/tasks/${taskId}`
     )
@@ -232,10 +260,24 @@ test('Rust workspace API browses a real Executor repository using returned physi
       const deleted = await request.post(`${managerUrl}/executor-manager/executor/delete`, {
         data: { executor_name: executorName },
       })
-      expect(deleted.status(), await deleted.text()).toBe(200)
-      expect((await deleted.json()).status).toBe('success')
+      expect.soft(deleted.status(), await deleted.text()).toBe(200)
+      expect.soft((await deleted.json()).status).toBe('success')
     }
-    if (taskId) expect((await api.deleteTask(String(taskId))).status).toBe(200)
+    if (taskId) expect.soft((await api.deleteTask(String(taskId))).status).toBe(200)
+    if (teamId) {
+      const deleted = await api.delete(
+        `/api/teams/${teamId}?force=true&confirm_name=${encodeURIComponent(teamName)}`
+      )
+      expect.soft(deleted.status, JSON.stringify(deleted.data)).toBe(200)
+    }
+    if (botId) {
+      const deleted = await api.delete(`/api/bots/${botId}?force=true`)
+      expect.soft(deleted.status, JSON.stringify(deleted.data)).toBe(200)
+    }
+    if (modelCreated) {
+      const deleted = await api.delete(`/api/v1/namespaces/default/models/${modelName}`)
+      expect.soft(deleted.status, JSON.stringify(deleted.data)).toBe(200)
+    }
   }
 })
 
