@@ -509,12 +509,22 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/cloud-model-presets.scenario.mjs"
 
-assert_desktop_case "uninstall transport faults select real cloud recovery" \
+assert_desktop_case "cloud history search selects its real cloud conversation checkpoint" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=false
 wework_desktop_core_e2e_matrix={"include":[]}
 wework_desktop_cloud_e2e=true
-wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-uninstall-resilience"}]}
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-11","name":"Cloud / shard 11","segments":"conversation-state"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/modules/cloud-history-search.mjs"
+
+assert_desktop_case "shared transport faults select cloud recovery and history search" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-11","name":"Cloud / shard 11","segments":"conversation-state"},{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-uninstall-resilience"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/plugin-uninstall-resilience.scenario.mjs" \
