@@ -1353,14 +1353,20 @@ export function ConnectionsDeviceSettingsPage({
       setRefreshingConnectorSlug(app.slug)
       setConnectorError(null)
       try {
-        let connection =
-          app.connection.status === 'expired'
-            ? await refreshWegentConnector(
-                cloudConnection.apiBaseUrl,
-                cloudConnection.token,
-                app.slug
-              )
-            : app.connection
+        let connection = app.connection
+        if (app.connection.status === 'expired') {
+          try {
+            connection = await refreshWegentConnector(
+              cloudConnection.apiBaseUrl,
+              cloudConnection.token,
+              app.slug
+            )
+          } catch {
+            // A revoked refresh token cannot be refreshed; fall through to a
+            // full OAuth authorization instead of surfacing a dead end.
+            connection = app.connection
+          }
+        }
         if (connection.status !== 'connected') {
           connection = await authorizeWegentConnector(
             cloudConnection.apiBaseUrl,

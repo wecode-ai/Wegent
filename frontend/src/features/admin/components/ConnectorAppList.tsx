@@ -224,10 +224,10 @@ export default function ConnectorAppList() {
   const loadApps = useCallback(async () => {
     setLoading(true)
     try {
-      const [adminApps, userApps] = await Promise.all([
-        adminApis.getConnectorApps(),
-        adminApis.getUserConnectorApps(),
-      ])
+      const adminApps = await adminApis.getConnectorApps()
+      // The user projection only drives the authorize button; a failure there
+      // must not hide the administrator catalog.
+      const userApps = await adminApis.getUserConnectorApps().catch(() => [])
       setApps(adminApps)
       setConnectionStatusBySlug(
         Object.fromEntries(userApps.map(app => [app.slug, app.connection.status]))

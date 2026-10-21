@@ -671,37 +671,35 @@
     "drag_to_reorder": "Drag to reorder",
     "reorder_failed": "Failed to reorder Git tokens",
     "connector_apps": {
-      "title": "App Connections",
-      "description": "External apps connected by admins. Authorize them to use in tasks.",
-      "empty": "No apps available",
-      "search_placeholder": "Search by name, ID, or description",
-      "search_empty": "No matching apps",
-      "load_failed": "Failed to load apps",
+      "account": "Authorized as {{name}}",
+      "authorization_failed": "Failed to authorize app",
       "authorize": "OAuth Authorization",
       "authorized": "App authorized",
-      "disconnect": "Disconnect",
-      "disconnected": "Disconnected",
-      "disconnect_failed": "Failed to disconnect",
-      "confirm_disconnect_title": "Disconnect app",
       "confirm_disconnect": "Disconnecting “{{name}}” requires authorizing again before it can be used. Disconnect?",
-      "retry": "Retry",
-      "retry_succeeded": "Connection restored",
-      "retry_failed": "Retry failed; the upstream is still unavailable",
-      "upstream_error": "Upstream error: {{message}}",
-      "dialog_title": "Authorize {{name}}",
+      "confirm_disconnect_title": "Disconnect app",
+      "description": "External apps connected by admins. Authorize them to use in tasks.",
       "dialog_description": "Once authorized, this app's tools become available in the conversation.",
+      "dialog_title": "Authorize {{name}}",
+      "disconnect": "Disconnect",
+      "disconnect_failed": "Failed to disconnect",
+      "disconnected": "Disconnected",
+      "empty": "No apps available",
+      "load_failed": "Failed to load apps",
+      "retry": "Retry",
+      "retry_failed": "Retry failed; the upstream is still unavailable",
+      "search_empty": "No matching apps",
+      "search_placeholder": "Search by name, ID, or description",
+      "title": "App Connections",
       "unavailable": "This app is unavailable. An administrator may have disabled it or removed your access.",
-      "account": "Authorized as {{name}}",
-      "popup_blocked": "The authorization window was blocked. Allow pop-ups and try again",
-      "authorization_failed": "Failed to authorize app",
+      "upstream_error": "Upstream error: {{message}}",
       "authorization_declined": "Authorization canceled",
       "authorization_timeout": "Authorization timed out. Try again",
+      "popup_blocked": "The authorization window was blocked. Allow pop-ups and try again",
+      "retry_succeeded": "Connection restored",
       "status": {
         "disconnected": "Not authorized",
-        "pending": "Authorizing",
         "connected": "Authorized",
-        "expired": "Expired",
-        "error": "Error"
+        "expired": "Expired"
       }
     }
   },
@@ -1651,17 +1649,38 @@
     "whyDescription": "In-app browsers may restrict login functionality from working properly. For the best experience, we recommend opening in your default browser (Safari, Chrome, etc.).",
     "howToOpen": "How to open in default browser?",
     "instructions": {
-      "wechat": ["Tap the '···' menu in the top right corner", "Select 'Open in Browser'"],
+      "wechat": [
+        "Tap the '···' menu in the top right corner",
+        "Select 'Open in Browser'"
+      ],
       "dingtalk": [
         "Tap the '···' menu in the top right corner",
         "Select 'Open in Default Browser'"
       ],
-      "alipay": ["Tap the '···' menu in the top right corner", "Select 'Open in Browser'"],
-      "qq": ["Tap the '···' menu in the top right corner", "Select 'Open in Browser'"],
-      "weibo": ["Tap the '···' menu in the top right corner", "Select 'Open in Browser'"],
-      "facebook": ["Tap the menu button in the top right corner", "Select 'Open in Browser'"],
-      "instagram": ["Tap the '···' menu in the top right corner", "Select 'Open in Browser'"],
-      "twitter": ["Tap the 'Share' button in the top right corner", "Select 'Open in Browser'"],
+      "alipay": [
+        "Tap the '···' menu in the top right corner",
+        "Select 'Open in Browser'"
+      ],
+      "qq": [
+        "Tap the '···' menu in the top right corner",
+        "Select 'Open in Browser'"
+      ],
+      "weibo": [
+        "Tap the '···' menu in the top right corner",
+        "Select 'Open in Browser'"
+      ],
+      "facebook": [
+        "Tap the menu button in the top right corner",
+        "Select 'Open in Browser'"
+      ],
+      "instagram": [
+        "Tap the '···' menu in the top right corner",
+        "Select 'Open in Browser'"
+      ],
+      "twitter": [
+        "Tap the 'Share' button in the top right corner",
+        "Select 'Open in Browser'"
+      ],
       "default": [
         "Tap the menu button in the top right corner",
         "Select 'Open in Browser' or 'Open in Default Browser'"

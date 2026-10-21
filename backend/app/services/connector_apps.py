@@ -175,6 +175,7 @@ class ConnectorAppService:
             exclude={
                 "provider_headers",
                 "clear_provider_headers",
+                "clear_oauth_client",
             },
         )
         for key, value in values.items():
@@ -347,7 +348,7 @@ class ConnectorAppService:
         available: list[ConnectorApp] = []
         pending: list[ConnectorApp] = []
         for app in visible_apps:
-            if app.auth_type != "oauth2":
+            if app.auth_type == "none":
                 available.append(app)
             elif (
                 connector_connection_service.response(connections.get(app.slug)).status

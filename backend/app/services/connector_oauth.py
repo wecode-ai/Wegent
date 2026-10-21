@@ -501,7 +501,9 @@ class ConnectorOAuthService:
             )
             response.raise_for_status()
             payload = response.json()
-        if not isinstance(payload, dict) or payload.get("error"):
+        if not isinstance(payload, dict):
+            raise ValueError("Connector token endpoint returned an invalid payload")
+        if payload.get("error"):
             raise ValueError(str(payload.get("error_description") or "token exchange"))
         if not payload.get("access_token"):
             raise ValueError("Connector did not return an access token")

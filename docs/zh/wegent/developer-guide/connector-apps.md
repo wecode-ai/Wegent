@@ -91,7 +91,7 @@ GIT_TOKEN_AES_IV="$(openssl rand -base64 12 | head -c 16)"
 - `/api/apps/list`、`/api/apps/read`、`/api/apps/installed`：Wework/Codex app 投影。
 - `/api/connector-runtime/token`：用普通云端会话签发最小权限短凭证。
 - `/api/connector-runtime/tools`、`/call`：仅接受 Connector 专用 JWT，供 Executor MCP 代理调用。
-- `/api/mcp/connectors/sse`：面向 Chat Shell 的动态 MCP 端点。它按 task token 解析调用者，`tools/list` 只返回可见且在管理员白名单内的工具，`tools/call` 复用 `ConnectorRuntimeService`（用户 token、刷新、固定请求头、白名单校验）。不带 `X-Connector-App` 时只暴露 `direct` App；带该请求头时只暴露对应 `skill` App。后端仅在用户存在 `direct` 已授权应用、且 Bot 使用 `Chat` Shell 时，把共享端点注入请求的 `mcp_servers`；`skill` App 通过合成 Skill 延迟加载；编码类 Shell 继续使用设备本地的 `wegent_apps` 代理，避免工具重复暴露。
+- `/api/mcp/connectors/sse`：面向 Chat Shell 的动态 MCP 端点。它按 task token 解析调用者，`tools/list` 只返回可见且在管理员白名单内的工具，`tools/call` 复用 `ConnectorRuntimeService`（用户 token、刷新、固定请求头、白名单校验）。不带 `X-Connector-App` 时只暴露 `static` App；带该请求头时只暴露对应 `lazy` App。后端仅在用户存在 `static` 已授权应用、且 Bot 使用 `Chat` Shell 时，把共享端点注入请求的 `mcp_servers`；`lazy` App 通过合成 Skill 延迟加载；编码类 Shell 继续使用设备本地的 `wegent_apps` 代理，避免工具重复暴露。
 
 ## 内置钉钉 Connector Apps
 
@@ -104,7 +104,7 @@ GIT_TOKEN_AES_IV="$(openssl rand -base64 12 | head -c 16)"
 | `dingtalk_aitable` | 钉钉 AI 表格 | `https://mcp-gw.dingtalk.com/oauth/server/aitable` |
 | `dingtalk_wiki` | 钉钉知识库 | `https://mcp-gw.dingtalk.com/oauth/server/wiki` |
 
-补齐是幂等的，并且只回填从未创建过的 slug：管理员删除某个内置应用后不会被重启重新建出来，需要显式重新添加。
+补齐是幂等的。删除内置应用会移除对应记录，下一次启动会重新建出它；需要定制时请编辑应用而不是删除。
 
 这四个服务不再使用 provider 配置弹窗，也不再注入"打开配置弹窗"的引导。内置 App 默认使用 `toolLoadingMode: lazy`，并带有钉钉服务关键词；消息命中关键词时提前 preload 对应 `wegent-connector-<slug>` Skill，否则由模型按需 `load_skill`。未授权时仍由对话内的 Connector 授权链接引导。OAuth 授权、工具发现和白名单校验保持原有 Connector 流程不变。Wegent Web 的"设置 → 集成"不再展示钉钉 provider 卡片，改用"应用连接"卡片。
 

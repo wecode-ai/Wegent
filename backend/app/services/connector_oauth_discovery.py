@@ -87,9 +87,15 @@ async def discover_connector_oauth(resource_url: str) -> dict[str, Any]:
         issuer = _require_secure_url(
             str(authorization_servers[0]), field="authorization server"
         )
+        # RFC 8414 puts the well-known segment between the host and the issuer
+        # path: https://as.example.com/tenant1 ->
+        # https://as.example.com/.well-known/oauth-authorization-server/tenant1
+        issuer_parts = urlsplit(issuer)
+        issuer_path = issuer_parts.path.rstrip("/")
         metadata = await _get_json(
             client,
-            f"{issuer.rstrip('/')}/.well-known/oauth-authorization-server",
+            f"{issuer_parts.scheme}://{issuer_parts.netloc}"
+            f"/.well-known/oauth-authorization-server{issuer_path}",
         )
 
     authorization_endpoint = _require_secure_url(

@@ -91,7 +91,7 @@ The paths below use the default `API_PREFIX=/api`; replace `/api` with your depl
 - `/api/apps/list`, `/api/apps/read`, `/api/apps/installed`: Wework/Codex app projections.
 - `/api/connector-runtime/token`: exchanges a normal cloud session for a least-privilege short token.
 - `/api/connector-runtime/tools` and `/call`: accept only connector JWTs and are used by the Executor MCP proxy.
-- `/api/mcp/connectors/sse`: dynamic MCP endpoint for the Chat Shell. It resolves the caller from the task token, returns only visible tools inside the administrator's allowlist from `tools/list`, and reuses `ConnectorRuntimeService` for `tools/call` (user token, refresh, fixed headers, allowlist). Without `X-Connector-App` it exposes only `direct` apps; with that header it exposes only the named `skill` app. The backend injects the shared endpoint into `mcp_servers` only when the user has an authorized `direct` app and the Bot uses the `Chat` shell. `skill` apps load through synthesized Skills with deferred MCP connection. Coding shells keep the device-local `wegent_apps` proxy so tools are not exposed twice.
+- `/api/mcp/connectors/sse`: dynamic MCP endpoint for the Chat Shell. It resolves the caller from the task token, returns only visible tools inside the administrator's allowlist from `tools/list`, and reuses `ConnectorRuntimeService` for `tools/call` (user token, refresh, fixed headers, allowlist). Without `X-Connector-App` it exposes only `static` apps; with that header it exposes only the named `lazy` app. The backend injects the shared endpoint into `mcp_servers` only when the user has an authorized `static` app and the Bot uses the `Chat` shell. `lazy` apps load through synthesized Skills with deferred MCP connection. Coding shells keep the device-local `wegent_apps` proxy so tools are not exposed twice.
 
 ## Built-in DingTalk connector apps
 
@@ -104,7 +104,7 @@ DingTalk hosts the document, sheet, AI table, and wiki MCP servers at fixed OAut
 | `dingtalk_aitable` | DingTalk AI Table | `https://mcp-gw.dingtalk.com/oauth/server/aitable` |
 | `dingtalk_wiki` | DingTalk Wiki | `https://mcp-gw.dingtalk.com/oauth/server/wiki` |
 
-Backfill is idempotent and only creates slugs that never existed: deleting a built-in app is respected and it is not recreated on restart.
+Backfill is idempotent. Deleting a built-in app removes its row, so the next startup bootstrap recreates it; edit an app to customize it instead of deleting it.
 
 These four services no longer use the provider configuration popup and inject no "open configuration" guidance. Built-in apps default to `toolLoadingMode: lazy` and carry DingTalk service keywords. A matching user message preloads the corresponding `wegent-connector-<slug>` Skill; otherwise the model loads it on demand through `load_skill`. The conversation authorization link still covers missing grants, and OAuth, tool discovery, and allowlist enforcement keep the existing Connector flow. The Wegent web "Settings → Integrations" page drops the DingTalk provider card in favor of the app-connections card.
 

@@ -604,7 +604,7 @@ class Settings(BaseSettings):
     )
     BUILTIN_PLUGINS_DIR: str = "/app/init_data/plugins"
     # Create the built-in DingTalk connector apps on startup when missing.
-    # Deleted apps stay deleted; this only backfills never-created slugs.
+    # Deleting a built-in app removes its row, so the next bootstrap recreates it.
     CONNECTOR_BUILTIN_APPS_ENABLED: bool = True
 
     # Default headers forwarded to the model backend on every LLM call.

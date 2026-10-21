@@ -13,6 +13,7 @@ import { getCodingEntryHref, openNavigationHref } from '@/config/coding-route'
 import { taskApis } from '@/apis/tasks'
 import { getRegisteredModal } from '@/lib/scheme/modal-registry'
 import { McpProviderConfigDialog } from '@/features/settings/components/McpProviderConfigDialog'
+import ConnectorOAuthDialog from '@/features/settings/components/ConnectorOAuthDialog'
 
 type OpenDialogDetail = {
   type?: string
@@ -32,6 +33,8 @@ export default function SchemeURLDialogBridge() {
   const [isMcpProviderConfigOpen, setIsMcpProviderConfigOpen] = useState(false)
   const [mcpProviderId, setMcpProviderId] = useState<string>('dingtalk')
   const [mcpProviderServiceId, setMcpProviderServiceId] = useState<string>('docs')
+  const [connectorOAuthSlug, setConnectorOAuthSlug] = useState<string>('')
+  const [isConnectorOAuthOpen, setIsConnectorOAuthOpen] = useState(false)
   const [activeModal, setActiveModal] = useState<OpenDialogDetail | null>(null)
 
   const getCurrentTaskId = useCallback((): number | null => {
@@ -110,6 +113,22 @@ export default function SchemeURLDialogBridge() {
         setMcpProviderId(typeof providerId === 'string' && providerId ? providerId : 'dingtalk')
         setMcpProviderServiceId(typeof serviceId === 'string' && serviceId ? serviceId : 'docs')
         setIsMcpProviderConfigOpen(true)
+        return
+      }
+
+      if (dialogType === 'connector-oauth') {
+        const slugParam = params.slug
+        const slug = Array.isArray(slugParam) ? slugParam[0] : slugParam
+        if (typeof slug !== 'string' || !slug) {
+          toast({
+            variant: 'destructive',
+            title: 'Missing connector app slug',
+            description: 'The authorization link did not include a connector app.',
+          })
+          return
+        }
+        setConnectorOAuthSlug(slug)
+        setIsConnectorOAuthOpen(true)
         return
       }
 
@@ -260,6 +279,11 @@ export default function SchemeURLDialogBridge() {
         onOpenChange={setIsMcpProviderConfigOpen}
         providerId={mcpProviderId}
         serviceId={mcpProviderServiceId}
+      />
+      <ConnectorOAuthDialog
+        open={isConnectorOAuthOpen}
+        slug={connectorOAuthSlug}
+        onOpenChange={setIsConnectorOAuthOpen}
       />
       {RegisteredModalComponent ? (
         <RegisteredModalComponent
