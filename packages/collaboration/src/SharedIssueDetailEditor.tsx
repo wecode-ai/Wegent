@@ -93,6 +93,7 @@ import { localizeStandardStatuses } from "./i18n";
 import { ExecutionConfigurationNotice } from "./runtime-profile/ExecutionConfigurationNotice";
 import { useCollaborationPortalTheme } from "./theme";
 import { useIssueAssigneeResources } from "./issue-detail/useIssueAssigneeResources";
+import { useIssueCreation } from "./issue-detail/useIssueCreation";
 
 function cn(...values: Array<string | false | null | undefined>): string {
   return values.filter(Boolean).join(" ");
@@ -746,6 +747,7 @@ export function TodoEditor(props: TodoEditorProps) {
   const showPanelControls = props.showPanelControls !== false;
   const showFullscreenControl = props.showFullscreenControl !== false;
   const item = editProps?.item ?? null;
+  const createIssue = useIssueCreation(editorPort.issues);
   const [securityBusy, setSecurityBusy] = useState(false);
   const isAITableEdit =
     item !== null && editProps?.project?.task_provider === "dingtalk_aitable";
@@ -1554,26 +1556,14 @@ export function TodoEditor(props: TodoEditorProps) {
       overrides: Partial<SharedIssueDetailCreateInput> = {},
     ): Promise<CloudLoopItem> => {
       const target = await resolveAssigneeTarget(assigneeTarget);
-      let created = await editorPort.issues.create(props.project.id, {
+      let created = await createIssue(props.project.id, {
         ...createInput,
         ...overrides,
       });
       // Human ownership must be part of creation so task.created automation
       // cannot start AI work before a follow-up assignment reaches the server.
-      if (target && !hasHumanAssignee) {
-        created = target.startsWith("group:")
-          ? await editorPort.issues.update(created.id, {
-              version: created.version,
-              assignee_group_id: target.slice(6),
-            })
-          : await editorPort.issues.assign(props.project.id, created.id, {
-              version: created.version,
-              assigneeType: target.split(":", 1)[0] as
-                | "user"
-                | "agent"
-                | "team",
-              assigneeId: target.slice(target.indexOf(":") + 1),
-            });
+      if (target && target !== issueAssigneeTarget(created)) {
+        created = await persistAssignee(created, target, notifyAssignee);
       }
       await uploadAttachments(created.id, pendingFiles);
       if (draftKey) {

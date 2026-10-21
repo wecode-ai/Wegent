@@ -223,6 +223,57 @@ describe('workspace Agent selection from the Issue assignee picker', () => {
     expect(api.issues.assign).not.toHaveBeenCalled()
   })
 
+  it.each(['local', 'backend'] as const)(
+    'resumes the same new %s Issue and binding after assignment failure',
+    async store => {
+      const { api, onCreated } = setup(store, 'create')
+      api.issues.assign.mockRejectedValueOnce(new Error('Assignment cancelled'))
+      const user = await chooseSource('create')
+      await user.click(screen.getByTestId('cloud-todo-create-confirm'))
+      expect(await screen.findByText('Assignment cancelled')).toBeVisible()
+      expect(onCreated).not.toHaveBeenCalled()
+      await user.click(screen.getByTestId('cloud-todo-create-confirm'))
+      await waitFor(() => expect(onCreated).toHaveBeenCalledOnce())
+      expect(api.issues.create).toHaveBeenCalledOnce()
+      expect(api.agents.create).toHaveBeenCalledOnce()
+      expect(api.issues.get).toHaveBeenCalledWith('ISSUE-1')
+      expect(api.issues.assign).toHaveBeenCalledTimes(2)
+      expect(api.issues.assign.mock.calls.every(([, issueId]) => issueId === 'ISSUE-1')).toBe(true)
+    }
+  )
+
+  it('reads a committed assignment before resuming and preserves user edits without duplicate execution', async () => {
+    const { api, onCreated } = setup('local', 'create')
+    api.issues.assign.mockRejectedValueOnce(new Error('Assignment response lost'))
+    const user = await chooseSource('create')
+    await user.click(screen.getByTestId('cloud-todo-create-confirm'))
+    expect(await screen.findByText('Assignment response lost')).toBeVisible()
+    const committed = {
+      ...(await api.issues.create.mock.results[0].value),
+      status: 'in_progress',
+      assignee_agent_id: 'project-binding',
+      version: 3,
+    }
+    api.issues.get.mockResolvedValue(committed)
+    api.issues.update.mockResolvedValue({ ...committed, title: 'Updated draft', version: 4 })
+    await user.clear(screen.getByTestId('cloud-todo-title'))
+    await user.type(screen.getByTestId('cloud-todo-title'), 'Updated draft')
+    await user.click(screen.getByTestId('cloud-todo-create-confirm'))
+    await waitFor(() => expect(onCreated).toHaveBeenCalledOnce())
+    expect(api.issues.create).toHaveBeenCalledOnce()
+    expect(api.issues.assign).toHaveBeenCalledOnce()
+    expect(api.issues.update).toHaveBeenCalledExactlyOnceWith('ISSUE-1', {
+      version: 3,
+      title: 'Updated draft',
+    })
+    expect(onCreated.mock.calls[0][0]).toMatchObject({
+      id: 'ISSUE-1',
+      title: 'Updated draft',
+      status: 'in_progress',
+      assignee_agent_id: 'project-binding',
+    })
+  })
+
   it('retains installed assignees when the workspace catalog cannot be loaded', async () => {
     const { api, bindings } = setup('backend')
     bindings.push({ id: 'installed', name: '已加入项目的智能体', status: 'active' })

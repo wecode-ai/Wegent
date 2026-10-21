@@ -135,9 +135,16 @@ export async function createSharedWorkspaceAgent(
   return source
 }
 
-export async function selectWorkspaceIssueAgent(control, triggerSelector, sourceId, timeoutMs) {
+export async function selectWorkspaceIssueAgent(
+  control,
+  triggerSelector,
+  sourceId,
+  timeoutMs,
+  mode = 'edit'
+) {
   await control.command('click', triggerSelector)
-  const option = `[data-testid="cloud-todo-detail-assignee-option-resource:${sourceId}"]`
+  const prefix = mode === 'create' ? 'cloud-todo-create-assignee' : 'cloud-todo-detail-assignee'
+  const option = `[data-testid="${prefix}-option-resource:${sourceId}"]`
   await control.command('waitFor', option, { visible: true, timeoutMs })
   await control.command('click', option)
   await control.command('waitFor', `${triggerSelector}[data-value="resource:${sourceId}"]`, {
@@ -149,7 +156,16 @@ export async function selectWorkspaceIssueAgent(control, triggerSelector, source
 export async function createAndAssignCloudIssue(
   control,
   request,
-  { contentSelector, projectId, title, description, assigneeTarget, timeoutMs }
+  {
+    contentSelector,
+    projectId,
+    title,
+    description,
+    assigneeTarget,
+    assignDuringCreate = false,
+    beforeSave,
+    timeoutMs,
+  }
 ) {
   const scoped = selector => `${contentSelector} ${selector}`
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-tab-board"]'), {
@@ -160,6 +176,17 @@ export async function createAndAssignCloudIssue(
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
     value: description,
   })
+  const selectAssignee = async () => {
+    const prefix = assignDuringCreate ? 'cloud-todo-create-assignee' : 'cloud-todo-detail-assignee'
+    await control.command('click', scoped(`[data-testid="${prefix}"]`))
+    const option = `[data-testid="${prefix}-option-${assigneeTarget}"]`
+    await control.command('waitFor', option, { visible: true, timeoutMs })
+    await control.command('click', option)
+  }
+  if (assignDuringCreate) {
+    await selectAssignee()
+    await beforeSave?.()
+  }
   await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-create-confirm"]'), {
     timeoutMs,
   })
@@ -169,13 +196,92 @@ export async function createAndAssignCloudIssue(
     'Wework UI did not persist the Issue',
     timeoutMs
   )
-  const trigger = scoped('[data-testid="cloud-todo-detail-assignee"]')
-  await control.command('click', trigger)
-  const option = `[data-testid="cloud-todo-detail-assignee-option-${assigneeTarget}"]`
-  await control.command('waitFor', option, { visible: true, timeoutMs })
-  await control.command('click', option)
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-    timeoutMs,
-  })
+  if (!assignDuringCreate) {
+    await selectAssignee()
+    await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
+      timeoutMs,
+    })
+  }
   return issue
+}
+
+/** Revoke the real workspace grant after selection, then recover the same unsaved draft. */
+export async function verifyRevokedWorkspaceIssueAgent(
+  control,
+  request,
+  { contentSelector, project, source, title, timeoutMs }
+) {
+  const scoped = selector => `${contentSelector} ${selector}`
+  const agentsPath = `/api/v1/cloud-projects/${project.id}/chat-agents`
+  const issuesPath = `/api/v1/cloud-projects/${project.id}/loop-items`
+  const runsPath = `/api/v1/cloud-projects/${project.id}/executions?include_terminal=true`
+  const grantPath = `/api/v1/workspaces/${project.workspace_id}/agents`
+  const before = {
+    agents: (await request(agentsPath)).map(item => item.id).sort(),
+    issues: (await request(issuesPath)).items.map(item => item.id).sort(),
+    runs: (await request(runsPath)).items.map(item => item.id).sort(),
+  }
+  await request(`${grantPath}/${source.team_id}`, { method: 'DELETE' })
+  try {
+    assert.equal(
+      (await request(grantPath)).items.some(item => item.id === source.id),
+      false,
+      'The real backend did not revoke the selected workspace Agent'
+    )
+    await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-create-confirm"]'))
+    await control.command('waitFor', scoped('[data-testid="cloud-todo-save-error"]'), {
+      text: 'Workspace Agent is no longer available',
+      timeoutMs,
+    })
+    assert.equal(
+      await control.command('getValue', scoped('[data-testid="cloud-todo-title"]')),
+      title
+    )
+    assert.equal(
+      await control.command('getAttribute', scoped('[data-testid="cloud-todo-create-assignee"]'), {
+        value: 'data-value',
+      }),
+      `resource:${source.id}`,
+      'Failed binding lost the selected resource draft'
+    )
+    assert.deepEqual(
+      (await request(agentsPath)).map(item => item.id).sort(),
+      before.agents,
+      'Revocation created a project binding'
+    )
+    assert.deepEqual(
+      (await request(issuesPath)).items.map(item => item.id).sort(),
+      before.issues,
+      'Failed binding created an orphan Issue'
+    )
+    assert.deepEqual(
+      (await request(runsPath)).items.map(item => item.id).sort(),
+      before.runs,
+      'Failed binding started an execution'
+    )
+  } finally {
+    const restored = await request(grantPath, {
+      method: 'POST',
+      body: JSON.stringify({ team_id: source.team_id }),
+    })
+    assert.equal(restored.id, source.id, 'Restoring authorization changed the resource identity')
+  }
+}
+
+export async function assertCreatedWorkspaceIssueAgent(request, { projectId, source, issue }) {
+  const agents = await request(`/api/v1/cloud-projects/${projectId}/chat-agents`)
+  const bindings = agents.filter(candidate => candidate.wegentTeamId === source.team_id)
+  assert.equal(
+    bindings.length,
+    1,
+    'Recovering the create draft duplicated the project Agent binding'
+  )
+  assert.equal(String(issue.assignee_agent_id), String(bindings[0].id))
+  assert.notEqual(String(bindings[0].id), String(source.id), 'Assignment persisted a resource ID')
+  const issues = (await request(`/api/v1/cloud-projects/${projectId}/loop-items`)).items
+  assert.equal(
+    issues.filter(candidate => candidate.title === issue.title).length,
+    1,
+    'Recovering the create draft duplicated the Issue'
+  )
 }

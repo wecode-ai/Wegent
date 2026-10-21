@@ -6,8 +6,10 @@ import { verifyExecutionActivityOrder } from '../modules/issue-execution-activit
 import { readProjectChatMessages } from '../modules/project-chat-snapshot.mjs'
 import {
   createSharedWorkspaceAgent,
+  assertCreatedWorkspaceIssueAgent,
   createAndAssignCloudIssue,
   createWorkspaceAndProject,
+  verifyRevokedWorkspaceIssueAgent,
   waitForValue,
 } from '../modules/workspace-agent-setup.mjs'
 import {
@@ -788,6 +790,15 @@ export function createDesktopScenario({
         title: ISSUE,
         description: `${MARKER}。由单个智能体在远程 Executor 上完成并提交待确认。`,
         assigneeTarget: `resource:${source.id}`,
+        assignDuringCreate: true,
+        beforeSave: () =>
+          verifyRevokedWorkspaceIssueAgent(control, request, {
+            contentSelector: CONTENT,
+            project,
+            source,
+            title: ISSUE,
+            timeoutMs: uiTimeoutMs,
+          }),
         timeoutMs: uiTimeoutMs,
       })
       const agent = await waitForValue(
@@ -868,6 +879,12 @@ export function createDesktopScenario({
         modelResponseTimeoutMs
       )
       assert.equal(String(persistedIssue.id), String(issue.id))
+      assert.equal(String(persistedIssue.assignee_agent_id), String(agent.id))
+      await assertCreatedWorkspaceIssueAgent(request, {
+        projectId: project.id,
+        source,
+        issue: persistedIssue,
+      })
       await control.command('waitFor', scoped('[data-testid="cloud-todo-detail-status"]'), {
         value: 'in_review',
         timeoutMs: uiTimeoutMs,
