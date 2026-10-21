@@ -397,7 +397,9 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       await control.command('waitFor', scoped(`[data-testid="${agentRowId}"]`), { visible: false })
       await control.command('click', sidebarScoped('[data-testid="collaboration-primary-home"]'))
       await control.command('click', sidebarScoped('[data-testid="collaboration-primary-agents"]'))
-      await control.command('waitFor', scoped('[data-testid="collaboration-agents-page"]'))
+      await control.command('waitFor', scoped('[data-testid="collaboration-agents-page"]'), {
+        text: '当前设备智能体',
+      })
       assert.equal(
         Number(await control.command('getElementCount', scoped(`[data-testid="${agentRowId}"]`))),
         0,
