@@ -1,6 +1,80 @@
 use super::*;
 
 #[test]
+fn active_codex_text_without_phase_stays_process_text_until_completion() {
+    let (handler, root) = isolated_runtime_work_handler("unphased-live-text");
+    let mut link =
+        RuntimeTaskLink::new_pending("task-1".into(), "/tmp/project".into(), "Task".into());
+    link.thread_id = Some("thread-1".into());
+    handler.upsert_local_task(link);
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
+    handler.record_active_codex_transcript_item("task-1", "turn-1", &json!({
+        "method": "item/agentMessage/delta", "params": {"itemId": "message-1", "delta": "Live answer"}
+    }));
+    let live = handler.active_codex_transcript_messages("task-1");
+    assert_eq!(live[0]["content"], "");
+    assert_eq!(live[0]["blocks"][0]["content"], "Live answer");
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &json!({
+            "method": "item/completed", "params": {"item": {
+                "id": "message-1", "type": "agentMessage", "text": "Live answer"
+            }}
+        }),
+    );
+    handler.persist_and_clear_active_codex_transcript("task-1", "completed");
+    let completed = completed_transcript_messages(&handler.local_task_link("task-1").unwrap());
+    assert_eq!(completed[0]["content"], "Live answer");
+    assert!(completed[0]["blocks"].as_array().unwrap().is_empty());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn recovered_goal_failure_before_active_turn_has_no_old_user_identity() {
+    let (mut handler, root) = isolated_runtime_work_handler("goal-startup-terminal-identity");
+    let (event_tx, mut event_rx) = broadcast::channel(32);
+    handler.event_tx = Some(event_tx);
+    let mut link =
+        RuntimeTaskLink::new_pending("task-1".into(), "/tmp/project".into(), "Task".into());
+    link.thread_id = Some("thread-1".into());
+    handler.upsert_local_task(link);
+    let execution_id = start_test_execution(&handler, "task-1");
+    let request = ExecutionRequest {
+        task_id: "task-1".into(),
+        subtask_id: "original-subtask".into(),
+        extra: serde_json::from_value(json!({
+            "wegent_resume_goal_only": true,
+            "client_user_message_id": "original-user",
+            "clientUserMessageId": "original-user",
+            "runtime_generated_user_message": true
+        }))
+        .unwrap(),
+        ..ExecutionRequest::default()
+    };
+    handler.handle_turn_result(
+        "task-1",
+        execution_id,
+        &request,
+        None,
+        Err("startup failed".into()),
+    );
+    let mut terminal = None;
+    while let Ok(event) = event_rx.try_recv() {
+        if event["event"] == "response.failed" {
+            terminal = Some(event);
+        }
+    }
+    let event = terminal.expect("startup failure should emit its terminal event");
+    assert!(event["payload"].get("clientUserMessageId").is_none());
+    assert!(event["payload"]
+        .get("runtimeGeneratedUserMessage")
+        .is_none());
+    assert_eq!(request.extra["client_user_message_id"], "original-user");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn active_codex_text_deltas_survive_interruption() {
     let (handler, root) = isolated_runtime_work_handler("interrupted-text-deltas");
     let mut link =

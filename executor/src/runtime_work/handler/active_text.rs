@@ -40,9 +40,11 @@ impl RuntimeWorkRpcHandler {
             if string_field(existing, "type").as_deref() != Some(text_item_type) {
                 return;
             }
-            let text = raw_string_field(existing, "text").unwrap_or_default();
             if let Some(object) = existing.as_object_mut() {
-                object.insert("text".to_owned(), Value::String(format!("{text}{delta}")));
+                match object.entry("text").or_insert_with(|| json!("")) {
+                    Value::String(text) => text.push_str(&delta),
+                    text => *text = Value::String(delta),
+                }
                 object.insert("status".to_owned(), Value::String("inProgress".to_owned()));
             }
             return;
