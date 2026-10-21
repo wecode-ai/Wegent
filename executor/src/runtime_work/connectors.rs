@@ -348,8 +348,22 @@ fn materialize_skills(skills_root: &Path, apps: &[Value]) -> Result<Value, AppIp
                     .join("\n")
             )
         };
+        let authorization_section = if app
+            .get("authorizationRequired")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            format!(
+                "\nThis app is not authorized for the current user yet, so its tools are unavailable.\n\
+                 When the user's request needs it, say briefly that authorization is required and end the turn with\n\
+                 `connector_auth_required` and `connectorSlug={slug}` so Wework shows its authorization card.\n\
+                 Do not claim the app does not exist and do not guess credentials.\n"
+            )
+        } else {
+            String::new()
+        };
         let body = format!(
-            "---\nname: wegent-connector-{slug}\ndescription: Use the administrator-managed Wegent connector app {slug}.\n---\n\n# Wegent connector `{slug}`\n\n{description}\n\nUse the `wegent_apps` MCP server. Only call tools whose names start with `{slug}__`.\nAuthentication and credentials are managed by Wegent; never request or expose them.\n{tool_section}"
+            "---\nname: wegent-connector-{slug}\ndescription: Use the administrator-managed Wegent connector app {slug}.\n---\n\n# Wegent connector `{slug}`\n\n{description}\n\nUse the `wegent_apps` MCP server. Only call tools whose names start with `{slug}__`.\nAuthentication and credentials are managed by Wegent; never request or expose them.\n{authorization_section}{tool_section}"
         );
         fs::write(&skill_path, body).map_err(|error| {
             AppIpcError::new(
@@ -438,6 +452,32 @@ mod tests {
             .expect("stale managed connector skill should be removed");
         assert!(!skill_path.exists());
         assert!(unrelated.join("SKILL.md").exists());
+    }
+
+    #[test]
+    fn unauthorized_app_skill_guides_the_agent_to_request_authorization() {
+        let temp = tempfile::tempdir().expect("temporary directory should be created");
+        let skills_root = temp.path().join("skills");
+
+        materialize_skills(
+            &skills_root,
+            &[json!({
+                "slug": "dingtalk_log",
+                "name": "钉钉日志",
+                "authorizationRequired": true,
+                "tools": [],
+            })],
+        )
+        .expect("guidance skill should materialize");
+
+        let content = fs::read_to_string(
+            skills_root
+                .join("wegent-connector-dingtalk_log")
+                .join("SKILL.md"),
+        )
+        .expect("skill should be readable");
+        assert!(content.contains("connector_auth_required"));
+        assert!(content.contains("connectorSlug=dingtalk_log"));
     }
 
     #[test]

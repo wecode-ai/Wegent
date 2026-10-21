@@ -5,7 +5,7 @@ import { localConnectorAuthHealth } from '@/api/local/localConnectorAuth'
 import { GITHUB_CLI_TARGET, isGithubCliTarget } from '@/api/local/githubCli'
 import {
   latestConnectorAuthMessage,
-  resolveLocalConnectorAuthHint,
+  resolveConnectorAuthHint,
 } from '@/features/plugins/localConnectorAuthGate'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { WORKBENCH_NEW_CHAT_STARTED_EVENT } from '@/lib/workbenchComposerFocus'
@@ -13,6 +13,8 @@ import { WORKBENCH_NEW_CHAT_STARTED_EVENT } from '@/lib/workbenchComposerFocus'
 export interface PendingConnectorAuth {
   target: LocalConnectorAuthTarget
   title?: string
+  /** Set for administrator-published cloud apps, which use Wegent OAuth. */
+  cloud?: { slug: string }
 }
 
 export function useLocalConnectorAuthRecovery(options: {
@@ -20,6 +22,7 @@ export function useLocalConnectorAuthRecovery(options: {
   onResumeSend: (input: string) => Promise<void> | void
   onError?: (message: string) => void
   active?: boolean
+  cloudConnection?: { apiBaseUrl?: string | null; token?: string | null }
 }) {
   const { t } = useTranslation('common')
   const active = options.active ?? true
@@ -31,11 +34,12 @@ export function useLocalConnectorAuthRecovery(options: {
   const recoveryVersionRef = useRef(0)
   const optionsRef = useRef(options)
   const candidate = latestConnectorAuthMessage(options.messages)
-  const hint = resolveLocalConnectorAuthHint(candidate?.text)
+  const hint = resolveConnectorAuthHint(candidate?.text)
   const messageId = candidate?.message.id
   const messageStatus = candidate?.message.status
   const pluginKey = hint?.pluginKey
   const connectorSlug = hint?.connectorSlug
+  const cloudAuth = Boolean(hint && !pluginKey)
 
   useEffect(() => {
     optionsRef.current = options
@@ -91,9 +95,32 @@ export function useLocalConnectorAuthRecovery(options: {
   }, [clearPending])
 
   useEffect(() => {
-    if (!active || pending || !messageId || !pluginKey || !connectorSlug) return
+    if (!active || pending || !messageId || !connectorSlug) return
     if (messageStatus !== 'done' && messageStatus !== 'failed') return
     if (handledMessageIdsRef.current.has(messageId)) return
+    // Cloud apps are authorized by Wegent, so there is nothing to probe.
+    if (cloudAuth) {
+      const probe = { messageId }
+      inFlightRef.current = probe
+      void (async () => {
+        // Defer past the effect body so the pending state settles like the
+        // probed local path instead of setting state during render.
+        await Promise.resolve()
+        if (inFlightRef.current !== probe) return
+        inFlightRef.current = null
+        if (handledMessageIdsRef.current.has(messageId)) return
+        handledMessageIdsRef.current.add(messageId)
+        const next: PendingConnectorAuth = {
+          target: { pluginKey: '', connectorSlug },
+          cloud: { slug: connectorSlug },
+        }
+        pendingMessageIdRef.current = messageId
+        pendingRef.current = next
+        setPending(next)
+      })()
+      return
+    }
+    if (!pluginKey) return
     const version = recoveryVersionRef.current
     let cancelled = false
     const isCurrent = () =>
@@ -137,7 +164,7 @@ export function useLocalConnectorAuthRecovery(options: {
     return () => {
       cancelled = true
     }
-  }, [active, pending, messageId, messageStatus, pluginKey, connectorSlug, t])
+  }, [active, pending, messageId, messageStatus, pluginKey, connectorSlug, cloudAuth, t])
 
   const completePending = useCallback(async () => {
     const current = pendingRef.current

@@ -386,12 +386,29 @@ async def build_execution_request(
                 )
         activate_provider_native_knowledge(request, provider_skills)
 
-        # A selected source can activate an already-resolved, non-preloaded Skill.
+        # Compose every guidance source into the single system-prompt block.
+        from app.services.chat.trigger.request_preparation import (
+            web_runtime_guidance_enabled,
+        )
+        from app.services.execution.connector_guidance import (
+            build_connector_guidance_section,
+        )
         from app.services.execution.provider_guidance import (
-            apply_provider_configuration_guidance,
+            apply_execution_guidance,
+            collect_provider_guides,
         )
 
-        apply_provider_configuration_guidance(request)
+        # A selected source can activate an already-resolved, non-preloaded Skill.
+        sections = collect_provider_guides(request)
+        if web_runtime_guidance_enabled(web_runtime_guidance, payload):
+            connector_section = build_connector_guidance_section(
+                db,
+                user,
+                mention=TaskRequestBuilder._extract_prompt_text(message),
+            )
+            if connector_section:
+                sections.append(connector_section)
+        apply_execution_guidance(request, sections)
         return request
 
     finally:

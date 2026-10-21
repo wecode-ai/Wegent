@@ -71,6 +71,14 @@ export function initializeModalMappings(): void {
   })
 
   registerModalScheme({
+    schemeId: 'modal-connector-oauth',
+    modalType: 'connector-oauth',
+    pattern: 'wegent://modal/connector-oauth',
+    description: 'Open the OAuth authorization dialog of a connector app',
+    examples: ['wegent://modal/connector-oauth?slug=dingtalk-mcp-generic'],
+  })
+
+  registerModalScheme({
     schemeId: 'modal-dingtalk-mcp-config',
     modalType: 'mcp-provider-config',
     pattern: 'wegent://modal/dingtalk-mcp-config',

@@ -4,6 +4,8 @@ import { Button } from '@/components/ui/button'
 import { openExternalUrl } from '@/lib/external-links'
 import { githubVerificationUrl, isGithubCliTarget } from '@/api/local/githubCli'
 import { useTranslation } from '@/hooks/useTranslation'
+import { authorizeWegentConnector } from '@/api/cloud/connectorApps'
+import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
 import type {
   LocalConnectorAuthResult,
   LocalConnectorAuthTarget,
@@ -16,6 +18,109 @@ interface ConnectorAuthCardProps {
   description?: string
   onSuccess: (result: LocalConnectorAuthResult) => void
   onCancel?: () => void
+}
+
+interface CloudConnectorAuthCardProps {
+  slug: string
+  apiBaseUrl?: string | null
+  token?: string | null
+  onSuccess: () => void
+  onCancel?: () => void
+}
+
+/**
+ * Authorization card for an administrator-published Wegent connector app.
+ *
+ * These apps are authorized through the Wegent cloud OAuth flow instead of the
+ * executor's local plugin login, so they get their own card.
+ */
+export function CloudConnectorAuthCard({
+  slug,
+  apiBaseUrl,
+  token,
+  onSuccess,
+  onCancel,
+}: CloudConnectorAuthCardProps) {
+  const { t } = useTranslation('common')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const authorize = async () => {
+    if (!apiBaseUrl || !token) {
+      setError(t('workbench.plugins_connector_cloud_required'))
+      return
+    }
+    setBusy(true)
+    setError(null)
+    try {
+      const connection = await authorizeWegentConnector(
+        apiBaseUrl,
+        token,
+        slug,
+        openCloudAuthorizationWindow
+      )
+      if (connection.status !== 'connected') {
+        setError(t('workbench.plugins_connector_auth_failed', { name: slug }))
+        return
+      }
+      onSuccess()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div
+      className="mb-3 max-w-md rounded-2xl border bg-background p-4 shadow-sm"
+      data-testid="cloud-connector-auth-card"
+    >
+      <div className="mb-3">
+        <h3 className="text-sm font-semibold">
+          {t('workbench.plugins_connector_auth_title', { name: slug })}
+        </h3>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {t('workbench.connector_auth_description')}
+        </p>
+      </div>
+      <div className="flex flex-col items-center gap-3 rounded-xl bg-muted/30 p-4">
+        <Button
+          data-testid="cloud-connector-auth-authorize"
+          onClick={() => void authorize()}
+          disabled={busy}
+        >
+          {busy ? (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          ) : (
+            <ExternalLink className="mr-2 h-4 w-4" />
+          )}
+          {t('workbench.plugins_connector_auth_action')}
+        </Button>
+        {error ? (
+          <p
+            className="text-xs text-destructive"
+            role="alert"
+            data-testid="cloud-connector-auth-error"
+          >
+            {error}
+          </p>
+        ) : null}
+      </div>
+      {onCancel ? (
+        <div className="mt-3 flex justify-end">
+          <button
+            type="button"
+            className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted"
+            data-testid="cloud-connector-auth-cancel"
+            onClick={onCancel}
+          >
+            {t('workbench.cancel', '取消')}
+          </button>
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 export function ConnectorAuthCard(props: ConnectorAuthCardProps) {

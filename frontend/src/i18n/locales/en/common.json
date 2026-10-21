@@ -669,7 +669,41 @@
     "no_tokens": "No git tokens configured",
     "new_token": "New Token",
     "drag_to_reorder": "Drag to reorder",
-    "reorder_failed": "Failed to reorder Git tokens"
+    "reorder_failed": "Failed to reorder Git tokens",
+    "connector_apps": {
+      "title": "App Connections",
+      "description": "External apps connected by admins. Authorize them to use in tasks.",
+      "empty": "No apps available",
+      "search_placeholder": "Search by name, ID, or description",
+      "search_empty": "No matching apps",
+      "load_failed": "Failed to load apps",
+      "authorize": "OAuth Authorization",
+      "authorized": "App authorized",
+      "disconnect": "Disconnect",
+      "disconnected": "Disconnected",
+      "disconnect_failed": "Failed to disconnect",
+      "confirm_disconnect_title": "Disconnect app",
+      "confirm_disconnect": "Disconnecting “{{name}}” requires authorizing again before it can be used. Disconnect?",
+      "retry": "Retry",
+      "retry_succeeded": "Connection restored",
+      "retry_failed": "Retry failed; the upstream is still unavailable",
+      "upstream_error": "Upstream error: {{message}}",
+      "dialog_title": "Authorize {{name}}",
+      "dialog_description": "Once authorized, this app's tools become available in the conversation.",
+      "unavailable": "This app is unavailable. An administrator may have disabled it or removed your access.",
+      "account": "Authorized as {{name}}",
+      "popup_blocked": "The authorization window was blocked. Allow pop-ups and try again",
+      "authorization_failed": "Failed to authorize app",
+      "authorization_declined": "Authorization canceled",
+      "authorization_timeout": "Authorization timed out. Try again",
+      "status": {
+        "disconnected": "Not authorized",
+        "pending": "Authorizing",
+        "connected": "Authorized",
+        "expired": "Expired",
+        "error": "Error"
+      }
+    }
   },
   "dingtalk": {
     "loading": "Loading DingTalk configuration...",

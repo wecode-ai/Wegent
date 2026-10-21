@@ -24,6 +24,7 @@ export interface WegentConnectorApp {
   description: string
   icon_url: string | null
   auth_type: 'none' | 'bearer' | 'oauth2'
+  tool_loading_mode: 'static' | 'lazy'
   connection: WegentConnectorConnection
 }
 
@@ -43,6 +44,7 @@ export interface WegentInstalledConnectorApp {
   runtime_name: string | null
   enabled: boolean
   callable: boolean
+  tool_loading_mode?: 'static' | 'lazy'
   connection: WegentConnectorConnection
   tool_summaries?: WegentInstalledConnectorTool[]
 }
@@ -130,6 +132,16 @@ export function disconnectWegentConnector(
 ): Promise<null> {
   return observeOperation('plugin.disconnect', () =>
     client(apiBaseUrl, token).delete<null>(`/connector-apps/${encodeURIComponent(slug)}/connection`)
+  )
+}
+
+export function refreshWegentConnector(
+  apiBaseUrl: string,
+  token: string,
+  slug: string
+): Promise<WegentConnectorConnection> {
+  return client(apiBaseUrl, token).post<WegentConnectorConnection>(
+    `/connector-apps/${encodeURIComponent(slug)}/connection/refresh`
   )
 }
 

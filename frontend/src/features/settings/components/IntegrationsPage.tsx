@@ -5,9 +5,9 @@
 'use client'
 
 import { useTranslation } from '@/hooks/useTranslation'
+import ConnectorAppConnections from './ConnectorAppConnections'
 import ExternalWikiConnectionCard from './ExternalWikiConnectionCard'
 import GitHubIntegration from './GitHubIntegration'
-import McpProviderIntegrations from './McpProviderIntegrations'
 
 export default function IntegrationsPage() {
   const { t } = useTranslation()
@@ -25,7 +25,7 @@ export default function IntegrationsPage() {
       {/* Git integration section */}
       <GitHubIntegration />
 
-      <McpProviderIntegrations providerId="dingtalk" />
+      <ConnectorAppConnections />
 
       <ExternalWikiConnectionCard />
     </div>

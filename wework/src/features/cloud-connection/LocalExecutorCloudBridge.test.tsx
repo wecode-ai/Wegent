@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   runtimeTokenPost: vi.fn(),
   issueToken: vi.fn(),
   listApps: vi.fn(),
+  listCatalog: vi.fn(),
   request: vi.fn().mockResolvedValue({}),
   notifySkillsChanged: vi.fn(),
   backendConnected: true,
@@ -25,6 +26,7 @@ vi.mock('./cloudConnectionAvailability', () => ({
 vi.mock('@/api/cloud/connectorApps', () => ({
   issueWegentConnectorToken: mocks.issueToken,
   listWegentInstalledConnectorApps: mocks.listApps,
+  listWegentConnectorApps: mocks.listCatalog,
 }))
 
 vi.mock('@/api/http', () => ({
@@ -88,6 +90,17 @@ describe('LocalExecutorCloudBridge', () => {
         },
       ],
     })
+    mocks.listCatalog.mockResolvedValue([
+      {
+        id: 1,
+        slug: 'tickets',
+        name: 'Tickets',
+        description: '',
+        icon_url: null,
+        auth_type: 'oauth2',
+        connection: { status: 'connected' },
+      },
+    ])
   })
 
   async function flushAsyncEffects() {
@@ -530,6 +543,7 @@ describe('LocalExecutorCloudBridge', () => {
           name: 'Tickets',
           description: '',
           tools: [{ name: 'tickets__search', raw_tool_name: 'search' }],
+          authorizationRequired: false,
         },
       ],
     })
@@ -537,6 +551,55 @@ describe('LocalExecutorCloudBridge', () => {
     expect(
       mocks.request.mock.calls.find(call => call[0] === 'runtime.connectors.configure')?.[1]
     ).not.toHaveProperty('authToken')
+  })
+
+  test('syncs an unauthorized app as guidance-only so the agent can offer authorization', async () => {
+    mocks.listCatalog.mockResolvedValue([
+      {
+        id: 1,
+        slug: 'tickets',
+        name: 'Tickets',
+        description: '',
+        icon_url: null,
+        auth_type: 'oauth2',
+        connection: { status: 'connected' },
+      },
+      {
+        id: 2,
+        slug: 'dingtalk_log',
+        name: '钉钉日志',
+        description: '工作日志',
+        icon_url: null,
+        auth_type: 'oauth2',
+        connection: { status: 'disconnected' },
+      },
+    ])
+
+    render(
+      <LocalExecutorCloudBridge
+        preferencesLoaded
+        apiBaseUrl="https://cloud.example.test/api"
+        backendUrl="https://cloud.example.test"
+        socketBaseUrl="wss://socket.example.test"
+        isConnected
+        token="cloud-token"
+      />
+    )
+
+    await waitFor(() => {
+      expect(mocks.request).toHaveBeenCalledWith(
+        'runtime.connectors.apps.sync',
+        expect.objectContaining({
+          apps: expect.arrayContaining([
+            expect.objectContaining({
+              slug: 'dingtalk_log',
+              tools: [],
+              authorizationRequired: true,
+            }),
+          ]),
+        })
+      )
+    })
   })
 
   test('disconnects the executor and clears connector state when cloud is unavailable', async () => {

@@ -19,6 +19,10 @@ class MCPProviderServiceDefinition(TypedDict):
     display_name: str
     message_keywords: tuple[str, ...]
     oauth_supported: bool
+    # When set, the service is provided by a connector app: the administrator
+    # publishes it once and users authorize their own account there instead of
+    # configuring a personal MCP URL in settings.
+    connector_slug: str | None
 
 
 class MCPProviderDefinition(TypedDict):
@@ -42,6 +46,7 @@ MCP_PROVIDER_REGISTRY: dict[str, MCPProviderDefinition] = {
                 "service_id": "docs",
                 "oauth_supported": True,
                 "server_name": "dingtalk_docs",
+                "connector_slug": "dingtalk_docs",
                 "detail_url": "https://mcp.dingtalk.com/#/detail?mcpId=9629",
                 "skill_name": "dingtalk-docs",
                 "display_name": "钉钉文档",
@@ -51,6 +56,7 @@ MCP_PROVIDER_REGISTRY: dict[str, MCPProviderDefinition] = {
                 "service_id": "table",
                 "oauth_supported": True,
                 "server_name": "dingtalk_table",
+                "connector_slug": "dingtalk_sheet",
                 "detail_url": "https://mcp.dingtalk.com/#/detail?mcpId=9704",
                 "skill_name": "dingtalk-table",
                 "display_name": "钉钉表格",
@@ -69,6 +75,7 @@ MCP_PROVIDER_REGISTRY: dict[str, MCPProviderDefinition] = {
                 "service_id": "ai_table",
                 "oauth_supported": True,
                 "server_name": "dingtalk_ai_table",
+                "connector_slug": "dingtalk_aitable",
                 "detail_url": "https://mcp.dingtalk.com/#/detail?mcpId=9555",
                 "skill_name": "dingtalk-ai-table",
                 "display_name": "钉钉AI表格",
@@ -87,6 +94,7 @@ MCP_PROVIDER_REGISTRY: dict[str, MCPProviderDefinition] = {
                 "service_id": "wikispace",
                 "oauth_supported": True,
                 "server_name": "dingtalk_wikispace",
+                "connector_slug": "dingtalk_wiki",
                 "detail_url": "https://mcp.dingtalk.com/#/detail?mcpId=9730",
                 "skill_name": "dingtalk-wikispace",
                 "display_name": "钉钉知识库",
@@ -143,5 +151,16 @@ def get_mcp_service_by_skill_name(
     for provider in list_mcp_providers():
         for service in provider["services"].values():
             if service.get("skill_name") == skill_name:
+                return provider, service
+    return None
+
+
+def get_mcp_service_by_connector_slug(
+    connector_slug: str,
+) -> tuple[MCPProviderDefinition, MCPProviderServiceDefinition] | None:
+    """Reverse-map a connector app slug to its provider service definition."""
+    for provider in MCP_PROVIDER_REGISTRY.values():
+        for service in provider["services"].values():
+            if service.get("connector_slug") == connector_slug:
                 return provider, service
     return None

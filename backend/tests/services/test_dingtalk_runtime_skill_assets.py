@@ -62,41 +62,31 @@ def asset_metadata(service: MCPProviderServiceDefinition) -> dict[str, Any]:
     )
 
 
-def test_dingtalk_service_has_runtime_skill_asset(
+def test_dingtalk_service_has_connector_managed_skill_asset(
     service: MCPProviderServiceDefinition,
     asset_metadata: dict[str, Any],
 ) -> None:
-    """Every package must retain its own MCP and actionable configuration link."""
+    """The package supports both the legacy personal URL and the connector bridge."""
+    connector_slug = service["connector_slug"]
+    assert connector_slug
     server = asset_metadata["mcpServers"][service["server_name"]]
-    assert server["type"] == "streamable-http"
     assert server["url"] == (
         "${{task_data.user_mcps.dingtalk.services."
         f"{service['service_id']}.credentials.url"
         "}}"
     )
-    guide = asset_metadata["config"]["unconfiguredGuide"]
-    link = urlparse(guide["modalLink"])
-    assert (link.scheme, link.netloc, link.path) == (
-        "wegent",
-        "modal",
-        "/mcp-provider-config",
-    )
-    assert parse_qs(link.query) == {
-        "provider": ["dingtalk"],
-        "service": [service["service_id"]],
-    }
-    assert service["display_name"] in guide["modalText"]
-    assert f"[{guide['modalText']}]({guide['modalLink']})" in asset_metadata["prompt"]
+    assert not asset_metadata.get("config")
+    assert "wegent-connectors" in asset_metadata["prompt"]
+    assert service["server_name"] in asset_metadata["prompt"]
+    assert f"connectorSlug={connector_slug}" in asset_metadata["prompt"]
     assert Version(asset_metadata["version"]) > Version("1.0.0")
 
 
-@pytest.mark.parametrize("configured", [False, True], ids=["missing", "configured"])
-def test_runtime_guidance_matches_each_asset_configuration_link(
+def test_connector_managed_asset_emits_no_provider_configuration_guidance(
     service: MCPProviderServiceDefinition,
     asset_metadata: dict[str, Any],
-    configured: bool,
 ) -> None:
-    """Each unconfigured service targets its own popup, without exposing its MCP."""
+    """Authorization is guided by the connector flow, not the provider popup."""
     name = service["skill_name"]
     assert name is not None
     skill = Kind(
@@ -111,22 +101,8 @@ def test_runtime_guidance_matches_each_asset_configuration_link(
             "spec": asset_metadata,
         },
     )
-    preferences = {}
-    if configured:
-        preferences = {
-            "mcps": {
-                "dingtalk": {
-                    "services": {
-                        service["service_id"]: {
-                            "enabled": True,
-                            "credentials": {"url": "https://example.com/mcp"},
-                        }
-                    }
-                }
-            }
-        }
     skill_data = TaskRequestBuilder(MagicMock())._build_skill_data(
-        skill, user=SimpleNamespace(preferences=preferences)
+        skill, user=SimpleNamespace(preferences={})
     )
     request = ExecutionRequest(
         system_prompt="Base instructions.",
@@ -138,17 +114,11 @@ def test_runtime_guidance_matches_each_asset_configuration_link(
 
     apply_provider_configuration_guidance(request)
 
-    guide = asset_metadata["config"]["unconfiguredGuide"]
-    assert skill_data["config"]["unconfiguredGuide"] == guide
-    if configured:
-        assert request.system_prompt == "Base instructions."
-        assert "configuration_required" not in skill_data
-        assert service["server_name"] in skill_data["mcpServers"]
-    else:
-        assert skill_data["configuration_required"] is True
-        assert "mcpServers" not in skill_data
-        assert request.system_prompt.count(guide["modalLink"]) == 1
-        assert f"[{guide['modalText']}]({guide['modalLink']})" in request.system_prompt
+    # No personal URL is configured, so the connector bridge supplies tools.
+    assert "configuration_required" not in skill_data
+    assert "mcpServers" not in skill_data
+    assert request.system_prompt == "Base instructions."
+    assert "mcp-provider-config" not in request.system_prompt
 
 
 def test_existing_dingtalk_skill_upgrades_metadata_and_download_package(
@@ -165,7 +135,8 @@ def test_existing_dingtalk_skill_upgrades_metadata_and_download_package(
     current_content = skill_md.read_text(encoding="utf-8")
     old_frontmatter = SkillValidator._parse_skill_md(current_content)
     old_frontmatter["version"] = "1.0.0"
-    old_frontmatter.pop("config")
+    old_frontmatter.pop("config", None)
+    old_frontmatter.pop("mcpServers", None)
     skill_md.write_text(
         f"---\n{yaml.safe_dump(old_frontmatter)}---\n\nUse the provider MCP directly.",
         encoding="utf-8",
@@ -191,7 +162,8 @@ def test_existing_dingtalk_skill_upgrades_metadata_and_download_package(
     assert updated is not None
     assert updated.metadata.labels["id"] == existing.metadata.labels["id"]
     assert updated.spec.version == asset_metadata["version"]
-    assert updated.spec.config == asset_metadata["config"]
+    assert updated.spec.config is None
+    # The asset keeps the personal-URL placeholder for API-key users.
     assert updated.spec.mcpServers == asset_metadata["mcpServers"]
     binary = (
         test_db.query(SkillBinary)
@@ -199,13 +171,13 @@ def test_existing_dingtalk_skill_upgrades_metadata_and_download_package(
         .one()
     )
     downloaded = SkillValidator.validate_zip(binary.binary_data, binary.file_name)
-    assert downloaded["config"] == updated.spec.config
     assert downloaded["prompt"] == asset_metadata["prompt"]
+    # Stored binaries are sanitized: the CRD keeps the placeholder, the zip does not.
     assert not downloaded["mcpServers"]
 
 
 def test_all_dingtalk_services_declare_oauth_support() -> None:
-    """All four DingTalk integrations must support OAuth and API-key URLs."""
+    """All four DingTalk integrations are published as connector apps."""
     services = list_mcp_provider_services("dingtalk")
 
     assert {service["service_id"] for service in services} == {
@@ -215,3 +187,9 @@ def test_all_dingtalk_services_declare_oauth_support() -> None:
         "wikispace",
     }
     assert all(service["oauth_supported"] for service in services)
+    assert {service["connector_slug"] for service in services} == {
+        "dingtalk_docs",
+        "dingtalk_sheet",
+        "dingtalk_aitable",
+        "dingtalk_wiki",
+    }
