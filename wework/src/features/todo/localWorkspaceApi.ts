@@ -36,10 +36,13 @@ async function loadWorkspaceCatalog<T>(catalog: string, request: Promise<T>): Pr
   try {
     return await request
   } catch (error) {
-    console.error('[Wework] Local workspace catalog failed', {
-      catalog,
-      reason: error instanceof Error ? error.message : String(error),
-    })
+    console.error(
+      '[Wework] Local workspace catalog failed',
+      JSON.stringify({
+        catalog,
+        reason: error instanceof Error ? error.message : String(error),
+      })
+    )
     throw error
   }
 }
