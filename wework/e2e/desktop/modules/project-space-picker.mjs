@@ -200,18 +200,26 @@ export function createProjectSpacePickerRegression({
 
     async cleanup() {
       if (cleaned) return
+      const failures = []
       for (const [collection, values] of [
         ['cloud-projects', projects],
         ['workspaces', workspaces],
       ]) {
         for (const fixture of values) {
-          const latest = await request(`/api/v1/${collection}/${fixture.id}`)
-          if (latest.status !== 'archived') {
-            await request(`/api/v1/${collection}/${fixture.id}?version=${latest.version}`, {
-              method: 'DELETE',
-            })
+          try {
+            const latest = await request(`/api/v1/${collection}/${fixture.id}`)
+            if (latest.status !== 'archived') {
+              await request(`/api/v1/${collection}/${fixture.id}?version=${latest.version}`, {
+                method: 'DELETE',
+              })
+            }
+          } catch (error) {
+            failures.push(error)
           }
         }
+      }
+      if (failures.length) {
+        throw new AggregateError(failures, 'Project picker fixture cleanup failed')
       }
       cleaned = true
     },

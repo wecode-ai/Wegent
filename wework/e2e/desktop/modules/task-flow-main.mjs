@@ -4645,8 +4645,8 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     await runTeardownStep('desktop application', async () => stopDesktopAppProcess(app))
     await runTeardownStep('desktop controller', async () => control.close())
     await runTeardownStep('blocking network proxy', async () => blockingNetworkProxy?.stop())
-    await runTeardownStep('cloud environment', async () => cloudEnvironment?.stop())
     await runTeardownStep('desktop scenario', async () => desktopScenario?.cleanup?.())
+    await runTeardownStep('cloud environment', async () => cloudEnvironment?.stop())
     await runTeardownStep('Codex SQLite home', async () =>
       rm(codexSqliteHome, {
         recursive: true,
