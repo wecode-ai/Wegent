@@ -53,26 +53,25 @@ fn native_catalog_can_be_saved_without_obsolete_capability_fields() {
 }
 
 #[cfg(unix)]
-fn catalog_export_fixture(script: &str) -> (tempfile::TempDir, String) {
-    use std::os::unix::fs::PermissionsExt;
-
+fn catalog_export_fixture(script: &str) -> (tempfile::TempDir, Command) {
     let home = tempfile::tempdir().expect("isolated Codex home");
-    let binary = home.path().join("codex");
-    fs::write(&binary, format!("#!/bin/sh\n{script}\n")).expect("fake Codex binary");
-    fs::set_permissions(&binary, fs::Permissions::from_mode(0o755))
-        .expect("executable Codex fixture");
-    (home, binary.to_string_lossy().into_owned())
+    let script_path = home.path().join("codex.sh");
+    fs::write(&script_path, script).expect("fake Codex script");
+    // Read the fixture instead of executing a freshly written inode during parallel tests.
+    let mut command = Command::new("/bin/sh");
+    command.arg(script_path);
+    (home, command)
 }
 
 #[cfg(unix)]
 #[tokio::test]
 async fn bundled_catalog_preserves_native_models_and_supports_overrides() {
-    let (home, binary) = catalog_export_fixture(
+    let (home, command) = catalog_export_fixture(
         r#"test "$1 $2 $3" = 'debug models --bundled' || exit 2
 test "$CODEX_HOME" = "$(dirname "$0")" || exit 3
 printf '%s' '{"models":[{"slug":"gpt-6.1-sol","context_window":400000,"native_field":{"enabled":true}},{"slug":"gpt-5.6-sol","context_window":500000}]}'"#,
     );
-    let mut catalog = export_bundled_catalog(&binary, home.path())
+    let mut catalog = export_bundled_catalog_command(command, home.path())
         .await
         .expect("native bundled catalog");
     merge_base_models(&mut catalog).unwrap();
@@ -119,8 +118,8 @@ async fn bundled_catalog_export_reports_failures_without_substituting_models() {
         ),
         ("printf '%s' '{}'", "must contain a models array"),
     ] {
-        let (home, binary) = catalog_export_fixture(script);
-        let error = export_bundled_catalog(&binary, home.path())
+        let (home, command) = catalog_export_fixture(script);
+        let error = export_bundled_catalog_command(command, home.path())
             .await
             .unwrap_err();
         assert!(error.contains(expected), "{error}");
