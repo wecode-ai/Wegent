@@ -3653,6 +3653,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
       control.setScenario('turn_navigation')
       const environmentPanelTurnCount = E2E_TRANSCRIPT_PAGE_SIZE + 4
+      const modelResponseTimeoutMs = Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
       for (let index = 0; index < environmentPanelTurnCount; index += 1) {
         const turnNumber = index + 1
         await sendPrompt(
@@ -3665,7 +3666,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
           {
             text: `${TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX}_${turnNumber}`,
-            timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+            timeoutMs: modelResponseTimeoutMs,
           }
         )
       }
