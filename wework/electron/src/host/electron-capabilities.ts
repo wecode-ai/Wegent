@@ -933,12 +933,7 @@ export function createElectronCapabilityRouter(
     )
   })
   router.register('preferences.get', () => preferences.read())
-  router.register('preferences.update', async params => {
-    const patch = params.patch
-    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
-      invalidParam('patch')
-    }
-    const preferencePatch = patch as Record<string, unknown>
+  const updatePreferences = async (preferencePatch: Record<string, unknown>) => {
     const updated = desktopServices.updatePreferences
       ? await desktopServices.updatePreferences(preferencePatch)
       : await preferences.update(preferencePatch)
@@ -946,6 +941,23 @@ export function createElectronCapabilityRouter(
       e2eHost.setSystemSleepEnabled(updated.preventSleepWhileTasksRunning)
     }
     desktopServices.events.publish('preferences.changed', updated)
+    return updated
+  }
+  router.register('preferences.update', params => {
+    const patch = params.patch
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+      invalidParam('patch')
+    }
+    return updatePreferences(patch as Record<string, unknown>)
+  })
+  router.register('runtime.changeWorkbenchMode', async (params, context) => {
+    const mode = stringParam(params, 'mode')
+    if (mode !== 'focus' && mode !== 'developer') invalidParam('mode')
+    const previousMode = (await preferences.read()).workbenchMode
+    const updated = await updatePreferences({ workbenchMode: mode })
+    if (previousMode !== mode) {
+      context.deferUntilResponseSent(e2eHost.scheduleCoreDshRestart)
+    }
     return updated
   })
   router.register('weworkSync.request', params => {

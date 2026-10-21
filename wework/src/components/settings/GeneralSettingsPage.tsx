@@ -387,13 +387,12 @@ export function GeneralSettingsPage() {
       return
     }
 
-    const previousMode = preferences.workbenchMode
     const nextMode = pendingWorkbenchMode
     setPreferences(current => ({ ...current, workbenchMode: nextMode }))
     setSaving(true)
     setError(null)
     try {
-      setPreferences(await changeWorkbenchMode(previousMode, nextMode))
+      setPreferences(await changeWorkbenchMode(nextMode))
     } catch (saveError) {
       console.error('[Wework] Failed to update workbench mode', saveError)
       try {
