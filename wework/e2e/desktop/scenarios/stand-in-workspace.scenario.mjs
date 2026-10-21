@@ -206,7 +206,9 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
         await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
         await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
         await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
-        await control.command('fill', '[data-testid="stand-in-prompt"]', { value: '/' })
+        await control.command('fill', '[data-testid="stand-in-prompt"]', {
+          value: `${MARKER}_UNSAVED /`,
+        })
         await control.command(
           'waitFor',
           '[data-testid="slash-command-option-skill-stand-in-catalog"]'
@@ -219,7 +221,10 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
         await control.command('waitFor', `${CONTENT} [data-testid="plugins-page-content"]`)
         await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
         await control.command('waitFor', `${CONTENT} [data-testid="collaboration-primary-home"]`)
-        assert.equal(await control.command('getValue', '[data-testid="stand-in-prompt"]'), '/')
+        assert.equal(
+          (await control.command('getValue', '[data-testid="stand-in-prompt"]')).trim(),
+          `${MARKER}_UNSAVED`
+        )
         await control.command('click', '[data-testid="stand-in-cancel"]')
       } finally {
         await rm(skillDirectory, { recursive: true, force: true })
