@@ -609,6 +609,22 @@ importers:
         specifier: ^4.1.7
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@24.13.2)(@vitest/coverage-istanbul@4.1.8)(jsdom@28.1.0)(msw@2.14.6(@types/node@24.13.2)(typescript@6.0.3))(vite@8.0.16(@types/node@24.13.2)(esbuild@0.28.1)(jiti@1.21.7)(tsx@4.22.4)(yaml@2.9.0))
 
+  packages/process-explorer:
+    dependencies:
+      systeminformation:
+        specifier: 5.33.15
+        version: 5.33.15
+    devDependencies:
+      '@types/node':
+        specifier: ^24.12.4
+        version: 24.13.2
+      typescript:
+        specifier: ~6.0.2
+        version: 6.0.3
+      vitest:
+        specifier: ^4.1.7
+        version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@24.13.2)(@vitest/coverage-istanbul@4.1.8)(jsdom@28.1.0)(msw@2.14.6(@types/node@24.13.2)(typescript@6.0.3))(vite@8.0.16(@types/node@24.13.2)(esbuild@0.28.1)(jiti@1.21.7)(tsx@4.22.4)(yaml@2.9.0))
+
   wework:
     dependencies:
       '@blocknote/core':
@@ -743,6 +759,9 @@ importers:
       '@wegent/collaboration':
         specifier: workspace:*
         version: link:../packages/collaboration
+      '@wegent/process-explorer':
+        specifier: workspace:*
+        version: link:../packages/process-explorer
       '@xterm/addon-fit':
         specifier: ^0.11.0
         version: 0.11.0
@@ -8778,6 +8797,12 @@ packages:
 
   symbol-tree@3.2.4:
     resolution: {integrity: sha512-9QNk5KwDF+Bvz+PyObkmSYjI5ksVUYtjW7AU22r2NKcfLJcXp96hkDWU3+XndOsUb+AQ9QhfzfCT2O+CNWT5Tw==}
+
+  systeminformation@5.33.15:
+    resolution: {integrity: sha512-s5RloL0F7xhN0ZjfHtLGnbf7EW74EI0N8NFL+1xR7Oxz9QA33obNZsl7lyfnJOhN04E/kGFPoJPlvY7TZ5fzmw==}
+    engines: {node: '>=10.0.0'}
+    os: [darwin, linux, win32, freebsd, openbsd, netbsd, sunos, android]
+    hasBin: true
 
   tabbable@6.4.0:
     resolution: {integrity: sha512-05PUHKSNE8ou2dwIxTngl4EzcnsCDZGJ/iCLtDflR/SHB/ny14rXc+qU5P4mG9JkusiV7EivzY9Mhm55AzAvCg==}
@@ -19037,6 +19062,8 @@ snapshots:
     optional: true
 
   symbol-tree@3.2.4: {}
+
+  systeminformation@5.33.15: {}
 
   tabbable@6.4.0: {}
 

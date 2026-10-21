@@ -4,9 +4,9 @@
 
 //! `GET /api/sites/app-types` — the Sites application-type catalog.
 //!
-//! Mirrors `app.api.endpoints.sites.list_site_app_types`, which requires an
-//! authenticated session (`app.core.security.get_current_user`) and renders
-//! `app.services.site_application_types.list_application_types()`. The catalog
+//! This migrated route requires an authenticated session and renders the catalog
+//! described by `app.services.site_application_types.list_application_types()`.
+//! Python no longer registers this public endpoint. The catalog
 //! is static: `APPLICATION_TYPE_HANDLERS` in registration order, each rendered
 //! by `ApplicationTypeHandler.descriptor()`.
 use crate::auth::SessionUser;
@@ -70,6 +70,7 @@ fn list_application_types() -> ApplicationTypeListResponse {
                     "delete",
                     "configure_environment",
                     "manage_access",
+                    "view_analytics",
                 ],
                 create: ApplicationCreatePluginResponse {
                     plugin_name: SITES_PLUGIN_NAME,
@@ -106,11 +107,10 @@ mod tests {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     use tokio::net::TcpStream;
 
-    /// The exact body recorded from the Python source for the representative
-    /// case (`GET /api/sites/app-types`).
+    /// The application-type contract, including the web analytics capability.
     const SOURCE_BODY: &str = "{\"items\":[{\"app_type\":\"web\",\"enabled\":true,\
         \"order\":10,\"capabilities\":[\"create\",\"publish\",\"edit\",\"delete\",\
-        \"configure_environment\",\"manage_access\"],\"create\":{\"plugin_name\":\
+        \"configure_environment\",\"manage_access\",\"view_analytics\"],\"create\":{\"plugin_name\":\
         \"wegent-sites\",\"marketplace_name\":\"wegent\"}},{\"app_type\":\"miniapp\",\
         \"enabled\":true,\"order\":20,\"capabilities\":[\"create\",\"open_experience\"],\
         \"create\":{\"plugin_name\":\"weibo-miniapp-h5-develop-agent\",\

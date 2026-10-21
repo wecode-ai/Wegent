@@ -109,7 +109,9 @@ function keysToCamelCase(value: unknown): unknown {
       const viewKey = camelCaseKey(key);
       return [
         viewKey,
-        viewKey === "modelOptions" ? nested : keysToCamelCase(nested),
+        ["modelOptions", "modelPolicy", "executionPolicy"].includes(viewKey)
+          ? nested
+          : keysToCamelCase(nested),
       ];
     }),
   );

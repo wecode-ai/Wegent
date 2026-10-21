@@ -59,24 +59,33 @@ async function waitForApiValue(load, predicate, message, timeoutMs) {
   assert.fail(`${message}: ${JSON.stringify(latest)}`)
 }
 
-async function createGroup(control, { name, leader }) {
+async function createGroup(control, { name, leader, autoSelectedLeader = false }) {
   const separatorIndex = leader.indexOf(':')
   const leaderKind = leader.slice(0, separatorIndex)
   const leaderId = leader.slice(separatorIndex + 1)
   await control.command('fill', scoped('[data-testid="collaboration-group-name"]'), {
     value: name,
   })
-  await control.command('click', scoped('[data-testid="collaboration-group-create-add-members"]'))
-  await control.command(
-    'click',
-    scoped(`[data-testid="collaboration-group-create-member-${leaderKind}-${leaderId}"]`)
-  )
-  await control.command('click', scoped('[data-testid="collaboration-group-create-add-members"]'))
-  await control.command('click', scoped('[data-testid="collaboration-group-leader"]'))
-  await control.command(
-    'click',
-    scoped(`[data-testid="collaboration-group-leader-${leaderKind}-${leaderId}"]`)
-  )
+  if (autoSelectedLeader) {
+    // Workspace groups automatically include the authenticated creator as leader.
+    await control.command(
+      'waitFor',
+      scoped(`[data-testid="collaboration-group-leader-${leaderKind}-${leaderId}"]`),
+      { visible: true }
+    )
+  } else {
+    await control.command('click', scoped('[data-testid="collaboration-group-create-add-members"]'))
+    await control.command(
+      'click',
+      scoped(`[data-testid="collaboration-group-create-member-${leaderKind}-${leaderId}"]`)
+    )
+    await control.command('click', scoped('[data-testid="collaboration-group-create-add-members"]'))
+    await control.command('click', scoped('[data-testid="collaboration-group-leader"]'))
+    await control.command(
+      'click',
+      scoped(`[data-testid="collaboration-group-leader-${leaderKind}-${leaderId}"]`)
+    )
+  }
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-group-create"]'), {
     timeoutMs: 10_000,
   })
@@ -220,6 +229,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         await createGroup(control, {
           name: WORKSPACE_GROUP_NAME,
           leader: `human:${workspace.created_by_user_id}`,
+          autoSelectedLeader: true,
         })
         const workspaceGroup = await waitForApiValue(
           () => request(`/api/v1/workspaces/${workspace.id}/collaboration-groups`),

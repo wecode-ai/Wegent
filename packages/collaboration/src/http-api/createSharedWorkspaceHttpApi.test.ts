@@ -372,6 +372,21 @@ describe("createSharedWorkspaceHttpApi", () => {
       },
     });
   });
+
+  it("preserves the runner policy wire keys when reading a project Agent", async () => {
+    const { transport, get } = createTransport();
+    const model = {
+      runtime: "codex",
+      provider: "native",
+      model_id: "default-model",
+      source: "cloud",
+      cloud_model: { name: "shared", type: "public", namespace: "default", resource_user_id: 0 },
+    };
+    get.mockResolvedValue([{ id: "agent", name: "Agent", execution_policy: { mode: "fixed", environment_id: "device" }, model_policy: { mode: "fixed", model } }]);
+    const [agent] = await createSharedWorkspaceHttpApi(transport).agents.list("project");
+    expect(agent.executionPolicy).toEqual({ mode: "fixed", environment_id: "device" });
+    expect(agent.modelPolicy).toEqual({ mode: "fixed", model });
+  });
 });
 
 it("deduplicates reads across adapters and invalidates the project list after a mutation", async () => {

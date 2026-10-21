@@ -3,7 +3,7 @@ import { cp, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { until } from './plugin-regression-fixture.mjs'
 
-export function bundledPluginUpgradeFixture(codexHome, plugins) {
+export function bundledPluginUpgradeFixture(codexHome, plugins, readyTimeoutMs) {
   const chatPath = join(codexHome, 'sessions', 'bundled-upgrade-preservation.jsonl')
   return {
     async prepare() {
@@ -32,6 +32,7 @@ export function bundledPluginUpgradeFixture(codexHome, plugins) {
     async verify(control) {
       let lastStates
       try {
+        // Startup RPCs can defer cache upgrades, so use the workbench readiness budget.
         await until(
           async () => {
             const result = JSON.parse(await control.command('getBundledPluginUpdates', 'body'))
@@ -39,7 +40,8 @@ export function bundledPluginUpgradeFixture(codexHome, plugins) {
             return result
           },
           result => plugins.every(({ name }) => result.states[name]?.status === 'ready'),
-          'Bundled plugin upgrades did not reach ready'
+          'Bundled plugin upgrades did not reach ready',
+          readyTimeoutMs
         )
       } catch (cause) {
         throw new Error(

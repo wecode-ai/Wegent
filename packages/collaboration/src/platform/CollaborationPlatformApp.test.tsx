@@ -787,12 +787,18 @@ function PlatformHarness({
   renderProjectImporter,
   projectAgentConfiguration,
   renderProject,
+  renderIssueComposer,
+  renderStandInPage,
+  currentUser,
   workspaceOwnerOptions,
   defaultAssistant,
   generateProjectCollaborationGroupDraft,
   loadProjectCollaborationGroupGenerationModels,
   capabilities = { automation: false, dingtalkAitable: false },
 }: {
+  renderIssueComposer?: CollaborationPlatformHostAdapter["renderIssueComposer"];
+  renderStandInPage?: CollaborationPlatformHostAdapter["renderStandInPage"];
+  currentUser?: CollaborationPlatformHostAdapter["currentUser"];
   api: SharedWorkspaceApi;
   navigationApis?: SharedWorkspaceApi[];
   cloudAccess?: CollaborationPlatformHostAdapter["cloudAccess"];
@@ -814,6 +820,9 @@ function PlatformHarness({
   const [location, setLocation] = useState(start);
   const host: CollaborationPlatformHostAdapter = {
     cloudAccess,
+    renderIssueComposer,
+    renderStandInPage,
+    currentUser,
     location,
     capabilities,
     navigate: setLocation,
@@ -2594,6 +2603,66 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(byTestId("test-location").textContent).toContain(
       `"workspaceId":"${workspace.id}"`,
     );
+  });
+
+  it("opens the host Stand-in settings page from the sidebar", async () => {
+    const { api } = createApi();
+    const renderStandInPage = vi.fn(({ projects }) => (
+      <div data-testid="stand-in-settings-page">{projects[0]?.name}</div>
+    ));
+    await render(
+      <PlatformHarness api={api} renderStandInPage={renderStandInPage} />,
+    );
+    await click(byTestId("collaboration-primary-stand-in"));
+    expect(byTestId("stand-in-settings-page").textContent).toContain(
+      project.name,
+    );
+    expect(
+      byTestId("collaboration-primary-stand-in").getAttribute("aria-current"),
+    ).toBe("page");
+  });
+
+  it("creates a personal Issue and retries Stand-in without creating it again", async () => {
+    const { api } = createApi();
+    const run = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Executor offline"))
+      .mockResolvedValue({ deviceId: "mac", taskId: "stand-in-human" });
+    api.standIn = { get: vi.fn(), save: vi.fn(), run };
+    await render(
+      <PlatformHarness
+        api={api}
+        currentUser={{ id: 7, name: "李明" }}
+        renderIssueComposer={(props) => (
+          <button
+            data-testid="manual-stand-in"
+            onClick={() => props.onSubmit("Handle this Issue", "mac", "review")}
+          >
+            Create
+          </button>
+        )}
+      />,
+    );
+    await click(byTestId("manual-stand-in"));
+    expect(api.issues.create).toHaveBeenCalledWith(
+      project.id,
+      expect.objectContaining({ description: "Handle this Issue" }),
+    );
+    expect(run).toHaveBeenCalledWith(
+      project.id,
+      expect.any(String),
+      "mac",
+      "review",
+    );
+    expect(byTestId("stand-in-run-error").textContent).toContain(
+      "Executor offline",
+    );
+    await click(byTestId("stand-in-run-retry"));
+    expect(api.issues.create).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(
+      container.querySelector('[data-testid="stand-in-run-error"]'),
+    ).toBeNull();
   });
 
   it("uses collaboration home as a guided new Issue entry", async () => {

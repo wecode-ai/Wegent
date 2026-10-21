@@ -15,6 +15,7 @@ pub mod kinds;
 pub mod task_detail;
 pub mod user_cache;
 pub mod video_refresh;
+pub(crate) mod workspace_root;
 
 mod handler;
 

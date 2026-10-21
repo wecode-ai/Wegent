@@ -12,6 +12,7 @@ export interface AddContextMenuProps {
   translate: CollaborationTranslate
   disabled: boolean
   onFileSelect: (files: File | File[]) => void
+  showAttachmentActions?: boolean
   onDraw?: () => void
   onSetPlanMode?: () => void
   onSetGoal?: () => void
@@ -25,6 +26,7 @@ export function AddContextMenu({
   disabled,
   onFileSelect,
   onDraw,
+  showAttachmentActions = true,
   onSetPlanMode,
   onSetGoal,
   onConfigureSupervisor,
@@ -123,6 +125,7 @@ export function AddContextMenu({
               'fixed z-system-popover w-[22rem] max-w-[calc(100vw-2rem)] overflow-y-auto rounded-xl border border-border bg-background p-1.5 shadow-[0_12px_32px_rgba(0,0,0,0.12)]',
             ].join(' ')}
           >
+            {showAttachmentActions && <>
             <button
               type="button"
               role="menuitem"
@@ -133,6 +136,7 @@ export function AddContextMenu({
               <Paperclip className="h-[18px] w-[18px] shrink-0 text-text-secondary" />
               <span>{t('workbench.add_photos_files', '添加照片和文件')}</span>
             </button>
+            </>}
             {onSetPlanMode && (
               <button
                 type="button"
