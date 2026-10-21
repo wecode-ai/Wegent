@@ -392,6 +392,50 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           uiTimeoutMs
         )
         assert.ok(projectAgent.wegentTeamId, 'The project Agent must retain its Team binding')
+        assert.equal(projectAgent.canUse, true, 'A newly created Agent must be usable')
+        const membersPath = `/api/share/Team/${projectAgent.wegentTeamId}/members`
+        const members = await request(membersPath)
+        const workspaceGrant = members.members.find(
+          member => member.entity_type === 'workspace' && member.entity_id === String(workspace.id)
+        )
+        assert.ok(workspaceGrant, 'Agent creation must persist its space authorization')
+        await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
+          visible: false,
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command(
+          'clickWhenEnabled',
+          scoped(`[data-testid="project-agent-archive-${projectAgent.id}"]`)
+        )
+        await control.command(
+          'waitFor',
+          scoped(`[data-testid="project-agent-reactivate-${projectAgent.id}"]`)
+        )
+        await request(`${membersPath}/${workspaceGrant.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ role: 'Reporter' }),
+        })
+        const unavailable = await request(
+          `/api/v1/cloud-projects/${project.id}/chat-agents?include_archived=true`
+        )
+        assert.equal(unavailable.find(agent => agent.id === projectAgent.id)?.canUse, false)
+        await control.command(
+          'clickWhenEnabled',
+          scoped(`[data-testid="project-agent-reactivate-${projectAgent.id}"]`)
+        )
+        await waitForApiValue(
+          () => request(`/api/v1/cloud-projects/${project.id}/chat-agents`),
+          agents => agents.find(agent => agent.id === projectAgent.id && agent.canUse),
+          'Explicit Agent reauthorization did not restore project use',
+          uiTimeoutMs
+        )
+        const restoredMembers = await request(membersPath)
+        const restoredGrants = restoredMembers.members.filter(
+          member => member.entity_type === 'workspace' && member.entity_id === String(workspace.id)
+        )
+        assert.equal(restoredGrants.length, 1, 'Reauthorization must update the existing grant')
+        assert.equal(restoredGrants[0].id, workspaceGrant.id)
+        assert.equal(restoredGrants[0].role, 'Developer')
         const localDevice = await waitForApiValue(
           () => request('/api/devices/online'),
           devices => devices.items.find(device => device.device_type === 'app') ?? null,
@@ -427,10 +471,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           compiled.payload.executionRequest.model_config.model_id,
           'The assigned Team model was lost during local task materialization'
         )
-        await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
-          visible: false,
-          timeoutMs: uiTimeoutMs,
-        })
         await control.command('waitFor', scoped('[data-testid^="project-agent-row-"]'), {
           text: PROJECT_AGENT_NAME,
           timeoutMs: uiTimeoutMs,
