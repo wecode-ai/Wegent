@@ -40,7 +40,7 @@ import { desktopComposerTransferServices } from './desktopComposerServices'
 import { useComposerModelSelector } from './useComposerModelSelector'
 
 interface ProjectChatComposerProps {
-  presentation?: 'chat' | 'document'
+  presentation?: 'chat' | 'document' | 'configuration'
   value: string
   onChange: (value: string) => void
   onBlur?: () => void
@@ -51,6 +51,7 @@ interface ProjectChatComposerProps {
   pluginPickerIconOnly?: boolean
   submitDisabled?: boolean
   requireText?: boolean
+  allowEmptySubmit?: boolean
   disabledReason?: string
   placeholder: string
   inputTestId?: string
@@ -135,6 +136,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       pluginPickerIconOnly = false,
       submitDisabled = false,
       requireText = false,
+      allowEmptySubmit = false,
       disabledReason,
       placeholder,
       inputTestId,
@@ -275,6 +277,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
           disabled={disabled}
           submitDisabled={submitDisabled}
           requireText={requireText}
+          allowEmptySubmit={allowEmptySubmit}
           isModelSelectionReady={isModelSelectionReady}
           placeholder={placeholder}
           inputTestId={inputTestId}
@@ -387,6 +390,8 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               canSend={toolbarProps.canSend}
               sendButtonTestId={submitButtonTestId}
               sendButtonLabel={submitLabel}
+              showSubmitButton={presentation !== 'configuration'}
+              showAttachmentActions={presentation !== 'configuration'}
               disabled={disabled}
               pluginPickerIconOnly={pluginPickerIconOnly}
               showExecutionTools={showExecutionTools}

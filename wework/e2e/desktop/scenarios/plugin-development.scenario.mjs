@@ -86,7 +86,8 @@ export async function createDesktopScenario({
                 name
               ),
       }))
-    )
+    ),
+    workbenchReadyTimeoutMs
   )
   const pluginRoot = join(resultDir, 'plugin-development-project')
   const controlRegistry = join(resultDir, 'desktop-control-instances')
@@ -214,6 +215,20 @@ export async function createDesktopScenario({
         visible: true,
       })
       await captureScreenshot(control, 'plugin-development-02-debug-opened.png', 'body')
+      // Scaffolding requires an empty directory; isolate Git before creating its first task.
+      await execFileAsync('git', ['init', pluginRoot])
+      await execFileAsync('git', ['-C', pluginRoot, 'add', '.'])
+      await execFileAsync('git', [
+        '-C',
+        pluginRoot,
+        '-c',
+        'user.name=Wework Desktop E2E',
+        '-c',
+        'user.email=desktop-e2e@wework.local',
+        'commit',
+        '-m',
+        'test: initialize isolated plugin project',
+      ])
       control.setScenario('plugin_development')
       await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
         timeoutMs: workbenchReadyTimeoutMs,

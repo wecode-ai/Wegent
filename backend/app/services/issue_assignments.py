@@ -11,6 +11,7 @@ from datetime import datetime
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.db.timezone import database_datetime_as_utc
 from app.models.delivery import (
     CloudProject,
     LoopItem,
@@ -319,8 +320,8 @@ class IssueAssignmentService:
             "created_by_user_id": assignment.assigned_by_user_id,
             "created_by_user_name": creator.user_name if creator is not None else None,
             "status": "active",
-            "created_at": assignment.created_at,
-            "updated_at": assignment.updated_at,
+            "created_at": database_datetime_as_utc(db, assignment.created_at),
+            "updated_at": database_datetime_as_utc(db, assignment.updated_at),
         }
 
     def project_for_issue(
