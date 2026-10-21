@@ -3,6 +3,7 @@
 import io
 import json
 import multiprocessing
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -250,12 +251,9 @@ def abandoned_worker(mysql_url, user_id, plugin_id, ready) -> None:
 def test_killed_worker_rolls_back_mysql_and_recovers_after_its_redis_ttl(
     context, monkeypatch
 ):
+    # Reuse the exact test URL so a * auth-protected Redis still works.
+    monkeypatch.setenv("REDIS_URL", os.environ["PLUGIN_AUTH_REDIS_TEST_URL"])
     client = coordination._redis_client()
-    redis_url = (
-        f"redis://{client.connection_pool.connection_kwargs['host']}:"
-        f"{client.connection_pool.connection_kwargs['port']}/15"
-    )
-    monkeypatch.setenv("REDIS_URL", redis_url)
     worker_context = multiprocessing.get_context("spawn")
     parent, child = worker_context.Pipe(duplex=False)
     process = worker_context.Process(

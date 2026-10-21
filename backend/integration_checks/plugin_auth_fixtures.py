@@ -109,10 +109,11 @@ def sessions():
         if index.name == "uq_kinds_account_auth_policy"
     )
     policy_index.create(engine, checkfirst=True)
-    redis_url = make_url(os.environ["PLUGIN_AUTH_REDIS_TEST_URL"])
+    raw_redis_url = os.environ["PLUGIN_AUTH_REDIS_TEST_URL"]
+    redis_url = make_url(raw_redis_url)
     assert redis_url.host in {"127.0.0.1", "localhost"}
     assert redis_url.database == "15", "Use only the dedicated test Redis DB 15"
-    client = Redis.from_url(str(redis_url), socket_timeout=2)
+    client = Redis.from_url(raw_redis_url, socket_timeout=2)
     assert client.ping()
 
     class PluginAuthSession(Session):

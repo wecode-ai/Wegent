@@ -56,7 +56,7 @@ versions without releasing the root transaction's lease.
 
 ## Failures and deployment
 
-HTTP errors use status 503 and `plugin_write_busy`, `plugin_write_unavailable`, or
+HTTP errors use status 503 and `plugin_write_busy`, `plugin_write_unavailable`,
 `plugin_write_lease_lost`, or `plugin_write_conflict`. The authentication broker
 returns the same rejection codes. A conflict requires rolling back the entire
 transaction and rereading business state; external OAuth effects must not be

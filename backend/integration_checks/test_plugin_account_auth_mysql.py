@@ -104,6 +104,41 @@ def test_simultaneous_first_policy_materialization_keeps_one_business_parent(
         assert rows[0].json == {"spec": {"enabled": True, "revision": 0}}
 
 
+def test_inactive_policy_row_is_reactivated_with_its_stored_preference(context):
+    with context.sessions.begin() as db:
+        policy_revision.read_policy_revision(db, context.user_id)
+    with context.sessions.begin() as db:
+        db.query(Kind).filter_by(
+            user_id=context.user_id,
+            kind="ConnectorAuthPolicy",
+            namespace="plugin-auth",
+            name="account",
+        ).update(
+            {
+                "is_active": False,
+                "json": {"spec": {"enabled": False, "revision": 2}},
+            }
+        )
+
+    with context.sessions.begin() as db:
+        parent = policy_revision.read_policy_revision(db, context.user_id)
+
+    assert parent.revision == 2
+    with context.sessions() as db:
+        row = (
+            db.query(Kind)
+            .filter_by(
+                user_id=context.user_id,
+                kind="ConnectorAuthPolicy",
+                namespace="plugin-auth",
+                name="account",
+            )
+            .one()
+        )
+        assert row.is_active is True
+        assert row.json == {"spec": {"enabled": False, "revision": 2}}
+
+
 def _policy_migration():
     path = (
         Path(__file__).parents[1]

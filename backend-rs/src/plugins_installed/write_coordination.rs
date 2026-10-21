@@ -22,9 +22,9 @@ const RELEASE_SCRIPT: &str = "if redis.call('get', KEYS[1]) == ARGV[1] then \
     return redis.call('del', KEYS[1]) else return 0 end";
 const CHECK_SCRIPT: &str = "if redis.call('get', KEYS[1]) == ARGV[1] then \
     return 1 else return 0 end";
-const POLICY_QUERY: &str = "SELECT id, json FROM kinds WHERE user_id = ? AND kind = \
+const POLICY_QUERY: &str = "SELECT id, json, is_active FROM kinds WHERE user_id = ? AND kind = \
     'ConnectorAuthPolicy' AND namespace = 'plugin-auth' AND name = \
-    'account' AND is_active IS true";
+    'account'";
 
 pub(super) struct PluginWriteLease<'a, R: Redis> {
     redis: &'a R,
@@ -38,6 +38,7 @@ pub(super) struct PluginWriteLease<'a, R: Redis> {
 struct PolicyRow {
     id: i64,
     json: serde_json::Value,
+    is_active: bool,
 }
 
 /// The existing account policy is the shared parent of this user's plugin
@@ -122,8 +123,20 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
                 let existing: Option<PolicyRow> = transaction
                     .fetch_optional(POLICY_QUERY, (self.user_id,))
                     .await?;
-                if existing.is_some() {
-                    return Ok(());
+                if let Some(row) = existing {
+                    if row.is_active {
+                        return Ok(());
+                    }
+                    // A deactivated policy row keeps the user's stored
+                    // preference; only restore the row's active flag.
+                    return transaction
+                        .execute(
+                            "UPDATE kinds SET is_active = true, updated_at = NOW() \
+                             WHERE id = ? AND is_active IS false",
+                            (row.id,),
+                        )
+                        .await
+                        .map(|_| ());
                 }
                 transaction
                     .execute(
@@ -152,7 +165,8 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
             .fetch_optional(POLICY_QUERY, (self.user_id,))
             .await?
             .ok_or_else(|| coordination_error("plugin_write_conflict"))?;
-        if !row
+        if !row.is_active
+            || !row
             .json
             .get("spec")
             .is_some_and(serde_json::Value::is_object)

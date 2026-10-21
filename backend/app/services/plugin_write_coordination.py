@@ -8,6 +8,7 @@ InnoDB's transactional locks; no SELECT FOR UPDATE is used for coordination.
 
 import logging
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
@@ -33,6 +34,7 @@ logger = logging.getLogger(__name__)
 LEASE_SECONDS = 30
 WAIT_SECONDS = 3
 RENEW_SECONDS = 10
+OPERATION_SECONDS = 20
 _LEASES = "plugin_write_leases"
 _CONFIGURED = "plugin_write_read_committed"
 _SAVEPOINTS = "plugin_policy_savepoint_revisions"
@@ -68,11 +70,15 @@ class _Lease:
     lock: Any
     token: str
     policy: PolicyRevision | None = None
+    started: float = field(default_factory=time.monotonic)
     stopped: threading.Event = field(default_factory=threading.Event)
     lost: threading.Event = field(default_factory=threading.Event)
 
     def renew(self) -> None:
         while not self.stopped.wait(RENEW_SECONDS):
+            if time.monotonic() - self.started >= OPERATION_SECONDS:
+                self.lost.set()
+                return
             try:
                 if not self.lock.reacquire():
                     self.lost.set()
@@ -82,6 +88,9 @@ class _Lease:
                 return
 
     def check(self) -> None:
+        if time.monotonic() - self.started >= OPERATION_SECONDS:
+            self.lost.set()
+            raise PluginWriteError("plugin_write_lease_lost")
         if self.lost.is_set():
             raise PluginWriteError("plugin_write_lease_lost")
         try:

@@ -53,7 +53,7 @@ runs:
         mkdir -p .ci-artifacts
         # Fork runtime producers have a 25-minute job deadline.
         if [[ "$EXECUTOR_ARTIFACT" == "true" ]]; then
-          export WEWORK_E2E_PREBUILT_EXECUTOR_WAIT_SECONDS=1500
+          export WEWORK_E2E_PREBUILT_EXECUTOR_WAIT_SECONDS=1800
         fi
         restore_executor() {
           if [[ "$EXECUTOR_ARTIFACT" == "true" ]]; then
@@ -61,7 +61,7 @@ runs:
             trap 'rm -rf "$artifact_directory"' EXIT
             ACTIONS_ARTIFACT_WORKFLOW=e2e-tests.yml \
               ACTIONS_ARTIFACT_HEAD_SHA="$EXECUTOR_HEAD_SHA" \
-              ACTIONS_ARTIFACT_WAIT_SECONDS=1500 \
+              ACTIONS_ARTIFACT_WAIT_SECONDS=1800 \
               .github/scripts/download-actions-artifact.sh \
                 executor-e2e-binary "$artifact_directory"
             test -f "$artifact_directory/wegent-executor"

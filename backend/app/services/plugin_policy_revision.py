@@ -55,8 +55,13 @@ def read_policy_revision(db: Session, user_id: int) -> PolicyRevision:
     if row is None:
         _materialize_default(db, user_id)
         row = _load(db, user_id)
-    if row is None or row.is_active is not True:
+    if row is None:
         raise PluginWriteError("plugin_write_conflict")
+    if row.is_active is not True:
+        _reactivate(db, row.id)
+        row = _load(db, user_id)
+        if row is None or row.is_active is not True:
+            raise PluginWriteError("plugin_write_conflict")
     payload = row.json
     if not isinstance(payload, dict) or not isinstance(payload.get("spec"), dict):
         raise PluginWriteError("plugin_write_conflict")
@@ -64,6 +69,17 @@ def read_policy_revision(db: Session, user_id: int) -> PolicyRevision:
     if type(revision) is not int or not 0 <= revision < MAX_REVISION:
         raise PluginWriteError("plugin_write_conflict")
     return PolicyRevision(row.id, user_id, revision)
+
+
+def _reactivate(db: Session, row_id: int) -> None:
+    """Restore a deactivated policy row, preserving its stored preference."""
+    reactivated = (
+        db.query(Kind)
+        .filter(Kind.id == row_id, Kind.is_active.is_(False))
+        .update({Kind.is_active: True}, synchronize_session=False)
+    )
+    if reactivated != 1:
+        raise PluginWriteError("plugin_write_conflict")
 
 
 def _materialize_default(db: Session, user_id: int) -> None:

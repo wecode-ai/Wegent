@@ -239,3 +239,37 @@ def test_existing_policy_without_revision_keeps_disabled_preference(test_db):
 
     policy = test_db.query(Kind).filter_by(user_id=17).one()
     assert policy.json == {"spec": {"enabled": False, "revision": 1}}
+
+
+def test_inactive_policy_row_is_reactivated_with_its_preference(test_db):
+    test_db.add(
+        Kind(
+            user_id=17,
+            kind="ConnectorAuthPolicy",
+            namespace="plugin-auth",
+            name="account",
+            json={"spec": {"enabled": False, "revision": 3}},
+            is_active=False,
+        )
+    )
+    test_db.flush()
+
+    coordination.acquire_plugin_write_lock(test_db, 17)
+    test_db.commit()
+
+    policy = test_db.query(Kind).filter_by(user_id=17).one()
+    assert policy.is_active is True
+    assert policy.json == {"spec": {"enabled": False, "revision": 4}}
+
+
+def test_expired_operation_deadline_rejects_commit(test_db, plugin_write_backend):
+    coordination.acquire_plugin_write_lock(test_db, 17)
+    lease = test_db.info[coordination._LEASES][17]
+    lease.started -= coordination.OPERATION_SECONDS + 1
+
+    with pytest.raises(coordination.PluginWriteError) as caught:
+        test_db.commit()
+
+    assert caught.value.code == "plugin_write_lease_lost"
+    test_db.rollback()
+    assert not plugin_write_backend[0].values
