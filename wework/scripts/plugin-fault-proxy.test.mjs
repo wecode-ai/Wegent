@@ -146,6 +146,11 @@ for (const fault of ['drop-response', 'hold-response']) {
     assert.throws(() => assertNativeCatalogRequests(proxy.requests, true), /unscoped/)
     assert.throws(() => assertNativeCatalogRequests(proxy.requests), /unscoped/)
 
+    const preflight = await fetch(`${proxy.url}${path}?project_id=project`, { method: 'OPTIONS' })
+    assert.equal(await preflight.text(), 'real-upstream-body')
+    assert.equal(proxy.requests.at(-1).fault, null)
+    assert.equal(hasScopedNativeFault(proxy.requests, fault), false)
+
     const start = proxy.requests.length
     const controller = new AbortController()
     const pending = assert.rejects(
@@ -163,5 +168,6 @@ for (const fault of ['drop-response', 'hold-response']) {
     controller.abort()
     await pending
     assert.equal(hasScopedNativeFault([{ ...scoped[0], unscoped: true }], fault), false)
+    assert.equal(hasScopedNativeFault([{ ...scoped[0], method: 'OPTIONS' }], fault), false)
   })
 }

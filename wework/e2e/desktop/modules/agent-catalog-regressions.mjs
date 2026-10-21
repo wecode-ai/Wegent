@@ -25,11 +25,12 @@ export function assertNativeCatalogRequests(entries, beforeDeviceSelection = fal
 }
 
 export const nativeCatalogFault = (entry, fault) =>
-  entry.path === NATIVE_CATALOG_PATH && !entry.unscoped ? fault : null
+  entry.method === 'GET' && entry.path === NATIVE_CATALOG_PATH && !entry.unscoped ? fault : null
 
 export const hasScopedNativeFault = (entries, fault) =>
   entries.some(
     entry =>
+      entry.method === 'GET' &&
       entry.path === NATIVE_CATALOG_PATH &&
       !entry.unscoped &&
       entry.fault === fault &&
