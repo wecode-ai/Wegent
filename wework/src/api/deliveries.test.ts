@@ -57,7 +57,9 @@ describe('createDeliveryApi queue and assignment routes', () => {
     await api.getBoardSnapshot(123)
 
     expect(client.get).toHaveBeenCalledOnce()
-    expect(client.get).toHaveBeenCalledWith('/v1/cloud-projects/123/board-snapshot')
+    expect(client.get).toHaveBeenCalledWith('/v1/cloud-projects/123/board-snapshot', {
+      cache: 'no-store',
+    })
   })
 
   it('persists the runtime task model identity when binding a board task', async () => {

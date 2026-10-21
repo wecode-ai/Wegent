@@ -20,6 +20,22 @@ function createClient() {
 }
 
 describe('createWebSharedWorkspaceApi', () => {
+  it('bypasses browser caching so newer board snapshots can overtake pending reads', async () => {
+    const client = createClient()
+    client.get.mockResolvedValue({ items: [], members: [], agents: [], task_bindings: [] })
+    const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
+
+    await expect(api.issues.getBoardSnapshot('project/1')).resolves.toEqual({
+      items: [],
+      members: [],
+      agents: [],
+      taskBindings: [],
+    })
+    expect(client.get).toHaveBeenCalledWith('/v1/cloud-projects/project%2F1/board-snapshot', {
+      cache: 'no-store',
+    })
+  })
+
   it.each(['public', 'user', 'group'] as const)(
     'preserves %s model identity when creating and updating runtime profiles',
     async modelType => {

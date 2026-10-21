@@ -253,7 +253,7 @@ projectTest(
       )
       await dragBefore(page, 'pending', issueId, 'pending', third.id)
       expect((await saved).ok()).toBe(true)
-      await expect(page.getByRole('alert').filter({ hasText: /load|加载/i })).toBeVisible()
+      await expect(page.getByTestId('collaboration-error')).toHaveText(/load|加载/i)
       expect(droppedSnapshots).toBeGreaterThan(0)
       await expectOrder()
     } finally {
@@ -268,7 +268,7 @@ projectTest(
     )
     await page.reload()
     await expectOrder()
-    await expect(page.getByRole('alert').filter({ hasText: /load|加载/i })).toHaveCount(0)
+    await expect(page.getByTestId('collaboration-error')).toHaveCount(0)
   }
 )
 

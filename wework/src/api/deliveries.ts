@@ -803,7 +803,8 @@ export function createDeliveryApi(client: HttpClient) {
       return client.get(`/v1/cloud-projects/${projectId}/loop-item-pages?${query.toString()}`)
     },
     getBoardSnapshot(projectId: CloudProjectIdInput): Promise<ProjectBoardSnapshot> {
-      return client.get(`/v1/cloud-projects/${projectId}/board-snapshot`)
+      // Mutation generations must not wait on the browser cache lock for an older snapshot.
+      return client.get(`/v1/cloud-projects/${projectId}/board-snapshot`, { cache: 'no-store' })
     },
     listLoopItemExecutions(
       projectId: CloudProjectIdInput,
