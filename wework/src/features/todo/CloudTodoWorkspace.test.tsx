@@ -4616,15 +4616,16 @@ describe('CloudTodoWorkspace', () => {
     workbenchServices.deliveryApi!.listCloudProjects = vi.fn(async () => ({
       items: [aitableProject],
     }))
-    let authCalls = 0
+    let authenticated = false
     workbenchServices.dwsApi = {
-      authStatus: vi.fn(async () => {
-        authCalls += 1
-        return authCalls === 1
-          ? { authenticated: false, token_valid: false }
-          : { authenticated: true, token_valid: true, corp_name: '测试组织' }
+      authStatus: vi.fn(async () => ({
+        authenticated,
+        token_valid: authenticated,
+        ...(authenticated ? { corp_name: '测试组织' } : {}),
+      })),
+      login: vi.fn(async () => {
+        authenticated = true
       }),
-      login: vi.fn(async () => undefined),
       logout: vi.fn(async () => undefined),
     }
     workbenchServices.deliveryApi!.listLoopItems = vi
@@ -4643,13 +4644,21 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click(await screen.findByTestId('cloud-sidebar-project-11'))
     const connectButton = await screen.findByTestId('aitable-board-dws-login')
     expect(connectButton).toHaveTextContent('连接钉钉')
+    expect(workbenchServices.dwsApi.login).not.toHaveBeenCalled()
 
-    await userEvent.click(connectButton)
-    await waitFor(() => expect(workbenchServices.dwsApi!.login).toHaveBeenCalledOnce())
-    await waitFor(
-      () => expect(screen.queryByTestId('aitable-board-dws-login')).not.toBeInTheDocument(),
-      { timeout: 5000 }
-    )
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      fireEvent.click(connectButton)
+      expect(workbenchServices.dwsApi.login).toHaveBeenCalledOnce()
+      expect(connectButton).toBeDisabled()
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(750)
+      })
+      expect(screen.queryByTestId('aitable-board-dws-login')).not.toBeInTheDocument()
+      expect(workbenchServices.deliveryApi!.listLoopItems).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('keeps project header controls interactive above the macOS drag region', async () => {
