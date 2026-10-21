@@ -22,6 +22,7 @@ import type {
   CollaborationIssue,
   CollaborationMember,
   CollaborationOwnedAgent,
+  CollaborationPlatformResources,
   CollaborationProject,
   CollaborationWorkspace,
 } from "../types";
@@ -1173,6 +1174,72 @@ describe("CollaborationPlatformApp real component flow", () => {
     ).toBeNull();
     expect(api.resources?.removeAgent).not.toHaveBeenCalled();
   });
+
+  it.each(["before", "after"])(
+    "reports a resource refresh failure %s navigation settles without reopening settings",
+    async (timing) => {
+      const { api } = createApi();
+      const editor = (props: { deletion?: AgentDeleteAction }) => (
+        <AgentSettingsEditor deletion={props.deletion} />
+      );
+      await render(
+        <PlatformHarness
+          api={api}
+          projectAgentConfiguration={
+            {
+              renderAgentEditor: editor,
+            } as unknown as CollaborationPlatformHostAdapter["projectAgentConfiguration"]
+          }
+        />,
+      );
+      await click(byTestId("collaboration-primary-agents"));
+      await click(byTestId(`collaboration-agents-settings-${agent.id}`));
+      await click(byTestId("agent-settings-delete"));
+      const refresh = deferred<CollaborationPlatformResources>();
+      const projects = deferred<CollaborationProject[]>();
+      const workspaces = deferred<CollaborationWorkspace[]>();
+      vi.mocked(api.resources!.list).mockReturnValueOnce(refresh.promise);
+      vi.mocked(api.projects.list).mockReturnValueOnce(projects.promise);
+      vi.mocked(api.workspaces!.list).mockReturnValueOnce(workspaces.promise);
+      await click(byTestId("collaboration-delete-agent-confirm"));
+      expect(
+        container.querySelector('[data-testid="agent-settings"]'),
+      ).toBeNull();
+
+      if (timing === "before") {
+        await act(async () =>
+          refresh.reject(new Error("Resource refresh failed")),
+        );
+      }
+      await act(async () => {
+        projects.resolve([project]);
+        workspaces.resolve([workspace]);
+      });
+      if (timing === "after") {
+        await act(async () =>
+          refresh.reject(new Error("Resource refresh failed")),
+        );
+      }
+      expect(container.textContent).toContain("加载协作空间失败");
+      expect(
+        container.querySelector('[data-testid="agent-settings"]'),
+      ).toBeNull();
+      expect(
+        container.querySelector(
+          '[data-testid="collaboration-delete-agent-confirm"]',
+        ),
+      ).toBeNull();
+      expect(api.resources!.removeAgent).toHaveBeenCalledExactlyOnceWith(agent);
+      await click(byTestId("collaboration-primary-home"));
+      await click(byTestId("collaboration-primary-agents"));
+      expect(container.querySelector('[role="alert"]')).toBeNull();
+      expect(
+        container.querySelector(
+          `[data-testid="collaboration-agents-row-${agent.id}"]`,
+        ),
+      ).toBeNull();
+    },
+  );
 
   it("does not expose deletion for a protected agent resource", async () => {
     const protectedAgent = {

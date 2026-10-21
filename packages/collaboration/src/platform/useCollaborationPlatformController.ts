@@ -292,6 +292,7 @@ export function useCollaborationPlatformController({
         let successfulNavigationLoads = 0;
         let primaryNavigationSettled = false;
         let navigationComplete = false;
+        let resourceLoadFailed = false;
         const publish = () => {
           if (revision !== loadRevisionRef.current) return;
           const snapshot = mergeRootNavigationSnapshots(snapshots);
@@ -339,7 +340,7 @@ export function useCollaborationPlatformController({
             executionEnvironments: [],
             resources: snapshot.resources,
             loading: false,
-            error: null,
+            error: resourceLoadFailed ? loadFailedMessage : null,
           }));
         };
         const updateSnapshot = (
@@ -371,7 +372,10 @@ export function useCollaborationPlatformController({
             .then((resources) => {
               updateSnapshot(0, { resources });
             })
-            .catch(() => undefined);
+            .catch(() => {
+              resourceLoadFailed = true;
+              if (successfulNavigationLoads > 0) publish();
+            });
         }
         for (const [index, source] of sources.entries()) {
           if (rootView === "inbox") {
