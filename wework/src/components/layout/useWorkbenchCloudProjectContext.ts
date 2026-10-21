@@ -879,12 +879,8 @@ export function useWorkbenchCloudProjectContext({
   const handleSelectCloudProject = useCallback(
     (project: CloudProject) => {
       setDismissedDefaultCloudProjectKey(null)
-      if (!contextRuntimeTask) {
-        setCloudActionNotice(t('workbench.cloud_project_bound_notice', { name: project.name }))
-        setPendingCloudContext(project, null)
-        return
-      }
       if (isDefaultWorkItemProject(project)) {
+        if (!contextRuntimeTask) setPendingCloudContext(project, null)
         return
       }
       const api = projectSpaceApiFor(project)
@@ -930,8 +926,18 @@ export function useWorkbenchCloudProjectContext({
 
   const associateRuntimeTask = useCallback(
     async (item: CloudLoopItem | null) => {
-      if (!contextRuntimeTask || !taskBoardAssociation) return
+      if (!taskBoardAssociation) return
       const { project } = taskBoardAssociation
+      if (!contextRuntimeTask) {
+        setPendingCloudContext(project, item)
+        setTaskBoardAssociation(null)
+        setCloudActionNotice(
+          item
+            ? t('workbench.task_board_association_pending_existing', { title: item.title })
+            : t('workbench.task_board_association_pending_new', { name: project.name })
+        )
+        return
+      }
       const api = projectTaskRuntimeApiForProject(services, project)
       if (!api) return
       setTaskBoardAssociation(current => (current ? { ...current, pending: true } : current))
@@ -982,6 +988,7 @@ export function useWorkbenchCloudProjectContext({
       services,
       runtimeTaskDescription,
       runtimeTaskTitle,
+      setPendingCloudContext,
       t,
       taskBoardAssociation,
     ]

@@ -27,7 +27,8 @@ export type CollaborationPlatformRootView =
   | "agents"
   | "teams"
   | "devices"
-  | "inbox";
+  | "inbox"
+  | "stand-in";
 
 export type CollaborationWorkspaceView =
   | "home"
@@ -52,6 +53,8 @@ export interface CollaborationPlatformLocation {
 }
 
 export interface CollaborationPlatformHostAdapter {
+  renderStandInPage?(props: { projects: CollaborationProject[] }): ReactNode;
+  renderProjectSidebarBadge?(project: CollaborationProject): ReactNode;
   currentUser?: {
     id: number;
     name: string;

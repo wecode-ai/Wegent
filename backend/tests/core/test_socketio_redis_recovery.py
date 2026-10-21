@@ -9,7 +9,7 @@ import socket
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 import pytest_asyncio
@@ -176,6 +176,19 @@ async def test_subscription_cleanup_finishes_when_transport_close_fails(
     assert heartbeat.cancelled()
     assert not stub.subscribers
     assert not stub.heartbeats
+
+
+@pytest.mark.asyncio
+async def test_subscription_cleanup_after_client_resets_connection() -> None:
+    stub = RedisSubscriptionServer(partial_response=True)
+    reader = asyncio.StreamReader()
+    reader.feed_eof()
+    writer = MagicMock(spec=asyncio.StreamWriter)
+    writer.wait_closed = AsyncMock(side_effect=ConnectionResetError)
+
+    await stub.handle(reader, writer)
+
+    writer.close.assert_called_once()
     assert not stub.handlers
     assert stub.connections_closed.is_set()
 
