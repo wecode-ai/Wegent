@@ -122,17 +122,11 @@ fn local_mcp_token() -> &'static str {
 
 pub(crate) async fn ensure_space_mcp_http_endpoint() -> Result<SpaceMcpEndpoint, String> {
     if let Some(endpoint) = active_endpoint() {
-        if endpoint_is_reachable(&endpoint).await {
-            return Ok(endpoint);
-        }
-        discard_endpoint(&endpoint);
+        return Ok(endpoint);
     }
     let _guard = SPACE_MCP_START_LOCK.lock().await;
     if let Some(endpoint) = active_endpoint() {
-        if endpoint_is_reachable(&endpoint).await {
-            return Ok(endpoint);
-        }
-        discard_endpoint(&endpoint);
+        return Ok(endpoint);
     }
 
     let runtime = TaskRuntime::from_env().map_err(|error| error.to_string())?;
@@ -228,35 +222,6 @@ pub(crate) async fn ensure_space_mcp_http_endpoint() -> Result<SpaceMcpEndpoint,
         &[("url", endpoint.url.clone())],
     );
     Ok(endpoint)
-}
-
-async fn endpoint_is_reachable(endpoint: &SpaceMcpEndpoint) -> bool {
-    let health_url = endpoint.url.trim_end_matches("/mcp").to_owned() + "/health";
-    reqwest::Client::new()
-        .get(health_url)
-        .bearer_auth(&endpoint.token)
-        .timeout(std::time::Duration::from_secs(1))
-        .send()
-        .await
-        .is_ok_and(|response| response.status().is_success())
-}
-
-fn discard_endpoint(endpoint: &SpaceMcpEndpoint) {
-    let discarded = if let Ok(mut running) = running_endpoint().lock() {
-        if running
-            .as_ref()
-            .is_some_and(|value| value.endpoint.url == endpoint.url)
-        {
-            running.take()
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-    if let Some(discarded) = discarded {
-        discarded.stop();
-    }
 }
 
 fn active_endpoint() -> Option<SpaceMcpEndpoint> {
@@ -650,6 +615,15 @@ mod tests {
             .to_str()
             .unwrap()
             .to_owned();
+
+        let (first, second) = tokio::join!(
+            ensure_space_mcp_http_endpoint(),
+            ensure_space_mcp_http_endpoint()
+        );
+        for reused in [first.unwrap(), second.unwrap()] {
+            assert_eq!(reused.url, endpoint.url);
+            assert_eq!(reused.token, endpoint.token);
+        }
 
         let tools = client
             .post(&endpoint.url)
