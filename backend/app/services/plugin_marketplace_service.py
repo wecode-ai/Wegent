@@ -2815,12 +2815,12 @@ class PluginMarketplaceService:
             .all()
         )
         for row in rows:
-            spec = dict(row.json.get("spec", {}))
+            payload = dict(row.json)
+            spec = dict(payload.get("spec", {}))
             spec["enabled"] = False
             spec["installState"] = "uninstalled"
-            row.json["spec"] = spec
-            row.is_active = False
-            flag_modified(row, "json")
+            payload["spec"] = spec
+            replace_installed_kind(db, row, payload, is_active=False)
 
     def plugin_copy_descriptor(
         self, db: Session, *, plugin_id: int, user_id: int

@@ -14,7 +14,7 @@ Python and the migrated Rust automatic update endpoint use the same protocol:
 
 - Key: `wegent:plugin-write:{user_id}`; value: a random 32-character hexadecimal token.
 - Contention waits up to 3 seconds; the lease lasts 30 seconds. Python renews
-  every 10 seconds; Rust bounds the entire operation to 20 seconds.
+  every 10 seconds; both runtimes reject commits after 20 seconds of operation.
 - The scope covers a user's plugin domain because automation policy, account
   transfers, and installations have cross-plugin constraints. Transactions
   requiring multiple users acquire leases in ascending user ID order.
@@ -29,6 +29,7 @@ that check from committing. Before reading business state, each writer snapshots
 namespace `plugin-auth` and name `account`. First use materializes the existing
 default, `enabled=true, revision=0`, in an independent short transaction. Existing
 policies need no extra connection and retain the user's automation preference.
+Deactivated policy rows are reactivated while preserving that preference.
 
 The final business statement atomically increments that revision, conditional
 on the primary key, complete policy identity, and observed revision. Exactly one

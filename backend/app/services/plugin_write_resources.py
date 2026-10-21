@@ -13,6 +13,7 @@ from sqlalchemy.pool import Pool
 
 from app.core.config import settings
 from app.db.pool_observability import ObservedQueuePool, register_pool
+from app.db.timezone import MYSQL_SESSION_TIMEZONE_OFFSET
 
 _mutex = threading.Lock()
 _redis: Redis | None = None
@@ -49,10 +50,14 @@ def policy_engine(business_engine: Engine) -> Engine:
                 pool_timeout=1,
                 pool_recycle=600,
                 connect_args={
+                    "charset": "utf8mb4",
                     "connect_timeout": 1,
                     "read_timeout": 4,
                     "write_timeout": 4,
-                    "init_command": "SET SESSION innodb_lock_wait_timeout = 3",
+                    "init_command": (
+                        f"SET SESSION time_zone = '{MYSQL_SESSION_TIMEZONE_OFFSET}', "
+                        "SESSION innodb_lock_wait_timeout = 3"
+                    ),
                 },
             )
             register_pool(

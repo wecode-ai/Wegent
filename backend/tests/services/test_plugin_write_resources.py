@@ -3,7 +3,7 @@
 from unittest.mock import Mock
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 
 from app.services import plugin_write_resources as resources
 
@@ -36,6 +36,34 @@ def test_policy_pool_is_independent_and_shared_across_session_option_engines():
         assert fence.pool is not business.pool
         assert fence.pool.size() == 2
         assert fence.pool.timeout() == 1
+    finally:
+        resources.close_plugin_write_resources()
+        business.dispose()
+
+
+def test_policy_connections_preserve_charset_and_configured_timezone():
+    business = create_engine("mysql+pymysql://unused@127.0.0.1/unused")
+    connect_options = {}
+
+    def capture_connection_options(_dialect, _record, _args, options):
+        connect_options.update(options)
+        raise RuntimeError("connection options captured")
+
+    try:
+        policy = resources.policy_engine(business)
+        event.listen(policy, "do_connect", capture_connection_options)
+
+        with pytest.raises(RuntimeError, match="connection options captured"):
+            policy.connect()
+
+        assert connect_options["charset"] == "utf8mb4"
+        assert connect_options["init_command"] == (
+            f"SET SESSION time_zone = '{resources.MYSQL_SESSION_TIMEZONE_OFFSET}', "
+            "SESSION innodb_lock_wait_timeout = 3"
+        )
+        assert connect_options["connect_timeout"] == 1
+        assert connect_options["read_timeout"] == 4
+        assert connect_options["write_timeout"] == 4
     finally:
         resources.close_plugin_write_resources()
         business.dispose()

@@ -167,9 +167,9 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
             .ok_or_else(|| coordination_error("plugin_write_conflict"))?;
         if !row.is_active
             || !row
-            .json
-            .get("spec")
-            .is_some_and(serde_json::Value::is_object)
+                .json
+                .get("spec")
+                .is_some_and(serde_json::Value::is_object)
         {
             return Err(coordination_error("plugin_write_conflict"));
         }

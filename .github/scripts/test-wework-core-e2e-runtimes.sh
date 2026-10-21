@@ -137,7 +137,7 @@ set -euo pipefail
 test "${GITHUB_TOKEN:-}" = synthetic-read-token
 test "$ACTIONS_ARTIFACT_WORKFLOW" = e2e-tests.yml
 test "$ACTIONS_ARTIFACT_HEAD_SHA" = synthetic-head-sha
-test "$ACTIONS_ARTIFACT_WAIT_SECONDS" = 1500
+test "$ACTIONS_ARTIFACT_WAIT_SECONDS" = 1800
 test "$1" = executor-e2e-binary
 echo artifact >> "$TEST_LOG"
 [[ "${FAIL_ARTIFACT:-false}" != true ]] || exit 1
