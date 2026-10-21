@@ -142,7 +142,7 @@ export async function verifyLocalIssueAssigneeRecovery(
   const completed = await runs()
   assert.equal(completed.length, 1, 'Retry duplicated the real execution')
   assert.equal(completed[0].agent_id, binding.id)
-  assert.equal(completed[0].status, 'succeeded')
+  assert.equal(completed[0].status, 'completed')
   assert.ok(
     completed[0].runtime_task_id,
     'The recovered assignment did not use a real runtime task'
