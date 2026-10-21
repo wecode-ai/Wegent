@@ -4,7 +4,12 @@ import {
   ComposerPredictionContext,
   ComposerPredictionPendingContext,
 } from '@wegent/collaboration/composer'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  getConversationDiagnosticsSnapshot,
+  resetConversationDiagnosticsForTest,
+  startConversationDiagnosticCapture,
+} from '@wegent/collaboration/conversation/conversationDiagnostics'
 import { defaultAppPreferences } from '@/desktop/appPreferences'
 import { AppPreferencesContext } from '@/features/app-preferences/appPreferencesContext'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
@@ -108,6 +113,91 @@ function fixture(
 }
 
 describe('reply prediction provider', () => {
+  afterEach(() => resetConversationDiagnosticsForTest())
+
+  it('diagnoses existing key-order restarts without changing prediction identity or request behavior', async () => {
+    startConversationDiagnosticCapture()
+    const predict = vi.fn<Predict>(() => new Promise(() => {}))
+    const original = {
+      ...source,
+      modelSelection: {
+        modelName: 'session-model',
+        modelType: 'runtime' as const,
+        options: { speed: 'standard', reasoning: 'low' },
+      },
+    }
+    const { rerender, unmount } = render(fixture(predict, original))
+    await waitFor(() => expect(predict).toHaveBeenCalledTimes(1))
+    rerender(
+      fixture(predict, {
+        ...original,
+        modelSelection: {
+          ...original.modelSelection,
+          options: { reasoning: 'low', speed: 'standard' },
+        },
+      })
+    )
+    await waitFor(() => expect(predict).toHaveBeenCalledTimes(2))
+    expect(predict.mock.calls[0][0].signal?.aborted).toBe(true)
+    const events = getConversationDiagnosticsSnapshot()!.events
+    const starts = events.filter(event => event.name === 'reply-prediction-effect-start')
+    expect(starts).toHaveLength(2)
+    expect(starts[0].details.predictionModelHash).not.toBe(starts[1].details.predictionModelHash)
+    expect(starts[0].details.predictionModelSemanticHash).toBe(
+      starts[1].details.predictionModelSemanticHash
+    )
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        name: 'reply-prediction-effect-cleanup',
+        details: expect.objectContaining({
+          keyChanged: true,
+          busyChanged: false,
+          serviceChanged: false,
+          unmounted: false,
+        }),
+      })
+    )
+    unmount()
+    expect(getConversationDiagnosticsSnapshot()!.events).toContainEqual(
+      expect.objectContaining({
+        name: 'reply-prediction-effect-cleanup',
+        details: expect.objectContaining({ unmounted: true }),
+      })
+    )
+  })
+
+  it('distinguishes busy transitions from API and service replacement', async () => {
+    startConversationDiagnosticCapture()
+    const predict = vi.fn<Predict>(() => new Promise(() => {}))
+    const { rerender } = render(fixture(predict))
+    await waitFor(() => expect(predict).toHaveBeenCalledTimes(1))
+    rerender(fixture(predict, { ...source, busy: true }))
+    expect(getConversationDiagnosticsSnapshot()!.events).toContainEqual(
+      expect.objectContaining({
+        name: 'reply-prediction-effect-cleanup',
+        details: expect.objectContaining({
+          busyChanged: true,
+          keyChanged: false,
+          serviceChanged: false,
+        }),
+      })
+    )
+    const replacement = vi.fn<Predict>(() => new Promise(() => {}))
+    rerender(fixture(replacement))
+    await waitFor(() => expect(replacement).toHaveBeenCalledTimes(1))
+    expect(getConversationDiagnosticsSnapshot()!.events).toContainEqual(
+      expect.objectContaining({
+        name: 'reply-prediction-effect-cleanup',
+        details: expect.objectContaining({
+          apiChanged: true,
+          serviceChanged: true,
+          busyChanged: true,
+          keyChanged: false,
+        }),
+      })
+    )
+  })
+
   it.each([
     { workspaceKind: 'chat' },
     { projectSession: { projectId: 'project-1', issueId: 'issue-1' } },

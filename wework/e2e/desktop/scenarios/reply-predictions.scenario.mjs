@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
+import { waitForSnapshot } from '../modules/conversation-layout.mjs'
 
 const ACTIVE = '[data-workspace-tab-content][aria-hidden="false"]'
 const INPUT = `${ACTIVE} [data-testid="chat-message-input"]`
@@ -121,6 +122,34 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       await control.command('press', INPUT, { key: 'Enter' })
       await control.command('waitFor', PENDING, { text: '正在生成建议' })
       await capture('reply-03b-generating-suggestion.png')
+      const beforeRefresh = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+        .workbench.currentRuntimeTask
+      await control.command('clickWhenEnabled', '[data-testid="conversation-rename-button"]')
+      await control.command('waitFor', '[data-testid="conversation-rename-input"]', {
+        visible: true,
+      })
+      await control.command('fill', '[data-testid="conversation-rename-input"]', {
+        value: '回复建议元数据刷新验证',
+      })
+      await control.command('nativePress', '[data-testid="conversation-rename-input"]', {
+        key: 'Enter',
+      })
+      await waitForSnapshot(
+        control,
+        snapshot => !snapshot.testIds.includes('conversation-rename-input'),
+        'Task metadata refresh did not finish before the held prediction was released'
+      )
+      const afterRefresh = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+        .workbench.currentRuntimeTask
+      assert.ok(
+        beforeRefresh?.taskId && beforeRefresh?.threadId,
+        'The prediction source task is missing'
+      )
+      assert.deepEqual(
+        [afterRefresh?.deviceId, afterRefresh?.taskId, afterRefresh?.threadId],
+        [beforeRefresh.deviceId, beforeRefresh.taskId, beforeRefresh.threadId],
+        'Refreshing task metadata changed the prediction source conversation'
+      )
       await control.command('fill', INPUT, { value: '生成时我也能输入' })
       assert.equal(Number(await control.command('getElementCount', PENDING)), 0)
       await control.command('fill', INPUT, { value: '' })
