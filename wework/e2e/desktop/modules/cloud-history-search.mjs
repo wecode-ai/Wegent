@@ -431,6 +431,14 @@ export function createCloudHistorySearchVerification() {
           join(resultDir, 'cloud-history-search.json'),
           `${JSON.stringify(evidence, null, 2)}\n`
         )
+        await writeFile(
+          join(resultDir, 'cloud-history-search-requests.json'),
+          `${JSON.stringify(
+            proxy.requests.filter(entry => entry.stage),
+            null,
+            2
+          )}\n`
+        )
       }
     },
     async cleanup() {

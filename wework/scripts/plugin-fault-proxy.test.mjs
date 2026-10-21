@@ -11,7 +11,9 @@ async function fixture(t) {
   const server = createServer((request, response) => {
     received.push({ method: request.method, url: request.url })
     request.resume()
-    response.writeHead(request.method === 'DELETE' ? 204 : 200)
+    response.writeHead(request.method === 'DELETE' ? 204 : 200, {
+      'Content-Type': 'text/plain',
+    })
     response.end(request.method === 'DELETE' ? undefined : 'real-upstream-body')
   })
   const sockets = new Set()
@@ -110,7 +112,10 @@ test(
         headers: { Authorization: 'Bearer secret' },
         body: 'credential-body',
       })
-    await assert.rejects(post())
+    const dropped = await post()
+    assert.equal(dropped.status, 200)
+    assert.equal(dropped.headers.get('content-type'), 'text/plain')
+    await assert.rejects(dropped.text())
     assert.equal(received.length, 1)
     assert.equal(received[0].method, 'POST')
     assert.equal(proxy.requests.length, 1)

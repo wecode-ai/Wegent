@@ -56,6 +56,9 @@ export class PluginFaultProxy {
         return
       }
       if (fault === 'drop-response') {
+        // Commit the real headers so Chromium cannot replay a pre-response disconnect.
+        response.writeHead(incoming.statusCode, incoming.headers)
+        response.flushHeaders()
         incoming.resume()
         incoming.once('end', () => {
           entry.committedResponseDropped = true
