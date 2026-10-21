@@ -6,8 +6,6 @@ remaining incremental API migration.
 
 ## API ownership
 
-Most APIs that were historically implemented in Python have migrated to Rust.
-
 - Implement every **new Backend API** here. Register its handler with
   `Application`, add it to the active `WEGENT_RS_ROUTES_FILE`, and add focused
   tests in the same change. Do not add a duplicate Python fallback handler.

@@ -27,10 +27,9 @@ Use `docs/en/` and `docs/zh/` for detailed architecture and guides. Keep this fi
 
 ## Backend migration ownership
 
-Most APIs that were historically implemented in `backend/` have migrated to
-Rust. `backend-rs/` is the default implementation for new Backend APIs. Add new
-API handlers in Rust, register them with `Application`, and select them in the
-active route table; do not add a duplicate Python implementation as a fallback.
+`backend-rs/` is the default implementation for new Backend APIs. Add new API
+handlers in Rust, register them with `Application`, and select them in the active
+route table; do not add a duplicate Python implementation as a fallback.
 
 Existing APIs that have not migrated remain owned by `backend/`. Do not infer
 ownership from a shared utility, a Rust foundation module, or the existence of
