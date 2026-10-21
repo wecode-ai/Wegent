@@ -35,9 +35,13 @@ def notify_project_chat_mentions(
 
     if not mentions:
         return
-    recipient_ids = _mentioned_member_ids(
-        mentions, project_participant_ids(db, project)
-    )
+    recipient_ids = [
+        user_id
+        for user_id in _mentioned_member_ids(
+            mentions, project_participant_ids(db, project)
+        )
+        if user_id != actor_user_id
+    ]
     for recipient_id in recipient_ids:
         _require_issue_visibility(db, project, task_id, item, recipient_id)
 
@@ -51,8 +55,6 @@ def notify_project_chat_mentions(
         reply_preview=reply_preview,
     )
     for recipient_id in recipient_ids:
-        if recipient_id == actor_user_id:
-            continue
         create_notification(
             db,
             user_id=recipient_id,

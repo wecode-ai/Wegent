@@ -15,7 +15,7 @@ from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import ResourceMember
 from app.models.user import User
 from app.models.wework_notification import WeworkNotification
-from app.schemas.project_chat import ProjectChatSend
+from app.schemas.project_chat import ProjectChatSend, ProjectChatSubscribe
 from app.services.cloud_projects.service import cloud_project_service
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.project_chat.service import project_chat_service
@@ -183,6 +183,107 @@ def test_cp14_external_issue_mentions_require_provider_visibility(
         assert test_db.query(WeworkNotification).count() == 0
         schedule.assert_not_called()
     assert (test_db.get(LoopItem, task_id) is not None) == shadow
+
+
+@pytest.mark.parametrize("provider", ["github", "gitlab"])
+@pytest.mark.parametrize("shadow", [False, True])
+@pytest.mark.parametrize("operation", ["send", "subscribe"])
+def test_cp14_external_issue_actor_uses_provider_visibility(
+    test_db, test_user, mention_scope, monkeypatch, provider, shadow, operation
+):
+    """A local index must not grant the actor access to a restricted provider Issue."""
+    project, workspace, actor, item, schedule = mention_scope
+    project.metadata_json = {"task_provider": provider}
+    task_id = f"{project.project_key}-1"
+    test_db.delete(item)
+    if shadow:
+        test_db.add(
+            LoopItem(
+                id=task_id,
+                cloud_project_id=project.id,
+                title="External issue index",
+                created_by_user_id=test_user.id,
+                metadata_json={"security_level": "open"},
+            )
+        )
+    grant_member(test_db, "Workspace", workspace.id, actor.id, "Developer")
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "_get_issue",
+        lambda _project, _number: {
+            "number": 1,
+            "title": "Restricted provider issue",
+            "labels": ["wegent:security:related"],
+        },
+    )
+    test_db.commit()
+
+    with pytest.raises(HTTPException) as error:
+        if operation == "send":
+            project_chat_service.send(
+                test_db,
+                user_id=actor.id,
+                user_name=actor.user_name,
+                request=mention_request(project, actor, task_id),
+            )
+        else:
+            project_chat_service.subscribe(
+                test_db,
+                user_id=actor.id,
+                request=ProjectChatSubscribe(project_id=project.id, task_id=task_id),
+            )
+    assert error.value.status_code == 404
+    test_db.rollback()
+    assert test_db.query(ProjectChatMessage).count() == 0
+    assert test_db.query(WeworkNotification).count() == 0
+    schedule.assert_not_called()
+
+
+@pytest.mark.parametrize("provider", ["github", "gitlab"])
+@pytest.mark.parametrize("operation", ["send", "subscribe"])
+def test_cp14_external_issue_must_belong_to_requested_project(
+    test_db, test_user, mention_scope, monkeypatch, provider, operation
+):
+    """Access to two projects must not allow a mismatched project/Issue scope."""
+    project, _, _, _, schedule = mention_scope
+    project.metadata_json = {"task_provider": provider}
+    public_id = str(uuid.uuid4())
+    other = CloudProject(
+        public_id=public_id,
+        project_key=f"FOREIGN{uuid.uuid4().hex[:6].upper()}",
+        name="Another external project",
+        created_by_user_id=test_user.id,
+        storage_prefix=f"projects/{public_id}",
+        metadata_json={"task_provider": provider},
+    )
+    authorize_project(test_db, other)
+    test_db.commit()
+    task_id = f"{other.project_key}-1"
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "_get_issue",
+        lambda _project, _number: {"number": 1, "title": "Other Issue", "labels": []},
+    )
+
+    with pytest.raises(HTTPException) as error:
+        if operation == "send":
+            project_chat_service.send(
+                test_db,
+                user_id=test_user.id,
+                user_name=test_user.user_name,
+                request=mention_request(project, test_user, task_id),
+            )
+        else:
+            project_chat_service.subscribe(
+                test_db,
+                user_id=test_user.id,
+                request=ProjectChatSubscribe(project_id=project.id, task_id=task_id),
+            )
+    assert error.value.status_code == 404
+    test_db.rollback()
+    assert test_db.query(ProjectChatMessage).count() == 0
+    assert test_db.query(WeworkNotification).count() == 0
+    schedule.assert_not_called()
 
 
 @pytest.mark.parametrize("source", ["Workspace", "CloudProject"])

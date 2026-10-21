@@ -2183,6 +2183,19 @@ class ProjectChatService:
                     status.HTTP_403_FORBIDDEN, "Insufficient permission"
                 )
             return project
+        if project.task_provider in {"github", "gitlab"}:
+            from app.services.loop_items.external_provider import (
+                external_loop_item_provider,
+            )
+
+            external_task = external_loop_item_provider.get(db, task_id, user_id)
+            if external_task["cloud_project_id"] != str(project.id):
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Project task not found")
+            if not has_permission(access.role, required_role):
+                raise HTTPException(
+                    status.HTTP_403_FORBIDDEN, "Insufficient permission"
+                )
+            return project
         task = (
             db.query(LoopItem)
             .filter(
@@ -2194,17 +2207,6 @@ class ProjectChatService:
             .first()
         )
         if task is None:
-            if project.task_provider in {"github", "gitlab"}:
-                from app.services.loop_items.external_provider import (
-                    external_loop_item_provider,
-                )
-
-                external_loop_item_provider.get(db, task_id, user_id)
-                if not has_permission(access.role, required_role):
-                    raise HTTPException(
-                        status.HTTP_403_FORBIDDEN, "Insufficient permission"
-                    )
-                return project
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Project task not found")
         if not can_view_item(db, access, task, user_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Project task not found")
