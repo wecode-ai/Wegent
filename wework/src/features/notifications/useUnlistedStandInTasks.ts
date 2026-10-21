@@ -13,6 +13,7 @@ export function useUnlistedStandInTasks(
 ) {
   const [loaded, setLoaded] = useState<Map<string, RuntimeTaskReminderItem>>(new Map())
   const attempted = useRef(new Map<string, string>())
+  const ordinary = useRef(new Set<string>())
   const mounted = useRef(false)
   useEffect(() => {
     mounted.current = true
@@ -41,6 +42,7 @@ export function useUnlistedStandInTasks(
   useEffect(() => {
     if (!reader || !runtimeApi) return
     for (const candidate of pending) {
+      if (ordinary.current.has(candidate.key)) continue
       if (attempted.current.get(candidate.key) === candidate.signature) continue
       attempted.current.set(candidate.key, candidate.signature)
       void (async () => {
@@ -59,12 +61,11 @@ export function useUnlistedStandInTasks(
           limit: 1,
           includeFullContent: false,
         })
-        if (
-          !mounted.current ||
-          attempted.current.get(candidate.key) !== candidate.signature ||
-          response.origin?.initiatedBy !== 'stand_in'
-        )
+        if (!mounted.current || attempted.current.get(candidate.key) !== candidate.signature) return
+        if (response.origin?.initiatedBy !== 'stand_in') {
+          if (response.origin) ordinary.current.add(candidate.key)
           return
+        }
         const task = {
           ...result.task,
           runtimeHandle: { ...result.task.runtimeHandle, origin: response.origin },

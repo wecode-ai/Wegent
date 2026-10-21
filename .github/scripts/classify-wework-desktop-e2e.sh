@@ -727,6 +727,10 @@ classify_wework_path() {
       wework/src/components/chat/composer/Goal* | \
       wework/src/features/workbench/runtimeTaskReminders*)
       select_target "core:goal-lifecycle"
+      if [[ "$path" == wework/src/features/workbench/runtimeTaskReminders* ]]; then
+        select_target "core:stand-in-notifications"
+        select_target "core:stand-in-cloud"
+      fi
       return
       ;;
 

@@ -48,16 +48,19 @@ export function StandInNotificationProcessing({
   const projectId = notification.payload.projectId
   const issueId = notification.payload.itemId
   const signature = state ? `${state.deviceId}:${state.taskId}:${state.updatedAt}` : ''
+  const deviceId = state?.deviceId
+  const taskId = state?.taskId
+  const status = state?.status
   const question = loaded?.signature === signature ? loaded.question : null
   const summary = loaded?.signature === signature ? loaded.summary : ''
   const loadError = loaded?.signature === signature ? loaded.error : undefined
   const displayStatus = submittedVersion === signature ? 'running' : state?.status
 
   useEffect(() => {
-    if (!state || state.status === 'running' || !runtimeApi) return
+    if (!deviceId || !taskId || status === 'running' || !runtimeApi) return
     let active = true
     void runtimeApi
-      .getRuntimeTranscript({ deviceId: state.deviceId, taskId: state.taskId, limit: 20 })
+      .getRuntimeTranscript({ deviceId, taskId, limit: 20 })
       .then(response => {
         if (!active) return
         const transcript = projectRuntimePaneTranscript(response)
@@ -83,7 +86,7 @@ export function StandInNotificationProcessing({
     return () => {
       active = false
     }
-  }, [signature, runtimeApi, state])
+  }, [signature, runtimeApi, deviceId, taskId, status])
 
   const perform = async (action: () => Promise<void>): Promise<boolean> => {
     if (submitting.current) return false

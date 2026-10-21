@@ -4,6 +4,13 @@ import { mergeStandInNotifications, standInState } from './standInNotifications'
 import { assignment, runtimeItem } from './standInNotifications.fixtures'
 
 describe('stand-in notification projection', () => {
+  it.each(['', 'invalid'])('handles invalid creation timestamps: %s', createdAt => {
+    const result = mergeStandInNotifications(
+      [],
+      [{ ...runtimeItem, task: { ...runtimeItem.task, createdAt } }]
+    )
+    expect(result[0].created_at).toBe('1970-01-01T00:00:00.000Z')
+  })
   it('enriches the original assignment without duplicating it or mutating API data', () => {
     const result = mergeStandInNotifications([assignment], [runtimeItem])
     expect(result).toHaveLength(1)

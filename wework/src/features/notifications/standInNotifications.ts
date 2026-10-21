@@ -20,6 +20,11 @@ export type StandInNotification = Omit<WeworkNotification, 'payload'> & {
   synthetic?: boolean
 }
 
+function runtimeTimestamp(value: string | number | null | undefined): number {
+  const parsed = value == null ? 0 : new Date(value).getTime()
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
 export function standInOrigin(item: RuntimeTaskReminderItem) {
   const origin = item.task.runtimeHandle?.origin
   if (
@@ -44,12 +49,11 @@ export function standInState(item: RuntimeTaskReminderItem): StandInNotification
           ? 'completed'
           : 'running'
   const timestamp = status === 'waiting' ? task.updatedAt : (task.completedAt ?? task.updatedAt)
-  const parsed = timestamp == null ? 0 : new Date(timestamp).getTime()
   return {
     ...item.address,
     status,
     summary: task.error ?? '',
-    updatedAt: new Date(Number.isFinite(parsed) ? parsed : 0).toISOString(),
+    updatedAt: new Date(runtimeTimestamp(timestamp)).toISOString(),
   }
 }
 
@@ -82,7 +86,7 @@ export function mergeStandInNotifications(
             title: item.task.title,
             body: '',
             url: weworkTaskScheme(item.address),
-            created_at: new Date(item.task.createdAt ?? 0).toISOString(),
+            created_at: new Date(runtimeTimestamp(item.task.createdAt)).toISOString(),
             read_at: 'read',
             payload: {
               projectId: String(origin.cloudProjectId),

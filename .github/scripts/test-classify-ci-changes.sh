@@ -612,6 +612,14 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
     "$notification_path"
 done
 
+assert_desktop_case "runtime reminder changes retain goal and stand-in notification coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-4","name":"Core / shard 4","segments":"goal-lifecycle"},{"id":"core-12","name":"Core / shard 12","segments":"stand-in-notifications"},{"id":"core-18","name":"Core / shard 18","segments":"stand-in-cloud"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/features/workbench/runtimeTaskReminders.ts"
+
 for stand_in_path in \
   "wework/e2e/desktop/scenarios/stand-in-workspace.scenario.mjs" \
   "wework/src/features/todo/StandInComposer.tsx" \

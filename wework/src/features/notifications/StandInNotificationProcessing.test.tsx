@@ -53,6 +53,12 @@ beforeEach(() => {
   run.mockResolvedValue(runtimeItem.address)
 })
 describe('notification inline handling', () => {
+  it('does not reload an unchanged execution when the notification source republishes', async () => {
+    const rendered = render(view())
+    await waitFor(() => expect(transcript).toHaveBeenCalledOnce())
+    rendered.rerender(view())
+    expect(transcript).toHaveBeenCalledOnce()
+  })
   it('sends follow-up to the existing execution without navigation or task creation', async () => {
     render(view())
     fireEvent.change(screen.getByTestId('notification-stand-in-reply-assignment'), {

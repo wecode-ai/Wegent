@@ -92,4 +92,18 @@ describe('unlisted stand-in task discovery', () => {
     await act(async () => resolvers[0]({ success: false }))
     expect(hook.result.current[0]?.task.title).toBe('Latest')
   })
+  it('does not re-read confirmed ordinary tasks when their lifecycle advances', async () => {
+    getRuntimeTranscript.mockResolvedValue({
+      origin: { initiatedBy: 'user' },
+      messages: [],
+      turns: [],
+    })
+    const hook = renderHook(({ value }) => useUnlistedStandInTasks([], value, reader, runtimeApi), {
+      initialProps: { value: snapshot() },
+    })
+    await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledOnce())
+    hook.rerender({ value: snapshot(true) })
+    expect(readTask).toHaveBeenCalledOnce()
+    expect(hook.result.current).toEqual([])
+  })
 })
