@@ -622,17 +622,18 @@ def test_loop_item_reorder_orders_one_lane(
         second["id"],
         first["id"],
     ]
-    assert [item["sort_order"] for item in response.json()["items"]] == [0, 1]
+    assert len({item["sort_order"] for item in response.json()["items"]}) == 2
 
     listed = test_client.get(
         f"/api/v1/cloud-projects/{delivery_project.id}/loop-items", headers=headers
     ).json()["items"]
     inbox_ids = [item["id"] for item in listed if item["status"] == "inbox"]
     assert inbox_ids == [second["id"], first["id"]]
-    # The other lane keeps its own ordering state.
+    # Status lanes are projections of one canonical sibling order.
+    assert sorted(item["sort_order"] for item in listed) == [0, 1, 2]
     assert (
-        next(item for item in listed if item["id"] == other_lane["id"])["sort_order"]
-        == 0
+        next(item for item in listed if item["id"] == other_lane["id"])["status"]
+        == "pending"
     )
 
     # Moving a TODO to another lane resets its manual position to the top.
@@ -1980,7 +1981,10 @@ def test_loop_item_reorder_respects_sibling_scope_across_statuses(
         key=lambda item: item["sort_order"],
     )
     assert [item["id"] for item in siblings] == expected
-    assert [item["sort_order"] for item in siblings] == list(range(len(expected)))
+    assert sorted(item["sort_order"] for item in listed if not item["parent_id"]) == [
+        0,
+        1,
+    ]
     assert next(item for item in listed if item["id"] == child["id"]) == child
     assert {item["id"]: item["status"] for item in listed} == {
         first["id"]: "inbox",

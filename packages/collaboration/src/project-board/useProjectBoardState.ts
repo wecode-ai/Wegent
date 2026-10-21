@@ -5,10 +5,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   defaultProjectBoardSort,
-  readProjectBoardColumnSorts,
   type ProjectBoardColumnSorts,
   type ProjectBoardSort,
 } from "./projectBoardSorting";
+import {
+  boardSortStorageChanged,
+  loadBoardSortPreferences,
+  saveBoardSortPreference,
+} from "./projectBoardPreferences";
 
 export type ProjectBoardGroupBy = "status" | "priority" | "assignee" | "tag";
 
@@ -57,13 +61,30 @@ export function useProjectBoardState({
   }, [defaultGroupBy, personalGroupStorageKey]);
 
   useEffect(() => {
-    setColumnSorts(
-      readProjectBoardColumnSorts(
+    const refresh = () =>
+      setColumnSorts(
         personalSortStorageKey
-          ? localStorage.getItem(personalSortStorageKey)
-          : null,
-      ),
-    );
+          ? loadBoardSortPreferences(personalSortStorageKey)
+          : {},
+      );
+    refresh();
+    const onStorage = (event: StorageEvent) => {
+      if (
+        event.key === null ||
+        event.key?.startsWith(`${personalSortStorageKey}:`)
+      )
+        refresh();
+    };
+    const onLocalChange = (event: Event) => {
+      if ((event as CustomEvent<string>).detail === personalSortStorageKey)
+        refresh();
+    };
+    window.addEventListener("storage", onStorage);
+    window.addEventListener(boardSortStorageChanged, onLocalChange);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener(boardSortStorageChanged, onLocalChange);
+    };
   }, [personalSortStorageKey]);
 
   const getColumnSort = useCallback(
@@ -74,13 +95,16 @@ export function useProjectBoardState({
 
   const selectColumnSort = useCallback(
     (columnKey: string, value: ProjectBoardSort) => {
+      const lane = JSON.stringify([groupBy, columnKey]);
+      if (personalSortStorageKey) {
+        saveBoardSortPreference(personalSortStorageKey, lane, value);
+        return;
+      }
       setColumnSorts((current) => {
         const next = {
           ...current,
-          [JSON.stringify([groupBy, columnKey])]: value,
+          [lane]: value,
         };
-        if (personalSortStorageKey)
-          localStorage.setItem(personalSortStorageKey, JSON.stringify(next));
         return next;
       });
     },

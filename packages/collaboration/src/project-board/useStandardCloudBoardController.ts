@@ -4,7 +4,6 @@
 
 import { useCallback, useMemo, useState } from "react";
 
-import { reorderLaneItems } from "../board";
 import {
   boardPriorities,
   compareProjectBoardItems,
@@ -19,9 +18,14 @@ import {
   type ProjectBoardStateOptions,
 } from "./useProjectBoardState";
 
+export interface ProjectBoardPosition {
+  beforeItemId: string | null;
+}
+
 export interface StandardCloudBoardItem {
   id: string;
   parent_id: string | null;
+  cloud_project_id?: string | number;
   assignee_user_id?: number | null;
   assignee_name?: string | null;
   assignee_agent_id?: string | null;
@@ -329,6 +333,7 @@ export interface StandardCloudBoardControllerOptions<
 > extends ProjectBoardStateOptions {
   createColumns(groupBy: ProjectBoardGroupBy): ProjectBoardColumn[];
   currentParentId?: string | null;
+  supportsOrder?: boolean;
   extensions: StandardCloudBoardHostExtensions<T>;
   items: T[];
   onCurrentParentIdChange?(parentId: string | null): void;
@@ -345,7 +350,6 @@ export type StandardCloudBoardMutation<T extends StandardCloudBoardItem> = (
   | {
       kind: "status";
       optimisticItems: T[];
-      laneIds: string[];
       status: string;
     }
   | {
@@ -364,10 +368,11 @@ export type StandardCloudBoardMutation<T extends StandardCloudBoardItem> = (
       optimisticItems: T[];
       tags: string[];
     }
-  | { kind: "reorder"; optimisticItems: T[]; laneIds: string[] }
-) & { laneIds?: string[] };
+  | { kind: "reorder"; optimisticItems: T[] }
+) & { position?: ProjectBoardPosition };
 
 export interface StandardCloudBoardMutationUpdate {
+  position?: ProjectBoardPosition;
   assignee_agent_id?: string | null;
   assignee_team_id?: number | null;
   assignee_user_id?: number | null;
@@ -386,16 +391,10 @@ export interface StandardCloudBoardMutationCommands<
       assigneeId: string;
       assigneeType: "user" | "agent" | "team";
       notifyAssignee: boolean;
+      position?: ProjectBoardPosition;
     },
   ): Promise<T>;
-  reorder?(
-    item: T,
-    input: {
-      laneIds: string[];
-      optimisticItems: T[];
-      status: string | null;
-    },
-  ): Promise<T | void>;
+  refreshOrder?(item: T): Promise<void>;
   update(item: T, input: TUpdate): Promise<T>;
 }
 
@@ -435,76 +434,52 @@ export async function executeStandardCloudBoardMutation<
   notifyAssignee?: boolean;
 }): Promise<T> {
   const standardUpdate = standardCloudBoardMutationUpdate(mutation);
+  const position = mutation.position;
+  if (position && !commands.refreshOrder)
+    throw new Error("Board moves require persisted-order refresh");
   const updated =
-    mutation.kind === "reorder"
-      ? item
-      : mutation.kind === "assignee" &&
-          mutation.assigneeType &&
-          mutation.assigneeId &&
-          commands.assign
-        ? await commands.assign(item, {
-            assigneeId: mutation.assigneeId,
-            assigneeType: mutation.assigneeType,
-            notifyAssignee,
-          })
-        : await commands.update(item, {
-            ...additionalUpdate,
-            ...standardUpdate,
-          } as TUpdate);
-
-  if (mutation.laneIds && commands.reorder) {
-    const optimisticItems = mutation.optimisticItems.map((candidate) =>
-      candidate.id === updated.id
-        ? {
-            ...candidate,
-            ...updated,
-            sort_order: candidate.sort_order,
-          }
-        : candidate,
-    );
-    const reordered = await commands.reorder(updated, {
-      laneIds: mutation.laneIds,
-      optimisticItems,
-      status: mutation.kind === "status" ? mutation.status : null,
-    });
-    return (
-      reordered ??
-      optimisticItems.find((candidate) => candidate.id === updated.id)!
-    );
-  }
+    mutation.kind === "assignee" &&
+    mutation.assigneeType &&
+    mutation.assigneeId &&
+    commands.assign
+      ? await commands.assign(item, {
+          assigneeId: mutation.assigneeId,
+          assigneeType: mutation.assigneeType,
+          notifyAssignee,
+          ...(position ? { position } : {}),
+        })
+      : await commands.update(item, {
+          ...additionalUpdate,
+          ...standardUpdate,
+          ...(position ? { position } : {}),
+        } as TUpdate);
+  if (position) await commands.refreshOrder!(updated);
   return updated;
 }
 
 function resolveStandardCloudBoardGroupMutation<
   T extends StandardCloudBoardItem,
 >({
-  beforeItemId,
   column,
   groupBy,
   item,
   items,
 }: {
-  beforeItemId: string | null;
   column: ProjectBoardColumn;
   groupBy: ProjectBoardGroupBy;
   item: T;
   items: T[];
 }): StandardCloudBoardMutation<T> | null {
   if (groupBy === "status") {
-    const reordered = reorderLaneItems(
-      items,
-      item.id,
-      column.groupValue,
-      beforeItemId,
-    );
-    return reordered
-      ? {
-          kind: "status",
-          optimisticItems: reordered.items,
-          laneIds: reordered.laneIds,
-          status: column.groupValue,
-        }
-      : null;
+    return {
+      kind: "status",
+      status: column.groupValue,
+      optimisticItems: items.map((candidate) =>
+        candidate.id === item.id
+          ? { ...candidate, status: column.groupValue }
+          : candidate,
+      ),
+    };
   }
   if (groupBy === "priority") {
     return {
@@ -558,6 +533,7 @@ export function resolveStandardCloudBoardMutation<
   T extends StandardCloudBoardItem,
 >({
   manualSort = false,
+  supportsOrder = true,
   extensions = {},
   ...input
 }: {
@@ -567,27 +543,31 @@ export function resolveStandardCloudBoardMutation<
   item: T;
   items: T[];
   manualSort?: boolean;
+  supportsOrder?: boolean;
   extensions?: Pick<StandardCloudBoardHostExtensions<T>, "noTagGroupValue">;
 }): StandardCloudBoardMutation<T> | null {
-  if (input.groupBy === "status")
-    return resolveStandardCloudBoardGroupMutation(input);
   const sameColumn = matchesStandardCloudBoardColumn(
     input.item,
     input.column,
     input.groupBy,
     extensions,
   );
+  if (sameColumn && !supportsOrder) return null;
   const mutation: StandardCloudBoardMutation<T> | null = sameColumn
     ? manualSort
-      ? { kind: "reorder", optimisticItems: input.items, laneIds: [] }
+      ? { kind: "reorder", optimisticItems: input.items }
       : null
     : resolveStandardCloudBoardGroupMutation(input);
-  if (!mutation || !manualSort) return mutation;
+  if (!mutation || !supportsOrder) return mutation;
 
   // One canonical sibling order spans statuses and is projected into every grouping.
   // Unrelated siblings keep their relative order, including cards hidden by filters.
   const siblings = mutation.optimisticItems
-    .filter((candidate) => candidate.parent_id === input.item.parent_id)
+    .filter(
+      (candidate) =>
+        candidate.parent_id === input.item.parent_id &&
+        candidate.cloud_project_id === input.item.cloud_project_id,
+    )
     .sort((a, b) => compareProjectBoardItems(a, b, []));
   const remaining = siblings.filter(
     (candidate) => candidate.id !== input.item.id,
@@ -600,13 +580,11 @@ export function resolveStandardCloudBoardMutation<
       extensions,
     ),
   );
-  if (
-    input.beforeItemId &&
-    !lane.some((candidate) => candidate.id === input.beforeItemId)
-  )
+  const beforeItemId = manualSort ? input.beforeItemId : null;
+  if (beforeItemId && !lane.some((candidate) => candidate.id === beforeItemId))
     return null;
-  const insertion = input.beforeItemId
-    ? remaining.findIndex((candidate) => candidate.id === input.beforeItemId)
+  const insertion = beforeItemId
+    ? remaining.findIndex((candidate) => candidate.id === beforeItemId)
     : lane.length
       ? remaining.findIndex((candidate) => candidate.id === lane.at(-1)!.id) + 1
       : remaining.length;
@@ -622,7 +600,7 @@ export function resolveStandardCloudBoardMutation<
   );
   return {
     ...mutation,
-    laneIds: remaining.map((candidate) => candidate.id),
+    position: { beforeItemId: remaining[insertion + 1]?.id ?? null },
     optimisticItems: mutation.optimisticItems.map((candidate) =>
       positions.has(candidate.id)
         ? { ...candidate, sort_order: positions.get(candidate.id)! }
@@ -641,6 +619,7 @@ export function useStandardCloudBoardController<
   onCurrentParentIdChange,
   onGroupByChange,
   onMove,
+  supportsOrder = true,
   ...stateOptions
 }: StandardCloudBoardControllerOptions<T>) {
   const boardState = useProjectBoardState(stateOptions);
@@ -706,11 +685,19 @@ export function useStandardCloudBoardController<
         item,
         items,
         manualSort,
+        supportsOrder,
         extensions,
       });
       if (mutation) void onMove(item, column, targetBeforeItemId, mutation);
     },
-    [boardState.groupBy, boardState.getColumnSort, extensions, items, onMove],
+    [
+      boardState.groupBy,
+      boardState.getColumnSort,
+      extensions,
+      items,
+      onMove,
+      supportsOrder,
+    ],
   );
 
   const moveDroppedItem = useCallback(

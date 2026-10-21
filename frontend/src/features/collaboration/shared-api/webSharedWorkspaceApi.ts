@@ -657,6 +657,7 @@ export function createWebSharedWorkspaceApi(
             version: input.version,
             assignee_team_id: teamId,
             notify_assignee: input.notifyAssignee ?? true,
+            position: input.position,
           })
         }
         return client.post(

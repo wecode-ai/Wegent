@@ -201,6 +201,11 @@ impl IssueProvider {
         task_id: &str,
         input: TaskUpdate,
     ) -> Result<LoopItem, TaskRuntimeError> {
+        if input.position.is_some() {
+            return Err(TaskRuntimeError::UnsupportedProvider(
+                "Manual ordering is not supported by this Issue provider".to_owned(),
+            ));
+        }
         if let Some(priority) = input.priority.as_deref() {
             validate_external_priority(priority)?;
         }
@@ -1557,6 +1562,30 @@ mod tests {
         priority_from_labels, status_from_labels,
     };
     use crate::task_runtime::TaskProviderKind;
+
+    #[tokio::test]
+    async fn rejects_manual_position_before_contacting_an_external_provider() {
+        use crate::task_runtime::{LocalTaskStore, ProjectCreate, TaskRuntimeError, TaskUpdate};
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("tasks.sqlite");
+        let store = LocalTaskStore::open(&path).unwrap();
+        let project = store
+            .create_project(
+                serde_json::from_value::<ProjectCreate>(
+                    serde_json::json!({ "name": "External board", "project_key": "EXT" }),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let provider = super::IssueProvider::new(path).unwrap();
+        let input = serde_json::from_value::<TaskUpdate>(serde_json::json!({"version": 1, "priority": "urgent", "position": {"before_item_id": null}})).unwrap();
+        let result = provider
+            .update(&project, TaskProviderKind::Github, "EXT-1", input)
+            .await;
+        assert!(
+            matches!(result, Err(TaskRuntimeError::UnsupportedProvider(message)) if message.contains("Manual ordering"))
+        );
+    }
 
     #[test]
     fn removes_gitlab_web_page_suffix_from_repository() {

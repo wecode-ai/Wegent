@@ -155,6 +155,7 @@ export interface WorkspaceIssueCreateInput {
 }
 
 export interface WorkspaceIssueUpdateInput {
+  position?: { beforeItemId: string | null };
   version: number;
   securityLevel?: "open" | "related";
   title?: string;
@@ -172,6 +173,7 @@ export interface WorkspaceIssueUpdateInput {
 }
 
 export interface WorkspaceIssueAssignmentInput {
+  position?: { beforeItemId: string | null };
   version: number;
   assigneeType: "user" | "agent" | "team" | "group";
   assigneeId: string;

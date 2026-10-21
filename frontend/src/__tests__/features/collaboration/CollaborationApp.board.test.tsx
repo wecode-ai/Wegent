@@ -180,13 +180,22 @@ describe('CollaborationApp shared project board', () => {
     expect(secondRestored.sort).toHaveAttribute('data-sort-rules', 'priority-desc,created-desc')
     secondRestored.unmount()
 
+    const localAccount = await mountAccount(0)
+    fireEvent.click(localAccount.sort)
+    fireEvent.click(screen.getByTestId('cloud-board-sort-by-pending-manual'))
+    localAccount.unmount()
+    const localRestored = await mountAccount(0)
+    expect(localRestored.sort).toHaveAttribute('data-sort-rules', 'manual')
+    localRestored.unmount()
+
     const unknownAccount = await mountAccount(undefined)
     expect(unknownAccount.sort).toHaveAttribute('data-sort-rules', 'priority-desc')
     fireEvent.click(unknownAccount.sort)
     fireEvent.click(screen.getByTestId('cloud-board-sort-by-pending-manual'))
     expect(Object.keys(localStorage).sort()).toEqual([
-      'collaboration-board-column-sort:v2:1:project-1',
-      'collaboration-board-column-sort:v2:2:project-1',
+      'collaboration-board-column-sort:v2:0:project-1:["status","pending"]',
+      'collaboration-board-column-sort:v2:1:project-1:["status","pending"]',
+      'collaboration-board-column-sort:v2:2:project-1:["status","pending"]',
       legacyKey,
     ])
   })
@@ -281,8 +290,12 @@ describe('CollaborationApp shared project board', () => {
         'collaboration-issue-urgent',
       ])
       expect(
-        JSON.parse(localStorage.getItem('collaboration-board-column-sort:v2:1:project-1')!)
-      ).toEqual({ '["status","pending"]': [] })
+        JSON.parse(
+          localStorage.getItem(
+            'collaboration-board-column-sort:v2:1:project-1:["status","pending"]'
+          )!
+        )
+      ).toEqual([])
       const completedSort = screen.getByTestId('cloud-board-sort-by-completed')
       expect(completedSort).toHaveAttribute('data-sort-rules', 'priority-desc')
       fireEvent.click(completedSort)
@@ -311,18 +324,11 @@ describe('CollaborationApp shared project board', () => {
         expect(updateIssue).toHaveBeenCalledWith('issue-1', {
           version: 1,
           status: 'completed',
+          position: { beforeItemId: null },
         })
       )
-      await waitFor(() =>
-        expect(reorderIssue).toHaveBeenCalledWith(currentProject.id, {
-          parentId: null,
-          status: 'completed',
-          issueIds: ['issue-1'],
-        })
-      )
-      expect(updateIssue.mock.invocationCallOrder[0]).toBeLessThan(
-        reorderIssue.mock.invocationCallOrder[0]
-      )
+      expect(reorderIssue).not.toHaveBeenCalled()
+      expect(api.issues.getBoardSnapshot).toHaveBeenCalledTimes(2)
 
       fireEvent.click(screen.getByTestId('collaboration-board-settings'))
       expect(await screen.findByTestId('project-board-settings-dialog')).toHaveAccessibleName(
@@ -361,6 +367,7 @@ describe('CollaborationApp shared project board', () => {
           expect(api.update).toHaveBeenCalledWith('issue-1', {
             version: 1,
             priority: 'urgent',
+            position: { beforeItemId: null },
           }),
       }),
     },
@@ -374,6 +381,7 @@ describe('CollaborationApp shared project board', () => {
             assigneeType: 'user',
             assigneeId: '2',
             notifyAssignee: true,
+            position: { beforeItemId: null },
           }),
       }),
     },
@@ -385,6 +393,7 @@ describe('CollaborationApp shared project board', () => {
           expect(api.update).toHaveBeenCalledWith('issue-1', {
             version: 1,
             tags: ['后端'],
+            position: { beforeItemId: null },
           }),
       }),
     },
@@ -454,7 +463,7 @@ describe('CollaborationApp shared project board', () => {
       const currentProject = project(groupBy)
       const first = issue()
       const second = { ...first, id: 'second', status: 'completed', sort_order: 1 }
-      const update = jest.fn()
+      const update = jest.fn().mockImplementation(async () => reordered[0])
       const assign = jest.fn()
       const reordered = [
         { ...second, sort_order: 0, version: 2 },
@@ -467,12 +476,12 @@ describe('CollaborationApp shared project board', () => {
           listExecutionEnvironments: jest.fn().mockResolvedValue([]),
         },
         issues: {
-          getBoardSnapshot: jest.fn().mockResolvedValue({
-            items: [first, second],
+          getBoardSnapshot: jest.fn().mockImplementation(async () => ({
+            items: update.mock.calls.length ? reordered : [first, second],
             members: [],
             agents: [],
             taskBindings: [],
-          }),
+          })),
           update,
           assign,
           reorder,
@@ -499,13 +508,12 @@ describe('CollaborationApp shared project board', () => {
         screen.getByTestId('collaboration-issue-issue-1')
       )
       await waitFor(() =>
-        expect(reorder).toHaveBeenCalledWith(currentProject.id, {
-          parentId: null,
-          status: null,
-          issueIds: ['second', 'issue-1'],
+        expect(update).toHaveBeenCalledWith('second', {
+          version: second.version,
+          position: { beforeItemId: first.id },
         })
       )
-      expect(update).not.toHaveBeenCalled()
+      expect(reorder).not.toHaveBeenCalled()
       expect(assign).not.toHaveBeenCalled()
       await waitFor(() =>
         expect(
@@ -612,6 +620,7 @@ describe('CollaborationApp shared project board', () => {
       cursor: 'pending-page-2',
       limit: 100,
     })
+    expect(screen.queryByTestId('cloud-board-sort-by-pending')).not.toBeInTheDocument()
     expect(api.issues.getBoardSnapshot).not.toHaveBeenCalled()
   })
 })

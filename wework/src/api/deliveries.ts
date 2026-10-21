@@ -942,6 +942,7 @@ export function createDeliveryApi(client: HttpClient) {
       > & {
         version: number
         automation_rule_id?: string | null
+        position?: { beforeItemId: string | null }
       }
     ): Promise<CloudLoopItem> {
       return client.patch(`/v1/loop-items/${encodeURIComponent(itemId)}`, data)
@@ -955,6 +956,7 @@ export function createDeliveryApi(client: HttpClient) {
         assigneeId: string
         runnerSelection?: RunnerSelection
         notifyAssignee?: boolean
+        position?: { beforeItemId: string | null }
       }
     ): Promise<CloudLoopItem> {
       return client.post(

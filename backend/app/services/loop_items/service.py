@@ -92,6 +92,11 @@ from app.services.loop_items.access import (
     related_item_filter,
     visible_item_filter,
 )
+from app.services.loop_items.ordering import (
+    persist_sibling_order,
+    position_siblings,
+    sibling_items,
+)
 from app.services.loop_items.task_bindings import active_task_binding_query
 from app.services.project_automation_domain import runnable_wegent_team
 from app.services.project_chat.service import ProjectChatService, bot_config
@@ -918,7 +923,9 @@ class LoopItemService:
                     )
                 )
             )
-        return query.order_by(LoopItem.sort_order, LoopItem.updated_at.desc()).all()
+        return query.order_by(
+            LoopItem.sort_order, LoopItem.updated_at.desc(), LoopItem.id
+        ).all()
 
     def reorder(
         self,
@@ -932,25 +939,16 @@ class LoopItemService:
         self._require_internal_task_project(
             db, cloud_project_id, user_id, BaseRole.Developer
         )
-        if values.parent_id is None:
-            # MySQL stores unset parent ids as empty strings, so match both.
-            parent_filter = or_(LoopItem.parent_id.is_(None), LoopItem.parent_id == "")
-        else:
-            parent_filter = LoopItem.parent_id == values.parent_id
-        query = (
-            db.query(LoopItem)
-            .filter(
-                LoopItem.cloud_project_id == cloud_project_id,
-                parent_filter,
-                loop_datetime_is_unset(LoopItem.deleted_at),
-            )
-            .order_by(LoopItem.sort_order, LoopItem.updated_at.desc())
-        )
-        if values.status is not None:
-            query = query.filter(LoopItem.status == values.status)
-        lane = query.all()
+        siblings = sibling_items(db, str(cloud_project_id), values.parent_id)
+        lane = [
+            item
+            for item in siblings
+            if values.status is None or item.status == values.status
+        ]
         by_id = {item.id: item for item in lane}
-        requested_ids = [item_id for item_id in values.item_ids if item_id in by_id]
+        requested_ids = list(
+            dict.fromkeys(item_id for item_id in values.item_ids if item_id in by_id)
+        )
         if not requested_ids:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "TODO not found in lane"
@@ -960,10 +958,11 @@ class LoopItemService:
         ordered = [by_id[item_id] for item_id in requested_ids] + [
             item for item in lane if item.id not in requested_ids
         ]
-        for position, item in enumerate(ordered):
-            if item.sort_order != position:
-                item.sort_order = position
-                item.version += 1
+        lane_ids = set(by_id)
+        positions = iter(ordered)
+        persist_sibling_order(
+            [next(positions) if item.id in lane_ids else item for item in siblings]
+        )
         db.commit()
         for item in ordered:
             db.refresh(item)
@@ -1440,6 +1439,23 @@ class LoopItemService:
         commit: bool = True,
     ) -> LoopItem:
         item = self.get(db, item_id, user_id)
+        position_order = None
+        if values.position is not None:
+            self._require_internal_task_project(
+                db, int(item.cloud_project_id), user_id, BaseRole.Developer
+            )
+            if values.position.before_item_id is not None:
+                self.get(db, values.position.before_item_id, user_id)
+            position_order = position_siblings(
+                db,
+                item,
+                (
+                    values.parent_id
+                    if "parent_id" in values.model_fields_set
+                    else item.parent_id
+                ),
+                values.position,
+            )
         if "security_level" in values.model_fields_set:
             require_cloud_project_role(
                 db, int(item.cloud_project_id), user_id, BaseRole.Maintainer
@@ -1474,6 +1490,7 @@ class LoopItemService:
                 "runner_selection",
                 "assignee_group_id",
                 "security_level",
+                "position",
             },
             exclude_unset=True,
         )
@@ -1814,7 +1831,8 @@ class LoopItemService:
             )
             # Reset the manual lane position so the TODO lands at the top of
             # its new lane instead of an arbitrary stale position.
-            updates["sort_order"] = 0
+            if position_order is None:
+                updates["sort_order"] = 0
         if meaningful_change:
             metadata = updates.get("metadata_json")
             if not isinstance(metadata, dict):
@@ -1871,6 +1889,8 @@ class LoopItemService:
                 user_id=user_id,
                 group=collaboration_group,
             )
+        if position_order is not None:
+            persist_sibling_order(position_order, updated_item_id=item.id)
         if commit:
             db.commit()
         else:
@@ -1987,6 +2007,16 @@ class LoopItemService:
         item = self.get(db, item_id, user_id)
         if item.cloud_project_id != str(project_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
+        position_order = None
+        if values.position is not None:
+            self._require_internal_task_project(
+                db, project_id, user_id, BaseRole.Developer
+            )
+            if values.position.before_item_id is not None:
+                self.get(db, values.position.before_item_id, user_id)
+            position_order = position_siblings(
+                db, item, item.parent_id, values.position
+            )
         require_issue_action(
             access,
             action=IssueAction.ASSIGN,
@@ -2218,6 +2248,7 @@ class LoopItemService:
                 LoopItemUpdate(
                     version=values.version,
                     assignee_group_id=values.assignee_id,
+                    position=values.position,
                     runner_selection=values.runner_selection,
                     notify_assignee=values.notify_assignee,
                 ),
@@ -2272,9 +2303,16 @@ class LoopItemService:
             item,
             values.version,
             metadata,
-            commit=commit,
+            commit=commit and position_order is None,
             **assignee_updates,
         )
+        if position_order is not None:
+            persist_sibling_order(position_order, updated_item_id=item.id)
+            if commit:
+                db.commit()
+            else:
+                db.flush()
+            db.refresh(updated)
         if cancelled_runs:
             from app.services.loop_item_executions.cancellation import (
                 request_execution_cancellations,

@@ -4955,6 +4955,7 @@ describe('CloudTodoWorkspace', () => {
       expect(workbenchServices.deliveryApi!.updateLoopItem).toHaveBeenCalledWith('WEG-1', {
         version: pendingItem.version,
         status: 'in_progress',
+        position: { beforeItemId: null },
       })
     )
     expect(screen.getByTestId('mock-start-background-task')).toHaveAttribute(

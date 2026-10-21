@@ -15,12 +15,6 @@ export interface CollaborationBoardGroup {
   issues: CollaborationIssue[];
 }
 
-interface LaneItem {
-  id: string;
-  parent_id: string | null;
-  status: string;
-}
-
 interface TreeItem {
   id: string;
   parent_id: string | null;
@@ -59,48 +53,6 @@ export function removeIssueSubtree<T extends TreeItem>(
 ): T[] {
   const subtreeIds = collectIssueSubtreeIds(items, rootId);
   return items.filter((item) => !subtreeIds.has(item.id));
-}
-
-export function reorderLaneItems<T extends LaneItem>(
-  items: T[],
-  itemId: string,
-  status: string,
-  beforeItemId: string | null,
-): { items: T[]; laneIds: string[] } | null {
-  const item = items.find((candidate) => candidate.id === itemId);
-  if (!item) return null;
-  const inLane = (candidate: T) =>
-    candidate.parent_id === item.parent_id &&
-    candidate.status === status &&
-    candidate.id !== itemId;
-  const currentLaneIds = items.filter(inLane).map((candidate) => candidate.id);
-  if (item.status === status) {
-    if (!beforeItemId) return null;
-    const laneOrder = items.filter(
-      (candidate) =>
-        candidate.parent_id === item.parent_id && candidate.status === status,
-    );
-    const itemIndex = laneOrder.findIndex(
-      (candidate) => candidate.id === itemId,
-    );
-    if (laneOrder[itemIndex + 1]?.id === beforeItemId) return null;
-  }
-  const laneIds = [...currentLaneIds];
-  const beforeIndex = beforeItemId ? laneIds.indexOf(beforeItemId) : -1;
-  laneIds.splice(beforeIndex >= 0 ? beforeIndex : laneIds.length, 0, itemId);
-  const laneItems = new Map(
-    items.filter(inLane).map((candidate) => [candidate.id, candidate]),
-  );
-  laneItems.set(itemId, { ...item, status });
-  return {
-    items: [
-      ...items.filter(
-        (candidate) => !inLane(candidate) && candidate.id !== itemId,
-      ),
-      ...laneIds.map((id) => laneItems.get(id)!),
-    ],
-    laneIds,
-  };
 }
 
 function assigneeLabel(issue: CollaborationIssue, unassigned: string): string {

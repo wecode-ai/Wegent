@@ -778,6 +778,7 @@ export function CollaborationApp({
                                   target.id,
                                   {
                                     version: target.version,
+                                    position: input.position,
                                     ...(input.status !== undefined
                                       ? { status: input.status }
                                       : {}),
@@ -828,14 +829,11 @@ export function CollaborationApp({
                                   throw new Error(messages.saveFailed);
                                 return updated;
                               },
-                              reorder: async (target, order) => {
-                                const updated = await commands.reorderIssue({
-                                  issue: target,
-                                  ...order,
-                                });
-                                if (!updated)
-                                  throw new Error(messages.saveFailed);
-                                return updated;
+                              refreshOrder: async (target) => {
+                                await commands.loadProjectSnapshot(
+                                  target.cloud_project_id,
+                                  { invalidate: true },
+                                );
                               },
                             },
                           });

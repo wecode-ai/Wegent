@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect, test, type Page } from '@playwright/test'
-import { REGULAR_USER } from '../../config/test-users'
+import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
 import { createApiClient } from '../../utils/api-client'
 import { webApi } from '../../utils/collaboration-test-support'
 
@@ -87,6 +87,8 @@ const projectTest = test.extend<{ scheduledProject: ScheduledProject }>({
     }
   },
 })
+
+projectTest.setTimeout(120_000)
 
 projectTest(
   'sorts lanes independently with compound rules and restores choices after reload',
@@ -174,6 +176,35 @@ projectTest(
     await expect(sort).toHaveAttribute('data-sort-rules', 'priority-desc,created-desc')
     await assertOrder('pending', [urgent.id, newerHigh.id, high.id, issueId])
     await expect(completedSort).toHaveAttribute('data-sort-rules', 'created-asc')
+    const updatedAsc = [newerHigh.id, issueId, urgent.id, high.id]
+    for (const id of updatedAsc) {
+      await new Promise(resolve => setTimeout(resolve, 1_100))
+      const current = await webApi<Resource>(page, `/api/v1/loop-items/${id}`)
+      await webApi(page, `/api/v1/loop-items/${id}`, {
+        method: 'PATCH',
+        body: { version: current.version, description: `Updated ${id}` },
+      })
+    }
+    await page.reload()
+    await sort.click()
+    await page.getByTestId('cloud-board-sort-by-pending-rule-1-remove').click()
+    await sort.click()
+    const createdAsc = [issueId, high.id, urgent.id, newerHigh.id]
+    for (const [mode, expected] of [
+      ['priority-asc', [issueId, newerHigh.id, high.id, urgent.id]],
+      ['priority-desc', [urgent.id, newerHigh.id, high.id, issueId]],
+      ['created-asc', createdAsc],
+      ['created-desc', [...createdAsc].reverse()],
+      ['updated-asc', updatedAsc],
+      ['updated-desc', [...updatedAsc].reverse()],
+    ] as const) {
+      await sort.click()
+      await page.getByTestId('cloud-board-sort-by-pending-rule-0-mode').click()
+      await page.getByTestId(`cloud-board-sort-by-pending-rule-0-mode-${mode}`).click()
+      await sort.click()
+      await expect(sort).toHaveAttribute('data-sort-rules', mode)
+      await assertOrder('pending', [...expected])
+    }
   }
 )
 
@@ -182,14 +213,14 @@ async function dragBefore(
   sourceLane: string,
   id: string,
   lane: string,
-  beforeId: string
+  beforeId: string | null
 ) {
   const source = page
     .getByTestId(`cloud-todo-column-${sourceLane}`)
     .getByTestId(`cloud-todo-card-${id}`)
-  const target = page
-    .getByTestId(`cloud-todo-column-${lane}`)
-    .getByTestId(`collaboration-issue-${beforeId}`)
+  const target = beforeId
+    ? page.getByTestId(`cloud-todo-column-${lane}`).getByTestId(`collaboration-issue-${beforeId}`)
+    : page.getByTestId(`cloud-todo-column-dropzone-${lane}-content`)
   await source.scrollIntoViewIfNeeded()
   const from = (await source.boundingBox())!
   await page.mouse.move(from.x + 20, from.y + 20)
@@ -199,7 +230,11 @@ async function dragBefore(
     await expect(page.getByTestId('project-board-drag-overlay')).toBeVisible()
     await target.scrollIntoViewIfNeeded()
     const to = (await target.boundingBox())!
-    await page.mouse.move(to.x + to.width / 2, to.y + 10, { steps: 10 })
+    await page.mouse.move(
+      beforeId ? to.x + to.width / 2 : to.x + 2,
+      beforeId ? to.y + 10 : to.y + to.height - 2,
+      { steps: 10 }
+    )
   } finally {
     await page.mouse.up()
   }
@@ -306,7 +341,8 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
       await sort.click()
       const reorder = page.waitForResponse(
         response =>
-          response.request().method() === 'POST' && response.url().endsWith('/loop-items/reorder')
+          response.request().method() === 'PATCH' &&
+          response.url().endsWith(`/loop-items/${second.id}`)
       )
       await dragBefore(page, lane, second.id, lane, first.id)
       expect((await reorder).ok()).toBe(true)
@@ -316,7 +352,8 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
       await assertOrder([second.id, first.id])
       const crossReorder = page.waitForResponse(
         response =>
-          response.request().method() === 'POST' && response.url().endsWith('/loop-items/reorder')
+          response.request().method() === 'PATCH' &&
+          response.url().endsWith(`/loop-items/${outside.id}`)
       )
       await dragBefore(page, sourceLane, outside.id, lane, first.id)
       expect((await crossReorder).ok()).toBe(true)
@@ -330,9 +367,128 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
         assignee_user_id: null,
       })
       expect(saved.find(item => item.id === first.id)?.status).toBe('pending')
+      // Reorder through a status projection, including the blank lane tail, then
+      // return to the original grouping and compare with the persisted global order.
+      await page.getByTestId('cloud-board-group-by').click()
+      await page.getByTestId('cloud-board-group-option-status').click()
+      const pendingSort = page.getByTestId('cloud-board-sort-by-pending')
+      await pendingSort.click()
+      await page.getByTestId('cloud-board-sort-by-pending-manual').click()
+      await pendingSort.click()
+      await dragBefore(page, 'pending', first.id, 'pending', outside.id)
+      await expect
+        .poll(async () => {
+          const items = (await snapshot()).items
+          return (
+            items.find(item => item.id === first.id)!.sort_order <
+            items.find(item => item.id === outside.id)!.sort_order
+          )
+        })
+        .toBe(true)
+      await dragBefore(page, 'pending', first.id, 'pending', null)
+      await expect
+        .poll(async () => {
+          const pending = (await snapshot()).items
+            .filter(item => item.status === 'pending')
+            .sort((a, b) => a.sort_order - b.sort_order)
+          return pending.at(-1)?.id
+        })
+        .toBe(first.id)
+      const canonical = (await snapshot()).items.sort((a, b) => a.sort_order - b.sort_order)
+      expect(new Set(canonical.map(item => item.sort_order)).size).toBe(canonical.length)
+      const expected = canonical
+        .filter(item => [first.id, second.id, outside.id].includes(item.id))
+        .map(item => item.id)
+      await page.getByTestId('cloud-board-group-by').click()
+      await page.getByTestId(`cloud-board-group-option-${groupBy}`).click()
+      await assertOrder(expected)
+      await page.reload()
+      await assertOrder(expected)
     }
   )
 }
+
+projectTest(
+  'keeps independent lane changes from two tabs after reload',
+  async ({ page, scheduledProject: { path } }) => {
+    const other = await page.context().newPage()
+    try {
+      await page.goto(path)
+      await other.goto(path)
+      const firstSort = page.getByTestId('cloud-board-sort-by-pending')
+      const secondSort = other.getByTestId('cloud-board-sort-by-completed')
+      await expect(firstSort).toHaveAttribute('data-sort-rules', 'priority-desc')
+      await expect(secondSort).toHaveAttribute('data-sort-rules', 'priority-desc')
+      await firstSort.click()
+      await page.getByTestId('cloud-board-sort-by-pending-manual').click()
+      await firstSort.click()
+      await secondSort.click()
+      await other.getByTestId('cloud-board-sort-by-completed-rule-0-mode').click()
+      await other.getByTestId('cloud-board-sort-by-completed-rule-0-mode-created-asc').click()
+      await secondSort.click()
+      await expect(page.getByTestId('cloud-board-sort-by-completed')).toHaveAttribute(
+        'data-sort-rules',
+        'created-asc'
+      )
+      await expect(other.getByTestId('cloud-board-sort-by-pending')).toHaveAttribute(
+        'data-sort-rules',
+        'manual'
+      )
+      await page.reload()
+      await other.reload()
+      for (const tab of [page, other]) {
+        await expect(tab.getByTestId('cloud-board-sort-by-pending')).toHaveAttribute(
+          'data-sort-rules',
+          'manual'
+        )
+        await expect(tab.getByTestId('cloud-board-sort-by-completed')).toHaveAttribute(
+          'data-sort-rules',
+          'created-asc'
+        )
+      }
+    } finally {
+      await other.close()
+    }
+  }
+)
+
+projectTest(
+  'restores each account lane rules after switching users in the same browser',
+  async ({ page, scheduledProject: { path } }) => {
+    const switchAccount = async (username: string, password: string) => {
+      await page.goto('/settings')
+      await page.locator('button.rounded-full').first().click()
+      await page
+        .locator('button')
+        .filter({ hasText: /Logout|退出|Sign out/i })
+        .click()
+      await page.waitForURL(/\/login/)
+      await page.locator('input[name="user_name"]').fill(username)
+      await page.locator('input[name="password"]').fill(password)
+      await page.locator('button[type="submit"]').click()
+      await page.waitForURL(url => !url.pathname.includes('/login'))
+      await page.goto(path)
+    }
+    await page.goto(path)
+    const sort = page.getByTestId('cloud-board-sort-by-pending')
+    await sort.click()
+    await page.getByTestId('cloud-board-sort-by-pending-manual').click()
+    await sort.click()
+    try {
+      await switchAccount(REGULAR_USER.username, REGULAR_USER.password)
+      await expect(sort).toHaveAttribute('data-sort-rules', 'priority-desc')
+      await sort.click()
+      await page.getByTestId('cloud-board-sort-by-pending-rule-0-mode').click()
+      await page.getByTestId('cloud-board-sort-by-pending-rule-0-mode-created-asc').click()
+      await sort.click()
+      await page.reload()
+      await expect(sort).toHaveAttribute('data-sort-rules', 'created-asc')
+    } finally {
+      await switchAccount(ADMIN_USER.username, ADMIN_USER.password)
+    }
+    await expect(sort).toHaveAttribute('data-sort-rules', 'manual')
+  }
+)
 
 for (const view of ['calendar', 'gantt'] as const) {
   projectTest(

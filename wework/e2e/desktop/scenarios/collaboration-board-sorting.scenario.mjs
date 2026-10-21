@@ -5,7 +5,16 @@
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { reloadMainWindow, selectCollaborationDomain } from '../modules/workspace-flows.mjs'
+import {
+  createLocalCollaborationProject,
+  configureFirstProjectExecutionEnvironment,
+  enterLocalCollaborationWorkspace,
+  inCollaborationSidebar,
+  reloadMainWindow,
+  selectCollaborationDomain,
+} from '../modules/workspace-flows.mjs'
+
+import { createCollaborationBoardIssue } from '../modules/collaboration-board-issue.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const scoped = selector => `${CONTENT} ${selector}`
@@ -43,6 +52,25 @@ async function dragCard(control, id, beforeId, timeoutMs, sourceLane, targetLane
   } finally {
     await control.command('dragEnd', source, { target })
   }
+  await control.command('waitFor', '[data-testid="project-board-drag-overlay"]', {
+    visible: false,
+    timeoutMs,
+  })
+}
+
+async function dragToLaneTail(control, id, lane, timeoutMs) {
+  const source = `${laneSelector(lane)} [data-testid="cloud-todo-card-${id}"]`
+  const content = scoped(`[data-testid="cloud-todo-column-dropzone-${lane}-content"]`)
+  await control.command('scrollIntoView', source)
+  const [from] = JSON.parse(await control.command('getElementMetrics', source))
+  const [to] = JSON.parse(await control.command('getElementMetrics', content))
+  // Left padding belongs to the column but never intersects a card insertion target.
+  await control.command('dragBy', source, {
+    value: JSON.stringify({
+      x: to.left + 2 - Math.floor(from.left + from.width / 2),
+      y: to.bottom - 2 - Math.floor(from.top + from.height / 2),
+    }),
+  })
   await control.command('waitFor', '[data-testid="project-board-drag-overlay"]', {
     visible: false,
     timeoutMs,
@@ -133,6 +161,87 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
     })
   }
 
+  async function verifyLocalBoard(control) {
+    const name = `Local board sorting ${process.pid}`
+    await selectCollaborationDomain(control, CONTENT, 'local')
+    await createLocalCollaborationProject(control, CONTENT, name)
+    await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
+    await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+    const first = await createCollaborationBoardIssue(
+      control,
+      'Older local card',
+      'pending',
+      uiTimeoutMs
+    )
+    await new Promise(resolve => setTimeout(resolve, 1_100))
+    const completed = await createCollaborationBoardIssue(
+      control,
+      'Completed local card',
+      'completed',
+      uiTimeoutMs
+    )
+    await new Promise(resolve => setTimeout(resolve, 1_100))
+    const last = await createCollaborationBoardIssue(
+      control,
+      'Newer local card',
+      'pending',
+      uiTimeoutMs
+    )
+    const reopen = async () => {
+      await reloadMainWindow(control, 'Local board did not reopen')
+      await enterLocalCollaborationWorkspace(control, CONTENT)
+      await control.command(
+        'markElementWithText',
+        inCollaborationSidebar('[data-testid^="collaboration-workspace-project-"]'),
+        { text: name, value: 'local-sorting-project', timeoutMs: uiTimeoutMs }
+      )
+      await control.command('click', '[data-e2e-anchor-id="local-sorting-project"]')
+      await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+    }
+    await expectRules(control, 'pending', 'priority-desc')
+    await editRules(control, 'pending', ['manual'])
+    await dragCard(control, last, first, uiTimeoutMs, 'pending')
+    await expectOrder(control, 'pending', [last, first])
+    await editRules(control, 'pending', ['add', 'add', 'rule-1-mode', 'rule-1-mode-created-asc'])
+    await expectOrder(control, 'pending', [first, last])
+    await reopen()
+    await expectRules(control, 'pending', 'priority-desc,created-asc')
+    await expectOrder(control, 'pending', [first, last])
+    await editRules(control, 'pending', ['manual'])
+    await expectOrder(control, 'pending', [last, first])
+    await dragCard(control, completed, first, uiTimeoutMs, 'completed', 'pending')
+    await expectOrder(control, 'pending', [last, completed, first])
+    await reopen()
+    await expectRules(control, 'pending', 'manual')
+    await expectOrder(control, 'pending', [last, completed, first])
+    await dragToLaneTail(control, last, 'pending', uiTimeoutMs)
+    await expectOrder(control, 'pending', [completed, first, last])
+    await reopen()
+    await expectOrder(control, 'pending', [completed, first, last])
+    await dragCard(control, last, completed, uiTimeoutMs, 'pending')
+    await expectOrder(control, 'pending', [last, completed, first])
+    for (const [groupBy, lane] of [
+      ['priority', 'priority-none'],
+      ['assignee', 'assignee-unassigned'],
+      ['tag', 'tag-untagged'],
+    ]) {
+      await control.command('click', scoped('[data-testid="cloud-board-group-by"]'))
+      await control.command('click', `[data-testid="cloud-board-group-option-${groupBy}"]`)
+      await expectRules(control, lane, 'priority-desc')
+      await editRules(control, lane, ['manual'])
+      await expectOrder(control, lane, [last, completed, first])
+      await dragCard(control, first, last, uiTimeoutMs, lane)
+      await expectOrder(control, lane, [first, last, completed])
+      await reopen()
+      await expectRules(control, lane, 'manual')
+      await expectOrder(control, lane, [first, last, completed])
+      // Restore the same fixture order for the next grouping through a real drag.
+      await dragCard(control, first, completed, uiTimeoutMs, lane)
+      await dragCard(control, completed, first, uiTimeoutMs, lane)
+      await expectOrder(control, lane, [last, completed, first])
+    }
+  }
+
   return {
     requiresCloudEnvironment: true,
 
@@ -193,6 +302,44 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       await expectRules(control, 'completed', 'created-asc')
       await expectOrder(control, 'pending', [urgent.id, high.id, newerHigh.id, low.id])
       await expectOrder(control, 'completed', [completedHigh.id, completedUrgent.id])
+
+      await editRules(control, 'pending', ['rule-1-up'])
+      await expectOrder(control, 'pending', [low.id, high.id, urgent.id, newerHigh.id])
+      await editRules(control, 'pending', ['rule-0-down'])
+      await expectOrder(control, 'pending', [urgent.id, high.id, newerHigh.id, low.id])
+
+      const updatedAsc = [newerHigh.id, low.id, urgent.id, high.id]
+      for (const id of updatedAsc) {
+        await new Promise(resolve => setTimeout(resolve, 1_100))
+        const current = await request(`/api/v1/loop-items/${id}`)
+        await request(`/api/v1/loop-items/${id}`, 'PATCH', {
+          version: current.version,
+          description: `Updated ${id}`,
+        })
+      }
+      await reloadMainWindow(control, 'Updated-time sorting fixtures did not reload')
+      await openBoard(control)
+      await editRules(control, 'pending', ['rule-1-remove'])
+      const createdAsc = [low.id, high.id, urgent.id, newerHigh.id]
+      for (const [mode, expected] of [
+        ['priority-asc', [low.id, newerHigh.id, high.id, urgent.id]],
+        ['priority-desc', [urgent.id, newerHigh.id, high.id, low.id]],
+        ['created-asc', createdAsc],
+        ['created-desc', [...createdAsc].reverse()],
+        ['updated-asc', updatedAsc],
+        ['updated-desc', [...updatedAsc].reverse()],
+      ]) {
+        await editRules(control, 'pending', ['rule-0-mode', `rule-0-mode-${mode}`])
+        await expectRules(control, 'pending', mode)
+        await expectOrder(control, 'pending', expected)
+      }
+      await editRules(control, 'pending', [
+        'rule-0-mode',
+        'rule-0-mode-priority-desc',
+        'add',
+        'rule-1-mode',
+        'rule-1-mode-created-asc',
+      ])
 
       // A real, activated drag in an automatic lane must leave server order untouched.
       const beforeAutomaticDrag = await serverState()
@@ -316,6 +463,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         assert.deepEqual(saved.tags, ['backend', 'shared'])
         assert.equal(saved.assignee_user_id, null)
       }
+      await verifyLocalBoard(control)
     },
 
     async cleanup() {

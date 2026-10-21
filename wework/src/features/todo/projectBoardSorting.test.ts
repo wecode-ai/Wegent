@@ -141,7 +141,7 @@ describe('project board sorting', () => {
       completed,
       'completed-0',
       expect.objectContaining({
-        laneIds: ['2', 'completed-0', 'completed-1', 'completed-2'],
+        position: { beforeItemId: 'completed-0' },
       })
     )
     expect(result.current.state.getColumnSort(pending.key)).toEqual(['priority-desc'])
@@ -153,8 +153,8 @@ describe('project board sorting', () => {
       pending,
       '0',
       expect.objectContaining({
-        kind: 'status',
-        laneIds: ['2', '0', '1'],
+        kind: 'reorder',
+        position: { beforeItemId: '0' },
       })
     )
   })

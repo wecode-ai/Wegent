@@ -156,6 +156,9 @@ export function ProjectBoardAdapter({
   statuses,
   taskBindings,
 }: ProjectBoardAdapterProps) {
+  const supportsOrder = ["local", "native", "backend"].includes(
+    project.task_provider,
+  );
   const runtimeWork = useBrowserBoardRuntimeWork(
     renderIssueCard ? undefined : runtime,
     taskBindings,
@@ -226,13 +229,15 @@ export function ProjectBoardAdapter({
     extensions,
     focusStorageKey: `collaboration-board-focus:${project.id}`,
     items: issues,
+    supportsOrder,
     onGroupByChange,
     onMove: (issue, _column, _beforeItemId, mutation) =>
       onMove(issue, mutation),
     personalGroupStorageKey: null,
-    personalSortStorageKey: project.current_user_id
-      ? `collaboration-board-column-sort:v2:${project.current_user_id}:${project.id}`
-      : null,
+    personalSortStorageKey:
+      project.current_user_id != null
+        ? `collaboration-board-column-sort:v2:${project.current_user_id}:${project.id}`
+        : null,
   });
   const display = project.card_display ?? {
     show_assignee: true,
@@ -293,7 +298,9 @@ export function ProjectBoardAdapter({
           exit: "退出执行阶段专注视图",
           title: "专注视图",
         }}
-        sortLabels={createProjectBoardSortLabels(translate)}
+        sortLabels={
+          supportsOrder ? createProjectBoardSortLabels(translate) : undefined
+        }
         getColumnDragHint={(column) =>
           controller.activeDragItemId ? `移到这里：${column.label}` : undefined
         }

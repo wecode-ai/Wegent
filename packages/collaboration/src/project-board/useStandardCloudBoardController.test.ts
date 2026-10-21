@@ -79,6 +79,57 @@ function column(groupValue: string): ProjectBoardColumn {
 }
 
 describe("standard cloud board controller", () => {
+  it("keeps external provider field moves without advertising manual persistence", () => {
+    const item = items[0];
+    expect(
+      resolveStandardCloudBoardMutation({
+        item,
+        items: [item],
+        groupBy: "status",
+        column: column("pending"),
+        manualSort: true,
+        supportsOrder: false,
+        beforeItemId: null,
+      }),
+    ).toBeNull();
+    const move = resolveStandardCloudBoardMutation({
+      item,
+      items: [item],
+      groupBy: "priority",
+      column: column("urgent"),
+      supportsOrder: false,
+      beforeItemId: null,
+    });
+    expect(move).toMatchObject({ kind: "priority", priority: "urgent" });
+    expect(move).not.toHaveProperty("position");
+  });
+
+  it("orders equal ranks consistently before and after a refreshed snapshot", () => {
+    const earlier = {
+      ...items[0],
+      id: "A",
+      updated_at: "2026-09-10T00:00:00Z",
+    };
+    const later = { ...earlier, id: "B", updated_at: "2026-09-11T00:00:00Z" };
+    const tied = { ...later, id: "C" };
+    const state = {
+      groupBy: "status" as const,
+      groupFilter: "",
+      query: "",
+      getColumnSort: () => [],
+    };
+    const order = (boardItems: Item[]) =>
+      filterStandardCloudBoardItems({
+        column: column("pending"),
+        currentParentId: null,
+        extensions,
+        items: boardItems,
+        state,
+      }).map((item) => item.id);
+    expect(order([earlier, tied, later])).toEqual(["B", "C", "A"]);
+    expect(order([later, earlier, tied])).toEqual(["B", "C", "A"]);
+  });
+
   it.each(["status", "assignee", "tag"] as const)(
     "sorts %s columns by priority and keeps manual order for ties",
     (groupBy) => {
@@ -314,7 +365,7 @@ describe("standard cloud board controller", () => {
       }),
     ).toMatchObject({
       kind: "status",
-      laneIds: ["parent"],
+      position: { beforeItemId: null },
       status: "completed",
     });
     const priorityMutation = resolveStandardCloudBoardMutation({
@@ -371,87 +422,84 @@ describe("standard cloud board controller", () => {
     ).toMatchObject({ tags: ["backend"] });
   });
 
-  it("owns standard mutation API command selection and ordering", async () => {
+  it("saves fields and position once before refreshing the canonical order", async () => {
     const item = { ...items[0], version: 3 };
-    const updated = {
-      ...item,
-      status: "completed",
-      version: 4,
-      workflow: { nodes: [{ id: "implement", status: "ready" }] },
-    };
-    const calls: string[] = [];
-    const update = vi.fn(async (_item, input) => {
-      calls.push(`update:${JSON.stringify(input)}`);
-      return updated;
-    });
-    const assign = vi.fn(async () => {
-      calls.push("assign");
-      return updated;
-    });
-    const reorder = vi.fn(async (_item, input) => {
-      calls.push(`reorder:${input.status}:${input.laneIds.join(",")}`);
-    });
-    const statusMutation = resolveStandardCloudBoardMutation({
+    const updated = { ...item, status: "completed", version: 4 };
+    const update = vi.fn(async () => updated);
+    const assign = vi.fn(async () => updated);
+    const refreshOrder = vi.fn(async () => {});
+    const commands = { assign, update, refreshOrder };
+    const mutation = resolveStandardCloudBoardMutation({
       beforeItemId: null,
       column: column("completed"),
       groupBy: "status",
       item,
       items: [item],
-    });
-
-    expect(statusMutation).not.toBeNull();
+    })!;
     await executeStandardCloudBoardMutation({
       additionalUpdate: { automation_rule_id: "rule-1" },
-      commands: { assign, reorder, update },
+      commands,
       item,
-      mutation: statusMutation!,
+      mutation,
     });
-
-    expect(calls).toEqual([
-      'update:{"automation_rule_id":"rule-1","status":"completed"}',
-      "reorder:completed:parent",
-    ]);
-    expect(reorder).toHaveBeenCalledWith(updated, {
-      laneIds: ["parent"],
-      optimisticItems: [
-        expect.objectContaining({
-          id: item.id,
-          sort_order: 0,
-          status: "completed",
-          version: 4,
-          workflow: updated.workflow,
-        }),
-      ],
+    expect(update).toHaveBeenCalledWith(item, {
+      automation_rule_id: "rule-1",
       status: "completed",
+      position: { beforeItemId: null },
     });
+    expect(refreshOrder).toHaveBeenCalledWith(updated);
+    expect(update.mock.invocationCallOrder[0]).toBeLessThan(
+      refreshOrder.mock.invocationCallOrder[0],
+    );
     expect(assign).not.toHaveBeenCalled();
 
-    const assigneeMutation = resolveStandardCloudBoardMutation({
+    const assignment = resolveStandardCloudBoardMutation({
       beforeItemId: null,
       column: column("agent:bot-1"),
       groupBy: "assignee",
       item,
       items: [item],
-    });
+    })!;
     await executeStandardCloudBoardMutation({
-      commands: { assign, reorder, update },
+      commands,
       item,
-      mutation: assigneeMutation!,
+      mutation: assignment,
       notifyAssignee: false,
     });
     expect(assign).toHaveBeenCalledWith(item, {
       assigneeId: "bot-1",
       assigneeType: "agent",
       notifyAssignee: false,
+      position: { beforeItemId: null },
     });
-    expect(reorder).toHaveBeenCalledTimes(1);
+    expect(refreshOrder).toHaveBeenCalledTimes(2);
   });
 
-  it("uses the shared update command for priority, tag and unassignment", async () => {
+  it("does not refresh or report success after a failed atomic move", async () => {
+    const item = items[0];
+    const mutation = resolveStandardCloudBoardMutation({
+      beforeItemId: null,
+      column: column("urgent"),
+      groupBy: "priority",
+      item,
+      items: [item],
+    })!;
+    const update = vi.fn().mockRejectedValue(new Error("write failed"));
+    const refreshOrder = vi.fn();
+    await expect(
+      executeStandardCloudBoardMutation({
+        commands: { update, refreshOrder },
+        item,
+        mutation,
+      }),
+    ).rejects.toThrow("write failed");
+    expect(refreshOrder).not.toHaveBeenCalled();
+  });
+
+  it("uses one positioned update for priority, tag and unassignment", async () => {
     const item = { ...items[0], assignee_user_id: 99 };
     const update = vi.fn(async (_item, input) => ({ ...item, ...input }));
-    const commands = { update };
-
+    const commands = { update, refreshOrder: vi.fn(async () => {}) };
     for (const [groupBy, groupValue] of [
       ["priority", "urgent"],
       ["tag", "backend"],
@@ -463,38 +511,32 @@ describe("standard cloud board controller", () => {
         groupBy,
         item,
         items: [item],
-      });
-      await executeStandardCloudBoardMutation({
-        commands,
-        item,
-        mutation: mutation!,
-      });
+      })!;
+      await executeStandardCloudBoardMutation({ commands, item, mutation });
     }
-
     expect(update.mock.calls.map(([, input]) => input)).toEqual([
-      { priority: "urgent" },
-      { tags: ["backend"] },
+      { priority: "urgent", position: { beforeItemId: null } },
+      { tags: ["backend"], position: { beforeItemId: null } },
       {
         assignee_user_id: null,
         assignee_agent_id: null,
         assignee_team_id: null,
+        position: { beforeItemId: null },
       },
     ]);
   });
 });
 
-describe("manual order in non-status groupings", () => {
-  it.each(["priority", "assignee", "tag"] as const)(
-    "persists %s order across statuses without changing group fields",
+describe("canonical manual order for every grouping", () => {
+  it.each(["status", "priority", "assignee", "tag"] as const)(
+    "moves to a card and lane tail in %s without changing unrelated fields",
     async (groupBy) => {
       const first = {
         ...items[0],
         id: "first",
-        parent_id: null,
         priority: "high",
         assignee_user_id: 42,
         tags: ["backend", "shared"],
-        status: "pending",
         sort_order: 0,
       };
       const hidden = {
@@ -503,22 +545,32 @@ describe("manual order in non-status groupings", () => {
         priority: "low",
         assignee_user_id: null,
         tags: [],
+        status: "inbox",
         sort_order: 1,
       };
-      const last = { ...first, id: "last", status: "completed", sort_order: 2 };
+      const last = {
+        ...first,
+        id: "last",
+        status: groupBy === "status" ? "pending" : "completed",
+        sort_order: 2,
+      };
       const child = {
         ...first,
         id: "child",
         parent_id: first.id,
         sort_order: 0,
       };
-      const boardItems = [last, child, first, hidden];
+      const otherProject = {
+        ...first,
+        id: "other-project",
+        cloud_project_id: "foreign",
+        sort_order: 0,
+      };
+      const boardItems = [last, child, first, hidden, otherProject];
       const target = column(
-        groupBy === "priority"
-          ? "high"
-          : groupBy === "assignee"
-            ? "42"
-            : "backend",
+        { status: "pending", priority: "high", assignee: "42", tag: "backend" }[
+          groupBy
+        ],
       );
       const mutation = resolveStandardCloudBoardMutation({
         beforeItemId: first.id,
@@ -527,46 +579,52 @@ describe("manual order in non-status groupings", () => {
         item: last,
         items: boardItems,
         manualSort: true,
-      });
+      })!;
       expect(mutation).toMatchObject({
         kind: "reorder",
-        laneIds: ["last", "first", "hidden"],
+        position: { beforeItemId: first.id },
       });
-      const update = vi.fn();
-      const assign = vi.fn();
-      const reorder = vi.fn(async (_item, input) => {
-        expect(input.status).toBeNull();
-        return { ...last, sort_order: 0, version: 9 };
-      });
+      const update = vi.fn(async () => ({
+        ...last,
+        sort_order: 0,
+        version: 9,
+      }));
+      const refreshOrder = vi.fn(async () => {});
       const saved = await executeStandardCloudBoardMutation({
         item: last,
-        mutation: mutation!,
-        commands: { update, assign, reorder },
+        mutation,
+        commands: { update, refreshOrder },
       });
-      expect(update).not.toHaveBeenCalled();
-      expect(assign).not.toHaveBeenCalled();
+      expect(update).toHaveBeenCalledWith(last, {
+        position: { beforeItemId: first.id },
+      });
       expect(saved).toMatchObject({
         version: 9,
         sort_order: 0,
-        status: "completed",
         tags: ["backend", "shared"],
       });
       expect(
-        mutation!.optimisticItems.find((item) => item.id === "child"),
+        mutation.optimisticItems.find((item) => item.id === child.id),
       ).toEqual(child);
-      const restored = mutation!.optimisticItems
-        .filter((item) => item.parent_id === null && item.id !== "hidden")
-        .sort((a, b) => a.sort_order - b.sort_order);
-      expect(restored.map((item) => item.id)).toEqual(["last", "first"]);
+      expect(
+        mutation.optimisticItems.find((item) => item.id === otherProject.id),
+      ).toEqual(otherProject);
+      const orderedIds = (result: typeof mutation) =>
+        result.optimisticItems
+          .filter((item) => !item.parent_id && !item.cloud_project_id)
+          .sort((a, b) => a.sort_order - b.sort_order)
+          .map((item) => item.id);
+      expect(orderedIds(mutation)).toEqual(["last", "first", "hidden"]);
       const append = resolveStandardCloudBoardMutation({
         beforeItemId: null,
         column: target,
         groupBy,
         item: last,
-        items: mutation!.optimisticItems,
+        items: mutation.optimisticItems,
         manualSort: true,
-      });
-      expect(append).toMatchObject({ laneIds: ["first", "last", "hidden"] });
+      })!;
+      expect(append.position).toEqual({ beforeItemId: "hidden" });
+      expect(orderedIds(append)).toEqual(["first", "last", "hidden"]);
       expect(
         resolveStandardCloudBoardMutation({
           beforeItemId: "child",
@@ -586,49 +644,88 @@ describe("manual order in non-status groupings", () => {
           items: boardItems,
         }),
       ).toBeNull();
+      expect(
+        resolveStandardCloudBoardMutation({
+          beforeItemId: null,
+          column: target,
+          groupBy,
+          item: last,
+          items: append.optimisticItems,
+          manualSort: true,
+        }),
+      ).toBeNull();
     },
   );
 
-  it("updates a destination group before saving its manual order", async () => {
-    const first = {
+  it.each(["status", "priority", "assignee", "tag"] as const)(
+    "positions cross-column %s moves against the full sibling order",
+    (groupBy) => {
+      const first = {
+        ...items[0],
+        id: "first",
+        assignee_user_id: 42,
+        tags: ["backend"],
+        sort_order: 0,
+      };
+      const moved = {
+        ...first,
+        id: "moved",
+        priority: "low",
+        status: "completed",
+        assignee_user_id: 7,
+        tags: ["frontend"],
+        sort_order: 2,
+      };
+      const hidden = {
+        ...first,
+        id: "hidden",
+        status: "inbox",
+        priority: "none",
+        tags: [],
+        assignee_user_id: null,
+        sort_order: 1,
+      };
+      const target = column(
+        { status: "pending", priority: "high", assignee: "42", tag: "backend" }[
+          groupBy
+        ],
+      );
+      const manual = resolveStandardCloudBoardMutation({
+        beforeItemId: first.id,
+        column: target,
+        groupBy,
+        item: moved,
+        items: [first, hidden, moved],
+        manualSort: true,
+      })!;
+      expect(manual.position).toEqual({ beforeItemId: first.id });
+      const automatic = resolveStandardCloudBoardMutation({
+        beforeItemId: first.id,
+        column: target,
+        groupBy,
+        item: moved,
+        items: [first, hidden, moved],
+      })!;
+      expect(automatic.position).toEqual({ beforeItemId: hidden.id });
+    },
+  );
+
+  it("uses a single anchor for projects with more than 1000 siblings", () => {
+    const siblings = Array.from({ length: 1001 }, (_, index) => ({
       ...items[0],
-      id: "first",
-      parent_id: null,
-      priority: "high",
-      sort_order: 0,
-    };
-    const moved = {
-      ...first,
-      id: "moved",
-      priority: "low",
-      status: "completed",
-      sort_order: 1,
-    };
+      id: String(index),
+      sort_order: index,
+    }));
     const mutation = resolveStandardCloudBoardMutation({
-      beforeItemId: first.id,
-      column: column("high"),
-      groupBy: "priority",
-      item: moved,
-      items: [first, moved],
+      beforeItemId: "0",
+      column: column("pending"),
+      groupBy: "status",
+      item: siblings[1000],
+      items: siblings,
       manualSort: true,
-    });
-    const updated = { ...moved, priority: "high", version: 2 };
-    const update = vi.fn(async () => updated);
-    const reorder = vi.fn(async (item, input) => {
-      expect(item).toEqual(updated);
-      expect(input).toMatchObject({
-        status: null,
-        laneIds: ["moved", "first"],
-      });
-    });
-    await executeStandardCloudBoardMutation({
-      item: moved,
-      mutation: mutation!,
-      commands: { update, reorder },
-    });
-    expect(update.mock.invocationCallOrder[0]).toBeLessThan(
-      reorder.mock.invocationCallOrder[0],
-    );
+    })!;
+    expect(mutation.position).toEqual({ beforeItemId: "0" });
+    expect(mutation).not.toHaveProperty("laneIds");
   });
 
   it("uses the actual target lane for cards with multiple tags", () => {

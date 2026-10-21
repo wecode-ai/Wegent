@@ -80,6 +80,7 @@ export function readProjectBoardColumnSorts(value: string | null): ProjectBoardC
 }
 
 interface SortableBoardItem {
+  id?: string
   priority: string
   sort_order: number
   created_at: string
@@ -116,5 +117,9 @@ export function compareProjectBoardItems(
     const order = compareRule(left, right, rule)
     if (order) return order
   }
-  return left.sort_order - right.sort_order
+  return (
+    left.sort_order - right.sort_order ||
+    compareIssueTimestamps(right.updated_at, left.updated_at) ||
+    (left.id ?? '').localeCompare(right.id ?? '')
+  )
 }

@@ -125,12 +125,6 @@ export interface CollaborationWorkspaceControllerCommands {
     issueId: string,
     options?: { throwOnError?: boolean },
   ): Promise<boolean>;
-  reorderIssue(input: {
-    issue: CollaborationIssue;
-    status: string | null;
-    laneIds: string[];
-    optimisticItems: CollaborationIssue[];
-  }): Promise<CollaborationIssue | null>;
   changeProjectGroup(input: {
     project: CollaborationProject;
     groupBy: "status" | "priority" | "assignee" | "tag";
@@ -178,7 +172,6 @@ const unavailableCollaborationWorkspaceControllerCommands: CollaborationWorkspac
     updateIssue: async () => null,
     assignIssue: async () => null,
     archiveIssue: async () => false,
-    reorderIssue: async () => null,
     changeProjectGroup: async () => undefined,
     refreshSelectedIssue: async () => undefined,
     refreshProjectAgents: async () => undefined,
@@ -261,7 +254,6 @@ export type CollaborationWorkspaceControllerAction =
     }
   | { type: "remove-project"; projectId: string }
   | { type: "replace-issues"; issues: CollaborationIssue[] }
-  | { type: "merge-reorder-issues"; issues: CollaborationIssue[] }
   | { type: "append-issue"; issue: CollaborationIssue }
   | { type: "replace-issue"; issue: CollaborationIssue }
   | { type: "remove-issue"; issueId: string }
@@ -308,21 +300,6 @@ function newestIssue(
     : incoming;
 }
 
-function mergeReorderIssues(
-  current: CollaborationIssue[],
-  incoming: CollaborationIssue[],
-): CollaborationIssue[] {
-  const currentById = new Map(current.map((issue) => [issue.id, issue]));
-  const incomingIds = new Set(incoming.map((issue) => issue.id));
-  return [
-    ...incoming.map((issue) => {
-      const existing = currentById.get(issue.id);
-      return newestIssue(existing, issue);
-    }),
-    ...current.filter((issue) => !incomingIds.has(issue.id)),
-  ];
-}
-
 export function collaborationWorkspaceControllerReducer(
   state: CollaborationWorkspaceControllerState,
   action: CollaborationWorkspaceControllerAction,
@@ -355,19 +332,24 @@ export function collaborationWorkspaceControllerReducer(
         error: null,
         errorSource: null,
       };
-    case "project-snapshot-loaded":
+    case "project-snapshot-loaded": {
+      const existing = new Map(
+        (state.projectItems[action.projectId] ?? []).map((item) => [
+          item.id,
+          item,
+        ]),
+      );
+      const items = action.snapshot.items.map((item) =>
+        newestIssue(existing.get(item.id), item),
+      );
       return {
         ...state,
         selectedIssue:
           state.selectedIssue && state.project?.id === action.projectId
-            ? (action.snapshot.items.find(
-                (item) => item.id === state.selectedIssue?.id,
-              ) ?? null)
+            ? (items.find((item) => item.id === state.selectedIssue?.id) ??
+              null)
             : state.selectedIssue,
-        issues:
-          state.project?.id === action.projectId
-            ? action.snapshot.items
-            : state.issues,
+        issues: state.project?.id === action.projectId ? items : state.issues,
         members:
           state.project?.id === action.projectId
             ? action.snapshot.members
@@ -382,7 +364,7 @@ export function collaborationWorkspaceControllerReducer(
             : state.taskBindings,
         projectItems: {
           ...state.projectItems,
-          [action.projectId]: action.snapshot.items,
+          [action.projectId]: items,
         },
         projectMembers: {
           ...state.projectMembers,
@@ -399,6 +381,7 @@ export function collaborationWorkspaceControllerReducer(
         error: null,
         errorSource: null,
       };
+    }
     case "my-work-loaded":
       return {
         ...state,
@@ -583,16 +566,6 @@ export function collaborationWorkspaceControllerReducer(
           ? { ...state.projectItems, [state.project.id]: action.issues }
           : state.projectItems,
       };
-    case "merge-reorder-issues": {
-      const issues = mergeReorderIssues(state.issues, action.issues);
-      return {
-        ...state,
-        issues,
-        projectItems: state.project
-          ? { ...state.projectItems, [state.project.id]: issues }
-          : state.projectItems,
-      };
-    }
     case "append-issue":
       return {
         ...state,
@@ -886,6 +859,17 @@ export function createCollaborationWorkspaceControllerCommands({
     standardSnapshotLoads.delete(projectId);
     homeSnapshotLoads.delete(projectId);
     homeSnapshotResults.delete(projectId);
+  };
+  const reportPositionConflict = async (issueId: string, error: unknown) => {
+    if (!isIssueVersionConflict(error)) return false;
+    try {
+      const latest = await api.issues.get(issueId);
+      await loadProject(latest.cloud_project_id, false);
+      reportError(messages.conflict, "conflict");
+    } catch {
+      reportError(messages.loadFailed, "load");
+    }
+    return true;
   };
   const pendingReadRequests = new Map<
     string,
@@ -1341,7 +1325,8 @@ export function createCollaborationWorkspaceControllerCommands({
         dispatch({ type: "replace-issue", issue });
         return issue;
       } catch (error) {
-        reportError(messages.saveFailed);
+        if (!input.position || !(await reportPositionConflict(issueId, error)))
+          reportError(messages.saveFailed);
         if (options?.throwOnError) throw error;
         return null;
       }
@@ -1352,8 +1337,9 @@ export function createCollaborationWorkspaceControllerCommands({
         markProjectMutated(projectId);
         dispatch({ type: "replace-issue", issue });
         return issue;
-      } catch {
-        reportError(messages.saveFailed);
+      } catch (error) {
+        if (!input.position || !(await reportPositionConflict(issueId, error)))
+          reportError(messages.saveFailed);
         return null;
       }
     },
@@ -1370,52 +1356,6 @@ export function createCollaborationWorkspaceControllerCommands({
         reportError(messages.saveFailed);
         if (options?.throwOnError) throw error;
         return false;
-      }
-    },
-    async reorderIssue({ issue, status, laneIds, optimisticItems }) {
-      const mergedOptimisticItems = mergeReorderIssues(
-        getExternalBoardState().issues,
-        optimisticItems,
-      );
-      dispatch({ type: "replace-issues", issues: mergedOptimisticItems });
-      try {
-        if (status !== null && issue.status !== status) {
-          const movedIssue = await api.issues.update(issue.id, {
-            version: issue.version,
-            status,
-          });
-          markProjectMutated(issue.cloud_project_id);
-          dispatch({
-            type: "replace-issue",
-            issue: movedIssue,
-          });
-        }
-        const updated = await api.issues.reorder(issue.cloud_project_id, {
-          parentId: issue.parent_id,
-          status,
-          issueIds: laneIds,
-        });
-        markProjectMutated(issue.cloud_project_id);
-        const byId = new Map(updated.map((item) => [item.id, item]));
-        const reorderedItems = mergedOptimisticItems.map((item) => {
-          const reordered = byId.get(item.id);
-          if (!reordered) return item;
-          return reordered.version < item.version ? item : reordered;
-        });
-        dispatch({
-          type: "merge-reorder-issues",
-          issues: reorderedItems,
-        });
-        return byId.get(issue.id) ?? issue;
-      } catch (error) {
-        if (isIssueVersionConflict(error)) {
-          await loadProject(issue.cloud_project_id, false);
-          reportError(messages.conflict, "conflict");
-        } else {
-          await loadProject(issue.cloud_project_id, false);
-          reportError(messages.saveFailed);
-        }
-        return null;
       }
     },
     async changeProjectGroup({ project, groupBy, defaultStatuses }) {

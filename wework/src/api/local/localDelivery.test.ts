@@ -947,7 +947,7 @@ describe('local delivery API', () => {
 
     await api.listLoopItems('project-1')
     await expect(
-      api.updateLoopItem('LOCAL-1', { version: 1, tags: ['bug'] })
+      api.updateLoopItem('LOCAL-1', { version: 1, tags: ['bug'], position: { beforeItemId: null } })
     ).resolves.toMatchObject({
       local_project_id: 91,
       local_project_name: 'Wegent',
@@ -959,6 +959,7 @@ describe('local delivery API', () => {
       todo: {
         version: 1,
         tags: ['bug', 'wegent:local-project:91:Wegent'],
+        position: { before_item_id: null },
       },
     })
   })

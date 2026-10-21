@@ -201,11 +201,13 @@ describe('createWebSharedWorkspaceApi', () => {
       assigneeType: 'team',
       assigneeId: '9',
       notifyAssignee: false,
+      position: { beforeItemId: null },
     })
     expect(client.patch).toHaveBeenCalledWith('/v1/loop-items/issue-1', {
       version: 1,
       assignee_team_id: 9,
       notify_assignee: false,
+      position: { beforeItemId: null },
     })
     expect(() =>
       api.issues.assign('11', 'issue-1', {
