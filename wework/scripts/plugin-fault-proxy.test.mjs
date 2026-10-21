@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { once } from 'node:events'
 import { createServer } from 'node:http'
 import { connect } from 'node:net'
-import test from 'node:test'
+import { test } from 'vitest'
 import { PluginFaultProxy } from '../e2e/desktop/modules/plugin-fault-proxy.mjs'
 import { until } from '../e2e/desktop/modules/plugin-regression-fixture.mjs'
 
@@ -22,7 +22,7 @@ async function fixture(t) {
   })
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   const proxy = await new PluginFaultProxy(`http://127.0.0.1:${server.address().port}`).start()
-  t.after(async () => {
+  t.onTestFinished(async () => {
     await proxy.stop()
     for (const socket of sockets) socket.destroy()
     await new Promise(resolve => server.close(resolve))
@@ -111,7 +111,7 @@ test(
       )
     })
     const client = connect(new URL(proxy.url).port, '127.0.0.1')
-    t.after(() => client.destroy())
+    t.onTestFinished(() => client.destroy())
     await once(client, 'connect')
     const handshake = once(client, 'data')
     client.write(
