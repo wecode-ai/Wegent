@@ -101,7 +101,10 @@ from app.services.plugin_upstream_fetch import (
     fetch_upstream_package,
     validate_upstream_url,
 )
-from app.services.plugin_write_coordination import acquire_plugin_write_lock
+from app.services.plugin_write_coordination import (
+    acquire_plugin_write_lock,
+    acquire_plugin_write_locks,
+)
 from shared.telemetry.decorators import trace_sync
 
 SEMVER_PATTERN = re.compile(
@@ -2486,6 +2489,31 @@ class PluginMarketplaceService:
             plugin_id=plugin.id,
             owner_user_id=user_id,
         )
+        grants = [
+            ResourceMember.create(
+                resource_type=ResourceType.PLUGIN.value,
+                resource_id=plugin.id,
+                entity_type=target.entityType,
+                entity_id=target.entityId,
+                entity_display_name=target.displayName,
+                status=MemberStatus.APPROVED.value,
+                invited_by_user_id=user_id,
+                reviewed_by_user_id=user_id,
+                reviewed_at=datetime.now(),
+            )
+            for target in targets
+        ]
+        revoked = [
+            (recipient_user_id, installed_id)
+            for recipient_user_id, installed_id in recipient_installs
+            if not self._can_access_plugin(
+                db,
+                plugin=plugin,
+                user_id=recipient_user_id,
+                grants=grants,
+            )
+        ]
+        acquire_plugin_write_locks(db, (user_id for user_id, _ in revoked))
         (
             db.query(ResourceMember)
             .filter(
@@ -2496,32 +2524,10 @@ class PluginMarketplaceService:
             )
             .delete(synchronize_session=False)
         )
-        for target in targets:
-            db.add(
-                ResourceMember.create(
-                    resource_type=ResourceType.PLUGIN.value,
-                    resource_id=plugin.id,
-                    entity_type=target.entityType,
-                    entity_id=target.entityId,
-                    entity_display_name=target.displayName,
-                    status=MemberStatus.APPROVED.value,
-                    invited_by_user_id=user_id,
-                    reviewed_by_user_id=user_id,
-                    reviewed_at=datetime.now(),
-                )
-            )
+        db.add_all(grants)
         plugin.visibility = "personal"
         plugin.allow_copy = bool(request.allowCopy and targets)
         db.flush()
-        revoked = [
-            (recipient_user_id, installed_id)
-            for recipient_user_id, installed_id in recipient_installs
-            if not self._can_access_plugin(
-                db,
-                plugin=plugin,
-                user_id=recipient_user_id,
-            )
-        ]
         self._deactivate_revoked_installations(db, revoked)
         db.commit()
         return (
@@ -2569,6 +2575,7 @@ class PluginMarketplaceService:
                 status_code=409,
                 detail="Plugin is shared or installed by other users",
             )
+        acquire_plugin_write_locks(db, (user_id for user_id, _ in installations))
         self._clear_plugin_grants(db, plugin_id=plugin.id)
         self._deactivate_revoked_installations(db, installations)
         plugin.status = "deleted"
@@ -2641,10 +2648,9 @@ class PluginMarketplaceService:
         db: Session,
         revoked: list[tuple[int, int]],
     ) -> None:
+        """Deactivate installations after the caller acquires recipient leases."""
         if not revoked:
             return
-        for user_id in sorted({user_id for user_id, _ in revoked}):
-            acquire_plugin_write_lock(db, user_id)
         revoked_ids = {installed_id for _, installed_id in revoked}
         rows = (
             db.query(Kind)

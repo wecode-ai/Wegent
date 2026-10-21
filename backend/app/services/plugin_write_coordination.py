@@ -9,6 +9,7 @@ InnoDB's transactional locks; no SELECT FOR UPDATE is used for coordination.
 import logging
 import threading
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -111,6 +112,40 @@ class _Lease:
 
 def acquire_plugin_write_lock(db: Session, user_id: int) -> None:
     """Acquire once per user/root transaction; release only at its end."""
+    _acquire_plugin_write_lock(db, user_id, blocking_timeout=WAIT_SECONDS)
+
+
+def acquire_plugin_write_locks(db: Session, user_ids: Iterable[int]) -> None:
+    """Acquire a batch before business writes, sharing one coordination budget."""
+    ordered_user_ids = sorted(set(user_ids))
+    if not ordered_user_ids:
+        return
+    deadline = time.monotonic() + WAIT_SECONDS
+    leases: dict[int, _Lease] = db.info.get(_LEASES, {})
+    if leases:
+        deadline = min(
+            deadline,
+            min(lease.started + OPERATION_SECONDS for lease in leases.values()),
+        )
+    try:
+        for user_id in ordered_user_ids:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise PluginWriteError("plugin_write_busy")
+            _acquire_plugin_write_lock(db, user_id, blocking_timeout=remaining)
+        if time.monotonic() >= deadline:
+            raise PluginWriteError("plugin_write_busy")
+        for lease in db.info.get(_LEASES, {}).values():
+            lease.check()
+    except Exception:
+        # Policy reads can reactivate rows. Roll back before releasing any lease.
+        db.rollback()
+        raise
+
+
+def _acquire_plugin_write_lock(
+    db: Session, user_id: int, *, blocking_timeout: float
+) -> None:
     configure_plugin_session(db)
     leases: dict[int, _Lease] = db.info.setdefault(_LEASES, {})
     if user_id in leases:
@@ -120,7 +155,7 @@ def acquire_plugin_write_lock(db: Session, user_id: int) -> None:
         lock = distributed_lock.owned_lock(
             f"wegent:plugin-write:{user_id}",
             expire_seconds=LEASE_SECONDS,
-            blocking_timeout=WAIT_SECONDS,
+            blocking_timeout=blocking_timeout,
             redis_client=_redis_client(),
         )
         acquired = lock.acquire()

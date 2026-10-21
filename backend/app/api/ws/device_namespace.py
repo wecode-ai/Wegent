@@ -74,6 +74,7 @@ from app.db.session import SessionLocal
 from app.models.subtask import SubtaskStatus
 from app.models.user import User
 from app.schemas.device import (
+    DeviceCapabilitySyncResult,
     DeviceHeartbeatPayload,
     DeviceOfflineEvent,
     DeviceOnlineEvent,
@@ -1832,8 +1833,12 @@ class DeviceNamespace(socketio.AsyncNamespace):
     ) -> None:
         """Best-effort desired-state sync when a device comes online."""
         try:
-            include_plugins = self._prepare_plugins_for_registered_device(
-                user_id=user_id, device_id=device_id
+            include_plugins = await run_sync_in_executor(
+                partial(
+                    self._prepare_plugins_for_registered_device,
+                    user_id=user_id,
+                    device_id=device_id,
+                )
             )
             result = (
                 await device_capability_sync_service.sync_current_device_capabilities(
@@ -1844,13 +1849,13 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 )
             )
             if include_plugins:
-                with _db_session() as db:
-                    configure_plugin_session(db)
-                    plugin_device_installation_service.record_device_sync_result(
-                        db,
+                await run_sync_in_executor(
+                    partial(
+                        self._record_registration_sync_result,
                         user_id=user_id,
                         result=result,
                     )
+                )
             if not result.success:
                 logger.warning(
                     "[Device WS] Capability sync after register failed: user=%s, device=%s, error=%s",
@@ -1886,6 +1891,16 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 exc.code,
             )
             return False
+
+    def _record_registration_sync_result(
+        self, *, user_id: int, result: DeviceCapabilitySyncResult
+    ) -> None:
+        """Persist the acknowledgement in the same worker as its session."""
+        with _db_session() as db:
+            configure_plugin_session(db)
+            plugin_device_installation_service.record_device_sync_result(
+                db, user_id=user_id, result=result
+            )
 
     def _schedule_runtime_auth_sync_after_heartbeat(
         self,

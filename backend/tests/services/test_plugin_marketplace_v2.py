@@ -73,6 +73,7 @@ from app.services.plugin_package_storage import (
     PluginPackageStorageError,
     plugin_package_storage,
 )
+from app.services.plugin_write_errors import PluginWriteError
 
 GITHUB_UPSTREAM_SKILL_PATHS = (
     "skills/gh-address-comments/SKILL.md",
@@ -1641,6 +1642,244 @@ def test_personal_plugin_delete_requires_impact_confirmation_and_revokes_usage(
         .count()
         == 0
     )
+
+
+@pytest.fixture
+def shared_personal_plugin(
+    test_db: Session, test_user: User
+) -> tuple[PluginMarketplaceService, Plugin, list[User], list[Kind]]:
+    recipients = [
+        User(
+            user_name=f"bulk-plugin-recipient-{index}",
+            password_hash=test_user.password_hash,
+            email=f"bulk-plugin-recipient-{index}@example.com",
+            is_active=True,
+        )
+        for index in range(3)
+    ]
+    plugin = Plugin(
+        slug="bulk-revocation",
+        name="bulk-revocation",
+        display_name="Bulk Revocation",
+        owner_user_id=test_user.id,
+        keywords_json=[],
+        interface_json={},
+        visibility="personal",
+        status="published",
+        allow_copy=True,
+    )
+    test_db.add_all([plugin, *recipients])
+    test_db.flush()
+    installations = []
+    for recipient in recipients:
+        installed = Kind(
+            user_id=recipient.id,
+            kind="InstalledPlugin",
+            namespace="default",
+            name=plugin.name,
+            json={
+                "spec": {
+                    "pluginId": plugin.id,
+                    "revision": 4,
+                    "enabled": True,
+                    "installState": "installed",
+                    "componentStates": {"review": False},
+                }
+            },
+            is_active=True,
+        )
+        test_db.add_all(
+            [
+                installed,
+                Kind(
+                    user_id=recipient.id,
+                    kind="ConnectorAuthPolicy",
+                    namespace="plugin-auth",
+                    name="account",
+                    json={"spec": {"enabled": True, "revision": 3}},
+                    is_active=True,
+                ),
+                ResourceMember.create(
+                    resource_type="Plugin",
+                    resource_id=plugin.id,
+                    entity_type="user",
+                    entity_id=str(recipient.id),
+                    status=MemberStatus.APPROVED.value,
+                ),
+            ]
+        )
+        installations.append(installed)
+    test_db.commit()
+    return PluginMarketplaceService(), plugin, recipients, installations
+
+
+def _revoke_personal_plugin_usage(
+    db: Session,
+    service: PluginMarketplaceService,
+    plugin_id: int,
+    owner_user_id: int,
+    operation: str,
+) -> list[tuple[int, int]]:
+    if operation == "access":
+        _, revoked = service.update_plugin_access(
+            db,
+            plugin_id=plugin_id,
+            user_id=owner_user_id,
+            request=PluginAccessUpdateRequest(scope="private", targets=[]),
+        )
+        return revoked
+    impact = service.get_personal_plugin_delete_impact(
+        db, plugin_id=plugin_id, user_id=owner_user_id
+    )
+    return service.delete_owned_personal_plugin(
+        db,
+        plugin_id=plugin_id,
+        user_id=owner_user_id,
+        impact_revision=impact.impactRevision,
+        revoke_and_delete=True,
+    )
+
+
+@pytest.mark.parametrize("operation", ["access", "delete"])
+def test_personal_plugin_revocation_updates_all_recipients_atomically(
+    test_db, test_user, shared_personal_plugin, plugin_write_backend, operation
+):
+    service, plugin, recipients, installations = shared_personal_plugin
+
+    revoked = _revoke_personal_plugin_usage(
+        test_db, service, plugin.id, test_user.id, operation
+    )
+
+    assert set(revoked) == {
+        (recipient.id, installed.id)
+        for recipient, installed in zip(recipients, installations)
+    }
+    test_db.refresh(plugin)
+    assert plugin.status == ("deleted" if operation == "delete" else "published")
+    assert plugin.allow_copy is False
+    assert service._plugin_grants(test_db, plugin.id) == []
+    for installed in installations:
+        test_db.refresh(installed)
+        assert installed.is_active is False
+        assert installed.json["spec"] == {
+            "pluginId": plugin.id,
+            "revision": 5,
+            "enabled": False,
+            "installState": "uninstalled",
+            "componentStates": {"review": False},
+        }
+    policies = test_db.query(Kind).filter(Kind.kind == "ConnectorAuthPolicy").all()
+    assert {row.user_id for row in policies} == {user.id for user in recipients}
+    assert all(row.json["spec"]["revision"] == 4 for row in policies)
+    assert not plugin_write_backend.values
+
+
+@pytest.mark.parametrize("operation", ["access", "delete"])
+def test_personal_plugin_revocation_busy_recipient_preserves_every_record(
+    test_db,
+    test_user,
+    shared_personal_plugin,
+    plugin_write_backend,
+    monkeypatch,
+    operation,
+):
+    service, plugin, recipients, installations = shared_personal_plugin
+    recipient_ids = sorted(user.id for user in recipients)
+    busy_key = f"wegent:plugin-write:{recipient_ids[-1]}"
+    busy_lock = plugin_write_backend.lock(
+        busy_key, timeout=30, blocking_timeout=0, thread_local=False
+    )
+    assert busy_lock.acquire()
+    original_lock = plugin_write_backend.lock
+
+    def immediate_busy_lock(name: str, **options):
+        lock = original_lock(name, **options)
+        if name == busy_key:
+            # Exercise contention without depending on a wall-clock timeout.
+            lock.blocking_timeout = 0
+        return lock
+
+    lock_factory = Mock(side_effect=immediate_busy_lock)
+    monkeypatch.setattr(plugin_write_backend, "lock", lock_factory)
+    original_grants = {
+        (grant.id, grant.entity_id)
+        for grant in service._plugin_grants(test_db, plugin.id)
+    }
+    try:
+        with pytest.raises(PluginWriteError, match="plugin_write_busy"):
+            _revoke_personal_plugin_usage(
+                test_db, service, plugin.id, test_user.id, operation
+            )
+
+        assert [call.args[0] for call in lock_factory.call_args_list] == [
+            f"wegent:plugin-write:{user_id}" for user_id in recipient_ids
+        ]
+        test_db.refresh(plugin)
+        assert plugin.status == "published"
+        assert plugin.allow_copy is True
+        assert {
+            (grant.id, grant.entity_id)
+            for grant in service._plugin_grants(test_db, plugin.id)
+        } == original_grants
+        for installed in installations:
+            test_db.refresh(installed)
+            assert installed.is_active is True
+            assert installed.json["spec"]["revision"] == 4
+            assert installed.json["spec"]["enabled"] is True
+            assert installed.json["spec"]["installState"] == "installed"
+        policies = test_db.query(Kind).filter(Kind.kind == "ConnectorAuthPolicy").all()
+        assert all(row.json["spec"]["revision"] == 3 for row in policies)
+        assert not test_db.info.get("plugin_write_leases")
+        assert set(plugin_write_backend.values) == {busy_key}
+        assert busy_lock.owned()
+    finally:
+        busy_lock.release()
+
+
+def test_access_revocation_does_not_lock_retained_recipient(
+    test_db, test_user, shared_personal_plugin, plugin_write_backend, monkeypatch
+):
+    service, plugin, recipients, installations = shared_personal_plugin
+    retained = recipients[0]
+    retained_key = f"wegent:plugin-write:{retained.id}"
+    retained_lock = plugin_write_backend.lock(
+        retained_key, timeout=30, blocking_timeout=0, thread_local=False
+    )
+    assert retained_lock.acquire()
+    lock_factory = Mock(wraps=plugin_write_backend.lock)
+    monkeypatch.setattr(plugin_write_backend, "lock", lock_factory)
+    try:
+        access, revoked = service.update_plugin_access(
+            test_db,
+            plugin_id=plugin.id,
+            user_id=test_user.id,
+            request=PluginAccessUpdateRequest(
+                scope="restricted",
+                targets=[
+                    PluginAccessTarget(entityType="user", entityId=str(retained.id))
+                ],
+                allowCopy=True,
+            ),
+        )
+
+        assert [target.entityId for target in access.targets] == [str(retained.id)]
+        assert set(revoked) == {
+            (recipient.id, installed.id)
+            for recipient, installed in zip(recipients[1:], installations[1:])
+        }
+        assert {call.args[0] for call in lock_factory.call_args_list} == {
+            f"wegent:plugin-write:{user.id}" for user in recipients[1:]
+        }
+        test_db.refresh(installations[0])
+        assert installations[0].is_active is True
+        assert installations[0].json["spec"]["revision"] == 4
+        for installed in installations[1:]:
+            test_db.refresh(installed)
+            assert installed.is_active is False
+        assert set(plugin_write_backend.values) == {retained_key}
+        assert retained_lock.owned()
+    finally:
+        retained_lock.release()
 
 
 def test_personal_plugin_delete_rejects_stale_impact_revision(test_db, test_user):

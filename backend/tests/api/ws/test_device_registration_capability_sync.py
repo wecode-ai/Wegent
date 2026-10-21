@@ -4,6 +4,8 @@
 
 """Registration keeps Skills/MCP sync independent of plugin write failures."""
 
+import asyncio
+import threading
 from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -27,6 +29,7 @@ PLUGIN_WRITE_ERRORS = (
 def registration_sync(monkeypatch):
     """Use the real desired-state builder and session rollback/close boundary."""
     events = []
+    session_threads = []
     failure = {"stage": None, "error": None}
 
     def fail_once(stage):
@@ -36,13 +39,20 @@ def registration_sync(monkeypatch):
             raise failure["error"]
 
     class RegistrationSession:
+        def __init__(self):
+            self.threads = [threading.get_ident()]
+            session_threads.append(self.threads)
+
         def commit(self):
+            self.threads.append(threading.get_ident())
             fail_once("commit")
 
         def rollback(self):
+            self.threads.append(threading.get_ident())
             events.append("rollback")
 
         def close(self):
+            self.threads.append(threading.get_ident())
             events.append("close")
 
     monkeypatch.setattr(device_namespace, "SessionLocal", RegistrationSession)
@@ -91,6 +101,7 @@ def registration_sync(monkeypatch):
     return SimpleNamespace(
         namespace=device_namespace.DeviceNamespace(),
         events=events,
+        session_threads=session_threads,
         failure=failure,
         catalog=catalog,
         pending=pending,
@@ -108,6 +119,43 @@ def registration_sync(monkeypatch):
 async def _sync(rig):
     await rig.namespace._sync_global_capabilities_to_registered_device(
         user_id=7, device_id="registered-device"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ("catalog", "record"))
+async def test_plugin_registration_waits_do_not_block_event_loop(
+    registration_sync, stage
+):
+    rig = registration_sync
+    loop = asyncio.get_running_loop()
+    loop_thread = threading.get_ident()
+    started = asyncio.Event()
+    release = threading.Event()
+
+    def wait_for_release(*args, **kwargs):
+        rig.events.append(stage)
+        loop.call_soon_threadsafe(started.set)
+        assert threading.get_ident() != loop_thread
+        assert release.wait(timeout=5), "Test did not release the database operation"
+
+    getattr(rig, stage).side_effect = wait_for_release
+    sync_task = asyncio.create_task(_sync(rig))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5)
+        # The event loop observed the worker while its database call is blocked.
+        assert not release.is_set()
+        assert not sync_task.done()
+    finally:
+        release.set()
+        await asyncio.wait_for(sync_task, timeout=5)
+
+    rig.dispatch.assert_awaited_once()
+    rig.record.assert_called_once()
+    assert len(rig.session_threads) == 2
+    assert all(
+        len(set(threads)) == 1 and threads[0] != loop_thread
+        for threads in rig.session_threads
     )
 
 

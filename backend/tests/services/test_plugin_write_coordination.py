@@ -1,6 +1,7 @@
 """Lease lifetime and stale-writer protection at real Session boundaries."""
 
 import threading
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -10,6 +11,162 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.services import plugin_write_coordination as coordination
+
+
+@pytest.fixture
+def batch_clock(monkeypatch):
+    """Advance coordination time without delaying Redis or renewal threads."""
+    clock = SimpleNamespace(now=0.0)
+    lease_type = coordination._Lease
+    monkeypatch.setattr(
+        coordination, "time", SimpleNamespace(monotonic=lambda: clock.now)
+    )
+    monkeypatch.setattr(
+        coordination, "_Lease", lambda lock: lease_type(lock=lock, started=clock.now)
+    )
+    return clock
+
+
+def test_batch_sorts_deduplicates_and_shares_one_wait_budget(
+    test_db, plugin_write_backend, monkeypatch, batch_clock
+):
+    attempts = []
+    make_lock = plugin_write_backend.lock
+    read_policy = coordination.read_policy_revision
+
+    def timed_lock(name, **options):
+        attempts.append((name, options["blocking_timeout"]))
+        return make_lock(name, **options)
+
+    def timed_policy(db, user_id):
+        policy = read_policy(db, user_id)
+        batch_clock.now += 0.5
+        return policy
+
+    monkeypatch.setattr(plugin_write_backend, "lock", timed_lock)
+    monkeypatch.setattr(coordination, "read_policy_revision", timed_policy)
+
+    coordination.acquire_plugin_write_locks(test_db, [19, 17, 19, 18])
+
+    assert attempts == [
+        ("wegent:plugin-write:17", 3.0),
+        ("wegent:plugin-write:18", 2.5),
+        ("wegent:plugin-write:19", 2.0),
+    ]
+    assert len(plugin_write_backend.values) == 3
+    test_db.commit()
+    assert not plugin_write_backend.values
+
+
+def test_batch_policy_reads_exhaust_budget_before_more_users_are_locked(
+    test_db, plugin_write_backend, monkeypatch, batch_clock
+):
+    read_policy = coordination.read_policy_revision
+    attempted = []
+
+    def slow_policy(db, user_id):
+        attempted.append(user_id)
+        policy = read_policy(db, user_id)
+        batch_clock.now += 2.0
+        return policy
+
+    monkeypatch.setattr(coordination, "read_policy_revision", slow_policy)
+
+    with pytest.raises(coordination.PluginWriteError) as caught:
+        coordination.acquire_plugin_write_locks(test_db, [17, 18, 19])
+
+    assert caught.value.code == "plugin_write_busy"
+    assert attempted == [17, 18]
+    assert not plugin_write_backend.values
+    assert coordination._LEASES not in test_db.info
+    assert test_db.query(Kind).filter(Kind.user_id.in_([17, 18, 19])).count() == 0
+
+
+def test_final_policy_read_cannot_run_business_work_after_batch_deadline(
+    test_db, plugin_write_backend, monkeypatch, batch_clock
+):
+    read_policy = coordination.read_policy_revision
+
+    def slow_policy(db, user_id):
+        policy = read_policy(db, user_id)
+        batch_clock.now += coordination.WAIT_SECONDS + 0.1
+        return policy
+
+    monkeypatch.setattr(coordination, "read_policy_revision", slow_policy)
+
+    with pytest.raises(coordination.PluginWriteError, match="plugin_write_busy"):
+        coordination.acquire_plugin_write_locks(test_db, [17])
+
+    assert not plugin_write_backend.values
+    assert test_db.query(Kind).filter_by(user_id=17).count() == 0
+
+
+@pytest.mark.parametrize("failure", ["busy", "redis", "policy"])
+def test_batch_failure_rolls_back_policy_changes_and_releases_all_leases(
+    test_db, plugin_write_backend, monkeypatch, failure
+):
+    policy = Kind(
+        user_id=17,
+        kind="ConnectorAuthPolicy",
+        namespace="plugin-auth",
+        name="account",
+        json={"spec": {"enabled": False, "revision": 3}},
+        is_active=False,
+    )
+    test_db.add(policy)
+    test_db.commit()
+    make_lock = plugin_write_backend.lock
+    read_policy = coordination.read_policy_revision
+
+    def failing_lock(name, **options):
+        if name.endswith(":18"):
+            if failure == "busy":
+                return Mock(acquire=Mock(return_value=False))
+            if failure == "redis":
+                raise ConnectionError()
+        return make_lock(name, **options)
+
+    def failing_policy(db, user_id):
+        if user_id == 18 and failure == "policy":
+            raise TimeoutError()
+        return read_policy(db, user_id)
+
+    monkeypatch.setattr(plugin_write_backend, "lock", failing_lock)
+    monkeypatch.setattr(coordination, "read_policy_revision", failing_policy)
+
+    with pytest.raises(coordination.PluginWriteError) as caught:
+        coordination.acquire_plugin_write_locks(test_db, [17, 18])
+
+    expected = "plugin_write_busy" if failure == "busy" else "plugin_write_unavailable"
+    assert caught.value.code == expected
+    assert not plugin_write_backend.values
+    test_db.refresh(policy)
+    assert policy.is_active is False
+    assert policy.json["spec"] == {"enabled": False, "revision": 3}
+
+
+def test_batch_respects_existing_lease_remaining_operation_budget(
+    test_db, plugin_write_backend, monkeypatch, batch_clock
+):
+    coordination.acquire_plugin_write_lock(test_db, 17)
+    existing = test_db.info[coordination._LEASES][17]
+    batch_clock.now = coordination.OPERATION_SECONDS - 0.5
+    make_lock = plugin_write_backend.lock
+    attempts = []
+
+    def timed_lock(name, **options):
+        attempts.append((name, options["blocking_timeout"]))
+        return make_lock(name, **options)
+
+    monkeypatch.setattr(plugin_write_backend, "lock", timed_lock)
+
+    coordination.acquire_plugin_write_locks(test_db, [17, 18])
+
+    assert attempts == [("wegent:plugin-write:18", 0.5)]
+    assert test_db.info[coordination._LEASES][17] is existing
+    assert existing.started == 0.0
+    test_db.commit()
+    assert not plugin_write_backend.values
 
 
 def test_lock_is_reentrant_until_root_commit(test_db, plugin_write_backend):

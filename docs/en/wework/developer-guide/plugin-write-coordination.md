@@ -42,7 +42,13 @@ Python and the migrated Rust plugin writers use the same protocol:
   lease without a renewal task.
 - The scope is a user's plugin domain because automation preferences, account
   transfers, and installations have cross-plugin constraints. Transactions
-  requiring multiple users acquire locks in ascending user ID order.
+  requiring multiple users acquire locks in ascending user ID order. Bulk access
+  revocation and personal plugin deletion acquire all affected users' locks before
+  changing business state. They share one 3-second coordination budget, also
+  bounded by any existing lease's remaining operation time. Acquisition failure
+  rolls back the whole transaction and releases acquired locks without partial
+  revocation. Policy reads count toward this budget, but synchronous I/O cannot
+  be interrupted; business changes do not start after the budget is exhausted.
 - Renewal, ownership checks, and release compare tokens. An old worker must not
   release its successor's lock.
 - After acquiring the lock, reread policies, installations, connections, and other
@@ -121,6 +127,9 @@ recorded as a plugin installation acknowledgement. This preserves local plugins.
 The partial round also defers removal of absent Skills/MCP until a later
 successful full sync. The normal path still replaces the full desired state and
 records plugin results.
+Plugin preparation and acknowledgement persistence run in the existing thread
+pool, creating and closing each Session in its worker so synchronous Redis and
+database waits do not block the WebSocket event loop.
 
 Normal INSERT, UPDATE, and DELETE retain InnoDB transaction locks; primary-key CAS
 can also wait for another transaction. This change removes explicit coordination
