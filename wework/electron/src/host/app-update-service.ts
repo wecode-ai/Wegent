@@ -26,6 +26,8 @@ interface AppUpdateServiceOptions {
   ) => Promise<void>
   prepareInstall: () => Promise<void>
   updateBaseUrl: string
+  platform?: NodeJS.Platform
+  arch?: string
   log?: (event: Record<string, unknown>) => void
 }
 
@@ -40,6 +42,8 @@ export class AppUpdateService {
   ) => Promise<void>
   private readonly prepareInstall: () => Promise<void>
   private readonly updateBaseUrl: string
+  private readonly platform: NodeJS.Platform
+  private readonly arch: string
   private readonly log: (event: Record<string, unknown>) => void
   private checkPromise: Promise<WeworkUpdateInfo | null> | null = null
   private checkingChannel: WeworkUpdateChannel | null = null
@@ -62,6 +66,8 @@ export class AppUpdateService {
     this.prepareUpdate = options.prepareUpdate
     this.prepareInstall = options.prepareInstall
     this.updateBaseUrl = options.updateBaseUrl.replace(/\/+$/, '')
+    this.platform = options.platform ?? process.platform
+    this.arch = options.arch ?? process.arch
     this.updater.autoDownload = false
     this.updater.autoInstallOnAppQuit = false
     this.updater.disableDifferentialDownload = true
@@ -88,13 +94,22 @@ export class AppUpdateService {
     }
   }
 
+  /**
+   * electron-updater only requests `${channel}.yml` on Windows, so arm64 needs a
+   * dedicated manifest to avoid receiving the x64 installer.
+   */
+  private electronChannel(channel: WeworkUpdateChannel): string {
+    const base = channel === 'beta' ? 'beta' : 'latest'
+    return this.platform === 'win32' && this.arch === 'arm64' ? `${base}-arm64` : base
+  }
+
   private async performCheck(channel: WeworkUpdateChannel): Promise<WeworkUpdateInfo | null> {
     if (!this.isPackaged()) {
       throw new Error('Wework updater is only available in a packaged desktop app.')
     }
 
     this.updater.allowPrerelease = channel === 'beta'
-    this.updater.channel = channel === 'beta' ? 'beta' : 'latest'
+    this.updater.channel = this.electronChannel(channel)
     this.updater.setFeedURL({
       provider: 'generic',
       url: this.updateBaseUrl,
