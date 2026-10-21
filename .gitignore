@@ -13,6 +13,7 @@ env/
 build/
 develop-eggs/
 dist/
+wework/electron/src/vendor/
 downloads/
 eggs/
 .eggs/

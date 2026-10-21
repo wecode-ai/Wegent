@@ -248,6 +248,8 @@ window.__WEWORK_PERF__.snapshot();
 
 The snapshot includes the current URL, page visibility, DOM node count, memory snapshot, navigation timing, resource count, recent events, and Wework process-group data. macOS reparents Chromium XPC processes to PID 1; diagnostics use LaunchServices to associate the current Wework instance with its Web Content, GPU, and Networking processes.
 
+Performance Diagnostics deliberately keeps its own collector. It still reads macOS `ps` RSS through `wework/electron/src/host/process-diagnostics.ts`, while the Process Explorer reads Electron metrics plus `systeminformation` and uses Electron `workingSetSize` for Electron-owned processes. The numbers are close but not interchangeable: do not reuse one surface's memory thresholds for the other, and treat a consolidation as a separate change that re-baselines the memory E2E suites.
+
 Each process group reports both `rss_kib` and `physical_footprint_kib`. RSS includes shared mappings and reclaimable resident pages and is commonly much larger than actual memory pressure. Prefer `physical_footprint_kib` when investigating leaks or system resource usage, and treat RSS as a secondary residency metric. When comparing multiple snapshots, focus on:
 
 - Whether `memory.usedJSHeapSize` keeps growing.
