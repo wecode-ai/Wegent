@@ -349,7 +349,16 @@ export class RuntimeTaskLifecycleStore {
     const current = this.getTask(address)
     const ignoreStaleRunningTranscript = shouldIgnoreStaleRunningTranscript(current)
     if (hasStreamingTurn) {
-      if (ignoreStaleRunningTranscript) return
+      if (
+        ignoreStaleRunningTranscript ||
+        (currentTurn?.active &&
+          streamingTurn?.id &&
+          (this.isPriorTurn(address, streamingTurn.id) ||
+            (transcript.running === false &&
+              currentTurn.id &&
+              streamingTurn.id !== currentTurn.id)))
+      )
+        return
       this.executorStarted(address)
       this.dispatch(address, {
         type: 'turn_recovered',

@@ -1589,6 +1589,43 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(snapshot?.derived.isTurnActive).toBe(true)
   })
 
+  test.each([false, true])(
+    'preserves a native Goal turn over stale streaming history (running: %s)',
+    running => {
+      const store = new RuntimeTaskLifecycleStore(`goal-stale-stream-${running}`)
+      store.syncRuntimeWork(runtimeWork(task({ running: true, goalStatus: 'active' })))
+      store.turnStarted(address, 'previous-turn')
+      store.turnSettled(address, 'previous-turn', 'succeeded')
+      store.turnStarted(address, 'native-goal-turn')
+
+      store.syncTranscript(
+        address,
+        transcript({
+          running,
+          turns: [
+            {
+              id: running ? 'previous-turn' : 'stale-history-turn',
+              status: 'streaming',
+              items: [],
+            },
+          ],
+        })
+      )
+
+      expect(store.getTask(address)?.turn.id).toBe('native-goal-turn')
+      store.goalStatusReceived(address, 'complete')
+      store.syncTranscript(
+        address,
+        transcript({
+          running: false,
+          turns: [{ id: 'native-goal-turn', status: 'completed', completedAt: 1000, items: [] }],
+        })
+      )
+      expect(store.getTask(address)?.derived.isBusy).toBe(false)
+      expect(store.getTask(address)?.unread).toBe(true)
+    }
+  )
+
   test('retains the newer turn when idle history only contains its predecessor', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.syncRuntimeWork(
