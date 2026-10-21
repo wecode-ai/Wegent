@@ -52,6 +52,8 @@ export function defaultContentRoute(kind: WorkspaceTabKind): string {
 }
 
 export function inferWorkspaceTabKind(pathname: string): WorkspaceTabKind {
+  const declaredKind = resolveDshRoute(pathname)?.workspaceTabKind
+  if (declaredKind) return declaredKind
   if (pathname === '/todo') return 'board'
   if (pathname === '/app/wegent') return 'agent'
   if (
@@ -165,3 +167,4 @@ export const workspaceTabParams = {
   id: WORKSPACE_TAB_PARAM,
   title: WORKSPACE_TAB_TITLE_PARAM,
 }
+import { resolveDshRoute } from '@/features/dsh-runtime/dshRoutes'

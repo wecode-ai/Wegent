@@ -2176,6 +2176,18 @@ async function verifyWorkspaceTabIsolation(control, restartDesktopApp) {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  assert.equal(
+    await control.command('getAttribute', `[data-testid="workspace-tab-select-${thirdTaskId}"]`, {
+      value: 'data-tab-kind',
+    }),
+    'task',
+    'Plugin marketplace navigation must retain task tab ownership'
+  )
+  await control.command('click', `${thirdTaskContent} [data-testid="sites-button"]`)
+  await control.command('waitFor', '[data-testid="sites-workspace"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   const afterOrdinaryNavigation = JSON.parse(
     await control.command('snapshot', '[data-testid="workspace-tab-strip-container"]')
   )

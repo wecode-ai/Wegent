@@ -13,6 +13,48 @@ const snapshot = {
 }
 
 describe('addressed composer catalogs', () => {
+  it('reads a workspace catalog before task creation and rejects mismatched scopes', async () => {
+    const target = {
+      deviceId: 'remote-device',
+      scope: 'workspace' as const,
+      workspacePath: '/repo',
+    }
+    const request = vi.fn().mockResolvedValue({
+      ...snapshot,
+      taskId: null,
+      scope: 'workspace',
+      workspacePath: '/repo',
+    })
+    const api = createRuntimeComposerApi({ request }, async () => [])
+    expect(await api.readCatalog(target, true)).toMatchObject({
+      taskId: null,
+      workspacePath: '/repo',
+    })
+    expect(request).toHaveBeenCalledWith(
+      'runtime.composer.catalog.read',
+      { scope: 'workspace', workspacePath: '/repo', forceRefresh: true },
+      'remote-device'
+    )
+    request.mockResolvedValueOnce(snapshot)
+    await expect(api.readCatalog(target)).rejects.toThrow('another workspace')
+    request.mockResolvedValueOnce({
+      ...snapshot,
+      taskId: null,
+      scope: 'workspace',
+      workspacePath: '/other',
+    })
+    await expect(api.readCatalog(target)).rejects.toThrow('another workspace')
+    request.mockResolvedValueOnce({
+      ...snapshot,
+      taskId: null,
+      scope: 'workspace',
+      workspacePath: '',
+    })
+    expect(await api.readCatalog({ ...target, workspacePath: null })).toMatchObject({
+      taskId: null,
+      workspacePath: '',
+    })
+  })
   it('merges the addressed device cloud installs and fails when that membership is unavailable', async () => {
     const request = vi.fn().mockResolvedValue(snapshot)
     const listCloud = vi.fn().mockResolvedValue([])

@@ -1,7 +1,9 @@
 import { normalizeProjectPluginNames } from './composer-plugin-scope'
 import { buildComposerPluginInventory } from './composer-plugin-inventory'
-import type { RuntimeTaskAddress } from './runtime'
-import type { RuntimeComposerCatalogSnapshot } from './runtime-composer-snapshot'
+import type {
+  RuntimeComposerCatalogSnapshot,
+  RuntimeComposerCatalogTarget,
+} from './runtime-composer-snapshot'
 import type { LocalDeviceApp } from './runtime-composer-catalog'
 import {
   mergeInstalledPluginSummaries,
@@ -41,10 +43,10 @@ export function composerAppsFromRuntimeSnapshot(
 /** One instance per addressed composer; simultaneous menu readers share a single request. */
 export function createRuntimeComposerPluginSource(
   read: (
-    address: RuntimeTaskAddress,
+    address: RuntimeComposerCatalogTarget,
     forceRefresh: boolean
   ) => Promise<RuntimeComposerCatalogSnapshot>,
-  address: RuntimeTaskAddress,
+  address: RuntimeComposerCatalogTarget,
   translate: (key: string) => string,
   resolveAsset: (path: string) => Promise<string>
 ) {
