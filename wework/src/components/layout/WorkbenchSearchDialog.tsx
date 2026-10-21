@@ -158,8 +158,8 @@ function WorkbenchSearchDialogPanel({
         data-testid="workbench-search-dialog"
         className="w-full max-w-[520px] overflow-hidden rounded-[18px] bg-popover text-text-primary shadow-[0_24px_70px_rgba(15,23,42,0.20)] ring-[0.5px] ring-border"
       >
-        <div className="flex h-14 items-center gap-3 border-b border-border/70 px-4">
-          <Search className="h-4 w-4 shrink-0 text-text-muted" />
+        <div className="group/search flex h-14 items-center gap-3 border-b border-border/70 px-4">
+          <Search className="h-4 w-4 shrink-0 text-text-muted group-focus-within/search:text-text-primary" />
           <input
             data-testid="workbench-search-input"
             value={query}
@@ -195,7 +195,7 @@ function WorkbenchSearchDialogPanel({
               }
             }}
             placeholder={t('workbench.search_conversations')}
-            className="h-full min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted"
+            className="workbench-chrome-input h-full min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted"
           />
           {loading && <Loader2 className="h-4 w-4 animate-spin text-text-muted" />}
           <button
