@@ -32,6 +32,18 @@ import {
 import { sha256Hex } from '@/api/fileHash'
 export const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
 
+async function loadWorkspaceCatalog<T>(catalog: string, request: Promise<T>): Promise<T> {
+  try {
+    return await request
+  } catch (error) {
+    console.error('[Wework] Local workspace catalog failed', {
+      catalog,
+      reason: error instanceof Error ? error.message : String(error),
+    })
+    throw error
+  }
+}
+
 function assertValidCollaborationGroup(
   leader: CollaborationGroup['leader'],
   members: CollaborationGroup['members'],
@@ -248,10 +260,13 @@ export function createLocalWorkspaceApi(
   }
   const workspace = async (): Promise<CollaborationWorkspace> => {
     const [items, environments, agents, backingProject] = await Promise.all([
-      projects(),
-      executionEnvironments(),
-      localAgentResources(),
-      delivery.projects.get(DEFAULT_WORK_ITEM_PROJECT_ID),
+      loadWorkspaceCatalog('projects', projects()),
+      loadWorkspaceCatalog('execution-environments', executionEnvironments()),
+      loadWorkspaceCatalog('agents', localAgentResources()),
+      loadWorkspaceCatalog(
+        'workspace-settings',
+        delivery.projects.get(DEFAULT_WORK_ITEM_PROJECT_ID)
+      ),
     ])
     const now = new Date().toISOString()
     return {
