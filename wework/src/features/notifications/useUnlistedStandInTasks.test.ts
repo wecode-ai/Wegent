@@ -1,0 +1,81 @@
+import { renderHook, waitFor } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { StandInExecutorApi } from '@/api/standIn'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { RuntimeTaskMachine } from '@/features/workbench/runtimeTaskLifecycle/RuntimeTaskMachine'
+import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
+import { runtimeItem } from './standInNotifications.fixtures'
+import { useUnlistedStandInTasks } from './useUnlistedStandInTasks'
+
+const readTask = vi.fn()
+const getRuntimeTranscript = vi.fn()
+const reader = { readTask } as unknown as StandInExecutorApi
+const runtimeApi = { getRuntimeTranscript } as unknown as WorkbenchServices['runtimeWorkApi']
+function snapshot(completed = false): RuntimeTaskLifecycleStoreSnapshot {
+  const machine = new RuntimeTaskMachine(runtimeItem.address)
+  machine.dispatch({
+    type: 'executor_snapshot_received',
+    address: runtimeItem.address,
+    task: {
+      ...runtimeItem.task,
+      runtimeHandle: {},
+      ...(completed ? { running: false, status: 'done', completedAt: '2026-10-21T12:04:00Z' } : {}),
+    },
+  })
+  return {
+    version: completed ? 2 : 1,
+    tasks: new Map([[runtimeItem.key, machine.getSnapshot()]]),
+    runningTaskKeys: new Set(),
+    queuedTaskKeys: new Set(),
+    unreadTaskKeys: new Set(),
+  }
+}
+beforeEach(() => {
+  vi.clearAllMocks()
+  readTask.mockResolvedValue({ success: true, task: { ...runtimeItem.task, runtimeHandle: {} } })
+  getRuntimeTranscript.mockResolvedValue({
+    origin: runtimeItem.task.runtimeHandle!.origin,
+    messages: [],
+    turns: [],
+  })
+})
+describe('unlisted stand-in task discovery', () => {
+  it('reads authoritative task metadata when sidebar project filters hide the execution', async () => {
+    const current = snapshot()
+    const hook = renderHook(() => useUnlistedStandInTasks([], current, reader, runtimeApi))
+    await waitFor(() => expect(hook.result.current).toHaveLength(1))
+    expect(readTask).toHaveBeenCalledExactlyOnceWith('device', 'task')
+    expect(hook.result.current[0].task.runtimeHandle?.origin).toMatchObject({
+      initiatedBy: 'stand_in',
+    })
+  })
+  it('keeps the newer observation when task state changes while metadata is loading', async () => {
+    const resolvers: Array<(value: unknown) => void> = []
+    readTask.mockImplementation(() => new Promise(resolve => resolvers.push(resolve)))
+    const hook = renderHook(({ value }) => useUnlistedStandInTasks([], value, reader, runtimeApi), {
+      initialProps: { value: snapshot() },
+    })
+    hook.rerender({ value: snapshot(true) })
+    resolvers[1]({
+      success: true,
+      task: { ...runtimeItem.task, title: 'Latest', running: false, status: 'done' },
+    })
+    await waitFor(() => expect(hook.result.current[0]?.task.title).toBe('Latest'))
+    resolvers[0]({ success: true, task: { ...runtimeItem.task, title: 'Stale' } })
+    await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(2))
+    expect(hook.result.current[0].task.title).toBe('Latest')
+  })
+  it('does not duplicate visible tasks or include unrelated runtime conversations', async () => {
+    const current = snapshot()
+    renderHook(() => useUnlistedStandInTasks([runtimeItem], current, reader, runtimeApi))
+    expect(readTask).not.toHaveBeenCalled()
+    getRuntimeTranscript.mockResolvedValue({
+      origin: { type: 'board_comment' },
+      messages: [],
+      turns: [],
+    })
+    const hook = renderHook(() => useUnlistedStandInTasks([], current, reader, runtimeApi))
+    await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledOnce())
+    expect(hook.result.current).toEqual([])
+  })
+})
