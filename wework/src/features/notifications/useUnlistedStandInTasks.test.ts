@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StandInExecutorApi } from '@/api/standIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
@@ -61,8 +61,10 @@ describe('unlisted stand-in task discovery', () => {
       task: { ...runtimeItem.task, title: 'Latest', running: false, status: 'done' },
     })
     await waitFor(() => expect(hook.result.current[0]?.task.title).toBe('Latest'))
-    resolvers[0]({ success: true, task: { ...runtimeItem.task, title: 'Stale' } })
-    await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(2))
+    await act(async () =>
+      resolvers[0]({ success: true, task: { ...runtimeItem.task, title: 'Stale' } })
+    )
+    expect(getRuntimeTranscript).toHaveBeenCalledOnce()
     expect(hook.result.current[0].task.title).toBe('Latest')
   })
   it('does not duplicate visible tasks or include unrelated runtime conversations', async () => {
@@ -77,5 +79,17 @@ describe('unlisted stand-in task discovery', () => {
     const hook = renderHook(() => useUnlistedStandInTasks([], current, reader, runtimeApi))
     await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledOnce())
     expect(hook.result.current).toEqual([])
+  })
+  it('preserves the latest task when an older metadata request fails', async () => {
+    const resolvers: Array<(value: unknown) => void> = []
+    readTask.mockImplementation(() => new Promise(resolve => resolvers.push(resolve)))
+    const hook = renderHook(({ value }) => useUnlistedStandInTasks([], value, reader, runtimeApi), {
+      initialProps: { value: snapshot() },
+    })
+    hook.rerender({ value: snapshot(true) })
+    resolvers[1]({ success: true, task: { ...runtimeItem.task, title: 'Latest' } })
+    await waitFor(() => expect(hook.result.current[0]?.task.title).toBe('Latest'))
+    await act(async () => resolvers[0]({ success: false }))
+    expect(hook.result.current[0]?.task.title).toBe('Latest')
   })
 })

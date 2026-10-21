@@ -45,13 +45,13 @@ export function useUnlistedStandInTasks(
       attempted.current.set(candidate.key, candidate.signature)
       void (async () => {
         const result = await reader.readTask(candidate.address.deviceId, candidate.address.taskId)
+        if (!mounted.current || attempted.current.get(candidate.key) !== candidate.signature) return
         if (!result.success || !result.task) {
-          if (mounted.current)
-            setLoaded(current => {
-              const next = new Map(current)
-              next.delete(candidate.key)
-              return next
-            })
+          setLoaded(current => {
+            const next = new Map(current)
+            next.delete(candidate.key)
+            return next
+          })
           return
         }
         const response = await runtimeApi.getRuntimeTranscript({
@@ -83,7 +83,7 @@ export function useUnlistedStandInTasks(
         }
         setLoaded(current => new Map(current).set(candidate.key, item))
       })().catch(error => {
-        if (!mounted.current) return
+        if (!mounted.current || attempted.current.get(candidate.key) !== candidate.signature) return
         console.warn('[Wework] Failed to read unlisted execution for collaboration notifications', {
           address: candidate.address,
           error,
