@@ -285,6 +285,14 @@ export function runtimeConversationHydrationHasUpdates(
   return hydration?.token === token && hydration.bufferedActions.length > 0
 }
 
+function getRuntimeConversationTurnsWithBufferedActions(key: string): RuntimeConversationTurn[] {
+  let turns = turnsByConversation.get(key) ?? []
+  for (const action of hydrationByConversation.get(key)?.bufferedActions ?? []) {
+    turns = reduceRuntimeConversationTurns(turns, action)
+  }
+  return turns
+}
+
 export function completeRuntimeConversationHydration(
   address: RuntimeTaskAddress,
   token: symbol,
@@ -294,11 +302,10 @@ export function completeRuntimeConversationHydration(
   const hydration = hydrationByConversation.get(key)
   if (hydration?.token !== token) return getRuntimeConversationMessages(address)
 
-  let turns = turnsByConversation.get(key) ?? []
-  for (const action of hydration.bufferedActions) {
-    turns = reduceRuntimeConversationTurns(turns, action)
-  }
-  turns = mergeRuntimeConversationTurns(turns, snapshotTurns)
+  const turns = mergeRuntimeConversationTurns(
+    getRuntimeConversationTurnsWithBufferedActions(key),
+    snapshotTurns
+  )
   hydrationByConversation.delete(key)
   cacheRuntimeConversationTurns(key, turns)
   notifyHydratedRuntimeConversation(key, hydration.bufferedActions)
@@ -313,10 +320,7 @@ export function abortRuntimeConversationHydration(
   const hydration = hydrationByConversation.get(key)
   if (hydration?.token !== token) return getRuntimeConversationMessages(address)
 
-  let turns = turnsByConversation.get(key) ?? []
-  for (const action of hydration.bufferedActions) {
-    turns = reduceRuntimeConversationTurns(turns, action)
-  }
+  const turns = getRuntimeConversationTurnsWithBufferedActions(key)
   hydrationByConversation.delete(key)
   cacheRuntimeConversationTurns(key, turns)
   notifyHydratedRuntimeConversation(key, hydration.bufferedActions)
@@ -370,7 +374,7 @@ export function runtimeConversationSnapshotSettlesLatestTurn(
   address: RuntimeTaskAddress,
   snapshotTurns: RuntimeConversationTurn[]
 ): boolean {
-  const localTurns = turnsByConversation.get(runtimeConversationKey(address)) ?? []
+  const localTurns = getRuntimeConversationTurnsWithBufferedActions(runtimeConversationKey(address))
   const latestLocalTurn = localTurns.at(-1)
   if (!latestLocalTurn) return true
 
