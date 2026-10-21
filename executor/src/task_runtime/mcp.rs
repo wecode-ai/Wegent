@@ -24,6 +24,8 @@ use crate::logging::log_executor_event;
 use crate::protocol::ExecutionRequest;
 
 mod assignment_notifications;
+#[cfg(test)]
+mod issue_access_tests;
 
 use assignment_notifications::emit_local_assignment_notifications;
 
@@ -633,6 +635,8 @@ pub(crate) fn decode_space_context_grant(encoded: &str) -> Option<SpaceContextGr
 }
 
 fn context_scope_error(grant: &SpaceContextGrant, arguments: &Value) -> Option<String> {
+    // Personal task context supplies defaults; only dispatch roles have delegated scope.
+    let role = grant.role?;
     if let Some(requested_space_id) = arguments.get("space_id").and_then(Value::as_str) {
         if grant.space_id.as_deref().is_some_and(|space_id| {
             !requested_space_id.trim().is_empty() && requested_space_id != space_id
@@ -640,7 +644,7 @@ fn context_scope_error(grant: &SpaceContextGrant, arguments: &Value) -> Option<S
             return Some("The requested project space is outside this Agent session".to_owned());
         }
     }
-    if grant.role != Some(SpaceContextRole::Manager) {
+    if role == SpaceContextRole::Executor {
         if let Some(requested_item_id) = arguments.get("item_id").and_then(Value::as_str) {
             if grant.item_id.as_deref().is_some_and(|item_id| {
                 !requested_item_id.trim().is_empty() && requested_item_id != item_id
@@ -3938,7 +3942,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_arguments_outside_the_context_grant() {
+    fn personal_issue_context_allows_explicit_project_and_issue_targets() {
         let grant = SpaceContextGrant {
             version: 1,
             task_id: "task-1".to_owned(),
@@ -3955,11 +3959,15 @@ mod tests {
 
         assert!(
             context_scope_error(&grant, &json!({"space_id": "space-2", "item_id": "item-1"}))
-                .is_some()
+                .is_none()
+        );
+        assert!(
+            context_scope_error(&grant, &json!({"space_id": "space-2", "item_id": "item-2"}))
+                .is_none()
         );
         assert!(
             context_scope_error(&grant, &json!({"space_id": "space-1", "item_id": "item-2"}))
-                .is_some()
+                .is_none()
         );
         assert!(
             context_scope_error(&grant, &json!({"space_id": "space-1", "item_id": "item-1"}))
