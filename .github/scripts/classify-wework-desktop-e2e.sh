@@ -381,6 +381,11 @@ classify_wework_path() {
       select_target "core:system-pac"
       return
       ;;
+    wework/e2e/desktop/modules/terminal-history-search.mjs)
+      select_target "core:running-conversation-history"
+      select_target "cloud:conversation-state"
+      return
+      ;;
     wework/e2e/desktop/modules/cloud-history-search.mjs)
       select_target "cloud:conversation-state"
       return

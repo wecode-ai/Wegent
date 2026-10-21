@@ -304,7 +304,7 @@ done
     .unwrap();
     assert_eq!(capped["totalMatches"], 1);
     assert_eq!(capped["isCapped"], true);
-    assert_eq!(self::calls(&log).len() - before_cap, 3);
+    assert_eq!(self::calls(&log).len() - before_cap, 4);
 
     let invalid = CodexSearchCursor {
         turn_id: "removed-turn".to_owned(),
@@ -354,6 +354,233 @@ fn calls(log: &std::path::Path) -> Vec<Value> {
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect()
+}
+
+#[tokio::test]
+async fn native_search_projects_terminal_turns_across_pages_and_hydrates_complete_segments() {
+    let _environment = crate::agents::CodexLaunchEnvironment::new();
+    let directory = tempfile::tempdir().unwrap();
+    let mut failed_segments = vec![json!({
+        "id":"early", "type":"agentMessage", "phase":"final_answer",
+        "text":"API error: needle needle",
+    })];
+    failed_segments.extend((0..110).map(|index| {
+        json!({
+            "id":format!("tool-{index}"), "type":"commandExecution", "command":"echo padding",
+        })
+    }));
+    failed_segments.extend([
+        json!({"id":"guidance", "type":"userMessage", "clientId":"guidance-client",
+            "content":[{"type":"text", "text":"continue"}]}),
+        json!({"id":"hidden-prefix", "type":"agentMessage", "phase":"final_answer", "text":"API error:"}),
+        json!({"id":"hidden-tail", "type":"agentMessage", "phase":"final_answer", "text":"needle"}),
+    ]);
+    let mut joined_content = vec![json!({
+        "id":"joined-head", "type":"agentMessage", "phase":"final_answer", "text":"needle",
+    })];
+    joined_content.extend((0..110).map(|index| {
+        json!({
+            "id":format!("tool-{index}"), "type":"commandExecution", "command":"echo padding",
+        })
+    }));
+    joined_content.push(json!({
+        "id":"joined-tail", "type":"agentMessage", "phase":"final_answer", "text":"visible suffix",
+    }));
+    let cases = [
+        (
+            "failed-only",
+            "failed",
+            "needle",
+            "API error: needle",
+            vec![json!({"id":"hidden", "type":"agentMessage", "text":"API error: needle"})],
+            vec![],
+        ),
+        (
+            "cancelled-only",
+            "interrupted",
+            "interrupted",
+            "",
+            vec![
+                json!({"id":"hidden", "type":"agentMessage", "phase":"commentary", "text":"interrupted"}),
+            ],
+            vec![],
+        ),
+        (
+            "cancelled-visible-process",
+            "interrupted",
+            "interrupted",
+            "",
+            // Unphased cancelled output is a visible process block, not final content.
+            vec![json!({"id":"visible", "type":"agentMessage", "text":"interrupted"})],
+            vec![("visible", 0)],
+        ),
+        (
+            "failed-segments",
+            "failed",
+            "needle",
+            "API error: needle",
+            failed_segments,
+            vec![("early", 0), ("early", 1)],
+        ),
+        (
+            "failed-joined",
+            "failed",
+            "needle",
+            "needle",
+            joined_content,
+            vec![("joined-head", 0)],
+        ),
+        (
+            "cancelled-segments",
+            "interrupted",
+            "interrupted",
+            "",
+            vec![
+                json!({"id":"early", "type":"agentMessage", "phase":"commentary", "text":"interrupted"}),
+                json!({"id":"guidance", "type":"userMessage",
+                "content":[{"type":"text", "text":"continue"}]}),
+                json!({"id":"hidden", "type":"agentMessage", "phase":"commentary", "text":"interrupted"}),
+            ],
+            vec![("early", 0)],
+        ),
+        (
+            "cancelled-process",
+            "interrupted",
+            "needle",
+            "",
+            vec![
+                json!({"id":"narrative", "type":"agentMessage", "phase":"analysis", "text":"needle analysis"}),
+                json!({"id":"tool", "type":"commandExecution", "command":"echo padding"}),
+            ],
+            vec![("narrative", 0)],
+        ),
+    ];
+    for (thread_id, status, _, error, items, _) in &cases {
+        let turn = json!({"id":"turn-visible", "status":status,
+            "error":{"message":error}, "items":[], "itemsView":"notLoaded"});
+        fs::write(
+            directory.path().join(format!("{thread_id}-turns.json")),
+            json!({"data":[turn], "nextCursor":null, "backwardsCursor":"turn-anchor"}).to_string(),
+        )
+        .unwrap();
+        let page_count = items.len().div_ceil(SEARCH_PAGE_SIZE);
+        for (index, page) in items.chunks(SEARCH_PAGE_SIZE).enumerate() {
+            let data: Vec<_> = page
+                .iter()
+                .map(|item| json!({"turnId":"turn-visible", "item":item}))
+                .collect();
+            let next = (index + 1 < page_count).then(|| format!("page-{}", index + 1));
+            fs::write(
+                directory
+                    .path()
+                    .join(format!("{thread_id}-page-{index}.json")),
+                json!({"data":data, "nextCursor":next}).to_string(),
+            )
+            .unwrap();
+        }
+    }
+    let binary = directory.path().join("terminal-search-fixture");
+    let log = directory.path().join("requests.jsonl");
+    let script = r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> '__DIRECTORY__/requests.jsonl'
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  thread=$(printf '%s' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+  case "$line" in
+    *'"method":"initialized"'*) continue ;;
+    *'"method":"thread/read"'*) result='{"thread":{"historyMode":"paginated"}}' ;;
+    *'"method":"thread/turns/list"'*) result=$(cat "__DIRECTORY__/$thread-turns.json") ;;
+    *'"method":"thread/items/list"'*)
+      case "$line" in
+        *'"cursor":null'*) page=page-0 ;;
+        *) page=$(printf '%s' "$line" | sed -n 's/.*"cursor":"\([^"]*\)".*/\1/p') ;;
+      esac
+      result=$(cat "__DIRECTORY__/$thread-$page.json") ;;
+    *) result='{}' ;;
+  esac
+  printf '{"id":%s,"result":%s}\n' "$id" "$result"
+done
+"#;
+    fs::write(
+        &binary,
+        script.replace("__DIRECTORY__", &directory.path().to_string_lossy()),
+    )
+    .unwrap();
+    fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+    let request = serde_json::from_value(json!({
+        "user_name":"synthetic", "team_namespace":"default", "team_name":"search",
+        "team_id":12, "bot":[{"id":31,"shell_type":"Codex"}],
+    }))
+    .unwrap();
+    let client = CodexAppServerClient::new(binary.to_string_lossy())
+        .for_request(&request)
+        .unwrap();
+    for (thread_id, status, query, error, items, expected) in cases {
+        let result = search_codex_transcript(
+            &client,
+            thread_id,
+            query,
+            250,
+            &HashSet::new(),
+            &HashMap::new(),
+        )
+        .await
+        .unwrap();
+        let found: Vec<_> = result["matches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|matched| {
+                (
+                    matched["itemId"].as_str().unwrap(),
+                    matched["occurrence"].as_u64().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(found, expected, "{thread_id}");
+        if expected.is_empty() {
+            continue;
+        }
+        let cursor = parse_search_cursor(result["matches"][0]["cursor"].as_str().unwrap())
+            .unwrap()
+            .unwrap();
+        let before = calls(&log).len();
+        let page = load_search_match(&client, json!({"id":thread_id}), cursor)
+            .await
+            .unwrap();
+        assert_eq!(
+            page.thread["turns"][0]["items"],
+            json!(items),
+            "{thread_id}"
+        );
+        assert_eq!(page.thread["turns"][0]["status"], status);
+        assert_eq!(page.thread["turns"][0]["error"]["message"], error);
+        assert_eq!(page.thread["turns"][0]["itemsView"], "full");
+        assert!(page.before_cursor.is_none() && page.after_cursor.is_none());
+        let hydrated_sources =
+            codex_turn_search_sources(&page.thread["turns"][0], &HashMap::new(), Some(thread_id));
+        for (item_id, occurrence) in expected {
+            let text = hydrated_sources
+                .iter()
+                .find(|(id, _)| id == item_id)
+                .unwrap();
+            assert!(
+                text.1
+                    .to_lowercase()
+                    .match_indices(query)
+                    .nth(occurrence as usize)
+                    .is_some(),
+                "{thread_id}: {item_id}"
+            );
+        }
+        assert!(calls(&log)[before..].iter().all(|call| {
+            call["method"] != "thread/items/read"
+                && (call["method"] != "thread/items/list"
+                    || call["params"]["cursor"].is_null()
+                    || call["params"]["cursor"].is_string())
+        }));
+    }
+    client.restart().await;
 }
 
 #[tokio::test]

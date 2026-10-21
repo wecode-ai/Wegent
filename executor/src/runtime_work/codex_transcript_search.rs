@@ -13,9 +13,9 @@ use super::{
     codex_transcript_page::{
         read_codex_thread_metadata, CodexTranscriptDirection, CodexTranscriptPage,
     },
-    transcript::visible_user_request_content,
-    transcript_search_text::{assistant_search_text, markdown_search_text},
-    util::{extract_text, item_type, string_field},
+    transcript::turn_assistant_status,
+    transcript_search_text::codex_turn_search_sources,
+    util::{item_type, string_field},
 };
 
 const SEARCH_CURSOR_PREFIX: &str = "wework-codex-search:";
@@ -195,9 +195,10 @@ async fn search_paginated_codex_transcript(
             let anchor = anchor
                 .as_ref()
                 .ok_or_else(|| "Codex search turn page is missing its anchor".to_owned())?;
+            let turn = load_search_turn_items(client, thread_id, turn.clone()).await?;
             let capped = search_turn_items(
-                client,
                 thread_id,
+                &turn,
                 CodexSearchCursor {
                     turn_id,
                     item_id: String::new(),
@@ -208,8 +209,7 @@ async fn search_paginated_codex_transcript(
                 limit,
                 user_content_by_client_id,
                 &mut matches,
-            )
-            .await?;
+            )?;
             if capped {
                 return Ok(search_result(matches, true));
             }
@@ -233,15 +233,14 @@ fn search_result(matches: Vec<Value>, is_capped: bool) -> Value {
     })
 }
 
-async fn search_turn_items(
+async fn load_search_turn_items(
     client: &CodexAppServerClient,
     thread_id: &str,
-    mut position: CodexSearchCursor,
-    needle: &str,
-    limit: usize,
-    user_content_by_client_id: &HashMap<String, String>,
-    matches: &mut Vec<Value>,
-) -> Result<bool, String> {
+    mut turn: Value,
+) -> Result<Value, String> {
+    let turn_id =
+        string_field(&turn, "id").ok_or_else(|| "Codex search turn is missing id".to_owned())?;
+    let mut items = Vec::new();
     let mut cursor = None;
     let mut seen_cursors = HashSet::new();
     loop {
@@ -249,38 +248,16 @@ async fn search_turn_items(
             .request(
                 "thread/items/list",
                 json!({
-                    "threadId": thread_id, "turnId": position.turn_id,
+                    "threadId": thread_id, "turnId": turn_id,
                     "cursor": cursor, "sortDirection": "asc", "limit": SEARCH_PAGE_SIZE,
                 }),
             )
             .await?;
-        let items = response_item_refs(&page, &position.turn_id)?;
-        for item in items {
-            let text = visible_item_text(item, user_content_by_client_id).to_lowercase();
-            if !text.contains(needle) {
-                continue;
-            }
-            position.item_id = string_field(item, "id")
-                .ok_or_else(|| "Codex search item is missing id".to_owned())?;
-            let anchor = search_cursor(&position)?;
-            for (occurrence, _) in text.match_indices(needle).enumerate() {
-                let mut matched = json!({
-                    "turnId": position.turn_id, "itemId": position.item_id,
-                    "occurrence": occurrence, "cursor": anchor,
-                });
-                if item_type(item) == "usermessage" {
-                    matched["messageId"] = json!(string_field(item, "clientId")
-                        .or_else(|| string_field(item, "client_id"))
-                        .unwrap_or_else(|| position.item_id.clone()));
-                }
-                matches.push(matched);
-                if matches.len() >= limit {
-                    return Ok(true);
-                }
-            }
-        }
+        items.extend(response_items(&page, &turn_id)?);
         let Some(next) = string_field(&page, "nextCursor") else {
-            return Ok(false);
+            turn["items"] = json!(items);
+            turn["itemsView"] = json!("full");
+            return Ok(turn);
         };
         if !seen_cursors.insert(next.clone()) || cursor.as_ref() == Some(&next) {
             return Err("Codex search returned a repeated item cursor".to_owned());
@@ -289,20 +266,63 @@ async fn search_turn_items(
     }
 }
 
-fn visible_item_text(item: &Value, user_content_by_client_id: &HashMap<String, String>) -> String {
-    match item_type(item).as_str() {
-        "usermessage" => {
-            let text = extract_text(item).unwrap_or_default();
-            let content = string_field(item, "clientId")
+fn search_turn_items(
+    thread_id: &str,
+    turn: &Value,
+    mut position: CodexSearchCursor,
+    needle: &str,
+    limit: usize,
+    user_content_by_client_id: &HashMap<String, String>,
+    matches: &mut Vec<Value>,
+) -> Result<bool, String> {
+    let provider_item_ids: HashSet<_> = turn
+        .get("items")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|item| string_field(item, "id"))
+        .collect();
+    let user_message_ids: HashMap<_, _> = turn
+        .get("items")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|item| item_type(item) == "usermessage")
+        .filter_map(|item| {
+            let id = string_field(item, "id")?;
+            let message_id = string_field(item, "clientId")
                 .or_else(|| string_field(item, "client_id"))
-                .and_then(|client_id| user_content_by_client_id.get(&client_id))
-                .map(String::as_str)
-                .unwrap_or(&text);
-            markdown_search_text(visible_user_request_content(content))
+                .unwrap_or_else(|| id.clone());
+            Some((id, message_id))
+        })
+        .collect();
+    for (item_id, text) in
+        codex_turn_search_sources(turn, user_content_by_client_id, Some(thread_id))
+    {
+        let text = text.to_lowercase();
+        if !text.contains(needle) {
+            continue;
         }
-        "agentmessage" => assistant_search_text(&extract_text(item).unwrap_or_default()),
-        _ => String::new(),
+        if !provider_item_ids.contains(&item_id) {
+            return Err("Codex search item is missing provider id".to_owned());
+        }
+        position.item_id = item_id;
+        let anchor = search_cursor(&position)?;
+        for (occurrence, _) in text.match_indices(needle).enumerate() {
+            let mut matched = json!({
+                "turnId": position.turn_id, "itemId": position.item_id,
+                "occurrence": occurrence, "cursor": anchor,
+            });
+            if let Some(message_id) = user_message_ids.get(&position.item_id) {
+                matched["messageId"] = json!(message_id);
+            }
+            matches.push(matched);
+            if matches.len() >= limit {
+                return Ok(true);
+            }
+        }
     }
+    Ok(false)
 }
 
 fn response_items(response: &Value, turn_id: &str) -> Result<Vec<Value>, String> {
@@ -363,8 +383,60 @@ pub(super) async fn load_search_match(
         })
         .cloned()
         .ok_or_else(|| "Persisted conversation search turn is no longer available".to_owned())?;
+    let (center, before_item_cursor, after_item_cursor) =
+        load_match_turn(client, &thread_id, turn.clone(), &cursor).await?;
+    let (older_context, newer_context) = tokio::try_join!(
+        initial_context_side(
+            client,
+            &thread_id,
+            &turn,
+            &cursor.turn_id,
+            &older_turns,
+            before_item_cursor,
+            ContextDirection::Desc
+        ),
+        initial_context_side(
+            client,
+            &thread_id,
+            &turn,
+            &cursor.turn_id,
+            &newer_turns,
+            after_item_cursor,
+            ContextDirection::Asc
+        ),
+    )?;
+    let mut turns = older_context.0;
+    turns.push(center);
+    turns.extend(newer_context.0);
+    thread["turns"] = json!(turns);
+    Ok(CodexTranscriptPage {
+        thread,
+        before_cursor: older_context.1,
+        after_cursor: newer_context.1,
+        prepend_item_turn_ids: HashSet::new(),
+    })
+}
+
+async fn load_match_turn(
+    client: &CodexAppServerClient,
+    thread_id: &str,
+    turn: Value,
+    cursor: &CodexSearchCursor,
+) -> Result<(Value, Option<String>, Option<String>), String> {
+    if matches!(turn_assistant_status(&turn), "failed" | "cancelled") {
+        // Visibility depends on every assistant fragment and user boundary in the turn.
+        let center = load_search_turn_items(client, thread_id, turn).await?;
+        if !center["items"].as_array().is_some_and(|items| {
+            items
+                .iter()
+                .any(|item| string_field(item, "id").as_deref() == Some(cursor.item_id.as_str()))
+        }) {
+            return Err("Persisted conversation search item is no longer available".to_owned());
+        }
+        return Ok((center, None, None));
+    }
     let (older, matched, newer) = tokio::try_join!(
-        search_neighbor_items(client, &thread_id, &cursor, "desc"),
+        search_neighbor_items(client, thread_id, cursor, "desc"),
         client.request(
             "thread/items/read",
             json!({
@@ -373,7 +445,7 @@ pub(super) async fn load_search_match(
                 "itemIds": [cursor.item_id],
             }),
         ),
-        search_neighbor_items(client, &thread_id, &cursor, "asc"),
+        search_neighbor_items(client, thread_id, cursor, "asc"),
     )?;
     let mut items = response_items(&older, &cursor.turn_id)?;
     items.reverse();
@@ -386,26 +458,6 @@ pub(super) async fn load_search_match(
     }
     items.extend(matched_items);
     items.extend(response_items(&newer, &cursor.turn_id)?);
-    let (older_context, newer_context) = tokio::try_join!(
-        initial_context_side(
-            client,
-            &thread_id,
-            &turn,
-            &cursor.turn_id,
-            &older_turns,
-            string_field(&older, "nextCursor"),
-            ContextDirection::Desc
-        ),
-        initial_context_side(
-            client,
-            &thread_id,
-            &turn,
-            &cursor.turn_id,
-            &newer_turns,
-            string_field(&newer, "nextCursor"),
-            ContextDirection::Asc
-        ),
-    )?;
     let mut center = turn;
     center["items"] = json!(items);
     center["itemsView"] = json!(if string_field(&older, "nextCursor").is_none()
@@ -415,16 +467,11 @@ pub(super) async fn load_search_match(
     } else {
         "summary"
     });
-    let mut turns = older_context.0;
-    turns.push(center);
-    turns.extend(newer_context.0);
-    thread["turns"] = json!(turns);
-    Ok(CodexTranscriptPage {
-        thread,
-        before_cursor: older_context.1,
-        after_cursor: newer_context.1,
-        prepend_item_turn_ids: HashSet::new(),
-    })
+    Ok((
+        center,
+        string_field(&older, "nextCursor"),
+        string_field(&newer, "nextCursor"),
+    ))
 }
 
 async fn resolve_search_turn_cursor(
@@ -679,26 +726,80 @@ mod tests {
 
     #[test]
     fn visible_search_excludes_context_and_tool_output() {
-        let user = json!({
-            "type": "userMessage",
-            "content": [{"type": "text", "text":
-                "<application_context>hidden needle</application_context> Visible request"}],
-        });
-        assert_eq!(visible_item_text(&user, &HashMap::new()), "Visible request");
+        let turn = json!({"id":"turn-1", "status":"completed", "items":[
+            {"id":"user", "type":"userMessage", "content":[{"type":"text", "text":
+                "<application_context>hidden needle</application_context> Visible request"}]},
+            {"id":"tool", "type":"commandExecution", "text":"needle"},
+            {"id":"assistant", "type":"agentMessage", "text":"visible needle"},
+        ]});
         assert_eq!(
-            visible_item_text(
-                &json!({"type":"commandExecution", "text":"needle"}),
-                &HashMap::new(),
-            ),
-            "",
+            codex_turn_search_sources(&turn, &HashMap::new(), Some("thread-1")),
+            [
+                ("user".to_owned(), "Visible request".to_owned()),
+                ("assistant".to_owned(), "visible needle".to_owned()),
+            ],
         );
-        assert_eq!(
-            visible_item_text(
-                &json!({"type":"agentMessage", "text":"visible needle"}),
+    }
+
+    #[test]
+    fn native_search_excludes_child_threads_and_preserves_root_occurrences() {
+        let turn = json!({"id":"turn-1", "status":"completed", "items":[
+            {"id":"child", "type":"agentMessage", "threadId":"child-thread", "text":"needle needle"},
+            {"id":"root", "type":"agentMessage", "thread_id":"root-thread", "text":"needle needle"},
+        ]});
+        let mut matches = Vec::new();
+        let capped = search_turn_items(
+            "root-thread",
+            &turn,
+            CodexSearchCursor {
+                turn_id: "turn-1".into(),
+                item_id: String::new(),
+                turn_cursor: "opaque-turn".into(),
+                turn_offset: 0,
+            },
+            "needle",
+            10,
+            &HashMap::new(),
+            &mut matches,
+        )
+        .unwrap();
+        assert!(!capped);
+        assert_eq!(matches.len(), 2);
+        for (occurrence, matched) in matches.iter().enumerate() {
+            assert_eq!(matched["itemId"], "root");
+            assert_eq!(matched["occurrence"], occurrence);
+            let cursor = parse_search_cursor(matched["cursor"].as_str().unwrap())
+                .unwrap()
+                .unwrap();
+            assert_eq!(cursor.item_id, "root");
+        }
+    }
+
+    #[test]
+    fn native_search_rejects_matching_items_without_provider_ids() {
+        for item_type in ["agentMessage", "userMessage"] {
+            let turn = json!({"id":"turn-1", "status":"completed", "items":[
+                {"type":item_type, "text":"needle"},
+            ]});
+            let mut matches = Vec::new();
+            let error = search_turn_items(
+                "root-thread",
+                &turn,
+                CodexSearchCursor {
+                    turn_id: "turn-1".into(),
+                    item_id: String::new(),
+                    turn_cursor: "opaque-turn".into(),
+                    turn_offset: 0,
+                },
+                "needle",
+                10,
                 &HashMap::new(),
-            ),
-            "visible needle",
-        );
+                &mut matches,
+            )
+            .unwrap_err();
+            assert_eq!(error, "Codex search item is missing provider id");
+            assert!(matches.is_empty());
+        }
     }
 
     #[test]

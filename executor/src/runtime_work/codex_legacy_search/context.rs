@@ -68,16 +68,22 @@ struct ContextWindow {
     direction: Option<CodexTranscriptDirection>,
     turn_limit: usize,
     capture_native: bool,
+    complete_anchor_turn: Option<usize>,
 }
 
 impl ContextWindow {
-    fn new(direction: Option<CodexTranscriptDirection>, turn_limit: usize) -> Self {
+    fn new(
+        direction: Option<CodexTranscriptDirection>,
+        turn_limit: usize,
+        complete_anchor_turn: Option<usize>,
+    ) -> Self {
         Self {
             items: VecDeque::new(),
             anchor_turn: None,
             direction,
             turn_limit: turn_limit.clamp(1, 5),
             capture_native: direction != Some(CodexTranscriptDirection::Ascending),
+            complete_anchor_turn,
         }
     }
 
@@ -101,7 +107,10 @@ impl ContextWindow {
     fn after_count(&self, offset: u64) -> usize {
         self.items
             .iter()
-            .filter(|item| item.cursor.byte_offset > offset)
+            .filter(|item| {
+                item.cursor.byte_offset > offset
+                    && Some(item.turn_index) != self.complete_anchor_turn
+            })
             .count()
     }
 
@@ -158,18 +167,22 @@ impl ContextWindow {
             }
             self.items.push_back(item);
             self.capture_native = if self.direction.is_none() {
-                self.after_count(anchor_offset) < ITEM_RADIUS
+                self.items
+                    .back()
+                    .is_some_and(|last| Some(last.turn_index) == self.complete_anchor_turn)
+                    || self.after_count(anchor_offset) < ITEM_RADIUS
             } else {
                 self.items.len() < CONTEXT_PAGE_SIZE
             };
         } else {
+            let complete_anchor_item = Some(item.turn_index) == self.complete_anchor_turn;
             self.items.push_back(item);
             let maximum = if self.direction.is_none() {
                 ITEM_RADIUS
             } else {
                 CONTEXT_PAGE_SIZE
             };
-            if self.items.len() > maximum {
+            if !complete_anchor_item && self.items.len() > maximum {
                 self.items.pop_front();
             }
         }
@@ -177,13 +190,18 @@ impl ContextWindow {
 }
 
 pub(super) fn hydrate_context_reader(
-    reader: impl BufRead,
+    mut reader: impl BufRead + Seek,
     cursor: &LegacySearchCursor,
     direction: Option<CodexTranscriptDirection>,
     turn_limit: usize,
 ) -> Result<CodexTranscriptPage, String> {
+    let complete_anchor_turn = if direction.is_none() {
+        complete_anchor_turn(&mut reader, cursor)?
+    } else {
+        None
+    };
     let mut reducer = LegacyProjection::new();
-    let mut window = ContextWindow::new(direction, turn_limit);
+    let mut window = ContextWindow::new(direction, turn_limit, complete_anchor_turn);
     scan(reader, 0, |record, offset| {
         reducer.capture_native = window.capture_native;
         let result = reducer.handle(&record, offset);
@@ -224,6 +242,28 @@ pub(super) fn hydrate_context_reader(
     context_page(&reducer, window)
 }
 
+fn complete_anchor_turn(
+    reader: &mut (impl BufRead + Seek),
+    cursor: &LegacySearchCursor,
+) -> Result<Option<usize>, String> {
+    let metadata = read_metadata(&mut *reader)?;
+    reader
+        .rewind()
+        .map_err(|error| format!("Cannot rewind legacy Codex history: {error}"))?;
+    // Terminal visibility depends on the joined final answer and guidance boundaries.
+    Ok(metadata.turns.iter().position(|turn| {
+        turn.id == cursor.turn_id
+            && turn.item_ids.contains_key(&cursor.item_id)
+            && matches!(turn.status, "failed" | "interrupted")
+            && turn
+                .first_text_offset
+                .is_some_and(|offset| offset <= cursor.byte_offset)
+            && turn
+                .last_text_offset
+                .is_some_and(|offset| offset >= cursor.byte_offset)
+    }))
+}
+
 fn context_page(
     reducer: &LegacyProjection,
     window: ContextWindow,
@@ -235,11 +275,7 @@ fn context_page(
     for item in window.items {
         let metadata = &reducer.turns[item.turn_index];
         if turns.last().and_then(|turn| turn["id"].as_str()) != Some(metadata.id.as_str()) {
-            turns.push(json!({
-                "id": metadata.id, "items": [], "itemsView": "full",
-                "status": metadata.status, "startedAt": metadata.started_at,
-                "completedAt": metadata.completed_at, "durationMs": metadata.duration_ms,
-            }));
+            turns.push(metadata.native_turn(Vec::new()));
             if window.direction == Some(CodexTranscriptDirection::Descending) {
                 prepend_item_turn_ids.insert(metadata.id.clone());
             }

@@ -7,6 +7,15 @@ import { DatabaseSync } from 'node:sqlite'
 
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
+import {
+  TERMINAL_HISTORY_TURN_COUNT as LEGACY_TURN_COUNT,
+  seedNativeTerminalHistory,
+  terminalHistoryCompletion,
+  terminalHistoryTurn,
+  verifyNativeTerminalHistorySearch,
+  verifyTerminalHistorySearch,
+  waitForHighlightedHistoryMatch as waitForHighlightedSearchTarget,
+} from '../modules/terminal-history-search.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -17,7 +26,6 @@ const SWITCH_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SWITCH'
 const SWITCH_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SWITCH_COMPLETE'
 const LEGACY_PROMPT = 'WEWORK_DESKTOP_E2E_LEGACY_SEARCH_TARGET'
 const LEGACY_ATTACHMENT_PREVIEW = 'WEWORK_DESKTOP_E2E_ATTACHMENT_PREVIEW_ONLY'
-const LEGACY_TURN_COUNT = 80
 const LEGACY_MATCH_TURNS = [5, 25]
 const SECOND_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SECOND'
 const SECOND_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SECOND_COMPLETE'
@@ -184,7 +192,8 @@ async function seedLegacySearchHistory(executorHome, sqliteHome, task) {
   const records = []
   for (let index = 0; index < LEGACY_TURN_COUNT; index += 1) {
     const turnId = `legacy-search-turn-${index}`
-    const answer = `Legacy search answer ${index}`
+    const terminal = terminalHistoryTurn(index)
+    const answer = terminal?.text ?? `Legacy search answer ${index}`
     const prompt = LEGACY_MATCH_TURNS.includes(index)
       ? `${LEGACY_PROMPT} ${index}`
       : `Legacy search prompt ${index}`
@@ -200,8 +209,8 @@ async function seedLegacySearchHistory(executorHome, sqliteHome, task) {
         text_elements: [],
         local_images: [],
       },
-      { type: 'agent_message', message: answer, phase: 'final_answer' },
-      { type: 'task_complete', turn_id: turnId, last_agent_message: answer },
+      { type: 'agent_message', message: answer, phase: terminal?.phase ?? 'final_answer' },
+      terminalHistoryCompletion(turnId, answer, terminal),
     ]
     records.push(
       ...events.map(payload =>
@@ -254,34 +263,6 @@ async function assertFindInputFocus(control, findInput) {
   }
 }
 
-async function waitForHighlightedSearchTarget(control, text, afterSequence, timeoutMs) {
-  const content = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="user-message-content"]`
-  await control.command('waitFor', content, { text })
-  const marker = 'legacy-search-current-target'
-  await control.command('markElementWithText', content, { text, value: marker })
-  const target = `${ACTIVE_WORKBENCH_SELECTOR} [data-e2e-anchor-id="${marker}"]`
-  const scroller = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll"]`
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    const [element] = JSON.parse(await control.command('getElementMetrics', target))
-    const [viewport] = JSON.parse(await control.command('getElementMetrics', scroller))
-    const diagnostics = JSON.parse(
-      await control.command('getConversationDiagnosticsSnapshot', 'body')
-    )
-    const highlights = diagnostics?.events.findLast(
-      event =>
-        event.sequence > afterSequence &&
-        event.name === 'search-highlights' &&
-        event.details.matchCount > 0
-    )
-    if (element.top >= viewport.top && element.bottom <= viewport.bottom && highlights) {
-      return diagnostics.events.at(-1).sequence
-    }
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-  throw new Error('The selected historical match was not highlighted and scrolled into view')
-}
-
 async function assertLegacyContext(control, first, last) {
   const users = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="user-message-content"]`
   const answers = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`
@@ -307,6 +288,10 @@ async function verifyLegacySearch(control, timeoutMs) {
     text: `Legacy search answer ${LEGACY_TURN_COUNT - 1}`,
   })
   const original = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).pane
+  assert.doesNotMatch(
+    await control.command('getText', '[data-testid="assistant-message-content"]'),
+    /interrupted|TERMINAL_ERROR_BODY/
+  )
   await control.command('nativePress', COMPOSER_SELECTOR, {
     key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
   })
@@ -358,6 +343,7 @@ async function verifyLegacySearch(control, timeoutMs) {
     0,
     'Browsing either side of a historical search match reported a history failure'
   )
+  await verifyTerminalHistorySearch(control, timeoutMs)
   await control.command('nativePress', findInput, { key: 'Escape' })
   await control.command('waitFor', loadOlder)
   await control.command('waitFor', '[data-testid="assistant-message-content"]', {
@@ -696,6 +682,25 @@ export function createDesktopScenario({
       })
 
       assert.ok(restartDesktopApp, 'The running-history scenario cannot restart Wework')
+      await restartDesktopApp(async () => {
+        const indexPath = join(executorHome, 'runtime-work', 'index.json')
+        const index = JSON.parse(await readFile(indexPath, 'utf8'))
+        const task = Object.values(index.tasks ?? {}).find(
+          candidate => candidate.local_task_id === switchTaskId
+        )
+        assert.ok(task?.thread_id, 'The completed native search task was missing')
+        seedNativeTerminalHistory(codexSqliteHome, task.thread_id)
+        delete task.runtime_handle?.completedTranscriptMessages
+        delete task.runtime_handle?.completedTranscriptThreadId
+        await writeFile(indexPath, `${JSON.stringify(index)}\n`, 'utf8')
+      })
+      await control.command('waitFor', switchTaskRow, { timeoutMs: uiTimeoutMs })
+      await control.command('clickWhenEnabled', switchTaskRow, { timeoutMs: uiTimeoutMs })
+      await verifyNativeTerminalHistorySearch(
+        control,
+        await waitForTaskAddress(control, switchTaskId, uiTimeoutMs),
+        uiTimeoutMs
+      )
       await restartDesktopApp(async () => {
         const indexPath = join(executorHome, 'runtime-work', 'index.json')
         const index = JSON.parse(await readFile(indexPath, 'utf8'))

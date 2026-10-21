@@ -7,6 +7,14 @@ import { Readable } from 'node:stream'
 import { PluginFaultProxy } from './plugin-fault-proxy.mjs'
 import { ensureExperimentalFeaturesEnabled } from './preferences-automation-flows.mjs'
 import {
+  TERMINAL_HISTORY_SEARCH_CASES,
+  TERMINAL_HISTORY_TURN_COUNT as TURN_COUNT,
+  terminalHistoryCompletion,
+  terminalHistoryTurn,
+  verifyTerminalHistorySearch,
+  waitForHighlightedHistoryMatch,
+} from './terminal-history-search.mjs'
+import {
   ACTIVE_WORKBENCH_SELECTOR,
   CLOUD_DEVICE_ID,
   CLOUD_PUBLIC_MODEL_NAME,
@@ -21,7 +29,6 @@ import {
 const SEARCH_PATH = '/api/runtime-work/transcript/search'
 const TRANSCRIPT_PATH = '/api/runtime-work/transcript'
 const QUERY = 'CLOUD_HISTORY_SEARCH_TARGET'
-const TURN_COUNT = 80
 const MATCH_TURNS = [10, 30]
 const FIND = '[data-testid="conversation-find-input"]'
 const FIND_RETRY = '[data-testid="conversation-find-retry"]'
@@ -104,11 +111,13 @@ async function seedHistory(cloud, taskId) {
   metadata.payload.history_mode = 'legacy'
   for (let index = 0; index < TURN_COUNT; index += 1) {
     const turnId = `cloud-search-turn-${index}`
+    const terminal = terminalHistoryTurn(index)
+    const text = terminal?.text ?? answer(index)
     for (const payload of [
       { type: 'task_started', turn_id: turnId, model_context_window: null },
       { type: 'user_message', message: prompt(index), text_elements: [], local_images: [] },
-      { type: 'agent_message', message: answer(index), phase: 'final_answer' },
-      { type: 'task_complete', turn_id: turnId, last_agent_message: answer(index) },
+      { type: 'agent_message', message: text, phase: terminal?.phase ?? 'final_answer' },
+      terminalHistoryCompletion(turnId, text, terminal),
     ]) {
       records.push({ timestamp: '2026-10-20T00:00:00Z', type: 'event_msg', payload })
     }
@@ -138,42 +147,6 @@ async function waitForPane(control, predicate, description, timeoutMs = DEFAULT_
     await new Promise(resolve => setTimeout(resolve, 100))
   } while (Date.now() < deadline)
   throw new Error(`${description}: ${JSON.stringify(pane?.transcript)}`)
-}
-
-async function assertSelectedMatch(control, index, afterSequence) {
-  await control.command('waitFor', USERS, { text: prompt(index) })
-  await control.command('markElementWithText', USERS, {
-    text: prompt(index),
-    value: 'cloud-history-match',
-  })
-  const deadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
-  do {
-    const [match] = JSON.parse(
-      await control.command('getElementMetrics', '[data-e2e-anchor-id="cloud-history-match"]')
-    )
-    const [viewport] = JSON.parse(
-      await control.command(
-        'getElementMetrics',
-        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll"]`
-      )
-    )
-    const diagnostics = JSON.parse(
-      await control.command('getConversationDiagnosticsSnapshot', 'body')
-    )
-    if (
-      match.top >= viewport.top &&
-      match.bottom <= viewport.bottom &&
-      diagnostics?.events.some(
-        event =>
-          event.sequence > afterSequence &&
-          event.name === 'search-highlights' &&
-          event.details.matchCount > 0
-      )
-    )
-      return diagnostics.events.at(-1).sequence
-    await new Promise(resolve => setTimeout(resolve, 100))
-  } while (Date.now() < deadline)
-  assert.fail('The cloud historical match was not highlighted and scrolled into view')
 }
 
 /** Runs inside the existing CI cloud conversation-state checkpoint. */
@@ -276,6 +249,15 @@ export function createCloudHistorySearchVerification() {
           results.matches.map(match => match.turnId),
           MATCH_TURNS.map(index => `cloud-search-turn-${index}`)
         )
+        for (const { query, matches } of TERMINAL_HISTORY_SEARCH_CASES) {
+          const terminal = await request(SEARCH_PATH, { ...search, query })
+          assert.equal(terminal.totalMatches, matches.length)
+          assert.deepEqual(
+            terminal.matches.map(match => match.turnId),
+            matches.map(match => `cloud-search-turn-${match.index}`),
+            'Cloud search indexed a hidden terminal body or omitted useful output'
+          )
+        }
         await request(
           SEARCH_PATH,
           { ...search, projectSession: { ...scope, issueId: otherIssue.id } },
@@ -318,6 +300,10 @@ export function createCloudHistorySearchVerification() {
           pane => pane?.currentRuntimeTask?.taskId === taskId && !pane.transcript.loading,
           'The original cloud conversation did not finish loading'
         )
+        assert.doesNotMatch(
+          await control.command('getText', ANSWERS),
+          /interrupted|TERMINAL_ERROR_BODY/
+        )
         const arm = (name, matches) => {
           assert.equal(fault, undefined, 'A previous cloud search fault was not consumed')
           const next = { name, matches }
@@ -343,7 +329,7 @@ export function createCloudHistorySearchVerification() {
         const assertRecovered = async (count, index) => {
           await control.command('waitFor', COUNT, { text: count })
           assert.equal(Number(await control.command('getElementCount', FIND_RETRY)), 0)
-          sequence = await assertSelectedMatch(control, index, sequence)
+          sequence = await waitForHighlightedHistoryMatch(control, prompt(index), sequence)
         }
         // Focus an existing pane button; Issue-owned executions have no composer.
         await control.command('nativePress', OLDER, {
@@ -391,6 +377,7 @@ export function createCloudHistorySearchVerification() {
         await control.command('scrollIntoView', NEWER)
         await control.command('clickWhenEnabled', NEWER)
         await control.command('waitFor', USERS, { text: prompt(MATCH_TURNS[1] + 2) })
+        await verifyTerminalHistorySearch(control)
         await control.command('fill', FIND, { value: `${QUERY}_NO_MATCH` })
         await control.command('waitFor', COUNT, { text: '0 个结果' })
         assert.equal(Number(await control.command('getElementCount', FIND_RETRY)), 0)

@@ -39,7 +39,10 @@ fn hydrate(bytes: &[u8], matched: &Value) -> Value {
     hydrate_reader(Cursor::new(bytes), &cursor).unwrap()
 }
 
-fn hydrate_reader(reader: impl BufRead, cursor: &LegacySearchCursor) -> Result<Value, String> {
+fn hydrate_reader(
+    reader: impl BufRead + Seek,
+    cursor: &LegacySearchCursor,
+) -> Result<Value, String> {
     let page = context::hydrate_context_reader(reader, cursor, None, 3)?;
     page.thread["turns"]
         .as_array()
@@ -169,6 +172,108 @@ fn search_uses_visible_user_and_assistant_text() {
     ]);
     assert_eq!(search(&bytes, "secret")["totalMatches"], 0);
     assert_eq!(search(&bytes, "visible")["totalMatches"], 2);
+}
+
+#[test]
+fn terminal_status_hides_cancelled_final_placeholder_after_legacy_scan() {
+    let bytes = rollout(vec![
+        event(json!({"type":"task_started", "turn_id":"cancelled"})),
+        event(json!({"type":"user_message", "message":"request"})),
+        event(json!({"type":"agent_message", "phase":"commentary", "message":"interrupted"})),
+        event(json!({"type":"turn_aborted", "turn_id":"cancelled"})),
+    ]);
+    assert_eq!(search(&bytes, "interrupted")["totalMatches"], 0);
+    assert_eq!(search(&bytes, "request")["totalMatches"], 1);
+}
+
+#[test]
+fn failed_legacy_turn_preserves_error_and_hides_only_final_error_content() {
+    let error = json!({"message":"API error: needle final"});
+    let bytes = rollout(vec![
+        event(json!({"type":"task_started", "turn_id":"failed"})),
+        event(json!({"type":"user_message", "message":"request needle"})),
+        event(json!({"type":"agent_message", "message":"API error: needle final"})),
+        event(json!({"type":"task_complete", "turn_id":"failed", "error":error})),
+    ]);
+    let response = search(&bytes, "needle");
+    assert_eq!(response["totalMatches"], 1);
+    assert_eq!(response["matches"][0]["itemId"], "item-1");
+    let turn = hydrate(&bytes, &response["matches"][0]);
+    assert_eq!(turn["status"], "failed");
+    assert_eq!(turn["error"], error);
+}
+
+#[test]
+fn interrupted_legacy_turn_keeps_meaningful_partial_output_and_occurrences() {
+    let bytes = rollout(vec![
+        event(json!({"type":"task_started", "turn_id":"partial"})),
+        event(json!({"type":"user_message", "message":"request"})),
+        event(
+            json!({"type":"agent_message", "phase":"commentary", "message":"partial needle needle"}),
+        ),
+        event(json!({"type":"turn_aborted", "turn_id":"partial"})),
+    ]);
+    let response = search(&bytes, "needle");
+    assert_eq!(response["totalMatches"], 2);
+    assert_eq!(response["matches"][0]["itemId"], "item-2");
+    assert_eq!(response["matches"][0]["occurrence"], 0);
+    assert_eq!(response["matches"][1]["occurrence"], 1);
+    assert_eq!(
+        hydrate(&bytes, &response["matches"][0])["status"],
+        "interrupted"
+    );
+}
+
+#[test]
+fn failed_legacy_turn_filters_joined_content_and_keeps_earlier_guidance_segment() {
+    let bytes = rollout(vec![
+        event(json!({"type":"task_started", "turn_id":"guided"})),
+        event(json!({"type":"user_message", "message":"request"})),
+        event(json!({"type":"agent_message", "message":"API error: needle earlier needle"})),
+        event(json!({"type":"user_message", "message":"guidance needle", "client_id":"guidance"})),
+        event(json!({"type":"agent_message", "message":"API error: needle final"})),
+        event(
+            json!({"type":"task_complete", "turn_id":"guided", "error":"API error: needle final"}),
+        ),
+    ]);
+    let response = search(&bytes, "needle");
+    assert_eq!(response["totalMatches"], 3);
+    let matches = response["matches"].as_array().unwrap();
+    assert_eq!(matches[0]["itemId"], "item-2");
+    assert_eq!(matches[0]["occurrence"], 0);
+    assert_eq!(matches[1]["itemId"], "item-2");
+    assert_eq!(matches[1]["occurrence"], 1);
+    assert_eq!(matches[2]["itemId"], "item-3");
+    assert_eq!(matches[2]["messageId"], "guidance");
+}
+
+#[test]
+fn failed_legacy_turn_keeps_error_like_item_inside_meaningful_joined_answer() {
+    let bytes = rollout(vec![
+        event(json!({"type":"task_started", "turn_id":"partial"})),
+        event(json!({"type":"agent_message", "message":"Useful partial output"})),
+        event(json!({"type":"agent_message", "message":"needle"})),
+        event(json!({"type":"task_complete", "turn_id":"partial", "error":"needle"})),
+    ]);
+    let response = search(&bytes, "needle");
+    assert_eq!(response["totalMatches"], 1);
+    assert_eq!(response["matches"][0]["itemId"], "item-2");
+}
+
+#[test]
+fn rollback_reused_turn_id_searches_only_replacement_generation() {
+    let bytes = rollout(vec![
+        event(json!({"type":"task_started", "turn_id":"same"})),
+        event(json!({"type":"agent_message", "message":"removed needle needle"})),
+        event(json!({"type":"thread_rolled_back", "num_turns":1})),
+        event(json!({"type":"task_started", "turn_id":"same"})),
+        event(json!({"type":"agent_message", "message":"replacement needle"})),
+        event(json!({"type":"task_complete", "turn_id":"same"})),
+    ]);
+    let response = search(&bytes, "needle");
+    assert_eq!(response["totalMatches"], 1);
+    let turn = hydrate(&bytes, &response["matches"][0]);
+    assert_eq!(turn["items"][0]["text"], "replacement needle");
 }
 
 #[test]
@@ -317,6 +422,142 @@ fn hydration_reads_late_completion_after_its_bounded_text_window() {
     assert_eq!(turn["status"], "completed");
     assert_eq!(turn["completedAt"], 20);
     assert_eq!(turn["durationMs"], 10000);
+}
+
+#[test]
+fn failed_match_restores_complete_joined_answer_and_keeps_neighbor_pagination() {
+    use crate::runtime_work::codex_transcript_page::CodexTranscriptDirection;
+
+    let mut records = vec![event(json!({"type":"task_started", "turn_id":"older"}))];
+    records.extend(
+        (0..75).map(|index| {
+            event(json!({"type":"agent_message", "message":format!("older {index}")}))
+        }),
+    );
+    records.extend([
+        event(json!({"type":"task_complete", "turn_id":"older"})),
+        event(json!({"type":"task_started", "turn_id":"failed"})),
+        event(json!({"type":"agent_message", "message":"useful output"})),
+    ]);
+    records.extend(
+        (0..150).map(|index| {
+            event(json!({"type":"agent_message", "message":format!("partial {index}")}))
+        }),
+    );
+    records.extend([
+        event(json!({"type":"agent_message", "message":"needle"})),
+        event(json!({"type":"task_complete", "turn_id":"failed", "error":"needle"})),
+        event(json!({"type":"task_started", "turn_id":"newer"})),
+    ]);
+    records.extend(
+        (0..75).map(|index| {
+            event(json!({"type":"agent_message", "message":format!("newer {index}")}))
+        }),
+    );
+    records.push(event(json!({"type":"task_complete", "turn_id":"newer"})));
+    let bytes = rollout(records);
+    let matches = search(&bytes, "needle");
+    assert_eq!(matches["totalMatches"], 1);
+    let cursor = parse_legacy_search_cursor(matches["matches"][0]["cursor"].as_str().unwrap())
+        .unwrap()
+        .unwrap();
+    let page = context::hydrate_context_reader(Cursor::new(&bytes), &cursor, None, 3).unwrap();
+    let turns = page.thread["turns"].as_array().unwrap();
+    assert_eq!(turns.len(), 3);
+    assert_eq!(turns[0]["items"].as_array().unwrap().len(), 50);
+    assert_eq!(turns[2]["items"].as_array().unwrap().len(), 50);
+    let failed = &turns[1];
+    assert_eq!(failed["items"].as_array().unwrap().len(), 152);
+    assert_eq!(failed["items"][0]["text"], "useful output");
+    assert_eq!(failed["items"][151]["text"], "needle");
+    assert_eq!(failed["error"], "needle");
+    let sources = codex_turn_search_sources(failed, &HashMap::new(), None);
+    assert!(sources
+        .iter()
+        .any(|(id, text)| id == &cursor.item_id && text == "needle"));
+    for (direction, boundary, expected_turn) in [
+        (
+            CodexTranscriptDirection::Descending,
+            page.before_cursor,
+            "older",
+        ),
+        (
+            CodexTranscriptDirection::Ascending,
+            page.after_cursor,
+            "newer",
+        ),
+    ] {
+        let cursor = parse_legacy_context_cursor(boundary.as_deref().unwrap())
+            .unwrap()
+            .unwrap();
+        let rest =
+            context::hydrate_context_reader(Cursor::new(&bytes), &cursor, Some(direction), 5)
+                .unwrap();
+        assert_eq!(rest.thread["turns"][0]["id"], expected_turn);
+        assert_eq!(
+            rest.thread["turns"][0]["items"].as_array().unwrap().len(),
+            25
+        );
+        assert!(rest.before_cursor.is_none() || rest.after_cursor.is_none());
+    }
+}
+
+#[test]
+fn failed_match_restores_guidance_boundaries_beyond_the_item_radius() {
+    let mut records = vec![
+        event(json!({"type":"task_started", "turn_id":"guided"})),
+        event(json!({"type":"agent_message", "message":"API error: needle earlier"})),
+    ];
+    records.extend(
+        (0..120).map(|index| {
+            event(json!({"type":"agent_message", "message":format!("earlier {index}")}))
+        }),
+    );
+    records.extend([
+        event(json!({"type":"user_message", "message":"continue", "client_id":"guidance"})),
+        event(json!({"type":"agent_message", "message":"API error: needle final"})),
+        event(
+            json!({"type":"task_complete", "turn_id":"guided", "error":"API error: needle final"}),
+        ),
+    ]);
+    let bytes = rollout(records);
+    let response = search(&bytes, "needle");
+    assert_eq!(response["totalMatches"], 1);
+    let turn = hydrate(&bytes, &response["matches"][0]);
+    assert_eq!(turn["items"].as_array().unwrap().len(), 123);
+    assert_eq!(turn["items"][121]["clientId"], "guidance");
+    let sources = codex_turn_search_sources(&turn, &HashMap::new(), None);
+    assert!(sources
+        .iter()
+        .any(|(id, text)| id == "item-1" && text.contains("needle")));
+    assert!(!sources
+        .iter()
+        .any(|(_, text)| text == "API error: needle final"));
+}
+
+#[test]
+fn interrupted_match_restores_the_complete_meaningful_partial_answer() {
+    let mut records = vec![event(
+        json!({"type":"task_started", "turn_id":"interrupted"}),
+    )];
+    records.extend((0..140).map(|index| {
+        event(json!({"type":"agent_message", "phase":"commentary",
+            "message":format!("partial {index}")}))
+    }));
+    records.extend([
+        event(json!({"type":"agent_message", "phase":"commentary", "message":"needle"})),
+        event(json!({"type":"turn_aborted", "turn_id":"interrupted"})),
+    ]);
+    let bytes = rollout(records);
+    let matched = search(&bytes, "needle");
+    assert_eq!(matched["totalMatches"], 1);
+    let turn = hydrate(&bytes, &matched["matches"][0]);
+    assert_eq!(turn["status"], "interrupted");
+    assert_eq!(turn["items"].as_array().unwrap().len(), 141);
+    assert_eq!(turn["items"][0]["text"], "partial 0");
+    assert!(codex_turn_search_sources(&turn, &HashMap::new(), None)
+        .iter()
+        .any(|(_, text)| text == "needle"));
 }
 
 #[test]

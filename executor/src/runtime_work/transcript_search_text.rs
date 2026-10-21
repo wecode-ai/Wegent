@@ -2,11 +2,124 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::sync::OnceLock;
+use std::{collections::HashMap, sync::OnceLock};
 
 use pulldown_cmark::{Event, Options, Parser, TagEnd};
 use regex::Regex;
-use serde_json::Value;
+use serde_json::{json, Value};
+
+use super::{
+    transcript::{search_transcript_messages, visible_user_request_content},
+    util::{item_type, string_field},
+};
+
+/// Index the same item projection that transcript hydration sends to the renderer.
+pub(super) fn codex_turn_search_sources(
+    turn: &Value,
+    user_content_by_client_id: &HashMap<String, String>,
+    root_thread_id: Option<&str>,
+) -> Vec<(String, String)> {
+    let mut turn = turn.clone();
+    restore_search_user_content(&mut turn, user_content_by_client_id);
+    let messages = search_transcript_messages(&json!({"id": root_thread_id, "turns": [turn]}));
+    let mut items = Vec::new();
+    for message in &messages {
+        if message["role"] == "user" {
+            items.push(json!({"id": message["id"], "type": "user_message", "message": message}));
+        } else if let Some(runtime_items) = message["runtimeItems"].as_array() {
+            items.extend(runtime_items.iter().cloned());
+        }
+    }
+    let terminal = messages.last().unwrap_or(&Value::Null);
+    let status = terminal
+        .get("runtimeStatus")
+        .or_else(|| terminal.get("status"))
+        .and_then(Value::as_str)
+        .unwrap_or("done");
+    let error = terminal.get("error").and_then(Value::as_str);
+    let segment_count = items
+        .iter()
+        .filter(|item| item["type"] == "user_message")
+        .count()
+        + 1;
+    let mut sources = Vec::new();
+    for (index, segment) in items
+        .split_inclusive(|item| item["type"] == "user_message")
+        .enumerate()
+    {
+        // A user item closes the preceding assistant segment, just as the renderer does.
+        let is_last = index + 1 == segment_count;
+        sources.extend(projected_segment_search_sources(
+            segment,
+            if is_last { status } else { "done" },
+            if is_last { error } else { None },
+            user_content_by_client_id,
+        ));
+    }
+    sources
+}
+
+fn restore_search_user_content(turn: &mut Value, content_by_id: &HashMap<String, String>) {
+    for item in turn["items"].as_array_mut().into_iter().flatten() {
+        let is_user = item_type(item) == "usermessage"
+            || (item_type(item) == "message" && item["role"] == "user");
+        if !is_user {
+            continue;
+        }
+        let client_id = string_field(item, "clientId")
+            .or_else(|| string_field(item, "client_id"))
+            .or_else(|| string_field(item, "id"));
+        if let Some(content) = client_id.and_then(|id| content_by_id.get(&id)) {
+            // Restore before projection so an empty provider prompt is not dropped.
+            item["text"] = json!(content);
+        }
+    }
+}
+
+fn projected_segment_search_sources(
+    items: &[Value],
+    status: &str,
+    error: Option<&str>,
+    user_content_by_client_id: &HashMap<String, String>,
+) -> Vec<(String, String)> {
+    let content = items
+        .iter()
+        .filter(|item| item["type"] == "assistant_text")
+        .map(|item| strip_codex_ui_directives(item["content"].as_str().unwrap_or_default()))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let visible_content = visible_assistant_content(&content, status, error);
+    items
+        .iter()
+        .filter_map(|item| {
+            let id = string_field(item, "id")?;
+            let text = match item["type"].as_str()? {
+                "user_message" => {
+                    let message = &item["message"];
+                    let client_id = message["clientUserMessageId"].as_str().unwrap_or(&id);
+                    let content = user_content_by_client_id
+                        .get(client_id)
+                        .map(String::as_str)
+                        .or_else(|| message["content"].as_str())
+                        .unwrap_or_default();
+                    markdown_search_text(visible_user_request_content(content))
+                }
+                "assistant_text" if !visible_content.is_empty() => {
+                    assistant_search_text(item["content"].as_str().unwrap_or_default())
+                }
+                "block" if item["block"]["type"] == "text" => {
+                    let text = item["block"]["content"].as_str().unwrap_or_default();
+                    if text.trim().is_empty() || text.trim() == visible_content.trim() {
+                        return None;
+                    }
+                    assistant_block_search_text(text)
+                }
+                _ => return None,
+            };
+            Some((id, text))
+        })
+        .collect()
+}
 
 /// Mirror the renderer's Markdown text index, excluding image alt text, HTML,
 /// link destinations and code-block language metadata.
@@ -251,6 +364,107 @@ fn is_block(end: TagEnd) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn turn_sources(status: &str, content: &str, error: Option<&str>) -> Vec<(String, String)> {
+        codex_turn_search_sources(
+            &json!({
+                "id": "turn", "status": status, "error": error,
+                "items": [{"id": "answer", "type": "agentMessage", "phase": "commentary", "text": content}],
+            }),
+            &HashMap::new(),
+            None,
+        )
+    }
+
+    #[test]
+    fn projected_search_hides_terminal_placeholders_but_preserves_useful_output() {
+        for placeholder in ["interrupted", "cancelled", "canceled", "aborted"] {
+            assert!(turn_sources("interrupted", placeholder, None).is_empty());
+            assert_eq!(
+                turn_sources("completed", placeholder, None),
+                vec![("answer".into(), placeholder.into())]
+            );
+        }
+        let error = "API error: needle";
+        assert!(turn_sources("failed", error, Some(error)).is_empty());
+        assert_eq!(
+            turn_sources("completed", error, Some(error)),
+            vec![("answer".into(), error.into())]
+        );
+        assert_eq!(
+            turn_sources("interrupted", "useful interrupted output", None),
+            vec![("answer".into(), "useful interrupted output".into())]
+        );
+    }
+
+    #[test]
+    fn projected_search_uses_guidance_segments_and_joined_final_content() {
+        let sources = codex_turn_search_sources(
+            &json!({
+                "id": "turn", "status": "failed", "error": "API error: needle",
+                "items": [
+                    {"id": "first", "type": "agentMessage", "phase": "final_answer", "text": "API error: needle"},
+                    {"id": "guidance", "type": "userMessage", "content": [{"type": "inputText", "text": "continue"}]},
+                    {"id": "last", "type": "agentMessage", "phase": "final_answer", "text": "API error: needle"},
+                ],
+            }),
+            &HashMap::new(),
+            None,
+        );
+        assert!(sources.contains(&("first".into(), "API error: needle".into())));
+        assert!(!sources.iter().any(|(id, _)| id == "last"));
+
+        let sources = codex_turn_search_sources(
+            &json!({
+                "id": "turn", "status": "failed", "error": "API error: needle",
+                "items": [
+                    {"id": "partial", "type": "agentMessage", "phase": "final_answer", "text": "useful output"},
+                    {"id": "last", "type": "agentMessage", "phase": "final_answer", "text": "API error: needle"},
+                ],
+            }),
+            &HashMap::new(),
+            None,
+        );
+        assert_eq!(
+            sources,
+            vec![
+                ("partial".into(), "useful output".into()),
+                ("last".into(), "API error: needle".into())
+            ]
+        );
+    }
+
+    #[test]
+    fn projected_search_retains_visible_narrative_and_deduplicates_final_items() {
+        let sources = codex_turn_search_sources(
+            &json!({
+                "id": "turn", "status": "failed", "error": "API error: needle",
+                "items": [
+                    {"id": "process", "type": "agentMessage", "phase": "analysis", "text": "useful needle"},
+                    {"id": "final", "type": "agentMessage", "phase": "final_answer", "text": "API error: needle"},
+                    {"id": "duplicate", "type": "agentMessage", "phase": "final_answer", "text": "API error: needle"},
+                ],
+            }),
+            &HashMap::new(),
+            None,
+        );
+        assert_eq!(sources, vec![("process".into(), "useful needle".into())]);
+    }
+
+    #[test]
+    fn projected_search_restores_empty_user_prompts_before_projection() {
+        let sources = codex_turn_search_sources(
+            &json!({"id":"turn", "status":"completed", "items":[{
+                "id":"provider-user", "clientId":"client-user", "type":"userMessage", "content":[],
+            }]}),
+            &HashMap::from([("client-user".into(), "restored **needle**".into())]),
+            None,
+        );
+        assert_eq!(
+            sources,
+            vec![("provider-user".into(), "restored needle".into())]
+        );
+    }
 
     #[test]
     fn rendered_markdown_excludes_hidden_destinations_and_metadata() {

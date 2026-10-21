@@ -5,7 +5,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fs::File,
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, Seek},
     sync::OnceLock,
 };
 
@@ -13,8 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use super::{
-    transcript::visible_user_request_content,
-    transcript_search_text::{assistant_search_text, markdown_search_text},
+    transcript_search_text::codex_turn_search_sources,
     util::{item_type, string_field},
 };
 
@@ -80,7 +79,7 @@ pub(super) async fn search_legacy_transcript(
 }
 
 fn search_reader(
-    reader: impl BufRead,
+    mut reader: impl BufRead + Seek,
     query: &str,
     limit: usize,
     excluded: &HashSet<String>,
@@ -91,63 +90,53 @@ fn search_reader(
     let mut matches = Vec::new();
     let mut total = 0usize;
     if !needle.is_empty() {
+        let metadata = read_metadata(&mut reader)?;
+        reader
+            .rewind()
+            .map_err(|error| format!("Cannot rewind legacy Codex history: {error}"))?;
         let mut reducer = LegacyProjection::new();
+        reducer.capture_native = true;
+        let mut selected_turn = None;
+        let mut selected_items = Vec::new();
+        let mut append = |index: usize, items: &[ProjectedText]| {
+            append_turn_matches(
+                &metadata.turns[index],
+                items,
+                &needle,
+                limit,
+                user_content_by_client_id,
+                &mut matches,
+                &mut total,
+            )
+        };
         scan(reader, 0, |record, offset| {
             let result = reducer.handle(&record, offset);
-            if let Some(removed) = result.rollback_from {
-                total = total.saturating_sub(reducer.removed_match_count);
-                matches.retain(|matched: &Value| {
-                    matched["legacyTurnIndex"].as_u64().unwrap_or(u64::MAX) < removed as u64
-                });
-            }
             let Some(item) = result.item else {
                 return Ok(true);
             };
-            let turn = &mut reducer.turns[item.turn_index];
-            if excluded.contains(&turn.id) {
+            let Some(turn) = metadata.turns.get(item.turn_index) else {
+                return Ok(true);
+            };
+            let replayed = &reducer.turns[item.turn_index];
+            if excluded.contains(&turn.id)
+                || turn.id != replayed.id
+                || turn.first_text_offset != replayed.first_text_offset
+            {
                 return Ok(true);
             }
-            let text = if item.user {
-                let content = item
-                    .client_id
-                    .as_ref()
-                    .and_then(|client_id| user_content_by_client_id.get(client_id))
-                    .unwrap_or(&item.text);
-                markdown_search_text(visible_user_request_content(content))
-            } else {
-                assistant_search_text(&item.text)
-            };
-            let count = text.to_lowercase().match_indices(needle.as_str()).count();
-            if count == 0 {
-                return Ok(true);
-            }
-            turn.match_count = turn.match_count.saturating_add(count);
-            total = total.saturating_add(count);
-            let cursor = LegacySearchCursor {
-                turn_id: turn.id.clone(),
-                item_id: item.id.clone(),
-                byte_offset: offset,
-            };
-            let encoded = serde_json::to_string(&cursor)
-                .map_err(|error| format!("Cannot encode legacy search cursor: {error}"))?;
-            for occurrence in 0..count.min(limit.saturating_sub(matches.len())) {
-                let mut matched = json!({
-                    "turnId": turn.id,
-                    "itemId": item.id,
-                    "occurrence": occurrence,
-                    "cursor": format!("{CURSOR_PREFIX}{encoded}"),
-                    "legacyTurnIndex": item.turn_index,
-                });
-                if item.user {
-                    matched["messageId"] = json!(item.client_id.as_ref().unwrap_or(&item.id));
+            if selected_turn != Some(item.turn_index) {
+                if let Some(index) = selected_turn {
+                    append(index, &selected_items)?;
                 }
-                matches.push(matched);
+                selected_items.clear();
+                selected_turn = Some(item.turn_index);
             }
+            selected_items.push(item);
             Ok(true)
         })?;
-    }
-    for matched in &mut matches {
-        matched.as_object_mut().unwrap().remove("legacyTurnIndex");
+        if let Some(index) = selected_turn {
+            append(index, &selected_items)?;
+        }
     }
     Ok(json!({
         "success": true,
@@ -155,6 +144,55 @@ fn search_reader(
         "isCapped": total > matches.len(),
         "matches": matches,
     }))
+}
+
+fn read_metadata(reader: impl BufRead) -> Result<LegacyProjection, String> {
+    let mut reducer = LegacyProjection::new();
+    scan(reader, 0, |record, offset| {
+        reducer.handle(&record, offset);
+        Ok(true)
+    })?;
+    Ok(reducer)
+}
+
+fn append_turn_matches(
+    turn: &TurnMetadata,
+    items: &[ProjectedText],
+    needle: &str,
+    limit: usize,
+    user_content_by_client_id: &HashMap<String, String>,
+    matches: &mut Vec<Value>,
+    total: &mut usize,
+) -> Result<(), String> {
+    let native = turn.native_turn(items.iter().map(|item| item.native.clone()).collect());
+    let sources = codex_turn_search_sources(&native, user_content_by_client_id, None)
+        .into_iter()
+        .collect::<HashMap<_, _>>();
+    for item in items {
+        let Some(text) = sources.get(&item.id) else {
+            continue;
+        };
+        let count = text.to_lowercase().match_indices(needle).count();
+        *total = total.saturating_add(count);
+        let cursor = LegacySearchCursor {
+            turn_id: turn.id.clone(),
+            item_id: item.id.clone(),
+            byte_offset: item.byte_offset,
+        };
+        let encoded = serde_json::to_string(&cursor)
+            .map_err(|error| format!("Cannot encode legacy search cursor: {error}"))?;
+        for occurrence in 0..count.min(limit.saturating_sub(matches.len())) {
+            let mut matched = json!({
+                "turnId": turn.id, "itemId": item.id,
+                "occurrence": occurrence, "cursor": format!("{CURSOR_PREFIX}{encoded}"),
+            });
+            if item.user {
+                matched["messageId"] = json!(item.client_id.as_ref().unwrap_or(&item.id));
+            }
+            matches.push(matched);
+        }
+    }
+    Ok(())
 }
 
 /// Read one record at a time. A half-written final append is not a failed history.
@@ -194,7 +232,7 @@ struct ProjectedText {
     id: String,
     client_id: Option<String>,
     user: bool,
-    text: String,
+    byte_offset: u64,
     native: Value,
 }
 
@@ -211,13 +249,24 @@ struct TurnMetadata {
     item_ids: HashMap<String, usize>,
     item_count: usize,
     last_reasoning: bool,
-    match_count: usize,
     status: &'static str,
+    error: Option<Value>,
     started_at: Option<i64>,
     completed_at: Option<i64>,
     duration_ms: Option<i64>,
     first_text_offset: Option<u64>,
     last_text_offset: Option<u64>,
+}
+
+impl TurnMetadata {
+    fn native_turn(&self, items: Vec<Value>) -> Value {
+        json!({
+            "id": self.id, "items": items, "itemsView": "full",
+            "status": self.status, "error": self.error,
+            "startedAt": self.started_at, "completedAt": self.completed_at,
+            "durationMs": self.duration_ms,
+        })
+    }
 }
 
 /// Mirrors Codex ThreadHistoryBuilder's legacy persistence projection. Retain only
@@ -229,7 +278,6 @@ struct LegacyProjection {
     rollout_index: u64,
     next_item_index: u64,
     current_rollout_index: u64,
-    removed_match_count: usize,
     capture_native: bool,
 }
 
@@ -242,7 +290,6 @@ impl LegacyProjection {
             rollout_index: 0,
             next_item_index: 1,
             current_rollout_index: 0,
-            removed_match_count: 0,
             capture_native: false,
         }
     }
@@ -259,8 +306,8 @@ impl LegacyProjection {
             item_ids: HashMap::new(),
             item_count: 0,
             last_reasoning: false,
-            match_count: 0,
             status: if explicit { "inProgress" } else { "completed" },
+            error: None,
             started_at: None,
             completed_at: None,
             duration_ms: None,
@@ -361,10 +408,6 @@ impl LegacyProjection {
                     .and_then(Value::as_u64)
                     .unwrap_or(0) as usize;
                 let retained = self.turns.len().saturating_sub(remove);
-                self.removed_match_count = self.turns[retained..]
-                    .iter()
-                    .map(|turn| turn.match_count)
-                    .sum();
                 for turn in self.turns.drain(retained..) {
                     self.by_id.remove(&turn.id);
                 }
@@ -472,7 +515,7 @@ impl LegacyProjection {
             id,
             client_id,
             user,
-            text,
+            byte_offset: offset,
             native,
         })
     }
@@ -489,6 +532,7 @@ impl LegacyProjection {
                 turn.status = "interrupted";
             } else if payload.get("error").is_some_and(|error| !error.is_null()) {
                 turn.status = "failed";
+                turn.error = payload.get("error").cloned();
             } else if matches!(turn.status, "completed" | "inProgress") {
                 turn.status = "completed";
             }
