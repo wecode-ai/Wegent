@@ -95,10 +95,10 @@ async function assertFilteredIssues(control, scoped, issues, visibleIds) {
 
 export async function verifyPersonalAssigneeFilter(
   control,
-  { scoped, request, project, currentUser, issues }
+  { scoped, request, project, currentUser, issues, expectedRole = 'Developer' }
 ) {
   const before = await request(`/api/v1/cloud-projects/${project.id}`)
-  assert.equal(before.access_role, 'Developer', 'The filter regression needs an ordinary member')
+  assert.equal(before.access_role, expectedRole, 'The filter regression has the wrong project role')
   const filter = scoped('[data-testid="cloud-board-group-filter"]')
   const search = scoped('[data-testid="cloud-board-search"]')
   const mine = issues[0]
@@ -130,4 +130,7 @@ export async function verifyPersonalAssigneeFilter(
     issues.map(issue => issue.id)
   )
   await assertProjectConfigurationUnchanged(request, project.id, before)
+  console.log(
+    `[desktop-e2e] PASS personal-board: ${expectedRole} own-Issue filter/search/clear/reload did not modify shared project settings`
+  )
 }

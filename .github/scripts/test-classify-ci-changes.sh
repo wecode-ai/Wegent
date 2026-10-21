@@ -636,15 +636,21 @@ for consent_path in \
   fi
 done
 
-assert_desktop_case "Personal Issue board regressions select the shared collaboration checkpoint" \
-  'wework_desktop_e2e=true
+personal_board_expected='wework_desktop_e2e=true
 wework_desktop_core_e2e=true
 wework_desktop_core_e2e_matrix={"include":[{"id":"core-10","name":"Core / shard 10","segments":"collaboration-shared-core"}]}
 wework_desktop_other_e2e=false
-wework_desktop_other_e2e_matrix={"include":[]}' \
+wework_desktop_other_e2e_matrix={"include":[]}'
+for personal_board_path in \
   "wework/e2e/desktop/scenarios/collaboration-shared-core.scenario.mjs" \
   "wework/e2e/desktop/modules/collaboration-board-personal-view.mjs" \
-  "wework/e2e/desktop/modules/project-only-navigation.mjs"
+  "wework/e2e/desktop/modules/collaboration-board-field-drag.mjs" \
+  "wework/e2e/desktop/modules/collaboration-board-preferences.mjs" \
+  "wework/e2e/desktop/modules/collaboration-board-tag-drag.mjs" \
+  "wework/e2e/desktop/modules/project-only-navigation.mjs"; do
+  assert_desktop_case "Personal Issue board regression selects its checkpoint: $personal_board_path" \
+    "$personal_board_expected" "$personal_board_path"
+done
 
 assert_desktop_case "Issue archive scenario selects its own checkpoint" \
   'wework_desktop_e2e=true

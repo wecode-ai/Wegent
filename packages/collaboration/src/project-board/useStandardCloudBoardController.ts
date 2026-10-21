@@ -272,11 +272,10 @@ export interface StandardCloudBoardDrop {
   beforeItemId: string | null;
   column: ProjectBoardColumn;
   itemId: string;
+  sourceColumn: ProjectBoardColumn
 }
 
-export function resolveStandardCloudBoardDrop<
-  T extends StandardCloudBoardItem,
->({
+export function resolveStandardCloudBoardDrop<T extends StandardCloudBoardItem>({
   activeItemId,
   beforeItemId,
   columnDropKey,
@@ -284,34 +283,42 @@ export function resolveStandardCloudBoardDrop<
   extensions,
   groupBy,
   items,
+  sourceColumnKey,
 }: {
-  activeItemId: string;
-  beforeItemId: string | null;
-  columnDropKey: string | null;
-  columns: ProjectBoardColumn[];
-  extensions: Pick<StandardCloudBoardHostExtensions<T>, "noTagGroupValue">;
-  groupBy: ProjectBoardGroupBy;
-  items: T[];
+  activeItemId: string
+  beforeItemId: string | null
+  columnDropKey: string | null
+  columns: ProjectBoardColumn[]
+  extensions: Pick<StandardCloudBoardHostExtensions<T>, 'noTagGroupValue'>
+  groupBy: ProjectBoardGroupBy
+  items: T[]
+  sourceColumnKey: string
 }): StandardCloudBoardDrop | null {
-  if (beforeItemId) {
-    if (beforeItemId === activeItemId) return null;
-    const target = items.find((item) => item.id === beforeItemId);
-    const column = target
-      ? columns.find((candidate) =>
-          matchesStandardCloudBoardColumn(
-            target,
-            candidate,
-            groupBy,
-            extensions,
-          ),
-        )
-      : undefined;
-    return column ? { beforeItemId, column, itemId: activeItemId } : null;
+  const sourceColumn = columns.find(column => column.key === sourceColumnKey)
+  const column = columns.find(column => column.key === columnDropKey)
+  const item = items.find(item => item.id === activeItemId)
+  if (
+    !sourceColumn ||
+    !column ||
+    !item ||
+    !matchesStandardCloudBoardColumn(item, sourceColumn, groupBy, extensions)
+  )
+    return null
+  if (beforeItemId === activeItemId && sourceColumn.key === column.key) return null
+  const target = beforeItemId ? items.find(item => item.id === beforeItemId) : null
+  if (
+    beforeItemId &&
+    (!target ||
+      target.parent_id !== item.parent_id ||
+      !matchesStandardCloudBoardColumn(target, column, groupBy, extensions))
+  )
+    return null
+  return {
+    beforeItemId: beforeItemId === activeItemId ? null : beforeItemId,
+    column,
+    itemId: activeItemId,
+    sourceColumn,
   }
-  const column = columnDropKey
-    ? columns.find((candidate) => candidate.key === columnDropKey)
-    : undefined;
-  return column ? { beforeItemId: null, column, itemId: activeItemId } : null;
 }
 
 export interface StandardCloudBoardControllerOptions<
@@ -455,83 +462,75 @@ export async function executeStandardCloudBoardMutation<
   return updated;
 }
 
-export function resolveStandardCloudBoardMutation<
-  T extends StandardCloudBoardItem,
->({
+export function resolveStandardCloudBoardMutation<T extends StandardCloudBoardItem>({
   beforeItemId,
   column,
   groupBy,
   item,
   items,
+  sourceColumn,
 }: {
-  beforeItemId: string | null;
-  column: ProjectBoardColumn;
-  groupBy: ProjectBoardGroupBy;
-  item: T;
-  items: T[];
+  beforeItemId: string | null
+  column: ProjectBoardColumn
+  groupBy: ProjectBoardGroupBy
+  item: T
+  items: T[]
+  sourceColumn: ProjectBoardColumn
 }): StandardCloudBoardMutation<T> | null {
-  if (groupBy === "status") {
-    const reordered = reorderLaneItems(
-      items,
-      item.id,
-      column.groupValue,
-      beforeItemId,
-    );
+  if (groupBy === 'status') {
+    const reordered = reorderLaneItems(items, item.id, column.groupValue, beforeItemId)
     return reordered
       ? {
-          kind: "status",
+          kind: 'status',
           optimisticItems: reordered.items,
           laneIds: reordered.laneIds,
           status: column.groupValue,
         }
-      : null;
+      : null
   }
-  if (groupBy === "priority") {
+  if (sourceColumn.key === column.key) return null
+  if (groupBy === 'priority') {
     return {
-      kind: "priority",
-      optimisticItems: items.map((candidate) =>
-        candidate.id === item.id
-          ? { ...candidate, priority: column.groupValue }
-          : candidate,
+      kind: 'priority',
+      optimisticItems: items.map(candidate =>
+        candidate.id === item.id ? { ...candidate, priority: column.groupValue } : candidate
       ),
       priority: column.groupValue,
-    };
+    }
   }
-  if (groupBy === "assignee") {
-    const [type, id] = column.groupValue.includes(":")
-      ? column.groupValue.split(":", 2)
-      : ["user", column.groupValue];
+  if (groupBy === 'assignee') {
+    const [type, id] = column.groupValue.includes(':')
+      ? column.groupValue.split(':', 2)
+      : ['user', column.groupValue]
     const assigneeType =
-      id && (type === "user" || type === "agent" || type === "team")
-        ? type
-        : null;
-    const assigneeId = assigneeType ? id : null;
+      id && (type === 'user' || type === 'agent' || type === 'team') ? type : null
+    const assigneeId = assigneeType ? id : null
     return {
-      kind: "assignee",
+      kind: 'assignee',
       assigneeId,
       assigneeType,
-      optimisticItems: items.map((candidate) =>
+      optimisticItems: items.map(candidate =>
         candidate.id === item.id
           ? {
               ...candidate,
-              assignee_user_id:
-                assigneeType === "user" ? Number(assigneeId) : null,
-              assignee_agent_id: assigneeType === "agent" ? assigneeId : null,
-              assignee_team_id:
-                assigneeType === "team" ? Number(assigneeId) : null,
+              assignee_user_id: assigneeType === 'user' ? Number(assigneeId) : null,
+              assignee_agent_id: assigneeType === 'agent' ? assigneeId : null,
+              assignee_team_id: assigneeType === 'team' ? Number(assigneeId) : null,
             }
-          : candidate,
+          : candidate
       ),
-    };
+    }
   }
-  const tags = column.groupValue ? [column.groupValue] : [];
+  const tags = column.groupValue
+    ? [...new Set([...item.tags.filter(tag => tag !== sourceColumn.groupValue), column.groupValue])]
+    : []
   return {
-    kind: "tag",
-    optimisticItems: items.map((candidate) =>
-      candidate.id === item.id ? { ...candidate, tags } : candidate,
+    kind: 'tag',
+    optimisticItems: items.map(candidate =>
+      candidate.id === item.id ? { ...candidate, tags } : candidate
     ),
     tags,
-  };
+  }
 }
 
 export function useStandardCloudBoardController<
@@ -578,31 +577,38 @@ export function useStandardCloudBoardController<
       itemId: string,
       column: ProjectBoardColumn,
       beforeItemId: string | null,
+      sourceColumn: ProjectBoardColumn
     ) => {
-      const item = items.find((candidate) => candidate.id === itemId);
-      if (!item) return;
+      const item = items.find(candidate => candidate.id === itemId)
+      if (!item) return
       const mutation = resolveStandardCloudBoardMutation({
         beforeItemId,
         column,
         groupBy: boardState.groupBy,
         item,
         items,
-      });
-      if (mutation) void onMove(item, column, beforeItemId, mutation);
+        sourceColumn,
+      })
+      if (mutation) void onMove(item, column, beforeItemId, mutation)
     },
-    [boardState.groupBy, items, onMove],
-  );
+    [boardState.groupBy, items, onMove]
+  )
 
   const moveDroppedItem = useCallback(
     ({
       activeItemId,
       beforeItemId,
       columnDropKey,
+      sourceColumnKey,
+      groupBy,
     }: {
-      activeItemId: string;
-      beforeItemId: string | null;
-      columnDropKey: string | null;
+      activeItemId: string | null
+      beforeItemId: string | null
+      columnDropKey: string | null
+      sourceColumnKey: string | undefined
+      groupBy: ProjectBoardGroupBy | undefined
     }) => {
+      if (!activeItemId || !sourceColumnKey || groupBy !== boardState.groupBy) return
       const drop = resolveStandardCloudBoardDrop({
         activeItemId,
         beforeItemId,
@@ -611,11 +617,12 @@ export function useStandardCloudBoardController<
         extensions,
         groupBy: boardState.groupBy,
         items,
-      });
-      if (drop) moveItem(drop.itemId, drop.column, drop.beforeItemId);
+        sourceColumnKey,
+      })
+      if (drop) moveItem(drop.itemId, drop.column, drop.beforeItemId, drop.sourceColumn)
     },
-    [boardState.groupBy, columns, extensions, items, moveItem],
-  );
+    [boardState.groupBy, columns, extensions, items, moveItem]
+  )
 
   const getColumnItems = useCallback(
     (column: ProjectBoardColumn, state: ProjectBoardStatePort) =>

@@ -16,6 +16,7 @@ import {
   projectBoardDnd,
   projectBoardCollisionDetection,
   projectBoardDrop,
+  projectBoardDragItemId,
   useProjectBoardSensors,
 } from '@wegent/collaboration/project-board/projectBoardDnd'
 import { ProjectBoardDragOverlay } from '@wegent/collaboration/project-board/ProjectBoardDragOverlay'
@@ -4623,7 +4624,7 @@ export function CloudTodoWorkspace({
                         sensors: boardSensors,
                         collisionDetection: projectBoardCollisionDetection,
                         onDragStart: (event: DragStartEvent) => {
-                          setActiveDragItemId(String(event.active.id))
+                          setActiveDragItemId(projectBoardDragItemId(event.active))
                         },
                         onDragCancel: () => setActiveDragItemId(null),
                         onDragEnd: finishBoardDrop,

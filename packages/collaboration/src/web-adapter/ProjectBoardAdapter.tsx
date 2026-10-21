@@ -2,6 +2,7 @@ import {
   projectBoardDnd,
   projectBoardCollisionDetection,
   projectBoardDrop,
+  projectBoardDragItemId,
   useProjectBoardSensors,
 } from "../project-board/projectBoardDnd";
 import { ProjectBoardDragOverlay } from "../project-board/ProjectBoardDragOverlay";
@@ -260,15 +261,15 @@ export function ProjectBoardAdapter({
         dndContextProps={{
           sensors,
           collisionDetection: projectBoardCollisionDetection,
-          onDragStart: (event: { active: { id: string | number } }) =>
-            controller.setActiveDragItemId(String(event.active.id)),
+          onDragStart: (event: { active: Parameters<typeof projectBoardDragItemId>[0] }) =>
+            controller.setActiveDragItemId(projectBoardDragItemId(event.active)),
           onDragCancel: () => controller.setActiveDragItemId(null),
           onDragEnd: (event: Parameters<typeof projectBoardDrop>[0]) => {
             controller.setActiveDragItemId(null);
             if (
               issues.some(
                 (issue) =>
-                  issue.id === String(event.active.id) &&
+                  issue.id === projectBoardDragItemId(event.active) &&
                   canEditCollaborationIssue(issue),
               )
             )

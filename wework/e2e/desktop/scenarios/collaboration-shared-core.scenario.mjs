@@ -20,6 +20,7 @@ import {
   verifyCommentExecutionStatus,
 } from '../modules/issue-activity-timeline.mjs'
 import { verifyCollaborationLocalProjectImport } from '../modules/collaboration-local-project-import.mjs'
+import { verifyMultiTagBoardDrag } from '../modules/collaboration-board-tag-drag.mjs'
 import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
 import {
   openDirectProjectCreation,
@@ -87,7 +88,7 @@ export function createDesktopScenario({
   executorHome,
 }) {
   const boardReplyModel = createBoardReplyModelRegression({ executorHome, uiTimeoutMs })
-  const projectOnlyNavigation = createProjectOnlyNavigationRegression({ uiTimeoutMs })
+  const projectOnlyNavigation = createProjectOnlyNavigationRegression({ uiTimeoutMs, executorHome })
   let backendUrl = ''
   let authToken = ''
   let owner = null
@@ -155,6 +156,10 @@ export function createDesktopScenario({
 
     setCloudEnvironment(environment) {
       cloudEnvironment = environment
+    },
+
+    setRestartDesktopApp(restart) {
+      projectOnlyNavigation.setRestartDesktopApp(restart)
     },
 
     async verify(control) {
@@ -449,6 +454,7 @@ export function createDesktopScenario({
         })
         await selectProjectBoardGrouping(control, scoped, 'status')
         await capture(control, 'collaboration-shared-core-personal-board-views.png')
+        await verifyMultiTagBoardDrag(control, { scoped, request, project, uiTimeoutMs })
         await control.command('waitFor', scoped('[data-testid="collaboration-issue-create"]'), {
           visible: true,
           timeoutMs: uiTimeoutMs,

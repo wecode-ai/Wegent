@@ -8,7 +8,9 @@ import {
   useSensors,
   type CollisionDetection,
   type DragEndEvent,
+  type DragStartEvent,
 } from '@dnd-kit/core'
+import type { ProjectBoardGroupBy } from './useProjectBoardState'
 
 export const projectBoardDnd = { DndContext, DragOverlay, useDroppable }
 
@@ -16,20 +18,23 @@ export function useProjectBoardSensors() {
   return useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
 }
 
-export function boardCardIdFromDropId(id: string | number | undefined): string | null {
-  return typeof id === 'string' && id.startsWith('todo-card:')
-    ? id.slice('todo-card:'.length) || null
-    : null
+export function projectBoardDragItemId(active: DragStartEvent['active']): string | null {
+  const itemId = active.data.current?.itemId
+  return typeof itemId === 'string' ? itemId : null
 }
 
 export function projectBoardDrop(event: Pick<DragEndEvent, 'active' | 'over'>) {
-  const beforeItemId = boardCardIdFromDropId(event.over?.id)
+  const overData = event.over?.data.current
+  const beforeItemId = typeof overData?.itemId === 'string' ? overData.itemId : null
   const id = event.over?.id
   return {
-    activeItemId: String(event.active.id),
+    activeItemId: projectBoardDragItemId(event.active),
     beforeItemId,
-    columnDropKey:
-      !beforeItemId && typeof id === 'string' && id.startsWith('todo-column:')
+    sourceColumnKey: event.active.data.current?.columnKey as string | undefined,
+    groupBy: event.active.data.current?.groupBy as ProjectBoardGroupBy | undefined,
+    columnDropKey: beforeItemId
+      ? ((overData?.columnKey as string | undefined) ?? null)
+      : typeof id === 'string' && id.startsWith('todo-column:')
         ? id.slice('todo-column:'.length) || null
         : null,
   }
@@ -38,6 +43,6 @@ export function projectBoardDrop(event: Pick<DragEndEvent, 'active' | 'over'>) {
 /** Card insertion takes precedence over its containing lane's append target. */
 export const projectBoardCollisionDetection: CollisionDetection = args => {
   const collisions = pointerWithin(args)
-  const card = collisions.find(collision => boardCardIdFromDropId(collision.id))
+  const card = collisions.find(collision => String(collision.id).startsWith('todo-card:'))
   return card ? [card] : collisions.slice(0, 1)
 }

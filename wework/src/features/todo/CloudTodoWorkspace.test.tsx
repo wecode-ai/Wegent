@@ -52,6 +52,17 @@ vi.mock('@/telemetry/client', () => telemetryMocks)
 vi.mock('@dnd-kit/core', async importOriginal => {
   const actual = await importOriginal<typeof import('@dnd-kit/core')>()
   const ActualDndContext = actual.DndContext
+  const dragSource = () => {
+    const columnKey = document
+      .querySelector(`[data-testid="cloud-todo-card-${item.id}"]`)
+      ?.closest('section[data-testid^="cloud-todo-column-"]')
+      ?.getAttribute('data-testid')
+      ?.slice('cloud-todo-column-'.length)
+    return {
+      id: JSON.stringify(['status', columnKey, item.id]),
+      data: { current: { itemId: item.id, columnKey, groupBy: 'status' } },
+    }
+  }
   return {
     ...actual,
     DndContext: ({ children, ...props }: DndContextProps) => (
@@ -63,7 +74,7 @@ vi.mock('@dnd-kit/core', async importOriginal => {
           data-testid="mock-dnd-drag-start"
           onClick={() =>
             props.onDragStart?.({
-              active: { id: item.id },
+              active: dragSource(),
             } as DragStartEvent)
           }
         />
@@ -73,7 +84,7 @@ vi.mock('@dnd-kit/core', async importOriginal => {
           data-testid="mock-dnd-drag-cancel"
           onClick={() =>
             props.onDragCancel?.({
-              active: { id: item.id },
+              active: dragSource(),
             } as DragCancelEvent)
           }
         />
@@ -83,8 +94,8 @@ vi.mock('@dnd-kit/core', async importOriginal => {
           data-testid="mock-dnd-drag-to-pending"
           onClick={() =>
             props.onDragEnd?.({
-              active: { id: item.id },
-              over: { id: 'todo-column:pending' },
+              active: dragSource(),
+              over: { id: 'todo-column:pending', data: { current: undefined } },
             } as DragEndEvent)
           }
         />
@@ -94,8 +105,8 @@ vi.mock('@dnd-kit/core', async importOriginal => {
           data-testid="mock-dnd-drag-to-in-progress"
           onClick={() =>
             props.onDragEnd?.({
-              active: { id: item.id },
-              over: { id: 'todo-column:in_progress' },
+              active: dragSource(),
+              over: { id: 'todo-column:in_progress', data: { current: undefined } },
             } as DragEndEvent)
           }
         />

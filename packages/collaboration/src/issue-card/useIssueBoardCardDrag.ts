@@ -1,10 +1,14 @@
 import { useDraggable, useDroppable } from '@dnd-kit/core'
-import { useCallback } from 'react'
+import { useCallback, useContext } from 'react'
 import { CSS } from '@dnd-kit/utilities'
+import { ProjectBoardCardContext } from '../project-board/projectBoardCardContext'
 
 export function useIssueBoardCardDrag(id: string, enabled: boolean) {
-  const drag = useDraggable({ id, disabled: !enabled })
-  const drop = useDroppable({ id: `todo-card:${id}`, disabled: !enabled })
+  const column = useContext(ProjectBoardCardContext)
+  const cardId = JSON.stringify([column?.groupBy, column?.columnKey, id])
+  const data = { ...column, itemId: id }
+  const drag = useDraggable({ id: cardId, data, disabled: !enabled })
+  const drop = useDroppable({ id: `todo-card:${cardId}`, data, disabled: !enabled })
   const setDraggableRef = drag.setNodeRef
   const setDroppableRef = drop.setNodeRef
   const setNodeRef = useCallback(

@@ -1,20 +1,30 @@
 import assert from 'node:assert/strict'
 import { expandCollaborationWorkspace } from './workspace-flows.mjs'
+import { verifyBoardPreferenceIsolation } from './collaboration-board-preferences.mjs'
+import {
+  createReadOnlyBoardIssues,
+  verifyReadOnlyBoardDrag,
+} from './collaboration-board-field-drag.mjs'
 import {
   assertProjectBoardGrouping,
   createBoardFilterIssues,
   openProjectBoard,
   verifyPersonalAssigneeFilter,
   verifyPersonalBoardGrouping,
+  selectProjectBoardGrouping,
 } from './collaboration-board-personal-view.mjs'
 
-export function createProjectOnlyNavigationRegression({ uiTimeoutMs }) {
+export function createProjectOnlyNavigationRegression({ uiTimeoutMs, executorHome }) {
   let backendUrl = ''
   let readerToken = ''
   let creatorToken = ''
   let workspace = null
   let currentUser = null
+  let creator = null
+  let restartDesktopApp = null
   let boardFilterIssues = []
+  let readOnlyFilterIssues = []
+  let readOnlyBoardIssues = []
   const projects = []
   const archivedProjectIds = new Set()
   let workspaceArchived = false
@@ -42,7 +52,7 @@ export function createProjectOnlyNavigationRegression({ uiTimeoutMs }) {
       currentUser = reader
       const userName = `project-only-owner-${process.pid}`
       const password = 'project-only-navigation-e2e'
-      const creator = await request(readerToken, '/api/admin/users', {
+      creator = await request(readerToken, '/api/admin/users', {
         method: 'POST',
         body: JSON.stringify({
           user_name: userName,
@@ -77,16 +87,28 @@ export function createProjectOnlyNavigationRegression({ uiTimeoutMs }) {
         body: JSON.stringify({ user_id: reader.id, role: 'Developer' }),
       })
       const creatorRequest = (pathname, options) => request(creatorToken, pathname, options)
-      await creatorRequest(`/api/v1/cloud-projects/${projects[0].id}/loop-items`, {
-        method: 'POST',
-        body: JSON.stringify({ title: '只读成员的个人看板视图' }),
-      })
+      readOnlyBoardIssues = await createReadOnlyBoardIssues(
+        creatorRequest,
+        projects[0],
+        creator,
+        reader
+      )
+      readOnlyFilterIssues = await createBoardFilterIssues(
+        creatorRequest,
+        projects[0],
+        reader,
+        creator
+      )
       boardFilterIssues = await createBoardFilterIssues(
         creatorRequest,
         projects[1],
         reader,
         creator
       )
+    },
+
+    setRestartDesktopApp(restart) {
+      restartDesktopApp = restart
     },
 
     async verify(control, scoped) {
@@ -191,6 +213,23 @@ export function createProjectOnlyNavigationRegression({ uiTimeoutMs }) {
         await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
         const readerRequest = (pathname, options) => request(readerToken, pathname, options)
         if (project.id === projects[0].id) {
+          await verifyReadOnlyBoardDrag(control, {
+            scoped,
+            request: readerRequest,
+            project,
+            issues: readOnlyBoardIssues,
+            reader: currentUser,
+            owner: creator,
+          })
+          await selectProjectBoardGrouping(control, scoped, 'status')
+          await verifyPersonalAssigneeFilter(control, {
+            scoped,
+            request: readerRequest,
+            project,
+            currentUser,
+            issues: readOnlyFilterIssues,
+            expectedRole: 'Viewer',
+          })
           await verifyPersonalBoardGrouping(control, {
             scoped,
             request: readerRequest,
@@ -212,6 +251,29 @@ export function createProjectOnlyNavigationRegression({ uiTimeoutMs }) {
       await openProjectBoard(control, scoped, projects[1])
       await assertProjectBoardGrouping(control, scoped, 'assignee')
       await assertParent()
+      const beforePreferences = await request(
+        readerToken,
+        `/api/v1/cloud-projects/${projects[1].id}`
+      )
+      await verifyBoardPreferenceIsolation(control, {
+        scoped,
+        executorHome,
+        project: projects[1],
+        reader: currentUser,
+        creator,
+        readerToken,
+        creatorToken,
+        restartDesktopApp,
+      })
+      const afterPreferences = await request(
+        readerToken,
+        `/api/v1/cloud-projects/${projects[1].id}`
+      )
+      assert.equal(afterPreferences.version, beforePreferences.version)
+      assert.deepEqual(afterPreferences.board_config, beforePreferences.board_config)
+      console.log(
+        '[desktop-e2e] PASS personal-board: account/storage/restart checks did not modify shared project configuration'
+      )
       await control.command('click', scoped('[data-testid="collaboration-primary-home"]'))
     },
 

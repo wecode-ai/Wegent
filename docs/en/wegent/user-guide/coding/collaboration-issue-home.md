@@ -26,6 +26,8 @@ The `collaboration-local-agent-dispatch` desktop regression checks that the owne
 
 On the project board, choose **Assignee** as the grouping field, then select yourself in the adjacent filter to see your assigned Issues. Clear the filter to show all assignees again. Grouping is a personal preference for the current account and project and persists across reloads. Members and viewers can use it without changing the shared board configuration. Shared status columns and card display settings remain managed by project administrators.
 
+When grouped by tag, an Issue can appear in multiple columns. Dropping within the same column leaves tags unchanged. Moving between columns replaces only the source tag and preserves other tags; moving into the untagged column clears all tags.
+
 Open an assigned native cloud Issue from Inbox or its project board. Wework sends a desktop notification when another member assigns it.
 
 Users with editing permission can start, complete, or restart an Issue directly through the detail status selector or board dragging. Status changes require no additional information or submission form. Communicate progress, results, and feedback through comments, replies, and attachments. Status history records each change.
