@@ -123,6 +123,9 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
       assert.equal(saved.goalMode, false)
       assert.equal(saved.enabled, false)
       await control.command('click', `${CONTENT} [data-testid="collaboration-primary-home"]`)
+      await control.command('waitFor', '[data-testid="collaboration-issue-project-trigger"]', {
+        visible: true,
+      })
       await control.command('click', '[data-testid="collaboration-issue-project-trigger"]')
       await control.command('click', selector(`collaboration-issue-project-${project.id}`))
       await control.command('clickWhenEnabled', '[data-testid="issue-stand-in-select"]')
