@@ -348,7 +348,8 @@ async function inspectProcessGroup(processGroupId: number): Promise<'absent' | '
     try {
       value = await readFile(`/proc/${pid}/stat`, 'utf8')
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
+      const code = (error as NodeJS.ErrnoException).code
+      if (code === 'ENOENT' || code === 'ESRCH') continue
       throw error
     }
     // comm is parenthesized and may itself contain spaces or parentheses.

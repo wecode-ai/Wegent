@@ -245,6 +245,44 @@ test.each(['snapshot', 'runtime'])(
 )
 
 describe('cloud attachment task ownership', () => {
+  test.each([null, '/wrong/workspace'])(
+    'refreshes an unresolved UI workspace while rejecting a resolved mismatch: %s',
+    async initialWorkspace => {
+      vi.useFakeTimers()
+      vi.setSystemTime(0)
+      const address = {
+        deviceId: CLOUD_DEVICE_ID,
+        taskId: taskIds[0],
+        workspacePath: '/cloud/project',
+      }
+      const snapshot = workspacePath =>
+        JSON.stringify({ pane: { currentRuntimeTask: { ...address, workspacePath } } })
+      const command = vi.fn().mockResolvedValue(snapshot(address.workspacePath))
+      command.mockResolvedValueOnce(snapshot(initialWorkspace))
+      const verification = createCloudAttachmentVerification({
+        control: { command },
+        cloudEnvironment: {
+          runtimeWork: async () => ({
+            projects: [{ deviceWorkspaces: [{ ...address, tasks: [address] }] }],
+            chats: [],
+          }),
+        },
+        workspacePath: address.workspacePath,
+      })
+      const result = observe(verification.verifySubmittedTask())
+      await vi.advanceTimersByTimeAsync(100)
+      const outcome = await result
+      if (initialWorkspace === null) {
+        expect(outcome.error).toBeUndefined()
+        expect(outcome.value).toEqual(address)
+        expect(command).toHaveBeenCalledTimes(2)
+      } else {
+        expect(outcome.error?.message).toMatch(/workspace differs from its owning cloud runtime/)
+        expect(command).toHaveBeenCalledTimes(1)
+      }
+    }
+  )
+
   test('uses the owning cloud project source key even when a local project shares its path', () => {
     const projectWork = {
       project: { key: 'cloud-device:/cloud/project', name: 'Workspace' },

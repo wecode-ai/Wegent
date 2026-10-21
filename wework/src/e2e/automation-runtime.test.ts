@@ -87,6 +87,44 @@ describe('Electron desktop E2E automation', () => {
     }
   })
 
+  test('stops frame sampling explicitly after the observed action completes', async () => {
+    const root = document.createElement('div')
+    root.dataset.testid = 'metrics-sampling-root'
+    document.body.append(root)
+    const commands = [
+      { id: 'start-metrics', action: 'startElementMetricsSampling', value: '10000' },
+      { id: 'stop-metrics', action: 'stopElementMetricsSampling' },
+    ]
+    const results: Array<{ ok: boolean; value?: string }> = []
+    vi.stubGlobal('fetch', (url: string, options?: RequestInit) => {
+      if (url.includes('/commands?')) {
+        const command = commands.shift()
+        if (!command) return new Promise<Response>(() => {})
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              ...command,
+              selector: '[data-testid="metrics-sampling-root"]',
+            })
+          )
+        )
+      }
+      if (url.endsWith('/results')) results.push(JSON.parse(String(options?.body)))
+      return Promise.resolve(new Response('{}'))
+    })
+    void runDesktopControlClient('http://127.0.0.1:43111', 'main')
+    try {
+      await vi.waitFor(() => expect(results).toHaveLength(2))
+      expect(results.every(result => result.ok)).toBe(true)
+      const sample = JSON.parse(results[1].value!)
+      expect(sample.done).toBe(true)
+      expect(sample.frames.length).toBeGreaterThan(0)
+      expect(sample.frames.at(-1).time).toBeLessThan(10000)
+    } finally {
+      root.remove()
+    }
+  })
+
   test('does not turn an acknowledgement failure into a failed UI action', async () => {
     const button = document.createElement('button')
     button.dataset.testid = 'control-acknowledgement-button'

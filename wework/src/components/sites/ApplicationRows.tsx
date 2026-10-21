@@ -31,6 +31,7 @@ export interface ApplicationRowContext {
   onDelete: (site: Site) => void
   onManageCollaborators: (site: Site) => void
   onManageAccess: (site: Site) => void
+  onViewAnalytics: (site: Site) => void
 }
 
 function SiteThumbnail({ site }: { site: Site }) {
@@ -146,6 +147,7 @@ export function SiteApplicationRow({
         context.capabilities.has('edit') ||
         context.capabilities.has('configure_environment') ||
         context.capabilities.has('manage_access') ||
+        context.capabilities.has('view_analytics') ||
         context.capabilities.has('delete') ||
         site.access_role === 'owner' ? (
           <SiteActionsMenu
@@ -158,6 +160,8 @@ export function SiteApplicationRow({
             canEdit={context.capabilities.has('edit')}
             canConfigureEnvironment={context.capabilities.has('configure_environment')}
             canDelete={context.capabilities.has('delete')}
+            canViewAnalytics={context.capabilities.has('view_analytics')}
+            onViewAnalytics={context.onViewAnalytics}
             canManageCollaborators={site.access_role === 'owner'}
             canManageAccess={context.capabilities.has('manage_access') && network === 'inner'}
             onPublish={context.onPublish}

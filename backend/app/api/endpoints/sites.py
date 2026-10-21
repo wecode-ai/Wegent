@@ -16,6 +16,7 @@ from fastapi import (
     Response,
     status,
 )
+from pydantic import ValidationError
 
 from app.core import security
 from app.models.user import User
@@ -37,6 +38,7 @@ from app.schemas.site import (
     SiteResponse,
     SiteUpdateRequest,
 )
+from app.schemas.site_analytics import SiteAnalyticsQuery, SiteAnalyticsResponse
 from app.services.sites import (
     SitesNotAvailableError,
     SitesUpstreamResponseError,
@@ -88,6 +90,52 @@ async def list_sites(
             query=q.strip() if q and q.strip() else None,
             offset=offset,
             limit=limit,
+        )
+    except (
+        SitesNotAvailableError,
+        SitesUpstreamUnavailableError,
+        SitesUpstreamResponseError,
+    ) as error:
+        _raise_sites_error(error)
+
+
+@router.get("/{siteid}/analytics", response_model=SiteAnalyticsResponse)
+async def get_site_analytics(
+    siteid: str,
+    request: Request,
+    response: Response,
+    start_date: str = Query(...),
+    end_date: str = Query(...),
+    current_user: User = Depends(security.get_current_user),
+) -> SiteAnalyticsResponse:
+    """Return daily visits for a site accessible to the authenticated user."""
+    response.headers["Cache-Control"] = "no-store"
+    if any(
+        key not in {"start_date", "end_date"} for key in request.query_params
+    ) or any(
+        len(request.query_params.getlist(key)) != 1
+        for key in ("start_date", "end_date")
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "VALIDATION_ERROR",
+                "message": "Only start_date and end_date are accepted",
+            },
+        )
+    try:
+        query = SiteAnalyticsQuery(start_date=start_date, end_date=end_date)
+    except ValidationError as error:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "VALIDATION_ERROR",
+                "message": "请选择有效日期，最多查询 31 天且不能选择未来日期",
+            },
+        ) from error
+    try:
+        return await sites_service.get_analytics(
+            siteid, query, username=current_user.user_name
         )
     except (
         SitesNotAvailableError,
