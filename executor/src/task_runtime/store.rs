@@ -2659,7 +2659,7 @@ impl LocalTaskStore {
         let siblings = ordering::siblings(&transaction, project_id, input.parent_id.as_deref())?;
         let lane = siblings
             .iter()
-            .filter(|(_, status)| input.status.as_ref().is_none_or(|scope| scope == status))
+            .filter(|(_, status)| input.status.as_ref().map_or(true, |scope| scope == status))
             .map(|(id, _)| id.clone())
             .collect::<Vec<_>>();
         let mut seen = HashSet::new();
