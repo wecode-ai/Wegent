@@ -1,7 +1,8 @@
-"""Thread-safe Redis and durable-fence doubles for plugin service unit tests."""
+"""Thread-safe Redis lease doubles for plugin service unit tests."""
 
 import threading
 import time
+import uuid
 from typing import Any
 
 from redis.exceptions import LockNotOwnedError
@@ -39,7 +40,8 @@ class FakePluginLock:
                 value and value[0] == self.token and value[1] > time.monotonic()
             )
 
-    def acquire(self, token: str) -> bool:
+    def acquire(self, token: str | None = None) -> bool:
+        token = token if token is not None else uuid.uuid4().hex
         deadline = time.monotonic() + self.blocking_timeout
         while True:
             with self.redis.mutex:

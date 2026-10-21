@@ -1127,8 +1127,10 @@ classify_path() {
   local path="$1"
 
   case "$path" in
-    backend/app/services/plugin_write_coordination.py | \
-      backend/app/services/plugin_write_resources.py)
+    backend/app/core/distributed_lock.py | \
+      backend/app/services/plugin_write_*.py | \
+      backend/app/services/plugin_kind_revision.py | \
+      backend/app/services/plugin_policy_revision.py)
       select_target "cloud:plugin-account-auth"
       select_target "cloud:plugin-uninstall-resilience"
       select_target "cloud:plugin-auto-update"

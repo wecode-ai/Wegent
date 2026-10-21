@@ -13,7 +13,7 @@ from app.services import plugin_write_coordination as coordination
 
 
 def test_lock_is_reentrant_until_root_commit(test_db, plugin_write_backend):
-    redis, _ = plugin_write_backend
+    redis = plugin_write_backend
     coordination.acquire_plugin_write_lock(test_db, 17)
     original = redis.values["wegent:plugin-write:17"][0]
 
@@ -26,7 +26,7 @@ def test_lock_is_reentrant_until_root_commit(test_db, plugin_write_backend):
 
 @pytest.mark.parametrize("finish", ["rollback", "close"])
 def test_transaction_cleanup_releases_lease(test_db, plugin_write_backend, finish):
-    redis, _ = plugin_write_backend
+    redis = plugin_write_backend
     coordination.acquire_plugin_write_lock(test_db, 17)
 
     getattr(test_db, finish)()
@@ -36,7 +36,7 @@ def test_transaction_cleanup_releases_lease(test_db, plugin_write_backend, finis
 
 @pytest.mark.parametrize("finish", ["commit", "rollback"])
 def test_savepoint_end_keeps_root_lease(test_db, plugin_write_backend, finish):
-    redis, _ = plugin_write_backend
+    redis = plugin_write_backend
     coordination.acquire_plugin_write_lock(test_db, 17)
     nested = test_db.begin_nested()
 
@@ -60,7 +60,7 @@ def test_other_user_can_write_while_same_user_is_busy(
             coordination.acquire_plugin_write_lock(other, 17)
         assert caught.value.code == "plugin_write_busy"
         assert caught.value.status_code == 503
-    assert "wegent:plugin-write:17" in plugin_write_backend[0].values
+    assert "wegent:plugin-write:17" in plugin_write_backend.values
 
 
 def test_redis_failure_prevents_reading_policy(test_db, monkeypatch):
@@ -78,6 +78,22 @@ def test_redis_failure_prevents_reading_policy(test_db, monkeypatch):
     claim.assert_not_called()
 
 
+def test_public_lock_unavailability_prevents_reading_policy(test_db, monkeypatch):
+    claim = Mock()
+    monkeypatch.setattr(coordination, "read_policy_revision", claim)
+    monkeypatch.setattr(
+        coordination.distributed_lock,
+        "owned_lock",
+        Mock(side_effect=coordination.DistributedLockUnavailableError()),
+    )
+
+    with pytest.raises(coordination.PluginWriteError) as caught:
+        coordination.acquire_plugin_write_lock(test_db, 17)
+
+    assert caught.value.code == "plugin_write_unavailable"
+    claim.assert_not_called()
+
+
 def test_claim_failure_releases_acquired_lease(
     test_db, plugin_write_backend, monkeypatch
 ):
@@ -90,7 +106,7 @@ def test_claim_failure_releases_acquired_lease(
     with pytest.raises(RuntimeError, match="claim failed"):
         coordination.acquire_plugin_write_lock(test_db, 17)
 
-    assert not plugin_write_backend[0].values
+    assert not plugin_write_backend.values
 
 
 def test_policy_bootstrap_timeout_is_a_safe_retryable_error(
@@ -105,7 +121,7 @@ def test_policy_bootstrap_timeout_is_a_safe_retryable_error(
 
     assert caught.value.code == "plugin_write_unavailable"
     assert caught.value.headers == {"Cache-Control": "no-store"}
-    assert not plugin_write_backend[0].values
+    assert not plugin_write_backend.values
 
 
 def test_superseded_revision_rejects_commit_even_when_redis_reports_owned(
@@ -121,13 +137,13 @@ def test_superseded_revision_rejects_commit_even_when_redis_reports_owned(
 
     assert caught.value.code == "plugin_write_conflict"
     test_db.rollback()
-    assert not plugin_write_backend[0].values
+    assert not plugin_write_backend.values
 
 
 def test_lost_lease_cannot_be_reacquired_by_same_transaction(
     test_db, plugin_write_backend
 ):
-    redis, _ = plugin_write_backend
+    redis = plugin_write_backend
     coordination.acquire_plugin_write_lock(test_db, 17)
     redis.values.pop("wegent:plugin-write:17")
 
@@ -140,7 +156,7 @@ def test_lost_lease_cannot_be_reacquired_by_same_transaction(
 def test_failed_renewal_permanently_invalidates_lease(monkeypatch):
     lock = Mock()
     lock.reacquire.side_effect = ConnectionError()
-    lease = coordination._Lease(lock, "token")
+    lease = coordination._Lease(lock)
     monkeypatch.setattr(coordination, "RENEW_SECONDS", 0.001)
     worker = threading.Thread(target=lease.renew)
     worker.start()
@@ -150,6 +166,25 @@ def test_failed_renewal_permanently_invalidates_lease(monkeypatch):
     lock.owned.return_value = True
     with pytest.raises(coordination.PluginWriteError, match="plugin_write_lease_lost"):
         lease.check()
+
+
+def test_expired_transaction_stops_renewing_before_session_cleanup(monkeypatch):
+    """A stalled transaction must not extend its Redis lease indefinitely."""
+    lock = Mock()
+    lease = coordination._Lease(lock)
+    lease.started -= coordination.OPERATION_SECONDS + 1
+    monkeypatch.setattr(coordination, "RENEW_SECONDS", 0.001)
+    worker = threading.Thread(target=lease.renew, daemon=True)
+    worker.start()
+
+    try:
+        assert lease.lost.wait(1)
+        worker.join(timeout=1)
+        assert not worker.is_alive()
+        lock.reacquire.assert_not_called()
+    finally:
+        lease.stopped.set()
+        worker.join(timeout=1)
 
 
 def test_failed_release_does_not_report_successful_commit_as_failure(
@@ -272,4 +307,4 @@ def test_expired_operation_deadline_rejects_commit(test_db, plugin_write_backend
 
     assert caught.value.code == "plugin_write_lease_lost"
     test_db.rollback()
-    assert not plugin_write_backend[0].values
+    assert not plugin_write_backend.values

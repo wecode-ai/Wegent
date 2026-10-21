@@ -18,7 +18,8 @@ PLUGIN_AUTH_MYSQL_TEST_URL='mysql+pymysql://test-user:test-password@127.0.0.1:33
 PLUGIN_AUTH_REDIS_TEST_URL='redis://127.0.0.1:6379/15' \
   uv run pytest integration_checks/test_plugin_account_auth_mysql.py \
     integration_checks/test_plugin_write_races_mysql.py \
-    integration_checks/test_plugin_connection_requests_mysql.py -n 0
+    integration_checks/test_plugin_connection_requests_mysql.py \
+    integration_checks/test_plugin_policy_bootstrap_mysql.py -n 0
 ```
 
 MySQL URL 必须指向本机的 `plugin_auth_test`，Redis URL 必须指向本机 DB 15。
@@ -26,11 +27,12 @@ MySQL URL 必须指向本机的 `plugin_auth_test`，Redis URL 必须指向本�
 每项测试清理自己创建的用户和资源，不删除整库或读取个人认证。不要将变量指向
 开发共享库或生产库。
 
-| 套件                                       | 验证范围                                                                 |
-| ------------------------------------------ | ------------------------------------------------------------------------ |
-| `test_plugin_account_auth_mysql.py`        | 并发注册、凭证迁移、刷新、旧快照、过期提交保护、连接池耗尽与用户行锁隔离 |
-| `test_plugin_write_races_mysql.py`         | 同用户争用及恢复、跨用户隔离、真实租约过期、退出与凭证迁移或卸载交错     |
-| `test_plugin_connection_requests_mysql.py` | 真实 JWT 与 HTTP 路由、并发退出的版本冲突、503 后重试、用户行锁下退出    |
+| 套件                                       | 验证范围                                                                     |
+| ------------------------------------------ | ---------------------------------------------------------------------------- |
+| `test_plugin_account_auth_mysql.py`        | 并发凭证登记、凭证迁移、刷新、旧快照、过期提交保护、连接池耗尽与用户行锁隔离 |
+| `test_plugin_write_races_mysql.py`         | 同用户争用及恢复、跨用户隔离、真实租约过期、退出与凭证迁移或卸载交错         |
+| `test_plugin_connection_requests_mysql.py` | 真实 JWT 与 HTTP 路由、并发退出的版本冲突、503 后重试、用户行锁下退出        |
+| `test_plugin_policy_bootstrap_mysql.py`    | 首建策略、失败回滚、偏好保留、重复拒绝和旧版本 CAS                           |
 
 这些是后端集成测试，不替代桌面 E2E；接口测试保留生产认证和数据库依赖，
 仅将连接工厂配置到测试 MySQL，不替换业务服务。并发场景使用独立事务和同步事件
@@ -55,14 +57,16 @@ Missing services are failures. Tests remove only their own synthetic users and
 resources; they never clear an entire database or read personal credentials.
 
 The original account suite covers enrollment, transfers, refresh ownership,
-stale snapshots, durable commit fencing and connection-pool exhaustion. The
+stale snapshots, business revision CAS and connection-pool exhaustion. The
 write-races suite adds real contention, recovery, user isolation, lease expiry
 and interleaved logout/transfer/uninstall operations. The request suite exercises
 real JWT authentication and HTTP routes, concurrent disconnect conflicts, retry
 after HTTP 503, and logout while another transaction holds the user row lock.
+The policy suite covers first creation, rollback, preference preservation,
+duplicate rejection, and stale-revision CAS.
 Only the database connection factory is configured for the test database;
 authentication and business services remain real. These are backend integration
-tests, not desktop E2E tests. GitHub CI runs all three suites with dedicated
+tests, not desktop E2E tests. GitHub CI runs all four suites with dedicated
 MySQL/Redis services in `test-plugin-auth-mysql`, separately from SQLite unit tests.
 
 The same CI job runs `test_team_namespace_collation_mysql.py` against both

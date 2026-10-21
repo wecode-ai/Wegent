@@ -4,81 +4,179 @@ sidebar_position: 42
 
 # Plugin authentication and installation write coordination
 
-Authentication, logout, installation, updates, removal, and device installation
-state use Redis coordination instead of `SELECT ... FOR UPDATE` on `users.id`.
-Publication and device registration retain their existing lock policies.
+Status: the simplified shared Redis lock and business revision CAS implementation
+is complete. Local regressions passed; it is not deployed.
 
-## Shared protocol
+Authentication, logout, installation, reinstallation, updates, removal, and device
+installation state use Redis coordination instead of `SELECT ... FOR UPDATE` on
+`users.id`. Publication and device registration retain their existing lock policies.
+This protocol adds no table, column, or index, does not change user creation,
+registration, or OIDC, and requires no precreated coordination records.
 
-Python and the migrated Rust automatic update endpoint use the same protocol:
+## Shared Redis lock
 
-- Key: `wegent:plugin-write:{user_id}`; value: a random 32-character hexadecimal token.
-- Contention waits up to 3 seconds; the lease lasts 30 seconds. Python renews
-  every 10 seconds; both runtimes reject commits after 20 seconds of operation.
-- The scope covers a user's plugin domain because automation policy, account
+Python reuses the strict ownership interface in `app/core/distributed_lock.py`:
+
+```python
+distributed_lock.owned_lock(
+    f"wegent:plugin-write:{user_id}",
+    expire_seconds=30,
+    blocking_timeout=3,
+    redis_client=plugin_redis_client,
+)
+```
+
+`DistributedLock.owned_lock` accepts the complete key and returns a redis-py `Lock`
+with `thread_local=False`. Callers can inject the plugin Redis client with short
+timeouts. An unavailable client raises `DistributedLockUnavailableError`; plugin
+writes fail explicitly on Redis errors instead of proceeding without a lock.
+Existing callers of `acquire`, `release`, and the watchdog retain their behavior.
+
+Python and the migrated Rust plugin writers use the same protocol:
+
+- Key: `wegent:plugin-write:{user_id}`, with a unique token per holder. Python's
+  shared lock manages the ownership state.
+- Contention waits up to 3 seconds; TTL is 30 seconds. Python renews every
+  10 seconds. Both runtimes reject commits when a checkpoint detects more than
+  20 seconds of operation. Rust reuses its existing Redis client and uses a bounded
+  lease without a renewal task.
+- The scope is a user's plugin domain because automation preferences, account
   transfers, and installations have cross-plugin constraints. Transactions
-  requiring multiple users acquire leases in ascending user ID order.
-- Renewal and release compare the token. Redis failures reject writes without
-  falling back to execution without coordination.
-- Ownership lasts until the outer transaction commits, rolls back, or closes.
-  Ending a savepoint does not release the lease.
+  requiring multiple users acquire locks in ascending user ID order.
+- Renewal, ownership checks, and release compare tokens. An old worker must not
+  release its successor's lock.
+- After acquiring the lock, reread policies, installations, connections, and other
+  business state instead of reusing state read before waiting for Redis.
+- Hold the lock until the outer database transaction commits, rolls back, or
+  closes. Ending a savepoint does not release it.
 
-A Redis ownership check alone cannot stop a worker suspended immediately after
-that check from committing. Before reading business state, each writer snapshots
-`$.spec.revision` on the user's existing `ConnectorAuthPolicy` in `kinds`, with
-namespace `plugin-auth` and name `account`. First use materializes the existing
-default, `enabled=true, revision=0`, in an independent short transaction. Existing
-policies need no extra connection and retain the user's automation preference.
-Deactivated policy rows are reactivated while preserving that preference.
+## Business revisions and first-use policies
 
-The final business statement atomically increments that revision, conditional
-on the primary key, complete policy identity, and observed revision. Exactly one
-row must match; otherwise the entire transaction rolls back. This real business
-parent protects cross-record dependencies and absent records. Concurrent first
-installs may temporarily insert different installation and ZIP rows, but only
-one transaction can commit. A logout also prevents an older automation request
-from committing a newly inserted migration intent. Installations and account
-connections additionally use their own revision CAS; package `version` is not
-a concurrency token. Missing legacy revisions start at zero; invalid values
-reject writes.
+Redis provides normal mutual exclusion; revision CAS on existing business records
+detects concurrent changes. Before reading dependent installation, connection, or
+migration state, each plugin writer reads the user's real account-wide automation
+preference:
 
-Once a successor commits, older snapshots cannot commit. Acquiring a successor
-lease alone does not decide commit order: either transaction may win CAS before
-the other commits. Normal DML row locks remain, using primary-key lookups;
-explicit locking reads are unnecessary, but lock waits are still possible.
+```text
+kinds
+  user_id   = current user
+  kind      = ConnectorAuthPolicy
+  namespace = plugin-auth
+  name      = account
+  json.spec = { enabled: user preference, revision: concurrency version }
+```
+
+Queries include the complete identity and inactive records. After acquiring Redis,
+query again. If no policy exists, create the real default policy with
+`enabled=true, revision=0` in an independent short transaction. After that commits,
+the main business transaction rereads the policy revision before dependent state.
+User registration does not precreate the policy. A default policy may remain if
+initialization succeeds but business work fails, preserving the existing
+default-enabled semantics. Existing policies retain their preferences and
+revisions, including during reactivation. Duplicate policies and invalid revisions
+reject writes rather than selecting an arbitrary record, overwriting an opt-out,
+or automatically merging data.
+
+At the end of the business transaction, atomically increment the policy revision
+conditional on its primary key, complete identity, and observed revision. Exactly
+one row must match; otherwise roll back the entire business transaction.
+Installation, connection, and migration changes commit or roll back with the
+parent CAS. Installations and account connections retain their own revision CAS;
+package `version` is not a concurrency token. Read missing legacy revisions as
+zero and advance them during normal writes, without a bulk revision backfill.
+Policies retain preferences with no installations and must not be deleted on
+uninstall.
+
+First-use policy creation has no shared database row to CAS. Preventing duplicate
+creation therefore depends entirely on normal Redis mutual exclusion. There is no
+business unique index, extra shard record, or initialization script. Extreme
+overlap after a long process pause or lease expiration can produce duplicate
+policies; strict first-use uniqueness is not guaranteed. Later requests reject
+duplicates so operators can inspect and reconcile them. CAS protection for an
+existing record must not be described as a database uniqueness guarantee for
+every first-use operation.
+
+## Transactions and failure boundaries
 
 Python sessions call `configure_plugin_session` before their first SQL statement.
-HTTP uses the shared `get_plugin_db` dependency and READ COMMITTED so reads after
-lease acquisition observe current committed state. Rust snapshots the parent
-before catalog preloading, checks that version again on its pinned business
-connection, and performs CAS before commit. External OAuth and device requests
-run outside write transactions. Savepoint rollback restores expected policy
-versions without releasing the root transaction's lease.
+HTTP uses the shared `get_plugin_db` dependency with READ COMMITTED and refreshes
+ORM state so reads after acquisition observe current committed state. Rust saves
+the policy revision before catalog preloading, checks it again on the pinned
+business connection, and performs CAS before commit. External OAuth and device
+requests run outside write transactions; result writes validate current business
+state. Savepoint rollback restores expected versions without releasing the root
+lock.
 
-## Failures and deployment
+For transactions referring to the same policy row, CAS protects commit order:
+once a successor commits, an older revision cannot overwrite it. A worker paused
+after checking Redis ownership can still resume and win CAS before its successor
+commits. Expiration alone does not guarantee that every old request rolls back.
+Conflicts require a full business transaction rollback, fresh reads, and another
+evaluation of business state. Do not blindly replay external OAuth effects.
+
+On device registration, coordination failures during plugin preparation defer
+only that round of plugin synchronization. After rollback, the existing `merge`
+mode sends Skills/MCP without reading or sending plugins, and the result is not
+recorded as a plugin installation acknowledgement. This preserves local plugins.
+The partial round also defers removal of absent Skills/MCP until a later
+successful full sync. The normal path still replaces the full desired state and
+records plugin results.
+
+Normal INSERT, UPDATE, and DELETE retain InnoDB transaction locks; primary-key CAS
+can also wait for another transaction. This change removes explicit coordination
+on the shared `users` row that coupled plugin writes to unrelated transactions.
+It does not eliminate all database write waits.
 
 HTTP errors use status 503 and `plugin_write_busy`, `plugin_write_unavailable`,
-`plugin_write_lease_lost`, or `plugin_write_conflict`. The authentication broker
-returns the same rejection codes. A conflict requires rolling back the entire
-transaction and rereading business state; external OAuth effects must not be
-blindly replayed. Python's Redis has short timeouts and no network retries.
-Only first-use policy materialization uses a separate pool, adding at most four
-MySQL connections per process with a one-second checkout limit. Rust reuses
-Breeze pools with separate three-second limits for lease acquisition and policy
-materialization, and a 500-millisecond release limit.
+`plugin_write_lease_lost`, or `plugin_write_conflict`; the authentication broker
+returns the same rejection codes. Python's plugin Redis client uses short timeouts
+and no network retries. Rust continues using its existing Redis client and the
+same lock protocol. A release failure after a successful commit is logged without
+reporting the committed write as failed; token checks and TTL protect the
+successor's lock.
 
-No new table or business column is required. Run Alembic `upgrade head` before
-deployment to add a unique expression index for this exact policy identity
-(MySQL 8.0.13 or newer).
-It prevents competing first-use parents without constraining other Kinds or
-same-name plugins from different sources. Duplicate historical policies stop
-the migration for reconciliation rather than silently discarding preferences.
-Old workers do not participate in this protocol: drain old plugin writes before
-activating the new Python and Rust writers together. Mutual exclusion cannot be
-assumed while old and new writers coexist. Drain new writes before rolling back
-the code or dropping the index as well.
+## Deployment and rollback
 
-The `test-plugin-auth-mysql` CI job runs real MySQL and Redis races covering logout
-while a user row is locked, concurrent enrollment, uninstall/authentication races,
-expired writers, first-install ZIP rollback, missing policies, logout versus
-automation, and OAuth refresh.
+1. Stop and drain all old plugin writers, including automation, device sync, and
+   OAuth callbacks, to avoid mixing protocols.
+2. Check historical policies using their complete identity. Reconcile duplicate
+   preferences, references, and revisions without silently selecting or deleting
+   records.
+3. In `backend`, run `uv run alembic upgrade head`. Fresh environments do not create
+   the policy unique index; a cleanup migration removes it if an earlier branch
+   version created it. Preserve Alembic revision IDs and the migration chain to
+   avoid orphaned versions preventing startup.
+4. Check Redis availability and confirm that Python and active Rust writers use
+   the same key, TTL, and business revision protocol before enabling plugin writes.
+
+No coordination-record initialization or bulk revision update is required.
+Direct SQL and maintenance scripts must not bypass plugin locks to change the
+same business state during live traffic. The production `wecode/cache/kinds.py`
+extension is outside this repository; verify that its handling of existing
+authentication Kinds does not block commits before deployment.
+
+Rollback also stops and drains plugin writes and checks that the target version
+works without a policy unique index. After index removal, do not directly deploy
+a version that relies on that index to prevent duplicates. Client interfaces
+retain their existing protocol; no client release is required.
+
+## Regression verification
+
+Local verification passed: 556 plugin, shared-lock, API, migration, and model
+compatibility tests, plus 51 real MySQL/Redis regressions. Rust passed 2789 unit
+tests, one doctest, formatting checks, and Clippy. No desktop E2E
+or new CI run was performed in this round. The `test-plugin-auth-mysql` CI job
+runs real MySQL and Redis concurrency regressions. Desktop scenarios retain
+their isolated databases and Alembic migrations without extra coordination data
+initialization.
+
+Cover installation, removal, authentication, logout, and version updates; same-user
+contention and different-user isolation; installation and policy rereads after
+acquisition; commit, rollback, and savepoint lock lifetimes; token-checked release;
+Redis failures rejecting writes; stale revisions on existing records; missing
+revisions defaulting to zero; opt-out with no installations; duplicate policies
+rejecting writes; and post-uninstall OAuth cleanup. When another transaction locks
+only the target `users` row and plugin resources and dependencies remain healthy,
+the plugin lifecycle should complete. Locks on plugin business rows still follow
+normal transaction rules. Evaluate extreme lease-expiration overlap during first
+policy creation within the limits described above.

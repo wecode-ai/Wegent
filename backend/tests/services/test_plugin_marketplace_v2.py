@@ -873,7 +873,7 @@ def test_catalog_marks_manual_update_available(test_db, test_user, monkeypatch):
     assert item.updateAvailable is True
 
 
-def _create_auto_update_install(
+def _create_marketplace_update_install(
     db: Session,
     *,
     user_id: int,
@@ -947,7 +947,7 @@ def _create_auto_update_install(
 
 def test_marketplace_release_update_and_reinstall_advance_revision(test_db, test_user):
     service = PluginMarketplaceService()
-    installed, plugin, _, latest = _create_auto_update_install(
+    installed, plugin, _, latest = _create_marketplace_update_install(
         test_db, user_id=test_user.id, index=1
     )
     test_db.commit()
@@ -974,134 +974,9 @@ def test_marketplace_release_update_and_reinstall_advance_revision(test_db, test
     assert installed.is_active is True
 
 
-@pytest.mark.parametrize(
-    ("install_count", "expected_batches"),
-    [(0, 0), (1, 1), (5, 5), (6, 6), (12, 12)],
-)
-def test_auto_update_batches_are_bounded_and_drain_all_candidates(
-    test_db, test_user, install_count, expected_batches
-):
+def test_manual_release_update_preserves_manual_policy(test_db, test_user):
     service = PluginMarketplaceService()
-    installs = [
-        _create_auto_update_install(
-            test_db,
-            user_id=test_user.id,
-            index=index + 1,
-        )
-        for index in range(install_count)
-    ]
-    test_db.commit()
-
-    batch_sizes: list[int] = []
-    while True:
-        result = service.auto_update_batch(test_db, user_id=test_user.id)
-        if result.updatedCount == 0:
-            break
-        batch_sizes.append(result.updatedCount)
-        if result.remainingCount == 0:
-            break
-
-    assert len(batch_sizes) == expected_batches
-    assert all(size == 1 for size in batch_sizes)
-    assert sum(batch_sizes) == install_count
-    for installed, _, _, latest in installs:
-        test_db.refresh(installed)
-        assert installed.json["spec"]["releaseId"] == latest.id
-        assert installed.json["spec"]["version"] == "2.0.0"
-        assert installed.json["spec"]["updatePolicy"] == "auto"
-        assert installed.json["spec"]["enabled"] is False
-        assert installed.json["spec"]["componentStates"] == {"skills:review": False}
-
-
-@pytest.mark.parametrize("install_state", ["empty", "current", "manual"])
-def test_auto_update_empty_batch_releases_transaction_before_returning(
-    test_db, test_user, install_state
-):
-    service = PluginMarketplaceService()
-    user_id = test_user.id
-    if install_state != "empty":
-        installed, plugin, current, _ = _create_auto_update_install(
-            test_db, user_id=user_id, index=1
-        )
-        if install_state == "current":
-            plugin.latest_release_id = current.id
-        else:
-            installed.json["spec"]["updatePolicy"] = "manual"
-            flag_modified(installed, "json")
-    test_db.commit()
-
-    result = service.auto_update_batch(test_db, user_id=user_id)
-
-    assert result.updatedCount == 0
-    assert result.remainingCount == 0
-    assert not test_db.in_transaction(), (
-        "An empty auto-update poll must release its locking transaction before "
-        "the request dependency cleanup can be delayed by a concurrent install"
-    )
-
-
-def test_auto_update_is_idempotent_and_excludes_invalid_installations(
-    test_db, test_user
-):
-    service = PluginMarketplaceService()
-    valid, _, _, latest = _create_auto_update_install(
-        test_db,
-        user_id=test_user.id,
-        index=1,
-    )
-    invalid_scan, _, _, invalid_latest = _create_auto_update_install(
-        test_db,
-        user_id=test_user.id,
-        index=2,
-    )
-    invalid_latest.scan_status = "pending"
-    invalid_source, _, _, _ = _create_auto_update_install(
-        test_db,
-        user_id=test_user.id,
-        index=3,
-    )
-    invalid_source.json["spec"]["source"]["type"] = "upload"
-    flag_modified(invalid_source, "json")
-    invalid_catalog, _, _, _ = _create_auto_update_install(
-        test_db,
-        user_id=test_user.id,
-        index=4,
-    )
-    invalid_catalog.json["spec"]["releaseId"] = 999999
-    flag_modified(invalid_catalog, "json")
-    inaccessible, inaccessible_plugin, _, _ = _create_auto_update_install(
-        test_db,
-        user_id=test_user.id,
-        index=5,
-    )
-    inaccessible_plugin.visibility = "personal"
-    inaccessible_plugin.owner_user_id = test_user.id + 1000
-    test_db.commit()
-
-    first = service.auto_update_batch(test_db, user_id=test_user.id)
-    second = service.auto_update_batch(test_db, user_id=test_user.id)
-
-    assert first.updatedCount == 1
-    assert first.updated[0].installedPluginId == valid.id
-    assert first.updated[0].toReleaseId == latest.id
-    assert first.remainingCount == 0
-    assert second.updatedCount == 0
-    assert second.remainingCount == 0
-    for excluded in (
-        invalid_scan,
-        invalid_source,
-        invalid_catalog,
-        inaccessible,
-    ):
-        test_db.refresh(excluded)
-        assert excluded.json["spec"]["version"] == "1.0.0"
-
-
-def test_auto_update_excludes_manual_policy_and_manual_update_preserves_it(
-    test_db, test_user
-):
-    service = PluginMarketplaceService()
-    installed, _, _, latest = _create_auto_update_install(
+    installed, _, _, latest = _create_marketplace_update_install(
         test_db,
         user_id=test_user.id,
         index=1,
@@ -1110,10 +985,6 @@ def test_auto_update_excludes_manual_policy_and_manual_update_preserves_it(
     flag_modified(installed, "json")
     test_db.commit()
 
-    result = service.auto_update_batch(test_db, user_id=test_user.id)
-
-    assert result.updatedCount == 0
-    assert result.remainingCount == 0
     updated = service.update_release(
         test_db,
         user_id=test_user.id,
@@ -1125,8 +996,7 @@ def test_auto_update_excludes_manual_policy_and_manual_update_preserves_it(
 
 
 def test_installed_plugin_update_policy_requires_explicit_opt_in(test_db, test_user):
-    marketplace_service = PluginMarketplaceService()
-    installed, _, _, latest = _create_auto_update_install(
+    installed, _, _, _ = _create_marketplace_update_install(
         test_db,
         user_id=test_user.id,
         index=1,
@@ -1141,12 +1011,9 @@ def test_installed_plugin_update_policy_requires_explicit_opt_in(test_db, test_u
         installed_id=installed.id,
         request=InstalledPluginUpdateRequest(updatePolicy="auto"),
     )
-    result = marketplace_service.auto_update_batch(test_db, user_id=test_user.id)
-
     assert opted_in.spec.updatePolicy == "auto"
-    assert result.updatedCount == 1
     test_db.refresh(installed)
-    assert installed.json["spec"]["releaseId"] == latest.id
+    assert installed.json["spec"]["updatePolicy"] == "auto"
 
     opted_out = installed_plugin_service.update_installed_plugin(
         db=test_db,
@@ -2309,13 +2176,18 @@ def test_new_desired_release_resets_auto_update_failure_limit(test_db, test_user
 def test_device_payload_preserves_old_release_after_auto_update_circuit_opens(
     test_db, test_user, monkeypatch
 ):
-    installed, _, old_release, new_release = _create_auto_update_install(
+    installed, _, old_release, new_release = _create_marketplace_update_install(
         test_db,
         user_id=test_user.id,
         index=15,
     )
     test_db.commit()
-    PluginMarketplaceService().auto_update_batch(test_db, user_id=test_user.id)
+    PluginMarketplaceService().update_release(
+        test_db,
+        user_id=test_user.id,
+        installed_id=installed.id,
+        release_id=new_release.id,
+    )
     test_db.add(
         PluginDeviceInstallation(
             installed_kind_id=installed.id,

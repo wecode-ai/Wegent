@@ -8,17 +8,7 @@ Kubernetes-style CRD models for cloud-native agent management.
 
 from datetime import datetime, timezone
 
-from sqlalchemy import (
-    JSON,
-    Boolean,
-    Column,
-    DateTime,
-    Index,
-    Integer,
-    String,
-    func,
-    text,
-)
+from sqlalchemy import JSON, Boolean, Column, DateTime, Index, Integer, String, func
 
 from .base import Base
 
@@ -45,17 +35,6 @@ class Kind(Base):
     )
 
     __table_args__ = (
-        # Only the existing account-auth policy is a unique business parent.
-        # Other Kind names and installation sources retain their own semantics.
-        Index(
-            "uq_kinds_account_auth_policy",
-            text(
-                "(CASE WHEN kind = 'ConnectorAuthPolicy' "
-                "AND namespace = 'plugin-auth' AND name = 'account' "
-                "THEN user_id ELSE NULL END)"
-            ),
-            unique=True,
-        ),
         # Composite index for user's own resources query:
         # SELECT * FROM kinds WHERE user_id=? AND kind=? AND namespace=? AND is_active=1
         Index(

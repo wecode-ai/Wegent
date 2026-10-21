@@ -94,7 +94,6 @@ class PluginAuthAutomationService:
     def _intent(
         self, db: Session, user_id: int, device_id: str, plugin: Kind, connector: dict
     ) -> dict | None:
-        self.connections._coordinate_owner(db, user_id)
         slug = connector["slug"]
         source = self.connections._source_identity(plugin.json["spec"]["source"])
         from app.services.plugin_auth_local_lifecycle import (

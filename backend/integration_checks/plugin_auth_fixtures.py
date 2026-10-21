@@ -103,12 +103,15 @@ def sessions():
         SkillBinary.__table__,
     ):
         table.create(engine, checkfirst=True)
-    policy_index = next(
-        index
-        for index in Kind.__table__.indexes
-        if index.name == "uq_kinds_account_auth_policy"
-    )
-    policy_index.create(engine, checkfirst=True)
+    with Session(engine) as db, db.begin():
+        # This disposable database starts without the old policy index.
+        assert not db.scalar(
+            text(
+                "SELECT COUNT(*) FROM information_schema.statistics "
+                "WHERE table_schema = DATABASE() AND table_name = 'kinds' "
+                "AND index_name = 'uq_kinds_account_auth_policy'"
+            )
+        )
     raw_redis_url = os.environ["PLUGIN_AUTH_REDIS_TEST_URL"]
     redis_url = make_url(raw_redis_url)
     assert redis_url.host in {"127.0.0.1", "localhost"}

@@ -182,6 +182,7 @@ struct RevisionTransaction {
     statements: Vec<String>,
     rows_affected: u64,
     next_revision: Option<i64>,
+    inserted_user: Option<i64>,
 }
 
 impl MysqlTransaction for RevisionTransaction {
@@ -190,10 +191,16 @@ impl MysqlTransaction for RevisionTransaction {
         sql: S,
         args: A,
     ) -> MysqlResult<MysqlExecution> {
-        assert_eq!(args.len(), 4);
-        self.next_revision = args
+        let first_argument = args
             .first_route_value()
             .and_then(|value| value.as_i64().ok());
+        if sql.as_ref().starts_with("INSERT INTO kinds") {
+            assert_eq!(args.len(), 1);
+            self.inserted_user = first_argument;
+        } else {
+            assert_eq!(args.len(), 4);
+            self.next_revision = first_argument;
+        }
         self.statements.push(sql.as_ref().to_string());
         Ok(MysqlExecution {
             rows_affected: self.rows_affected,
@@ -442,4 +449,114 @@ async fn committed_operation_does_not_wait_for_unresponsive_lease_cleanup() {
     tokio::time::timeout(Duration::from_secs(2), lease.release())
         .await
         .expect("unlock must remain bounded after commit");
+}
+
+fn policy_row(id: i64, is_active: bool, document: serde_json::Value) -> PolicyRow {
+    PolicyRow {
+        id,
+        json: document,
+        is_active: Some(is_active),
+    }
+}
+
+#[test]
+fn policy_lookup_checks_full_identity_and_includes_inactive_duplicates() {
+    assert!(POLICY_QUERY.contains("user_id = ?"));
+    assert!(POLICY_QUERY.contains("'ConnectorAuthPolicy' AND namespace = 'plugin-auth'"));
+    assert!(POLICY_QUERY.contains("name = 'account'"));
+    assert!(POLICY_QUERY.ends_with("LIMIT 2"));
+    assert!(!POLICY_QUERY.contains("is_active ="));
+}
+
+#[test]
+fn duplicate_policy_parents_are_rejected_even_when_one_is_inactive() {
+    let error = unique_policy(vec![
+        policy_row(1, true, serde_json::json!({"spec": {"revision": 2}})),
+        policy_row(2, false, serde_json::json!({"spec": {"revision": 7}})),
+    ])
+    .unwrap_err();
+    assert_eq!(
+        http_error(error).detail_message(),
+        Some("plugin_write_conflict")
+    );
+}
+
+#[test]
+fn existing_legacy_policy_keeps_its_opt_out_and_version() {
+    let row = unique_policy(vec![policy_row(
+        42,
+        false,
+        serde_json::json!({"spec": {"enabled": false}}),
+    )])
+    .unwrap()
+    .unwrap();
+    assert_eq!(row.json["spec"]["enabled"], false);
+    assert_eq!(business_revision(&row.json).unwrap(), 0);
+    for document in [
+        serde_json::json!({}),
+        serde_json::json!({"spec": null}),
+        serde_json::json!({"spec": {"revision": -1}}),
+    ] {
+        assert!(unique_policy(vec![policy_row(42, true, document)]).is_err());
+    }
+}
+
+#[tokio::test]
+async fn inactive_policy_reactivation_uses_cas_and_advances_the_version() {
+    for rows_affected in [0, 1] {
+        let mut transaction = RevisionTransaction {
+            rows_affected,
+            ..Default::default()
+        };
+        let result = restore_policy(
+            &mut transaction,
+            23,
+            policy_row(
+                42,
+                false,
+                serde_json::json!({"spec": {"enabled": false, "revision": 7}}),
+            ),
+        )
+        .await;
+        assert_eq!(result.is_ok(), rows_affected == 1);
+        assert_eq!(transaction.next_revision, Some(8));
+        assert!(transaction.statements[0].contains("AND user_id = ?"));
+        assert!(transaction.statements[0].contains("AND is_active IS false"));
+        assert!(transaction.statements[0].contains("'$.spec.revision'), 0) = ?"));
+        assert!(!transaction.statements[0].contains("enabled"));
+    }
+}
+
+#[tokio::test]
+async fn an_existing_active_policy_needs_no_write() {
+    let mut transaction = RevisionTransaction::default();
+    restore_policy(
+        &mut transaction,
+        23,
+        policy_row(
+            42,
+            true,
+            serde_json::json!({"spec": {"enabled": false, "revision": 7}}),
+        ),
+    )
+    .await
+    .unwrap();
+    assert!(transaction.statements.is_empty());
+}
+
+#[tokio::test]
+async fn first_policy_creation_reads_the_real_parent_before_inserting() {
+    let mut transaction = RevisionTransaction::default();
+    ensure_policy_in(&mut transaction, 23).await.unwrap();
+    assert_eq!(transaction.statements.len(), 2);
+    assert_eq!(transaction.statements[0], POLICY_QUERY);
+    assert!(transaction.statements[1].starts_with("INSERT INTO kinds"));
+    assert!(transaction.statements[1].contains("'ConnectorAuthPolicy', 'plugin-auth', 'account'"));
+    assert!(transaction.statements[1].contains("{\"spec\":{\"enabled\":true,\"revision\":0}}"));
+    assert_eq!(transaction.inserted_user, Some(23));
+    assert_eq!(transaction.next_revision, None);
+    for sql in transaction.statements {
+        assert!(!sql.contains("FOR UPDATE"));
+        assert!(!sql.contains("ON DUPLICATE KEY"));
+    }
 }

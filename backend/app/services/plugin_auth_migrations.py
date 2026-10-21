@@ -103,7 +103,6 @@ class PluginAuthMigrationService:
         self, db: Session, user_id: int, spec: dict
     ) -> PluginMigrationResponse:
         # Slot rotation and enrollment share the transaction's Redis coordination.
-        self.connections._coordinate_owner(db, user_id)
         row = None
         if spec.get("automatic"):
             row = (

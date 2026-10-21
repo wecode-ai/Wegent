@@ -29,13 +29,13 @@ def test_policy_pool_is_independent_and_shared_across_session_option_engines():
         "mysql+pymysql://unused@127.0.0.1/unused", pool_size=1, max_overflow=0
     )
     try:
-        fence = resources.policy_engine(business)
+        policy = resources.policy_engine(business)
         configured = business.execution_options(isolation_level="READ COMMITTED")
 
-        assert resources.policy_engine(configured) is fence
-        assert fence.pool is not business.pool
-        assert fence.pool.size() == 2
-        assert fence.pool.timeout() == 1
+        assert resources.policy_engine(configured) is policy
+        assert policy.pool is not business.pool
+        assert policy.pool.size() == 2
+        assert policy.pool.timeout() == 1
     finally:
         resources.close_plugin_write_resources()
         business.dispose()

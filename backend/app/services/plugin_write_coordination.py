@@ -9,7 +9,6 @@ InnoDB's transactional locks; no SELECT FOR UPDATE is used for coordination.
 import logging
 import threading
 import time
-import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -21,13 +20,17 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, SessionTransaction
 
 from app.api.dependencies import get_db
+from app.core.distributed_lock import (
+    DistributedLockUnavailableError,
+    distributed_lock,
+)
 from app.services.plugin_policy_revision import (
     PolicyRevision,
     advance_policy_revision,
     read_policy_revision,
 )
 from app.services.plugin_write_errors import PluginWriteError
-from app.services.plugin_write_resources import redis_client
+from app.services.plugin_write_resources import redis_client as _redis_client
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +41,6 @@ OPERATION_SECONDS = 20
 _LEASES = "plugin_write_leases"
 _CONFIGURED = "plugin_write_read_committed"
 _SAVEPOINTS = "plugin_policy_savepoint_revisions"
-
-
-def _redis_client() -> Any:
-    return redis_client()
 
 
 def configure_plugin_session(db: Session) -> None:
@@ -68,7 +67,6 @@ def get_plugin_db(db: Session = Depends(get_db)) -> Session:
 @dataclass
 class _Lease:
     lock: Any
-    token: str
     policy: PolicyRevision | None = None
     started: float = field(default_factory=time.monotonic)
     stopped: threading.Event = field(default_factory=threading.Event)
@@ -90,7 +88,6 @@ class _Lease:
     def check(self) -> None:
         if time.monotonic() - self.started >= OPERATION_SECONDS:
             self.lost.set()
-            raise PluginWriteError("plugin_write_lease_lost")
         if self.lost.is_set():
             raise PluginWriteError("plugin_write_lease_lost")
         try:
@@ -119,26 +116,23 @@ def acquire_plugin_write_lock(db: Session, user_id: int) -> None:
     if user_id in leases:
         leases[user_id].check()
         return
-    token = uuid.uuid4().hex
     try:
-        lock = _redis_client().lock(
+        lock = distributed_lock.owned_lock(
             f"wegent:plugin-write:{user_id}",
-            timeout=LEASE_SECONDS,
+            expire_seconds=LEASE_SECONDS,
             blocking_timeout=WAIT_SECONDS,
-            thread_local=False,
+            redis_client=_redis_client(),
         )
-        acquired = lock.acquire(token=token)
-    except RedisError:
+        acquired = lock.acquire()
+    except (RedisError, DistributedLockUnavailableError):
         raise PluginWriteError("plugin_write_unavailable") from None
     if not acquired:
         raise PluginWriteError("plugin_write_busy")
-    lease = _Lease(lock=lock, token=token)
+    lease = _Lease(lock=lock)
     try:
         threading.Thread(target=lease.renew, daemon=True).start()
         lease.policy = read_policy_revision(db, user_id)
         lease.check()
-        if not db.in_transaction():
-            db.begin()
         if not (db.new or db.dirty or db.deleted):
             db.expire_all()
         leases[user_id] = lease

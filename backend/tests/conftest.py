@@ -46,7 +46,7 @@ def plugin_write_backend(monkeypatch: pytest.MonkeyPatch):
 
     redis = FakePluginRedis()
     monkeypatch.setattr(coordination, "_redis_client", lambda: redis)
-    return redis, {}
+    return redis
 
 
 @pytest.fixture(scope="session", autouse=True)

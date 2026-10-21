@@ -158,7 +158,6 @@ class PluginAuthLocalLifecycleService:
     def _set_policy(
         self, db: Session, user_id: int, source: str, slug: str, enabled: bool
     ) -> None:
-        self.connections._coordinate_owner(db, user_id)
         row = policy_query(db, user_id, source, slug).populate_existing().first()
         if row is None:
             row = Kind(

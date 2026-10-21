@@ -11,8 +11,7 @@ from pathlib import Path
 
 import pytest
 from pydantic import SecretStr
-from sqlalchemy import create_engine, inspect, select, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import create_engine, event, inspect, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from alembic.migration import MigrationContext
@@ -35,7 +34,6 @@ from app.services.plugin_account_connections import (
 )
 from app.services.plugin_auth_execution import PluginAuthExecutionService
 from app.services.plugin_auth_local_lifecycle import PluginAuthLocalLifecycleService
-from app.services.plugin_marketplace_service import PluginMarketplaceService
 from app.services.plugin_oauth_operations import PluginOAuthOperations
 from app.services.plugin_write_coordination import (
     PluginWriteError,
@@ -65,29 +63,52 @@ def test_simultaneous_enrollment_creates_only_one_account(context):
 def test_simultaneous_first_policy_materialization_keeps_one_business_parent(
     context, monkeypatch
 ):
-    barrier = threading.Barrier(2, timeout=5)
-    materialize = policy_revision._materialize_default
+    first_locked, release_first = threading.Event(), threading.Event()
+    second_waiting, second_locked = threading.Event(), threading.Event()
+    thread_state = threading.local()
+    client = coordination._redis_client()
+    real_lock = client.lock
 
-    def overlapping_materialization(db: Session, user_id: int) -> None:
-        # Both requests must observe absence before either attempts the INSERT.
-        barrier.wait()
-        materialize(db, user_id)
+    def observed_lock(*args, **kwargs):
+        lock = real_lock(*args, **kwargs)
+        acquire = lock.acquire
 
-    monkeypatch.setattr(
-        policy_revision, "_materialize_default", overlapping_materialization
-    )
+        def observed_acquire(*acquire_args, **acquire_kwargs):
+            if getattr(thread_state, "second", False):
+                second_waiting.set()
+            return acquire(*acquire_args, **acquire_kwargs)
 
-    def read_first_parent():
+        lock.acquire = observed_acquire
+        return lock
+
+    monkeypatch.setattr(client, "lock", observed_lock)
+
+    def read_first_parent(second=False):
+        thread_state.second = second
         with context.sessions.begin() as db:
             establish_snapshot(db, context)
-            return policy_revision.read_policy_revision(db, context.user_id)
+            acquire_plugin_write_lock(db, context.user_id)
+            parent = policy_revision.read_policy_revision(db, context.user_id)
+            if second:
+                second_locked.set()
+            else:
+                first_locked.set()
+                assert release_first.wait(5)
+            return parent.row_id, parent.revision
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        requests = [pool.submit(read_first_parent) for _ in range(2)]
-        parents = [request.result(timeout=10) for request in requests]
+        first = pool.submit(read_first_parent)
+        try:
+            assert first_locked.wait(5)
+            second = pool.submit(read_first_parent, True)
+            assert second_waiting.wait(5)
+            assert not second_locked.wait(0.1)
+        finally:
+            release_first.set()
+        parents = [request.result(timeout=10) for request in (first, second)]
 
-    assert parents[0] == parents[1]
-    assert parents[0].revision == 0
+    assert parents[0][0] == parents[1][0]
+    assert [parent[1] for parent in parents] == [0, 1]
     with context.sessions() as db:
         rows = (
             db.query(Kind)
@@ -99,9 +120,9 @@ def test_simultaneous_first_policy_materialization_keeps_one_business_parent(
             )
             .all()
         )
-        assert len(rows) == 1 and rows[0].id == parents[0].row_id
+        assert len(rows) == 1 and rows[0].id == parents[0][0]
         assert rows[0].is_active is True
-        assert rows[0].json == {"spec": {"enabled": True, "revision": 0}}
+        assert rows[0].json == {"spec": {"enabled": True, "revision": 2}}
 
 
 def test_inactive_policy_row_is_reactivated_with_its_stored_preference(context):
@@ -139,11 +160,8 @@ def test_inactive_policy_row_is_reactivated_with_its_stored_preference(context):
         assert row.json == {"spec": {"enabled": False, "revision": 2}}
 
 
-def _policy_migration():
-    path = (
-        Path(__file__).parents[1]
-        / "alembic/versions/20261020_b9d8e7a6c501_unique_account_auth_policy.py"
-    )
+def _policy_migration(filename):
+    path = Path(__file__).parents[1] / "alembic/versions" / filename
     spec = importlib.util.spec_from_file_location(
         "mysql_policy_identity_migration", path
     )
@@ -193,63 +211,72 @@ def _insert_migration_policy(connection, user_id: int, *, kind: str):
     ).inserted_primary_key[0]
 
 
+@pytest.mark.parametrize("legacy_index", [False, True])
 def test_mysql_policy_migration_round_trip_preserves_preferences_and_kind_names(
-    context,
+    context, legacy_index
 ):
-    migration = _policy_migration()
+    retired = _policy_migration("20261020_b9d8e7a6c501_unique_account_auth_policy.py")
+    cleanup = _policy_migration(
+        "20261021_c0e9f8d7a612_remove_account_auth_policy_index.py"
+    )
     engine = context.sessions.kw["bind"]
-    duplicate_id = None
     with engine.connect() as connection:
         original_columns = _column_layout(connection)
         policy_id = _insert_migration_policy(
             connection, context.user_id, kind="ConnectorAuthPolicy"
         )
+        unrelated_ids = [
+            _insert_migration_policy(connection, context.user_id, kind="UnrelatedKind")
+            for _ in range(2)
+        ]
         connection.commit()
         try:
-            with Operations.context(MigrationContext.configure(connection)):
-                migration.downgrade()
-                assert not _has_policy_index(connection)
-                duplicate_id = _insert_migration_policy(
-                    connection, context.user_id, kind="ConnectorAuthPolicy"
-                )
-                connection.commit()
-                with pytest.raises(RuntimeError, match="require reconciliation"):
-                    migration.upgrade()
-                assert not _has_policy_index(connection)
+            assert not _has_policy_index(connection)
+            if legacy_index:
                 connection.execute(
-                    Kind.__table__.delete().where(Kind.id == duplicate_id)
+                    text(
+                        "CREATE UNIQUE INDEX uq_kinds_account_auth_policy ON kinds "
+                        "((CASE WHEN kind = 'ConnectorAuthPolicy' "
+                        "AND namespace = 'plugin-auth' AND name = 'account' "
+                        "THEN user_id ELSE NULL END))"
+                    )
                 )
                 connection.commit()
-                duplicate_id = None
-                migration.upgrade()
-                assert _has_policy_index(connection)
-                with pytest.raises(IntegrityError):
-                    with connection.begin_nested():
-                        _insert_migration_policy(
-                            connection, context.user_id, kind="ConnectorAuthPolicy"
-                        )
-                unrelated_ids = [
-                    _insert_migration_policy(
-                        connection, context.user_id, kind="UnrelatedKind"
-                    )
-                    for _ in range(2)
-                ]
-                connection.commit()
-                assert len(set(unrelated_ids)) == 2
-                assert connection.scalar(
-                    select(Kind.json).where(Kind.id == policy_id)
-                ) == {"spec": {"enabled": False, "revision": 7}}
-                assert _column_layout(connection) == original_columns
+            statements = []
+
+            def record_sql(_conn, _cursor, statement, _params, _context, _many):
+                statements.append(statement)
+
+            event.listen(connection, "before_cursor_execute", record_sql)
+            with Operations.context(MigrationContext.configure(connection)):
+                retired.upgrade()
+                cleanup.upgrade()
+                cleanup.upgrade()
+                cleanup.downgrade()
+                retired.downgrade()
+            event.remove(connection, "before_cursor_execute", record_sql)
+            ddl = [
+                statement
+                for statement in statements
+                if statement.split()[0].upper() in {"CREATE", "ALTER", "DROP"}
+            ]
+            assert len(ddl) == int(legacy_index)
+            assert all("DROP INDEX" in statement.upper() for statement in ddl)
+            assert not _has_policy_index(connection)
+            assert len(set(unrelated_ids)) == 2
+            assert connection.scalar(select(Kind.json).where(Kind.id == policy_id)) == {
+                "spec": {"enabled": False, "revision": 7}
+            }
+            assert _column_layout(connection) == original_columns
+            _insert_migration_policy(
+                connection, context.user_id, kind="ConnectorAuthPolicy"
+            )
+            connection.commit()
         finally:
             connection.rollback()
-            if duplicate_id is not None:
-                connection.execute(
-                    Kind.__table__.delete().where(Kind.id == duplicate_id)
-                )
-                connection.commit()
-            if not _has_policy_index(connection):
-                with Operations.context(MigrationContext.configure(connection)):
-                    migration.upgrade()
+            with Operations.context(MigrationContext.configure(connection)):
+                cleanup.upgrade()
+            connection.commit()
 
 
 def test_local_logout_commits_while_an_unrelated_transaction_holds_the_user_row(
@@ -478,49 +505,6 @@ def test_expired_worker_cannot_commit_after_successor_advances_parent_revision(c
             .one()
         )
         assert parent.json["spec"]["revision"] == observed_revision + 1
-
-
-def test_empty_auto_update_batch_does_not_block_install_before_session_cleanup(context):
-    with context.sessions() as poll_db:
-        result = PluginMarketplaceService().auto_update_batch(
-            poll_db, user_id=context.user_id
-        )
-        assert result.updatedCount == 0
-
-        # Keep the polling request session open, as happens when an async install
-        # blocks the event loop before FastAPI can clean up another request.
-        with poll_db.get_bind().connect() as connection:
-            original_timeout = connection.scalar(
-                text("SELECT @@SESSION.innodb_lock_wait_timeout")
-            )
-            connection.commit()
-            try:
-                connection.execute(text("SET SESSION innodb_lock_wait_timeout = 2"))
-                connection.commit()
-                with context.sessions(bind=connection) as install_db:
-                    installed = Kind(
-                        user_id=context.user_id,
-                        kind="InstalledPlugin",
-                        namespace="default",
-                        name="concurrent-marketplace-install",
-                        json={"spec": {}},
-                        is_active=True,
-                    )
-                    install_db.add(installed)
-                    install_db.commit()
-                    assert installed.id is not None
-            finally:
-                connection.rollback()
-                connection.execute(
-                    text("SET SESSION innodb_lock_wait_timeout = :timeout"),
-                    {"timeout": original_timeout},
-                )
-                connection.commit()
-                assert (
-                    connection.scalar(text("SELECT @@SESSION.innodb_lock_wait_timeout"))
-                    == original_timeout
-                )
-                connection.commit()
 
 
 def test_simultaneous_device_registration_keeps_one_runtime_identity(context):

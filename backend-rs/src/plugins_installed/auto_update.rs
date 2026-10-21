@@ -4,9 +4,6 @@
 
 //! `POST /api/plugins/installed/auto-update-batch` implementation.
 //!
-//! Source: `app/api/endpoints/installed_plugins.py::auto_update_installed_plugins`
-//! -> `app/services/plugin_marketplace_service.py::auto_update_batch`.
-//!
 //! The endpoint advances at most one cloud-marketplace installation per call.
 //! It coordinates the user's plugin writes through the shared Redis lease,
 //! then reads the active `InstalledPlugin` kinds rows and keeps the rows
@@ -42,7 +39,7 @@ use super::write_coordination::{
 };
 use crate::http_compat::FastApiError;
 
-/// Source `plugin_marketplace_service.AUTO_UPDATE_BATCH_SIZE`.
+/// Keep each poll bounded while draining updates across successive calls.
 const AUTO_UPDATE_BATCH_SIZE: usize = 1;
 
 /// Success-response model (`PluginAutoUpdateBatchResponse`) field order.
@@ -105,16 +102,15 @@ where
     T: MysqlTransaction,
 {
     transaction
-        .fetch_all(installed_kinds_query(), (user_id,))
+        .fetch_all(
+            format!(
+                "SELECT {KIND_COLUMNS} FROM kinds WHERE kinds.user_id = ? AND kinds.kind = \
+                 'InstalledPlugin' AND kinds.namespace = 'default' AND kinds.is_active IS true \
+                 ORDER BY kinds.id ASC"
+            ),
+            (user_id,),
+        )
         .await
-}
-
-fn installed_kinds_query() -> String {
-    format!(
-        "SELECT {KIND_COLUMNS} FROM kinds WHERE kinds.user_id = ? AND kinds.kind = \
-         'InstalledPlugin' AND kinds.namespace = 'default' AND kinds.is_active IS true \
-         ORDER BY kinds.id ASC"
-    )
 }
 
 /// `db.query(Plugin).filter(Plugin.id.in_(plugin_ids))`.
@@ -163,8 +159,7 @@ struct EligibleRow<'a> {
     release_id: i64,
 }
 
-/// `_auto_update_eligible_rows`: keep active marketplace rows set to auto
-/// update whose stored `pluginId`/`releaseId` are integers.
+/// Keep marketplace rows set to auto update with integer plugin/release IDs.
 fn eligible_rows(rows: &[InstalledKindRow]) -> Vec<EligibleRow<'_>> {
     let mut eligible = Vec::new();
     for installed in rows {
@@ -250,12 +245,17 @@ where
     let lease = PluginWriteLease::acquire(redis, user_id).await?;
     let result = tokio::time::timeout_at(lease.deadline, async {
         lease.ensure_policy(mysql).await?;
-        let catalog_revision = mysql
-            .with_transaction(async |transaction| lease.read_revision(transaction).await)
+        let (catalog_revision, installed_rows) = mysql
+            .with_transaction(async |transaction| {
+                let revision = lease.read_revision(transaction).await?;
+                let installed_rows = list_installed_kinds(transaction, user_id).await?;
+                Ok((revision, installed_rows))
+            })
             .await?;
         // Catalog and permission resolvers may borrow additional pool
         // connections. Complete them before pinning the write connection.
-        let catalog = load_auto_update_catalog(mysql, redis, resolvers, user_id).await?;
+        let catalog =
+            load_auto_update_catalog(mysql, redis, resolvers, user_id, &installed_rows).await?;
         // The write transaction reads the shared parent before installation
         // state; its final CAS also detects commits from an expired worker.
         mysql
@@ -268,8 +268,12 @@ where
                 if revision != catalog_revision {
                     return Err(coordination_error("plugin_write_conflict"));
                 }
-                let response =
-                    apply_auto_update_batch(transaction, catalog.as_ref(), user_id).await?;
+                let response = if let Some(catalog) = catalog.as_ref() {
+                    let installed_rows = list_installed_kinds(transaction, user_id).await?;
+                    apply_auto_update_batch(transaction, catalog, &installed_rows, user_id).await?
+                } else {
+                    PluginAutoUpdateBatchResponse::empty()
+                };
                 lease.commit_revision(transaction, revision).await?;
                 Ok(response)
             })
@@ -293,17 +297,13 @@ async fn load_auto_update_catalog<M, R>(
     redis: Option<&R>,
     resolvers: &EntityResolvers<R>,
     user_id: i64,
+    installed_rows: &[InstalledKindRow],
 ) -> MysqlResult<Option<AutoUpdateCatalog>>
 where
     M: Mysql,
     R: brz_redis::Redis,
 {
-    // Discover installed IDs on the master, then release this connection
-    // before catalog and permission lookups borrow from the pool.
-    let installed_rows = mysql
-        .with_transaction(async |transaction| list_installed_kinds(transaction, user_id).await)
-        .await?;
-    let eligible = eligible_rows(&installed_rows);
+    let eligible = eligible_rows(installed_rows);
     if eligible.is_empty() {
         return Ok(None);
     }
@@ -343,14 +343,11 @@ where
 
 async fn apply_auto_update_batch<T: MysqlTransaction>(
     transaction: &mut T,
-    catalog: Option<&AutoUpdateCatalog>,
+    catalog: &AutoUpdateCatalog,
+    installed_rows: &[InstalledKindRow],
     user_id: i64,
 ) -> MysqlResult<PluginAutoUpdateBatchResponse> {
-    let installed_rows = list_installed_kinds(transaction, user_id).await?;
-    let Some(catalog) = catalog else {
-        return Ok(PluginAutoUpdateBatchResponse::empty());
-    };
-    let eligible = eligible_rows(&installed_rows);
+    let eligible = eligible_rows(installed_rows);
     let candidates = candidates(
         &eligible,
         &catalog.plugins_by_id,
@@ -416,7 +413,7 @@ async fn advance_installation<T: MysqlTransaction>(
     Ok(())
 }
 
-/// `_auto_update_candidates`'s filter step over the loaded catalog.
+/// Select accessible published plugins with a ready, scanned newer release.
 fn candidates<'a>(
     eligible: &'a [EligibleRow<'a>],
     plugins_by_id: &'a HashMap<i64, PluginRow>,
@@ -705,9 +702,7 @@ pub(super) fn component_states(components: &Value) -> Value {
     Value::Object(states)
 }
 
-/// `_installed_payload` plus `_apply_installed_release`: build the stored
-/// document for the advanced release, then carry over the existing `enabled`,
-/// `componentStates` and `updatePolicy` from the row being updated.
+/// Build the advanced release document while preserving its runtime preferences.
 fn installed_payload(
     plugin: &PluginRow,
     release: &PluginReleaseRow,
@@ -740,10 +735,6 @@ fn installed_payload(
         Value::String(release.version.clone()),
     );
     spec.insert(
-        "updatePolicy".to_string(),
-        Value::String("auto".to_string()),
-    );
-    spec.insert(
         "sourceProvider".to_string(),
         Value::String(source_provider(plugin).to_string()),
     );
@@ -773,8 +764,6 @@ fn installed_payload(
         "installState".to_string(),
         Value::String("installed".to_string()),
     );
-    spec.insert("enabled".to_string(), Value::Bool(true));
-    spec.insert("componentStates".to_string(), component_states(&components));
     spec.insert("manifest".to_string(), release.manifest_json.0.to_value());
     spec.insert("components".to_string(), components);
     spec.insert(
@@ -798,8 +787,7 @@ fn installed_payload(
         serde_json::json!({ "releaseId": release.id }),
     );
 
-    // `_apply_installed_release`: the advanced row keeps its own runtime
-    // preferences. Source defaults: `enabled` truthy-checked (default True),
+    // Preserve runtime preferences and legacy defaults: enabled defaults true,
     // `componentStates` falsy-to-`{}`, and `updatePolicy` restricted to
     // `manual`/`auto` (default `auto`).
     spec.insert(

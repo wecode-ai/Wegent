@@ -297,7 +297,6 @@ class PluginAuthTransferService:
         return {"state": "aborted"}
 
     def _check_target(self, db: Session, user_id: int, spec: dict, account: str):
-        self.connections._coordinate_owner(db, user_id)
         rows = self.connections._query(db, user_id).populate_existing().all()
         previous = next(
             (
@@ -348,7 +347,6 @@ class PluginAuthTransferService:
 
     @staticmethod
     def _query(db: Session, user_id: int, migration_id: str):
-        acquire_plugin_write_lock(db, user_id)
         return (
             db.query(Kind)
             .filter(

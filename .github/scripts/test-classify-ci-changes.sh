@@ -599,8 +599,12 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 done
 
 for coordination_path in \
+  "backend/app/core/distributed_lock.py" \
   "backend/app/services/plugin_write_coordination.py" \
-  "backend/app/services/plugin_write_resources.py"; do
+  "backend/app/services/plugin_write_errors.py" \
+  "backend/app/services/plugin_write_resources.py" \
+  "backend/app/services/plugin_kind_revision.py" \
+  "backend/app/services/plugin_policy_revision.py"; do
   assert_desktop_case "plugin write coordination selects its lifecycle regressions: $coordination_path" \
     'wework_desktop_e2e=true
 wework_desktop_core_e2e=false

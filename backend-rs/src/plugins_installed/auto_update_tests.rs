@@ -9,7 +9,7 @@ use brz_mysql::{FromMysqlRow, MysqlArgs, MysqlExecution};
 
 #[derive(Default)]
 struct BatchTransaction {
-    reads: Vec<String>,
+    reads: Vec<(String, Option<i64>)>,
     writes: Vec<String>,
     payloads: Vec<Value>,
     rows_affected: Option<u64>,
@@ -52,13 +52,17 @@ impl MysqlTransaction for BatchTransaction {
         panic!("unexpected fetch_one")
     }
 
-    async fn fetch_all<S, A, T>(&mut self, sql: S, _: A) -> MysqlResult<Vec<T>>
+    async fn fetch_all<S, A, T>(&mut self, sql: S, args: A) -> MysqlResult<Vec<T>>
     where
         S: AsRef<str> + Send,
         A: MysqlArgs + Send,
         T: FromMysqlRow + Send,
     {
-        self.reads.push(sql.as_ref().to_string());
+        self.reads.push((
+            sql.as_ref().to_string(),
+            args.first_route_value()
+                .and_then(|value| value.as_i64().ok()),
+        ));
         Ok(Vec::new())
     }
 
@@ -77,18 +81,42 @@ impl MysqlTransaction for BatchTransaction {
 }
 
 #[tokio::test]
-async fn batch_apply_uses_only_its_pinned_transaction_and_preloaded_catalog() {
-    // The apply interface receives no pool or resolver. It cannot acquire a
-    // second connection while holding the pinned write transaction.
+async fn installation_snapshot_is_scoped_and_uses_no_locking_read() {
     let mut transaction = BatchTransaction::default();
-    let response = apply_auto_update_batch(&mut transaction, None, 2095)
-        .await
-        .unwrap();
-    assert_eq!(response.updated_count, 0);
-    assert_eq!(response.remaining_count, 0);
+    list_installed_kinds(&mut transaction, 2095).await.unwrap();
     assert_eq!(transaction.reads.len(), 1);
-    assert!(transaction.reads[0].contains("kinds.user_id = ?"));
-    assert!(!transaction.reads[0].contains("FOR UPDATE"));
+    let (sql, user_id) = &transaction.reads[0];
+    assert_eq!(*user_id, Some(2095));
+    for scope in [
+        "kinds.user_id = ?",
+        "kinds.kind = 'InstalledPlugin'",
+        "kinds.namespace = 'default'",
+        "kinds.is_active IS true",
+        "ORDER BY kinds.id ASC",
+    ] {
+        assert!(sql.contains(scope), "missing installation scope: {scope}");
+    }
+    assert!(!sql.contains("FOR UPDATE"));
+}
+
+#[tokio::test]
+async fn no_eligible_installations_skip_catalog_and_permission_dependencies() {
+    let mysql = crate::sql_test_support::KindQueryCapture::writing();
+    let registry = EntityResolvers::public(
+        brz_mysql::MysqlService::connect_lazy("mysql://test:test@127.0.0.1:1/test").unwrap(),
+    );
+    let catalog = load_auto_update_catalog(
+        &mysql,
+        None::<&brz_redis::RedisService>,
+        &registry,
+        2095,
+        &[],
+    )
+    .await
+    .unwrap();
+    assert!(catalog.is_none());
+    assert!(mysql.queries().is_empty());
+    assert!(mysql.writes().is_empty());
 }
 
 fn installed_with_revision(revision: Option<Value>) -> InstalledKindRow {
@@ -250,15 +278,11 @@ fn eligible_rows_require_marketplace_auto_and_integer_ids() {
 
 #[tokio::test]
 async fn missing_redis_rejects_before_reading_or_writing_installations() {
-    let registry = || {
-        let mut registry = EntityResolvers::public(
-            brz_mysql::MysqlService::connect_lazy("mysql://test:test@127.0.0.1:1/test").unwrap(),
-        );
-        registry.register("org_department", NoopResolver);
-        registry
-    };
+    let registry = EntityResolvers::public(
+        brz_mysql::MysqlService::connect_lazy("mysql://test:test@127.0.0.1:1/test").unwrap(),
+    );
     let mysql = crate::sql_test_support::KindQueryCapture::writing();
-    let error = auto_update_batch(&mysql, None::<&brz_redis::RedisService>, &registry(), 2095)
+    let error = auto_update_batch(&mysql, None::<&brz_redis::RedisService>, &registry, 2095)
         .await
         .unwrap_err();
     assert_eq!(
@@ -269,36 +293,233 @@ async fn missing_redis_rejects_before_reading_or_writing_installations() {
     assert!(mysql.writes().is_empty());
 }
 
-/// A resolver that matches no bindings, so the full candidate pass with
-/// eligible rows still finds no updatable candidate (public plugins are
-/// accessible but their latest release already matches the recorded
-/// fixtures' semantics is irrelevant here: the capture returns no rows at
-/// all, so `_load_auto_update_catalog` yields nothing and the batch is
-/// empty).
-struct NoopResolver;
+fn auto_installation(plugin_id: i64) -> InstalledKindRow {
+    let mut row = installed_with_revision(Some(Value::from(0)));
+    row.id = 100 + plugin_id;
+    row.name = format!("plugin-{plugin_id}");
+    row.json = Json(OpaqueJson::from_serializable(serde_json::json!({
+        "spec": {
+            "source": {"type": "marketplace"},
+            "pluginId": plugin_id,
+            "releaseId": plugin_id * 10 + 1,
+            "updatePolicy": "auto",
+            "enabled": false,
+            "componentStates": {"skill:old": false},
+            "revision": 0,
+        }
+    })));
+    row
+}
 
-#[async_trait::async_trait]
-impl<R: brz_redis::Redis> crate::permissions::EntityResolver<R> for NoopResolver {
-    async fn match_bindings(
-        &self,
-        _: &crate::permissions::EntityResolvers<R>,
-        _: Option<&R>,
-        _: i64,
-        _: &[String],
-        _: crate::permissions::ResolutionPurpose,
-    ) -> MysqlResult<Vec<String>> {
-        Ok(Vec::new())
+fn plugin_row(id: i64) -> PluginRow {
+    PluginRow {
+        id,
+        catalog_namespace: "enterprise".into(),
+        slug: format!("plugin-{id}"),
+        name: format!("plugin-{id}"),
+        display_name: "Plugin".into(),
+        summary: "summary".into(),
+        description_md: String::new(),
+        listing_type: "plugin".into(),
+        source_type: "native".into(),
+        source_provider: "wework".into(),
+        owner_user_id: 42,
+        origin_plugin_id: 0,
+        category: String::new(),
+        keywords_json: Json(OpaqueJson::from_serializable(serde_json::json!([]))),
+        interface_json: Json(OpaqueJson::from_serializable(serde_json::json!({}))),
+        visibility: "public".into(),
+        allow_copy: false,
+        status: "published".into(),
+        latest_release_id: id * 10 + 2,
+        featured_rank: 0,
+        created_at: chrono::NaiveDateTime::default(),
+        updated_at: chrono::NaiveDateTime::default(),
+        published_at: chrono::NaiveDateTime::default(),
     }
+}
 
-    async fn get_resource_ids_by_entity(
-        &self,
-        _: &crate::permissions::EntityResolvers<R>,
-        _: &brz_mysql::MysqlService,
-        _: Option<&R>,
-        _: i64,
-        _: &str,
-        _: &str,
-    ) -> MysqlResult<Vec<i64>> {
-        Ok(Vec::new())
+fn release_row(id: i64, plugin_id: i64) -> PluginReleaseRow {
+    PluginReleaseRow {
+        id,
+        plugin_id,
+        version: "2.0.0".into(),
+        manifest_json: Json(OpaqueJson::from_serializable(serde_json::json!({}))),
+        interface_json: Json(OpaqueJson::from_serializable(serde_json::json!({}))),
+        release_notes: String::new(),
+        storage_key: format!("plugin-{plugin_id}/{id}.zip"),
+        sha256: "abc".into(),
+        size_bytes: 64,
+        status: "ready".into(),
+        scan_status: "passed".into(),
+        scan_report_json: Json(OpaqueJson::from_serializable(serde_json::json!({
+            "components": {"skills": [{"name": "new"}]}
+        }))),
+        created_by_user_id: 42,
+        publication_revision_id: 0,
+        source_commit_sha: String::new(),
+        created_at: chrono::NaiveDateTime::default(),
+        published_at: chrono::NaiveDateTime::default(),
     }
+}
+
+fn catalog_for(plugin_ids: &[i64]) -> AutoUpdateCatalog {
+    let mut catalog = AutoUpdateCatalog {
+        plugins_by_id: HashMap::new(),
+        releases_by_id: HashMap::new(),
+        grants_by_plugin_id: HashMap::new(),
+        access_context: None,
+    };
+    for &plugin_id in plugin_ids {
+        catalog
+            .plugins_by_id
+            .insert(plugin_id, plugin_row(plugin_id));
+        for release_id in [plugin_id * 10 + 1, plugin_id * 10 + 2] {
+            catalog
+                .releases_by_id
+                .insert(release_id, release_row(release_id, plugin_id));
+        }
+    }
+    catalog
+}
+
+#[test]
+fn candidate_selection_requires_access_and_a_valid_new_release() {
+    for (case, expected) in [
+        ("ready", true),
+        ("private_without_access", false),
+        ("private_owner", true),
+        ("workspace", true),
+        ("unpublished", false),
+        ("no_latest_release", false),
+        ("already_current", false),
+        ("missing_plugin", false),
+        ("missing_release", false),
+        ("current_release_wrong_plugin", false),
+        ("latest_release_wrong_plugin", false),
+        ("latest_release_not_ready", false),
+        ("latest_release_not_scanned", false),
+    ] {
+        let installed = [auto_installation(1)];
+        let eligible = eligible_rows(&installed);
+        let mut catalog = catalog_for(&[1]);
+        let plugin = catalog.plugins_by_id.get_mut(&1).unwrap();
+        match case {
+            "private_without_access" => plugin.visibility = "personal".into(),
+            "private_owner" => {
+                plugin.visibility = "personal".into();
+                plugin.owner_user_id = 2095;
+            }
+            "workspace" => plugin.visibility = "workspace".into(),
+            "unpublished" => plugin.status = "draft".into(),
+            "no_latest_release" => plugin.latest_release_id = 0,
+            "already_current" => plugin.latest_release_id = 11,
+            "missing_plugin" => {
+                catalog.plugins_by_id.clear();
+            }
+            "missing_release" => {
+                catalog.releases_by_id.remove(&12);
+            }
+            "current_release_wrong_plugin" => {
+                catalog.releases_by_id.get_mut(&11).unwrap().plugin_id = 2;
+            }
+            "latest_release_wrong_plugin" => {
+                catalog.releases_by_id.get_mut(&12).unwrap().plugin_id = 2;
+            }
+            "latest_release_not_ready" => {
+                catalog.releases_by_id.get_mut(&12).unwrap().status = "pending".into();
+            }
+            "latest_release_not_scanned" => {
+                catalog.releases_by_id.get_mut(&12).unwrap().scan_status = "failed".into();
+            }
+            "ready" => {}
+            _ => unreachable!(),
+        }
+        let selected = candidates(
+            &eligible,
+            &catalog.plugins_by_id,
+            &catalog.releases_by_id,
+            2095,
+            &catalog.grants_by_plugin_id,
+            catalog.access_context.as_ref(),
+        );
+        assert_eq!(!selected.is_empty(), expected, "{case}");
+    }
+}
+
+#[test]
+fn advancing_a_release_preserves_runtime_preferences_and_legacy_defaults() {
+    let plugin = plugin_row(1);
+    let release = release_row(12, 1);
+    for policy in ["auto", "manual", "invalid"] {
+        let current = InstalledSpec {
+            enabled: Some(Value::Bool(false)),
+            component_states: Some(serde_json::json!({"skill:old": false})),
+            update_policy: Some(policy.into()),
+            ..Default::default()
+        };
+        let payload = installed_payload(&plugin, &release, &current);
+        assert_eq!(payload["spec"]["enabled"], false);
+        assert_eq!(
+            payload["spec"]["componentStates"],
+            current.component_states.unwrap()
+        );
+        assert_eq!(
+            payload["spec"]["updatePolicy"],
+            if policy == "manual" { "manual" } else { "auto" }
+        );
+        assert_eq!(payload["spec"]["releaseId"], 12);
+        assert_eq!(payload["spec"]["version"], "2.0.0");
+    }
+    let payload = installed_payload(&plugin, &release, &InstalledSpec::default());
+    assert_eq!(payload["spec"]["enabled"], true);
+    assert_eq!(payload["spec"]["componentStates"], serde_json::json!({}));
+    assert_eq!(payload["spec"]["updatePolicy"], "auto");
+}
+
+#[tokio::test]
+async fn successive_bounded_batches_drain_candidates_without_repeating_updates() {
+    let catalog = catalog_for(&[1, 2, 3]);
+    let mut installed = vec![
+        auto_installation(1),
+        auto_installation(2),
+        auto_installation(3),
+    ];
+    for remaining in [2, 1, 0] {
+        let mut transaction = BatchTransaction {
+            rows_affected: Some(1),
+            ..Default::default()
+        };
+        let response = apply_auto_update_batch(&mut transaction, &catalog, &installed, 2095)
+            .await
+            .unwrap();
+        assert_eq!(response.updated_count, 1);
+        assert_eq!(response.updated.len(), 1);
+        assert_eq!(response.remaining_count, remaining);
+        assert_eq!(transaction.writes.len(), 1);
+        assert!(transaction.reads.is_empty());
+        let item = &response.updated[0];
+        assert_eq!(item.to_release_id, item.plugin_id * 10 + 2);
+        assert_eq!(item.from_release_id, item.plugin_id * 10 + 1);
+        let payload = transaction.payloads.pop().unwrap();
+        assert_eq!(payload["spec"]["revision"], 1);
+        assert_eq!(payload["spec"]["enabled"], false);
+        assert_eq!(
+            payload["spec"]["componentStates"],
+            serde_json::json!({"skill:old": false})
+        );
+        installed
+            .iter_mut()
+            .find(|row| row.id == item.installed_plugin_id)
+            .unwrap()
+            .json = Json(OpaqueJson::from_serializable(payload));
+    }
+    let mut transaction = BatchTransaction::default();
+    let response = apply_auto_update_batch(&mut transaction, &catalog, &installed, 2095)
+        .await
+        .unwrap();
+    assert_eq!(response.updated_count, 0);
+    assert_eq!(response.remaining_count, 0);
+    assert!(transaction.writes.is_empty());
+    assert!(transaction.reads.is_empty());
 }

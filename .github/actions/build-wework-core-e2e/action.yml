@@ -51,10 +51,6 @@ runs:
         WEWORK_ELECTRON_DEPENDENCIES_READY: "true"
       run: |
         mkdir -p .ci-artifacts
-        # Fork runtime producers have a 25-minute job deadline.
-        if [[ "$EXECUTOR_ARTIFACT" == "true" ]]; then
-          export WEWORK_E2E_PREBUILT_EXECUTOR_WAIT_SECONDS=1800
-        fi
         restore_executor() {
           if [[ "$EXECUTOR_ARTIFACT" == "true" ]]; then
             artifact_directory="$(mktemp -d .ci-artifacts/executor-download.XXXXXX)"

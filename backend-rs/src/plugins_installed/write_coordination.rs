@@ -24,7 +24,7 @@ const CHECK_SCRIPT: &str = "if redis.call('get', KEYS[1]) == ARGV[1] then \
     return 1 else return 0 end";
 const POLICY_QUERY: &str = "SELECT id, json, is_active FROM kinds WHERE user_id = ? AND kind = \
     'ConnectorAuthPolicy' AND namespace = 'plugin-auth' AND name = \
-    'account'";
+    'account' LIMIT 2";
 
 pub(super) struct PluginWriteLease<'a, R: Redis> {
     redis: &'a R,
@@ -38,7 +38,7 @@ pub(super) struct PluginWriteLease<'a, R: Redis> {
 struct PolicyRow {
     id: i64,
     json: serde_json::Value,
-    is_active: bool,
+    is_active: Option<bool>,
 }
 
 /// The existing account policy is the shared parent of this user's plugin
@@ -113,44 +113,20 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
         }
     }
 
-    /// Lazily create the existing account policy without changing an existing
-    /// opt-out or revision. The plugin identity's unique index makes initial
-    /// creation safe even when an expired lease overlaps its successor.
+    /// Create the real account policy in a short transaction under the lease.
+    /// First creation has no database uniqueness guarantee if leases overlap;
+    /// later reads reject duplicates instead of choosing an arbitrary parent.
     pub async fn ensure_policy<M: Mysql>(&self, mysql: &M) -> MysqlResult<()> {
-        tokio::time::timeout(
-            ACQUIRE_WAIT,
-            mysql.with_transaction(async |transaction| {
-                let existing: Option<PolicyRow> = transaction
-                    .fetch_optional(POLICY_QUERY, (self.user_id,))
-                    .await?;
-                if let Some(row) = existing {
-                    if row.is_active {
-                        return Ok(());
-                    }
-                    // A deactivated policy row keeps the user's stored
-                    // preference; only restore the row's active flag.
-                    return transaction
-                        .execute(
-                            "UPDATE kinds SET is_active = true, updated_at = NOW() \
-                             WHERE id = ? AND is_active IS false",
-                            (row.id,),
-                        )
-                        .await
-                        .map(|_| ());
-                }
-                transaction
-                    .execute(
-                        "INSERT INTO kinds (user_id, kind, namespace, name, json, is_active, \
-                         created_at, updated_at) VALUES (?, 'ConnectorAuthPolicy', \
-                         'plugin-auth', 'account', \
-                         '{\"spec\":{\"enabled\":true,\"revision\":0}}', \
-                         true, NOW(), NOW()) ON DUPLICATE KEY UPDATE id = id",
-                        (self.user_id,),
-                    )
-                    .await
-                    .map(|_| ())
-            }),
-        )
+        let deadline = (Instant::now() + ACQUIRE_WAIT).min(self.deadline);
+        tokio::time::timeout_at(deadline, async {
+            self.verify_owned().await?;
+            mysql
+                .with_transaction(async |transaction| {
+                    ensure_policy_in(transaction, self.user_id).await?;
+                    self.verify_owned().await
+                })
+                .await
+        })
         .await
         .unwrap_or_else(|_| Err(coordination_error("plugin_write_busy")))
     }
@@ -161,16 +137,10 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
         &self,
         transaction: &mut T,
     ) -> MysqlResult<PluginWriteRevision> {
-        let row: PolicyRow = transaction
-            .fetch_optional(POLICY_QUERY, (self.user_id,))
+        let row = load_policy(transaction, self.user_id)
             .await?
             .ok_or_else(|| coordination_error("plugin_write_conflict"))?;
-        if !row.is_active
-            || !row
-                .json
-                .get("spec")
-                .is_some_and(serde_json::Value::is_object)
-        {
+        if row.is_active != Some(true) {
             return Err(coordination_error("plugin_write_conflict"));
         }
         Ok(PluginWriteRevision {
@@ -241,6 +211,79 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
             tracing::warn!(user_id = self.user_id, "plugin write lease cleanup failed");
         }
     }
+}
+
+fn unique_policy(mut rows: Vec<PolicyRow>) -> MysqlResult<Option<PolicyRow>> {
+    if rows.len() > 1 {
+        return Err(coordination_error("plugin_write_conflict"));
+    }
+    let row = rows.pop();
+    if let Some(row) = &row {
+        if !row
+            .json
+            .get("spec")
+            .is_some_and(serde_json::Value::is_object)
+        {
+            return Err(coordination_error("plugin_write_conflict"));
+        }
+        business_revision(&row.json)?;
+    }
+    Ok(row)
+}
+
+async fn load_policy<T: MysqlTransaction>(
+    transaction: &mut T,
+    user_id: i64,
+) -> MysqlResult<Option<PolicyRow>> {
+    let result = unique_policy(transaction.fetch_all(POLICY_QUERY, (user_id,)).await?);
+    if result.is_err() {
+        tracing::warn!(user_id, "plugin write policy is invalid or duplicated");
+    }
+    result
+}
+
+async fn restore_policy<T: MysqlTransaction>(
+    transaction: &mut T,
+    user_id: i64,
+    row: PolicyRow,
+) -> MysqlResult<()> {
+    if row.is_active == Some(true) {
+        return Ok(());
+    }
+    let revision = business_revision(&row.json)?;
+    let result = transaction
+        .execute(
+            "UPDATE kinds SET json = JSON_SET(json, '$.spec.revision', ?), \
+             is_active = true, updated_at = NOW() WHERE id = ? AND user_id = ? \
+             AND kind = 'ConnectorAuthPolicy' AND namespace = 'plugin-auth' \
+             AND name = 'account' AND is_active IS false AND \
+             COALESCE(JSON_EXTRACT(json, '$.spec.revision'), 0) = ?",
+            (revision + 1, row.id, user_id, revision),
+        )
+        .await?;
+    if result.rows_affected != 1 {
+        return Err(coordination_error("plugin_write_conflict"));
+    }
+    Ok(())
+}
+
+async fn ensure_policy_in<T: MysqlTransaction>(
+    transaction: &mut T,
+    user_id: i64,
+) -> MysqlResult<()> {
+    if let Some(row) = load_policy(transaction, user_id).await? {
+        return restore_policy(transaction, user_id, row).await;
+    }
+    transaction
+        .execute(
+            "INSERT INTO kinds (user_id, kind, namespace, name, json, is_active, \
+             created_at, updated_at) VALUES (?, 'ConnectorAuthPolicy', \
+             'plugin-auth', 'account', \
+             '{\"spec\":{\"enabled\":true,\"revision\":0}}', true, NOW(), NOW())",
+            (user_id,),
+        )
+        .await
+        .map(|_| ())
 }
 
 pub(super) fn coordination_error(code: &str) -> MysqlError {
