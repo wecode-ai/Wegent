@@ -362,6 +362,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         timeoutMs: uiTimeoutMs,
       })
       await control.command('waitFor', editor, { visible: false })
+      await control.command('waitFor', scoped('[data-testid="collaboration-agents-page"]'))
       const agentRowId = await waitForTestIdByText(
         control,
         scoped('[data-testid="collaboration-agents-page"]'),
