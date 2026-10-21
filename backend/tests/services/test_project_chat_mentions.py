@@ -17,6 +17,7 @@ from app.models.user import User
 from app.models.wework_notification import WeworkNotification
 from app.schemas.project_chat import ProjectChatSend
 from app.services.cloud_projects.service import cloud_project_service
+from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.project_chat.service import project_chat_service
 from tests.utils.collaboration import authorize_project
 
@@ -86,6 +87,102 @@ def mention_request(
             {"type": "user", "id": str(recipient.id), "label": recipient.user_name}
         ],
     )
+
+
+@pytest.mark.parametrize("provider", ["github", "gitlab"])
+@pytest.mark.parametrize("shadow", [False, True])
+@pytest.mark.parametrize("security", ["open", "related"])
+@pytest.mark.parametrize("access", ["unrelated", "assignee", "maintainer"])
+@pytest.mark.parametrize("reply", [False, True])
+def test_cp14_external_issue_mentions_require_provider_visibility(
+    test_db,
+    test_user,
+    mention_scope,
+    monkeypatch,
+    provider,
+    shadow,
+    security,
+    access,
+    reply,
+):
+    """External labels govern recipients even without a local Issue row."""
+    project, workspace, recipient, item, schedule = mention_scope
+    project.metadata_json = {"task_provider": provider}
+    task_id = f"{project.project_key}-1"
+    test_db.delete(item)
+    if shadow:
+        test_db.add(
+            LoopItem(
+                id=task_id,
+                cloud_project_id=project.id,
+                title="External issue index",
+                created_by_user_id=test_user.id,
+                metadata_json={"security_level": "open"},
+            )
+        )
+    grant_member(
+        test_db,
+        "Workspace",
+        workspace.id,
+        recipient.id,
+        "Maintainer" if access == "maintainer" else "Viewer",
+    )
+    labels = [f"wegent:security:{security}"]
+    if access == "assignee":
+        labels.append(f"wegent:assignee:user:{recipient.id}")
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "_get_issue",
+        lambda _project, _number: {
+            "number": 1,
+            "title": "Provider issue",
+            "state": "open" if provider == "github" else "opened",
+            "labels": labels,
+        },
+    )
+    test_db.commit()
+    request = mention_request(project, recipient, task_id)
+    if reply:
+        root = project_chat_service.send(
+            test_db,
+            user_id=test_user.id,
+            user_name=test_user.user_name,
+            request=ProjectChatSend(
+                client_message_id=str(uuid.uuid4()),
+                project_id=project.id,
+                task_id=task_id,
+                content="Confidential external root comment",
+            ),
+        )
+        request.reply_to_message_id = root.message.message_id
+
+    if security == "open" or access != "unrelated":
+        result = project_chat_service.send(
+            test_db,
+            user_id=test_user.id,
+            user_name=test_user.user_name,
+            request=request,
+        )
+        assert result.created
+        test_db.expire_all()
+        assert test_db.query(WeworkNotification).one().user_id == recipient.id
+        assert test_db.query(ProjectChatMessage).count() == 1 + int(reply)
+        schedule.assert_called_once()
+    else:
+        with pytest.raises(HTTPException) as error:
+            project_chat_service.send(
+                test_db,
+                user_id=test_user.id,
+                user_name=test_user.user_name,
+                request=request,
+            )
+        assert error.value.status_code == 422
+        assert error.value.detail == "Mentioned user cannot view this issue"
+        test_db.rollback()
+        assert test_db.query(ProjectChatMessage).count() == int(reply)
+        assert test_db.query(WeworkNotification).count() == 0
+        schedule.assert_not_called()
+    assert (test_db.get(LoopItem, task_id) is not None) == shadow
 
 
 @pytest.mark.parametrize("source", ["Workspace", "CloudProject"])

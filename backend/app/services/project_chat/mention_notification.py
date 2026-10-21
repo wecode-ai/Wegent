@@ -17,6 +17,7 @@ def notify_project_chat_mentions(
     db: Session,
     *,
     project: CloudProject,
+    task_id: str | None,
     item: LoopItem | None,
     comment_id: str,
     actor_user_id: int,
@@ -37,11 +38,8 @@ def notify_project_chat_mentions(
     recipient_ids = _mentioned_member_ids(
         mentions, project_participant_ids(db, project)
     )
-    if item is not None:
-        for recipient_id in recipient_ids:
-            access = require_cloud_project_role(db, int(project.id), recipient_id)
-            if not can_view_item(db, access, item, recipient_id):
-                raise HTTPException(422, "Mentioned user cannot view this issue")
+    for recipient_id in recipient_ids:
+        _require_issue_visibility(db, project, task_id, item, recipient_id)
 
     preview = comment_preview(content)
     target = board_notification_target(db, project, item)
@@ -67,6 +65,36 @@ def notify_project_chat_mentions(
             comment_id=message.comment_id,
             payload=message.payload,
         )
+
+
+def _require_issue_visibility(
+    db: Session,
+    project: CloudProject,
+    task_id: str | None,
+    item: LoopItem | None,
+    recipient_id: int,
+) -> None:
+    """Use the owning provider's read policy before exposing Issue previews."""
+
+    if task_id is None:
+        return
+    if project.task_provider in {"github", "gitlab"}:
+        from app.services.loop_items.external_provider import (
+            external_loop_item_provider,
+        )
+
+        try:
+            external_loop_item_provider.get(db, task_id, recipient_id)
+        except HTTPException as exc:
+            if exc.status_code in {403, 404}:
+                raise HTTPException(
+                    422, "Mentioned user cannot view this issue"
+                ) from exc
+            raise
+        return
+    access = require_cloud_project_role(db, int(project.id), recipient_id)
+    if item is None or not can_view_item(db, access, item, recipient_id):
+        raise HTTPException(422, "Mentioned user cannot view this issue")
 
 
 def _mentioned_member_ids(

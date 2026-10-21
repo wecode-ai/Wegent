@@ -1000,6 +1000,7 @@ class ProjectChatService:
         notify_project_chat_mentions(
             db,
             project=project,
+            task_id=request.task_id,
             item=item,
             comment_id=message_id,
             actor_user_id=user_id,
