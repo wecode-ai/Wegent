@@ -95,6 +95,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
   let pendingCommentDocumentLink = ''
   let latestCommentDocumentLink = ''
   let pendingDocumentResponse = null
+  let pendingDocumentRequestCount = 0
   let latestDocumentRequestCount = 0
 
   const ownerRequest = (pathname, options) => requestJson(backendUrl, ownerToken, pathname, options)
@@ -246,39 +247,62 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     const documentLink = url =>
       `${activeSurface} a[data-testid="assistant-markdown-link"][href="${url}"]`
     const browserPanel = `${activeSurface} [data-testid="collaboration-embedded-browser-panel"]`
-    await control.command('click', documentLink(pendingCommentDocumentLink), { visible: true })
-    await waitForApiValue(
-      async () => Boolean(pendingDocumentResponse),
-      Boolean,
-      'The first comment document never began loading',
-      uiTimeoutMs
-    )
+    let heldResponse = null
+    let openingNativeLabel = null
     try {
+      await control.command('click', documentLink(pendingCommentDocumentLink), { visible: true })
+      heldResponse = await waitForApiValue(
+        async () => pendingDocumentResponse,
+        Boolean,
+        'The first comment document never began loading',
+        uiTimeoutMs
+      )
+      assert.equal(heldResponse.destroyed, false, 'The first request must still be connected')
+      assert.equal(heldResponse.writableEnded, false, 'The first response must still be held')
       const browserLabel = await collaborationBrowserLabel(control, browserPanel)
       const openingPage = JSON.parse(
         await control.command('getEmbeddedBrowserPageState', 'body', { value: browserLabel })
       )
+      assert.equal(openingPage.visible, true)
+      assert.equal(openingPage.navigationError, null)
       assert.equal(openingPage.isLoading, true, 'The first document must still be loading')
       assert.equal(openingPage.url, pendingCommentDocumentLink)
+      assert.ok(openingPage.nativeLabel, 'The loading page must identify its native browser')
+      openingNativeLabel = openingPage.nativeLabel
       // The held HTTP response keeps the first user-triggered browser.open pending.
       // A second UI click must win when that original native open completes.
       await control.command('click', documentLink(latestCommentDocumentLink), { visible: true })
     } finally {
-      pendingDocumentResponse.end(
-        `<!doctype html><title>Pending comment document</title><p>${COMMENT_DOCUMENT_TEXT}</p>`
-      )
-      pendingDocumentResponse = null
+      if (heldResponse && !heldResponse.destroyed && !heldResponse.writableEnded) {
+        heldResponse.end(
+          `<!doctype html><title>Pending comment document</title><p>${COMMENT_DOCUMENT_TEXT}</p>`
+        )
+      }
+      if (pendingDocumentResponse === heldResponse) pendingDocumentResponse = null
     }
     for (const requestNumber of [1, 2, 3]) {
       if (requestNumber > 1) {
         await control.command('click', documentLink(latestCommentDocumentLink), { visible: true })
       }
-      await waitForBrowserPage(
+      const loadedPage = await waitForBrowserPage(
         control,
         await collaborationBrowserLabel(control, browserPanel),
         latestCommentDocumentLink,
         `${COMMENT_LATEST_DOCUMENT_TEXT}: request ${requestNumber}`
       )
+      if (requestNumber < 3) {
+        assert.equal(
+          loadedPage.nativeLabel,
+          openingNativeLabel,
+          'Replacing the pending URL and reloading must reuse the same native browser'
+        )
+      } else {
+        assert.notEqual(
+          loadedPage.nativeLabel,
+          openingNativeLabel,
+          'Reopening a closed panel must create a new native browser'
+        )
+      }
       console.log(
         `[e2e] Comment browser verified: ${['pending open replacement', 'same URL reload', 'closed panel reopen'][requestNumber - 1]}`
       )
@@ -286,6 +310,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         await closeCommentBrowser(control, activeSurface, routeBeforeClick)
       }
     }
+    assert.equal(pendingDocumentRequestCount, 1)
+    assert.equal(latestDocumentRequestCount, 3)
   }
 
   async function verifyCommentLinks(control, activeSurface) {
@@ -357,7 +383,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         'cache-control': 'no-store',
       })
       if (url.searchParams.get('load') === 'pending') {
-        assert.equal(pendingDocumentResponse, null, 'The pending document was requested twice')
+        pendingDocumentRequestCount += 1
+        assert.equal(pendingDocumentRequestCount, 1, 'The pending document was requested twice')
         pendingDocumentResponse = response
         return true
       }
@@ -367,6 +394,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
           : COMMENT_DOCUMENT_TEXT
       response.end(`<!doctype html><title>Wework comment link fixture</title><p>${text}</p>`)
       return true
+    },
+
+    cleanup() {
+      pendingDocumentResponse?.destroy()
+      pendingDocumentResponse = null
     },
 
     async prepareCloud(cloud) {
