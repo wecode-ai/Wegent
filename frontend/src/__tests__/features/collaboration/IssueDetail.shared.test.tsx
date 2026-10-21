@@ -709,7 +709,7 @@ describe('shared IssueDetail', () => {
     }
   )
 
-  it('keeps an uploaded attachment when an older list request resolves afterward', async () => {
+  it('uploads to an empty-description Issue and preserves it when an older list resolves', async () => {
     let resolveAttachments: (attachments: []) => void = () => undefined
     const list = jest.fn(
       () =>
@@ -738,8 +738,13 @@ describe('shared IssueDetail', () => {
       },
     })
 
-    renderDetail(api)
-    fireEvent.click(screen.getByTestId('cloud-todo-detail-description'))
+    const emptyIssue = { ...issue, description: '' }
+    renderDetail(api, { issue: emptyIssue, allIssues: [emptyIssue] })
+    expect(screen.queryByTestId('cloud-todo-detail-description')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-attachment-input')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-title'))
+    expect(screen.getByTestId('cloud-todo-detail-title')).not.toHaveAttribute('readonly')
+    expect(screen.getByTestId('cloud-todo-attachment-input')).toBeEnabled()
     fireEvent.change(screen.getByTestId('cloud-todo-attachment-input'), {
       target: { files: [new File(['race'], uploaded.display_name, { type: 'text/plain' })] },
     })
