@@ -1,5 +1,5 @@
-import { cp, mkdir, mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { createHash } from 'node:crypto'
+import { cp, lstat, mkdir, mkdtemp, rename, rm } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -15,13 +15,20 @@ const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 export async function stageProcessExplorer({
   sourceRoot = resolve(electronRoot, '../../packages/process-explorer/src'),
   targetRoot = resolve(electronRoot, 'src/vendor/process-explorer'),
+  stagingRoot = resolve(electronRoot, '.process-explorer-staging'),
 } = {}) {
   await mkdir(dirname(targetRoot), { recursive: true })
   const release = await acquireProcessLock(`${targetRoot}.lock`)
+  const backup = join(
+    stagingRoot,
+    `${createHash('sha256').update(resolve(targetRoot)).digest('hex')}.previous`
+  )
   let staging
   try {
-    // Keep temporary TypeScript sources outside src so another tsc cannot discover them.
-    staging = await mkdtemp(join(tmpdir(), 'wework-process-explorer-stage-'))
+    await recoverPublication(targetRoot, backup)
+    // Use the same filesystem, outside src, so publication only renames complete trees.
+    await mkdir(stagingRoot, { recursive: true })
+    staging = await mkdtemp(join(stagingRoot, 'prepared-'))
     for (const entry of ['contract.ts', 'core', 'host']) {
       await cp(join(sourceRoot, entry), join(staging, entry), {
         recursive: true,
@@ -30,8 +37,7 @@ export async function stageProcessExplorer({
     }
     // A parallel check may already be reading this tree after its own staging step.
     if (await contentMatches(staging, targetRoot)) return
-    await rm(targetRoot, { recursive: true, force: true })
-    await cp(staging, targetRoot, { recursive: true })
+    await publishPreparedTree(staging, targetRoot, backup)
   } finally {
     try {
       if (staging) await rm(staging, { recursive: true, force: true })
@@ -39,6 +45,43 @@ export async function stageProcessExplorer({
       await release()
     }
   }
+}
+
+async function exists(path) {
+  try {
+    await lstat(path)
+    return true
+  } catch (error) {
+    if (error.code === 'ENOENT') return false
+    throw error
+  }
+}
+
+async function recoverPublication(target, backup) {
+  if (!(await exists(backup))) return
+  if (await exists(target)) await rm(backup, { recursive: true, force: true })
+  else await rename(backup, target)
+}
+
+async function publishPreparedTree(staging, target, backup) {
+  const hadTarget = await exists(target)
+  if (hadTarget) await rename(target, backup)
+  try {
+    await rename(staging, target)
+  } catch (error) {
+    if (hadTarget) {
+      try {
+        await rename(backup, target)
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [error, rollbackError],
+          'Failed to publish and restore staged sources'
+        )
+      }
+    }
+    throw error
+  }
+  if (hadTarget) await rm(backup, { recursive: true, force: true })
 }
 
 async function contentMatches(source, target) {
