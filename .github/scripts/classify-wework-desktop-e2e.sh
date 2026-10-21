@@ -17,6 +17,8 @@ core_segments=(
   stand-in-workspace
   stand-in-controls
   stand-in-cloud
+  stand-in-notifications
+
   stand-in-permissions
   collaboration-remote-agent-dispatch
   collaboration-local-group-coordinate
@@ -204,7 +206,7 @@ core_shards=(
   project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,stand-in,stand-in-workspace,stand-in-controls,collaboration-local-group-coordinate,collaboration-human-round-resume
   resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-task-discovery,collaboration-app-queue-identity,collaboration-issue-archive,collaboration-local-group-cancellation
   workspace-attachments,automation-lifecycle,drawing-attachment
-  project-assignment-notification,priority-filter,collaboration-issue-comment-mention,collaboration-issue-comment-attachments
+  project-assignment-notification,priority-filter,collaboration-issue-comment-mention,collaboration-issue-comment-attachments,stand-in-notifications
   transcript-sync,background-terminals
   runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification,collaboration-issue-mcp-comments,latest-conversation-history
@@ -712,8 +714,17 @@ classify_wework_path() {
       ;;
 
     wework/e2e/desktop/scenarios/goal-state-sync.scenario.mjs | \
+      wework/e2e/desktop/scenarios/goal-output-identity.scenario.mjs | \
       wework/src/features/workbench/runtimeTaskLifecycle/goalSynchronization*)
       select_target "core:goal-state-sync"
+      return
+      ;;
+
+    wework/src/features/notifications/* | \
+      wework/e2e/desktop/scenarios/stand-in-notifications.scenario.mjs)
+      select_target "core:stand-in-notifications"
+      select_target "core:stand-in-cloud"
+      select_target "core:project-assignment-notification"
       return
       ;;
 
@@ -722,6 +733,10 @@ classify_wework_path() {
       wework/src/components/chat/composer/Goal* | \
       wework/src/features/workbench/runtimeTaskReminders*)
       select_target "core:goal-lifecycle"
+      if [[ "$path" == wework/src/features/workbench/runtimeTaskReminders* ]]; then
+        select_target "core:stand-in-notifications"
+        select_target "core:stand-in-cloud"
+      fi
       return
       ;;
 

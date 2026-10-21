@@ -32,6 +32,27 @@ fn interrupted_by_executor_shutdown(
     matches!(result, Err(error) if error == CODEX_APP_SERVER_EXECUTOR_SHUTDOWN)
 }
 
+fn initial_turn_presentation(request: &ExecutionRequest) -> Option<(String, Option<String>)> {
+    // A recovered Goal continues autonomously; it does not submit the persisted user message again.
+    if request
+        .extra
+        .get(RESUME_GOAL_ONLY_MARKER)
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        return None;
+    }
+    let client_user_message_id = request
+        .extra
+        .get("client_user_message_id")
+        .or_else(|| request.extra.get("clientUserMessageId"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    Some((request.subtask_id.clone(), client_user_message_id))
+}
+
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct EncryptedRuntimeTurnQueue {
@@ -994,12 +1015,14 @@ impl RuntimeWorkRpcHandler {
         if !self.is_local_task_execution_accepting_notifications(local_task_id, execution_id) {
             return;
         }
-        let mut event_request = request.clone();
+        let event_request = self.request_for_codex_event(
+            local_task_id,
+            request,
+            active_turn.as_ref().map(|turn| turn.turn_id.as_str()),
+        );
         if let Some(active_turn) = active_turn {
             event_mapper.observe_root_thread_id(&active_turn.thread_id);
             self.record_active_codex_transcript_item(local_task_id, &active_turn.turn_id, &message);
-            event_request =
-                self.request_for_codex_turn(local_task_id, request, &active_turn.turn_id);
         }
         event_mapper.map(
             &self.event_tx,
@@ -1010,22 +1033,32 @@ impl RuntimeWorkRpcHandler {
         );
     }
 
-    fn request_for_codex_turn(
+    fn request_for_codex_event(
         &self,
         local_task_id: &str,
         request: &ExecutionRequest,
-        turn_id: &str,
+        turn_id: Option<&str>,
     ) -> ExecutionRequest {
         let mut event_request = request.clone();
-        event_request.subtask_id = turn_id.to_owned();
-        let initial_turn_id = self.local_task_link(local_task_id).and_then(|link| {
-            link.runtime_handle
-                .get("turnIdsBySubtask")
-                .and_then(|mappings| mappings.get(request.subtask_id.as_str()))
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
+        if let Some(turn_id) = turn_id {
+            event_request.subtask_id = turn_id.to_owned();
+        }
+        let continuation = turn_id.is_some_and(|turn_id| {
+            self.local_task_link(local_task_id).is_some_and(|link| {
+                link.runtime_handle
+                    .get("turnIdsBySubtask")
+                    .and_then(|mappings| mappings.get(request.subtask_id.as_str()))
+                    .and_then(Value::as_str)
+                    .is_some_and(|initial| initial != turn_id)
+            })
         });
-        if initial_turn_id.is_some_and(|initial| initial != turn_id) {
+        if request
+            .extra
+            .get(RESUME_GOAL_ONLY_MARKER)
+            .and_then(Value::as_bool)
+            == Some(true)
+            || continuation
+        {
             event_request.extra.remove("client_user_message_id");
             event_request.extra.remove("clientUserMessageId");
             event_request.extra.remove("runtime_generated_user_message");
@@ -1214,19 +1247,8 @@ impl RuntimeWorkRpcHandler {
             let active_turn_handler = handler.clone();
             let active_turn_local_task_id = turn_local_task_id.clone();
             let active_turn_execution_id = execution_id;
-            let active_turn_subtask_id = request.subtask_id.to_string();
-            let active_turn_client_user_message_id = request
-                .extra
-                .get("client_user_message_id")
-                .or_else(|| request.extra.get("clientUserMessageId"))
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned);
-            let pending_turn_presentation = Arc::new(Mutex::new(Some((
-                active_turn_subtask_id.clone(),
-                active_turn_client_user_message_id,
-            ))));
+            let pending_turn_presentation =
+                Arc::new(Mutex::new(initial_turn_presentation(&request)));
             let active_turn_request = request.clone();
             let callback_hook_turn = Arc::clone(&hook_turn);
             let callback_turn_presentation = Arc::clone(&pending_turn_presentation);
@@ -1381,18 +1403,15 @@ impl RuntimeWorkRpcHandler {
             }
 
             if matches!(result.as_ref(), Err(error) if error == CODEX_APP_SERVER_TURN_CANCELLED) {
-                let mut event_request = request.clone();
-                if let Some(active_turn) = hook_turn
+                let active_turn = hook_turn
                     .lock()
                     .expect("hook turn context lock should not be poisoned")
-                    .as_ref()
-                {
-                    event_request = handler.request_for_codex_turn(
-                        &turn_local_task_id,
-                        &request,
-                        &active_turn.turn_id,
-                    );
-                }
+                    .clone();
+                let event_request = handler.request_for_codex_event(
+                    &turn_local_task_id,
+                    &request,
+                    active_turn.as_ref().map(|turn| turn.turn_id.as_str()),
+                );
                 handler.persist_and_clear_active_codex_transcript(&turn_local_task_id, "cancelled");
                 if handler.settle_cancelled_local_task_execution(&turn_local_task_id, execution_id)
                 {
@@ -1647,11 +1666,11 @@ impl RuntimeWorkRpcHandler {
             );
             return;
         }
-        let mut event_request = request.clone();
-        if let Some(active_turn) = active_turn {
-            event_request =
-                self.request_for_codex_turn(local_task_id, request, &active_turn.turn_id);
-        }
+        let event_request = self.request_for_codex_event(
+            local_task_id,
+            request,
+            active_turn.map(|turn| turn.turn_id.as_str()),
+        );
         let automation_result = match &result {
             Ok(turn) => match &turn.outcome {
                 ExecutionOutcome::Completed { .. } => Some((AutomationRunStatus::Succeeded, None)),
@@ -1923,6 +1942,50 @@ impl RuntimeWorkRpcHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recovered_goal_does_not_rebind_persisted_user_message() {
+        let mut request = ExecutionRequest {
+            subtask_id: "submitted-subtask".to_owned(),
+            extra: serde_json::from_value(json!({
+                "client_user_message_id": "original-user",
+                "clientUserMessageId": "original-user",
+                "runtime_generated_user_message": true,
+            }))
+            .unwrap(),
+            ..ExecutionRequest::default()
+        };
+        assert_eq!(
+            initial_turn_presentation(&request),
+            Some((
+                "submitted-subtask".to_owned(),
+                Some("original-user".to_owned())
+            ))
+        );
+        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        let normal = handler.request_for_codex_event("missing-task", &request, None);
+        assert_eq!(normal.extra, request.extra);
+        request
+            .extra
+            .insert(RESUME_GOAL_ONLY_MARKER.to_owned(), json!(true));
+        assert_eq!(initial_turn_presentation(&request), None);
+
+        for turn_id in [None, Some("recovered-turn")] {
+            let recovered = handler.request_for_codex_event("missing-task", &request, turn_id);
+            assert_eq!(recovered.subtask_id, turn_id.unwrap_or("submitted-subtask"));
+            for key in [
+                "client_user_message_id",
+                "clientUserMessageId",
+                "runtime_generated_user_message",
+            ] {
+                assert!(
+                    !recovered.extra.contains_key(key),
+                    "Recovered turn retained {key}"
+                );
+            }
+        }
+        assert_eq!(request.extra["client_user_message_id"], "original-user");
+    }
 
     fn scheduled_turn(local_task_id: &str) -> SpawnTurnRequest {
         SpawnTurnRequest {

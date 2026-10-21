@@ -24,7 +24,19 @@ The selected Executor checks assignments periodically and calls the ordinary `ru
 
 Each poll checks the ordinary assignment identity and existing task bindings to avoid creating the same assignment again. Ordinary task creation has no atomic cross-device deduplication: two devices reading an unbound assignment simultaneously may each create a task. Stand-in adds no server lock or queue. Users review and submit results through existing flows; Stand-in adds no delivery or review lifecycle. A failed creation RPC rolls back the Issue binding just like manual creation. Recorded failed tasks remain available through existing task recovery and are not repeatedly started by subsequent polls.
 
-Focused tests cover durable versioned settings, independent tag rules, assignment age, existing binding filtering, device switching, and sidebar configuration merging and updates. The `stand-in`, `stand-in-workspace`, `stand-in-cloud`, and `stand-in-controls` desktop checkpoints run in existing CI. Only model responses are replaced; storage, task execution, cloud APIs, and device connections use real implementations.
+## Feedback in collaboration notifications
+
+Collaboration notifications read the existing Runtime execution list and match stand-in tasks by project, Issue, and assignment identity. The original assignment notification shows the mask icon and working, waiting, finished, or failed state. Local and manually started stand-ins without an assignment notification also appear here. Clicking the task title opens the existing execution conversation without dispatching another task.
+
+Notifications show the source, event and time, task content, and lightweight actions without an extra “New task” heading. New notifications snapshot the actual assigning user or manager agent name at creation; inbox reads do not query related records. Entries without a name omit assigner information and show the task title and time directly, without placeholder copy. Stand-in handling updates the identity and state in the same entry.
+
+The inline handling area accepts follow-up instructions, answers real Runtime questions, and retries failed stand-in tasks. Ordinary follow-up input expands after clicking Reply; pending questions appear directly. Replies continue the same conversation. A rejected send keeps the draft and displays the error. Question options and request identifiers come from the conversation, never from interpreting result text.
+
+Completion, failure, and pending input make the entry unread again and update its position. Desktop alerts respect collaboration notification preferences and are suppressed while that execution is visible. The desktop frontend owns this projection; no backend API or Executor protocol is added.
+
+Stand-in read markers and desktop delivery receipts are account-scoped on the current device and do not sync between devices. Original assignment notifications retain the existing read API. Each auxiliary collection retains at most 1000 entries for 90 days and is pruned on reads and writes. Cleanup never deletes real notifications, tasks, or execution history.
+
+Focused tests cover durable versioned settings, independent tag rules, assignment age, existing binding filtering, device switching, and sidebar configuration merging and updates. The `stand-in`, `stand-in-workspace`, `stand-in-cloud`, `stand-in-controls`, and `stand-in-notifications` desktop checkpoints run in existing CI. Only model responses are replaced; storage, task execution, cloud APIs, and device connections use real implementations.
 
 ## Verification plan
 

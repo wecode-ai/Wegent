@@ -692,6 +692,11 @@ export function createDesktopScenario({
         false,
         '人工 assignment 被错误实现为人工子 Issue'
       )
+      assert.equal(
+        humanAssignment.payload.actorName,
+        LEADER,
+        'The assigner must be the actual manager agent, not its credential owner'
+      )
       assert.equal(humanAssignment.payload.action, 'create_personal_task')
       assert.equal(humanAssignment.payload.itemId, String(rootIssue.id))
       assert.equal(humanAssignment.payload.assignmentId, HUMAN_ASSIGNMENT_ID)
@@ -808,6 +813,9 @@ export function createDesktopScenario({
       await control.command('waitFor', '[data-testid="issue-dispatch-notification-create-task"]', {
         text: HUMAN_TASK,
         timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="issue-dispatch-notification-create-task"]', {
+        text: LEADER,
       })
       await control.command('click', '[data-testid="issue-dispatch-notification-create-task"]')
       await control.command(

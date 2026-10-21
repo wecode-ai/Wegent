@@ -27,7 +27,7 @@ const CHECKPOINT_RESOURCES = new Map([
 ])
 const CHECKPOINT_SCENARIO_MODULES = {
   'plugin-toggle-persistence': './scenarios/plugin-toggle-persistence.scenario.mjs',
-  'goal-state-sync': './scenarios/goal-state-sync.scenario.mjs',
+  'goal-state-sync': './scenarios/goal-output-identity.scenario.mjs',
   'collaboration-worktree-policy': './scenarios/collaboration-worktree-policy.scenario.mjs',
   'cloud-model-recovery': './scenarios/cloud-model-recovery.scenario.mjs',
   'task-model-deletion': './scenarios/task-model-deletion.scenario.mjs',
@@ -110,6 +110,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'stand-in-permissions': './scenarios/stand-in-permissions.scenario.mjs',
   'stand-in-workspace': './scenarios/stand-in-workspace.scenario.mjs',
   'stand-in-controls': './scenarios/stand-in-controls.scenario.mjs',
+  'stand-in-notifications': './scenarios/stand-in-notifications.scenario.mjs',
   'collaboration-remote-agent-dispatch':
     './scenarios/collaboration-remote-agent-dispatch.scenario.mjs',
   'collaboration-local-group-coordinate':
@@ -199,6 +200,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'stand-in-permissions',
   'stand-in-workspace',
   'stand-in-controls',
+  'stand-in-notifications',
   'collaboration-remote-agent-dispatch',
   'collaboration-local-group-coordinate',
   'collaboration-remote-group-coordinate',

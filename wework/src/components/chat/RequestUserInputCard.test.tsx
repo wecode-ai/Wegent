@@ -470,3 +470,57 @@ describe('RequestUserInputCard', () => {
     expect(onIgnore).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('compact inline questions', () => {
+  test('single-question options send the original answer without an extra submit control', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(true)
+    const user = userEvent.setup()
+    render(
+      <RequestUserInputCard
+        compact
+        payload={{
+          kind: 'request_user_input',
+          requestId: 17,
+          itemId: 'retention-1',
+          questions: [
+            {
+              id: 'retention',
+              question: '删除后是否保留历史会话？',
+              options: [
+                { label: '保留会话', value: 'keep' },
+                { label: '一并删除', value: 'delete' },
+              ],
+            },
+          ],
+        }}
+        onSubmit={onSubmit}
+      />
+    )
+    expect(screen.queryByTestId('request-user-input-submit-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('request-user-input-ignore-button')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('request-user-input-option-retention-0'))
+    expect(onSubmit).toHaveBeenCalledExactlyOnceWith({
+      requestId: 17,
+      itemId: 'retention-1',
+      answers: { retention: { answers: ['keep'] } },
+    })
+  })
+  test('custom inline answers retain their submit action', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(true)
+    const user = userEvent.setup()
+    render(
+      <RequestUserInputCard
+        compact
+        payload={{
+          kind: 'request_user_input',
+          questions: [{ id: 'details', question: '补充要求', is_other: true }],
+        }}
+        onSubmit={onSubmit}
+      />
+    )
+    await user.type(screen.getByTestId('request-user-input-custom-details'), '保留历史会话')
+    await user.click(screen.getByTestId('request-user-input-submit-button'))
+    expect(onSubmit).toHaveBeenCalledOnce()
+    expect(onSubmit.mock.calls[0][0].answers).toEqual({ details: { answers: ['保留历史会话'] } })
+  })
+})

@@ -57,7 +57,8 @@ export function resolveSharedHarnessRuntimeAssetCacheRoot(
 export function resolveHarnessRuntimeAssetCacheEnvironment(
   environment = process.env,
   runtime = { platform: process.platform },
-  baseDirectory = process.cwd()
+  baseDirectory = process.cwd(),
+  materializedCacheRoot
 ) {
   const { WEWORK_HARNESS_RUNTIME_CACHE_ROOT: _cacheRoot, ...isolatedEnvironment } = environment
 
@@ -68,5 +69,8 @@ export function resolveHarnessRuntimeAssetCacheEnvironment(
       runtime,
       baseDirectory
     ),
+    ...(materializedCacheRoot
+      ? { WEWORK_HARNESS_RUNTIME_CACHE_ROOT: resolve(baseDirectory, materializedCacheRoot) }
+      : {}),
   }
 }

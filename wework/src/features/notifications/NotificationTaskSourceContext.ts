@@ -1,10 +1,12 @@
 import { createContext, useContext } from 'react'
 import type { RuntimeTaskReminderState } from '@/features/workbench/runtimeTaskReminders'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import type { RuntimeTaskAddress } from '@/types/api'
 
 export type TaskSource = Pick<
   RuntimeTaskReminderState,
   'items' | 'unreadTaskKeys' | 'markRuntimeTaskRead'
->
+> & { services?: WorkbenchServices; currentAddress?: RuntimeTaskAddress | null; userId?: number }
 
 /**
  * The assignment binding every task started from an Issue dispatch shares,
