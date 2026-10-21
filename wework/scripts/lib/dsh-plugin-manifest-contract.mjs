@@ -137,24 +137,28 @@ async function readManifest(pluginRoot) {
   return JSON.parse(await readFile(join(pluginRoot, 'package.json'), 'utf8'))
 }
 
+/** Require a dependency or injection list to contain one value. */
 function assertIncludes(values, expected, label) {
   if (!values.includes(expected)) {
     throw new Error(`${label} must include ${expected}`)
   }
 }
 
+/** Require a dependency or injection list to omit one value. */
 function assertExcludes(values, unexpected, label) {
   if (values.includes(unexpected)) {
     throw new Error(`${label} must not include ${unexpected}`)
   }
 }
 
+/** Require a manifest value to match the runtime-derived expectation. */
 function assertEquals(actual, expected, label) {
   if (actual !== expected) {
     throw new Error(`${label} must be ${String(expected)}, received ${String(actual)}`)
   }
 }
 
+/** Remove optional quotes from a scalar lockfile value. */
 function parseYamlScalar(value) {
   const trimmed = value.trim()
   if (
@@ -166,6 +170,7 @@ function parseYamlScalar(value) {
   return trimmed
 }
 
+/** Escape a package name before embedding it in a regular expression. */
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }

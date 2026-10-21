@@ -61,6 +61,7 @@ describe('DSH plugin manifest contract', () => {
   })
 })
 
+/** Create an isolated selected-runtime and plugin-manifest fixture. */
 async function createFixture(plugins) {
   const root = await mkdtemp(join(tmpdir(), 'wegent-dsh-manifest-'))
   fixtureRoots.push(root)
@@ -88,10 +89,12 @@ async function createFixture(plugins) {
   return { coreRuntimeSourcePath, harnessRuntimeRoot, pluginRoots }
 }
 
+/** Validate one isolated contract fixture. */
 function validateFixture(fixture) {
   return validateDshWebPluginManifests(fixture)
 }
 
+/** Build a web plugin manifest with overridable compatibility metadata. */
 function webPlugin(
   name,
   {
@@ -120,6 +123,7 @@ function webPlugin(
   }
 }
 
+/** Build the minimal lockfile metadata required by the contract validator. */
 function runtimeLockfile() {
   return `lockfileVersion: '9.0'
 
