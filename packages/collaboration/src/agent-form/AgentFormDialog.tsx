@@ -180,14 +180,13 @@ export function AgentFormDialog({
           />
         ) : null}
 
-        <div className="min-h-0 space-y-4 overflow-y-auto px-6 pb-5 pt-2">
-          {loading ? (
-            <p className="flex items-center gap-2 text-sm text-text-muted">
-              <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" />
-              {loadingLabel}
-            </p>
-          ) : null}
-
+        {loading ? (
+          <p className="flex items-center gap-2 px-6 pb-5 pt-2 text-sm text-text-muted">
+            <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" />
+            {loadingLabel}
+          </p>
+        ) : null}
+        <div className="min-h-0 space-y-4 overflow-y-auto px-6 pb-5 pt-2" hidden={loading}>
           <section
             aria-labelledby={runtimeTab ? `${testIds.dialog}-tab-basic` : undefined}
             className="min-w-0 space-y-4"
