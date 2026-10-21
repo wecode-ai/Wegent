@@ -14,8 +14,17 @@ import {
   decodeCodexComposerSkills,
 } from './codex-composer-catalog'
 
+export type RuntimeComposerCatalogTarget =
+  | RuntimeTaskAddress
+  | {
+      deviceId: string
+      scope: 'workspace'
+      workspacePath: string | null
+      taskId?: never
+    }
+
 export interface RuntimeComposerCatalogSnapshot {
-  taskId: string
+  taskId: string | null
   workspacePath: string
   projectPluginIds: string[]
   apps: LocalDeviceApp[]
@@ -81,17 +90,30 @@ function summary(value: unknown): CodexPluginSummary {
 
 /** An addressed snapshot retains all membership/authorization data for catalog merging. */
 export function decodeRuntimeComposerSnapshot(
-  address: Pick<RuntimeTaskAddress, 'taskId'>,
+  address:
+    | Pick<RuntimeTaskAddress, 'taskId'>
+    | Extract<RuntimeComposerCatalogTarget, { scope: 'workspace' }>,
   value: unknown,
   cloudInstalledPlugins: InstalledPlugin[] = []
 ): RuntimeComposerCatalogSnapshot {
   const snapshot = catalogRecord(value)
-  if (catalogString(snapshot.taskId) !== address.taskId)
+  if ('scope' in address) {
+    if (
+      snapshot.scope !== 'workspace' ||
+      snapshot.taskId !== null ||
+      snapshot.workspacePath !== (address.workspacePath ?? '')
+    )
+      throw new Error('Composer catalog belongs to another workspace')
+  } else if (catalogString(snapshot.taskId) !== address.taskId) {
     throw new Error('Composer catalog belongs to another task')
+  }
   const store = catalogRecord(snapshot.store)
   return {
-    taskId: address.taskId,
-    workspacePath: catalogString(snapshot.workspacePath),
+    taskId: address.taskId ?? null,
+    workspacePath:
+      'scope' in address && address.workspacePath === null
+        ? ''
+        : catalogString(snapshot.workspacePath),
     projectPluginIds: catalogArray(snapshot.projectPluginIds).map(catalogString),
     apps: decodeCodexComposerApps(snapshot.apps),
     skills: decodeCodexComposerSkills(snapshot.skills),

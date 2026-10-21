@@ -4,7 +4,7 @@ import {
 } from '@wegent/chat-core/composer-plugin-trial'
 import { runtimePaneQueue } from './runtimePaneQueues'
 import { ComposerCatalogContext } from '@/components/chat/composer/ComposerCatalogContext'
-import { useTaskComposerCatalog } from './useTaskComposerCatalog'
+import { useRuntimeComposerCatalog } from '@/components/chat/composer/useRuntimeComposerCatalog'
 import { resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
 import {
   runtimeQueuedMessageRequest,
@@ -183,7 +183,7 @@ export function TemporaryChatPanel({
   const catalogTranslate = useCallback((key: string) => String(t(key)), [t])
   const catalogAddress = address ?? source
   const catalogDeviceId = resolveLocalWorkbenchDeviceId(state.devices, catalogAddress?.deviceId)
-  const composerCatalog = useTaskComposerCatalog(
+  const composerCatalog = useRuntimeComposerCatalog(
     catalogAddress && catalogDeviceId ? { ...catalogAddress, deviceId: catalogDeviceId } : null,
     services,
     catalogTranslate

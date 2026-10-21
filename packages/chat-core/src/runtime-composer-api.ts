@@ -1,6 +1,8 @@
 import type { InstalledPlugin } from './installed-plugin-types'
-import type { RuntimeTaskAddress } from './runtime'
-import { decodeRuntimeComposerSnapshot } from './runtime-composer-snapshot'
+import {
+  decodeRuntimeComposerSnapshot,
+  type RuntimeComposerCatalogTarget,
+} from './runtime-composer-snapshot'
 import type { LocalDeviceSkill } from './runtime-composer-catalog'
 import type { CloudRuntimeIpcClient } from './runtime-ipc'
 import type { RuntimeWorkspaceSearchResponse } from './runtime-workspace-search'
@@ -40,13 +42,18 @@ export function createRuntimeComposerApi(
   listCloudInstalledPlugins: (deviceId: string) => Promise<InstalledPlugin[]>
 ) {
   return {
-    readCatalog: async (address: RuntimeTaskAddress, forceRefresh = false) => {
-      if (!address.deviceId.trim() || !address.taskId.trim())
+    readCatalog: async (address: RuntimeComposerCatalogTarget, forceRefresh = false) => {
+      if (!address.deviceId.trim() || (!('scope' in address) && !address.taskId.trim()))
         throw new Error('Composer device and task are required')
       const [response, installed] = await Promise.all([
         ipc.request<unknown>(
           'runtime.composer.catalog.read',
-          { taskId: address.taskId, forceRefresh },
+          {
+            ...('scope' in address
+              ? { scope: address.scope, workspacePath: address.workspacePath }
+              : { taskId: address.taskId }),
+            forceRefresh,
+          },
           address.deviceId
         ),
         listCloudInstalledPlugins(address.deviceId),
