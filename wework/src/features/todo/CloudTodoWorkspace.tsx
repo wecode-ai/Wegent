@@ -3108,9 +3108,14 @@ export function CloudTodoWorkspace({
       activeItemTaskBindings[item.id]?.length ?? 0,
       runtimeAddressesByWorkItem.get(`${item.cloud_project_id}:${item.id}`)?.length ?? 0
     )
-    const previousItems = activeBoardSourceItems
-    if (itemProject?.location !== 'cloud') {
-      setItems(mutation.optimisticItems)
+    const acceptPersistedMove = (updated: CloudLoopItem) => {
+      const locatedUpdated = { ...updated, project_store: item.project_store }
+      if (itemProject?.location === 'local') {
+        setItems(current =>
+          current.map(candidate => (candidate.id === updated.id ? locatedUpdated : candidate))
+        )
+      }
+      setSelectedItem(current => (current?.id === updated.id ? locatedUpdated : current))
     }
     setBoardError(null)
     try {
@@ -3157,7 +3162,8 @@ export function CloudTodoWorkspace({
         commands: {
           update: updateStandardBoardItem,
           assign: assignItem,
-          refreshOrder: async () => {
+          refreshOrder: async saved => {
+            acceptPersistedMove(saved)
             if (itemProject.location === 'cloud') {
               await cloudWorkspace.commands.loadProjectSnapshot(String(item.cloud_project_id), {
                 invalidate: true,
@@ -3180,12 +3186,7 @@ export function CloudTodoWorkspace({
         notifyAssignee,
       })
       const locatedUpdated = { ...updated, project_store: item.project_store }
-      if (itemProject.location === 'local') {
-        setItems(current =>
-          current.map(candidate => (candidate.id === updated.id ? locatedUpdated : candidate))
-        )
-      }
-      setSelectedItem(current => (current?.id === updated.id ? locatedUpdated : current))
+      if (!mutation.position) acceptPersistedMove(updated)
       const shouldOpenTaskComposer =
         enteringExecution &&
         shouldPrepareWorkItemTask(locatedUpdated, item.status, taskBindingCount)
@@ -3247,7 +3248,6 @@ export function CloudTodoWorkspace({
       })
       return true
     } catch (cause) {
-      if (itemProject?.location === 'local') setItems(previousItems)
       const candidates = automationSelectionCandidates(cause)
       if (candidates && !automationRuleId) {
         setBoardError(null)

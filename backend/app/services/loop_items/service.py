@@ -936,14 +936,29 @@ class LoopItemService:
     ) -> list[LoopItem]:
         """Persist sibling order, optionally restricted to a status lane."""
 
-        self._require_internal_task_project(
+        access = self._require_internal_task_project(
             db, cloud_project_id, user_id, BaseRole.Developer
         )
         siblings = sibling_items(db, str(cloud_project_id), values.parent_id)
+        visible_ids = None
+        if not has_permission(access.role, BaseRole.Maintainer):
+            visible_ids = {
+                item_id
+                for (item_id,) in db.query(LoopItem.id)
+                .filter(
+                    LoopItem.cloud_project_id == cloud_project_id,
+                    loop_datetime_is_unset(LoopItem.deleted_at),
+                    visible_item_filter(user_id, access.project),
+                )
+                .all()
+            }
+            if any(item_id not in visible_ids for item_id in values.item_ids):
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
         lane = [
             item
             for item in siblings
-            if values.status is None or item.status == values.status
+            if (values.status is None or item.status == values.status)
+            and (visible_ids is None or item.id in visible_ids)
         ]
         by_id = {item.id: item for item in lane}
         requested_ids = list(

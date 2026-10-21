@@ -4904,6 +4904,54 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute('data-task-id', inboxItem.id)
   })
 
+  it.each(['write', 'refresh'])(
+    'keeps the persisted local move state after a %s failure',
+    async stage => {
+      const localProject = { ...project, project_store: 'local' as const }
+      const localApi = services().deliveryApi!
+      let committed = false
+      localApi.listCloudProjects = vi.fn(async () => ({ items: [localProject] }))
+      localApi.listLoopItems = vi.fn(async () => {
+        if (committed) throw new Error('Order refresh failed')
+        return { items: [item] }
+      })
+      localApi.updateLoopItem = vi.fn(async (_id, update) => {
+        if (stage === 'write') throw new Error('Atomic write failed')
+        committed = true
+        return { ...item, ...update, version: item.version + 1 }
+      })
+      const cloudApi = services().deliveryApi!
+      cloudApi.listCloudProjects = vi.fn(async () => ({ items: [] }))
+      render(
+        <CloudTodoWorkspace
+          user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+          localProjects={[]}
+          services={services({
+            deliveryApi: cloudApi,
+            projectSpaceApis: { local: localApi, cloud: cloudApi, defaultLocation: 'local' },
+          })}
+        />
+      )
+      await userEvent.click(await screen.findByTestId('cloud-sidebar-project-11'))
+      await screen.findByTestId('cloud-todo-card-WEG-1')
+      fireEvent.click(screen.getByTestId('mock-dnd-drag-to-pending'))
+      await screen.findByText(stage === 'write' ? 'Atomic write failed' : 'Order refresh failed')
+      const lane = stage === 'write' ? 'in_progress' : 'pending'
+      expect(
+        within(screen.getByTestId(`cloud-todo-column-${lane}`)).getByTestId('cloud-todo-card-WEG-1')
+      ).toBeInTheDocument()
+      expect(localApi.updateLoopItem).toHaveBeenCalledTimes(1)
+      expect(localApi.updateLoopItem).toHaveBeenCalledWith(
+        item.id,
+        expect.objectContaining({
+          version: item.version,
+          status: 'pending',
+          position: { beforeItemId: null },
+        })
+      )
+    }
+  )
+
   it('fails closed when dragging a cloud Issue without can_edit', async () => {
     const readOnlyItem = {
       ...item,
