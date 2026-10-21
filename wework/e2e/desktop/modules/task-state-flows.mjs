@@ -464,6 +464,11 @@ export async function verifyAsyncQuestionWaitingIndicator({
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes(`runtime-local-task-waiting-${taskId}`),
+    'The sidebar did not receive the accepted async reply state'
+  )
   assert.equal(
     Number(await control.command('getElementCount', waitingSelector)),
     0,

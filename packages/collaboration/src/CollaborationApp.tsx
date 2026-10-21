@@ -386,7 +386,7 @@ export function CollaborationApp({
       setArchivedIssues((current) =>
         current.filter((candidate) => candidate.id !== issue.id),
       );
-      await commands.loadProjectSnapshot(project.id);
+      await commands.loadProjectSnapshot(project.id, { invalidate: true });
     } catch (error) {
       setArchiveDrawerError(
         error instanceof Error
