@@ -2,6 +2,13 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer utilities {
+  /* Preserve explicit outline opt-outs against DSH's late-injected focus color. */
+  .outline-none:focus-visible {
+    outline-color: transparent;
+  }
+}
+
 .electron-titlebar-drag-region {
   -webkit-app-region: drag;
 }
