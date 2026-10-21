@@ -24,6 +24,7 @@ class RedisSubscriptionServer:
         self.ready_callback: dict | None = None
         self.handlers: set[asyncio.Task] = set()
         self.subscribers: set[asyncio.StreamWriter] = set()
+        self.heartbeats: dict[asyncio.StreamWriter, asyncio.Task[None]] = {}
         self.connections_closed = asyncio.Event()
         self.connections_closed.set()
 
@@ -59,11 +60,22 @@ class RedisSubscriptionServer:
                 b"*3\r\n$7\r\nmessage\r\n$8\r\nsocketio\r\n$86732\r\n"
                 b'{"method":"emit","event":"chat:block_updated"}'
             )
-        elif self.subscriptions > 1 and self.ready_callback is not None:
-            writer.write(
-                self.message(b"socketio", json.dumps(self.ready_callback).encode())
-            )
+        elif self.subscriptions > 1:
+            if self.ready_callback is not None:
+                writer.write(
+                    self.message(b"socketio", json.dumps(self.ready_callback).encode())
+                )
+            if writer not in self.heartbeats:
+                self.heartbeats[writer] = asyncio.create_task(self.keep_alive(writer))
         await writer.drain()
+
+    @staticmethod
+    async def keep_alive(writer: asyncio.StreamWriter) -> None:
+        """Keep recovered connections healthy without generating Socket.IO events."""
+        while True:
+            await asyncio.sleep(0.05)
+            writer.write(b"*2\r\n$4\r\npong\r\n$0\r\n\r\n")
+            await writer.drain()
 
     async def publish_callback(self, channel: bytes, payload: bytes) -> None:
         emit = json.loads(payload)
@@ -112,6 +124,10 @@ class RedisSubscriptionServer:
                 await writer.drain()
         finally:
             self.subscribers.discard(writer)
+            heartbeat = self.heartbeats.pop(writer, None)
+            if heartbeat is not None:
+                heartbeat.cancel()
+                await asyncio.gather(heartbeat, return_exceptions=True)
             writer.close()
             await writer.wait_closed()
             self.handlers.discard(task)
@@ -172,6 +188,10 @@ async def test_stalled_subscription_resubscribes_and_receives_rpc_ack(
         except TimeoutError:
             pytest.fail("Socket.IO Redis listener did not recover from a stalled read")
 
+        # Recovery must survive a scheduling delay longer than the read timeout.
+        recovered_subscriptions = redis_subscription.subscriptions
+        await asyncio.sleep(socketio_core.settings.SOCKETIO_REDIS_SOCKET_TIMEOUT * 1.75)
+        assert redis_subscription.subscriptions == recovered_subscriptions
         result = await server.call(
             "runtime:rpc",
             {"method": "runtime.capacity.get", "payload": {}},

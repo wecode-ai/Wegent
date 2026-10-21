@@ -167,12 +167,14 @@ async function assertReleasePackageResources() {
   assert.equal(new Set(currentRuntimes.map(runtime => runtime.assetName)).size, 1)
   assert.equal(new Set(currentRuntimes.map(runtime => runtime.archiveSha256)).size, 1)
   assert.equal(new Set(currentRuntimes.map(runtime => runtime.archiveBytes)).size, 1)
-  assert.ok(
-    catalog.runtimes.some(
-      runtime => runtime.role === 'workbench' && runtime.dshVersion === '0.1.0-rc.8'
-    ),
-    'The packaged runtime catalog must retain the legacy Smart app runtime'
+  assert.deepEqual(catalog.runtimes, currentRuntimes)
+  const legacy = catalog.downloadableRuntimes.find(
+    runtime => runtime.role === 'workbench' && runtime.dshVersion === '0.1.0-rc.8'
   )
+  assert.ok(legacy, 'The packaged catalog must retain the legacy Smart app download descriptor')
+  await assert.rejects(lstat(join(resourcesRoot, 'harness-runtime', legacy.assetName)), {
+    code: 'ENOENT',
+  })
   assert.match(
     components.sourceSha,
     /^[0-9a-f]{40,64}$/i,

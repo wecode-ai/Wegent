@@ -10,6 +10,7 @@ const MENTIONER_PASSWORD = 'desktop-e2e-mentioner-password'
 const ISSUE_TITLE = '评论 @ 必须通知被提及的成员'
 const COMMENT_LINK = 'https://github.com/wecode-ai/Wegent/pull/3933'
 const COMMENT_DOCUMENT_PATH = '/comment-link-fixture'
+const COMMENT_DOCUMENT_TEXT = 'Wework comment link fixture loaded'
 const CLIENT_MESSAGE_PREFIX = 'desktop-e2e-mention'
 const FLASH_ANIMATION = 'task-detail-comment-flash'
 
@@ -149,9 +150,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     assert.fail(`The mentioned comment never flashed: animation-name=${latest}`)
   }
 
-  async function waitForBrowserPage(control, label, expectedUrl) {
+  async function waitForBrowserPage(control, label, expectedUrl, expectedText) {
     const deadline = Date.now() + Math.max(uiTimeoutMs, 30_000)
     let latest = null
+    let documentState = null
     let latestError = null
     while (Date.now() < deadline) {
       try {
@@ -172,15 +174,29 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       }
       if (
         latest.url &&
+        latest.visible &&
         !latest.isLoading &&
         new URL(latest.url).href === new URL(expectedUrl).href
       ) {
-        return latest
+        try {
+          documentState = JSON.parse(
+            await control.command('getEmbeddedBrowserDocumentState', 'body', { value: label })
+          )
+        } catch (error) {
+          latestError = error instanceof Error ? error.message : String(error)
+        }
+        if (
+          documentState?.href === new URL(expectedUrl).href &&
+          documentState.readyState === 'complete' &&
+          (expectedText === undefined || documentState.bodyText === expectedText)
+        ) {
+          return latest
+        }
       }
       await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
     }
     assert.fail(
-      `The Wework browser did not open ${expectedUrl}: ${JSON.stringify(latest)}${
+      `The Wework browser did not open ${expectedUrl}: ${JSON.stringify({ latest, documentState })}${
         latestError ? ` (${latestError})` : ''
       }`
     )
@@ -200,16 +216,26 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     })
 
     const routeBeforeClick = await control.command('getRoute')
-    for (const [selector, browserLabel, expectedUrl] of [
-      [githubLink, 'workspace-browser', COMMENT_LINK],
-      [documentLink, 'workspace-browser', commentDocumentLink],
+    const browserPanel = `${activeSurface} [data-testid="collaboration-embedded-browser-panel"]`
+    for (const [selector, expectedUrl, expectedText] of [
+      [githubLink, COMMENT_LINK],
+      [documentLink, commentDocumentLink, COMMENT_DOCUMENT_TEXT],
     ]) {
       await control.command('click', selector, { visible: true })
-      await waitForBrowserPage(control, browserLabel, expectedUrl)
-      await control.command('click', '[data-testid="collaboration-embedded-browser-close"]', {
-        visible: true,
-      })
-      await control.command('waitFor', '[data-testid="collaboration-embedded-browser-panel"]', {
+      await control.command('waitFor', browserPanel, { visible: true, timeoutMs: uiTimeoutMs })
+      const browserLabel = await control.command(
+        'getAttribute',
+        `${browserPanel} [data-testid="workspace-browser-panel"]`,
+        { value: 'data-embedded-browser-label' }
+      )
+      assert.ok(browserLabel, 'The visible collaboration browser must expose its logical label')
+      await waitForBrowserPage(control, browserLabel, expectedUrl, expectedText)
+      await control.command(
+        'click',
+        `${browserPanel} [data-testid="collaboration-embedded-browser-close"]`,
+        { visible: true }
+      )
+      await control.command('waitFor', browserPanel, {
         visible: false,
         timeoutMs: uiTimeoutMs,
       })
@@ -262,7 +288,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     handleHttp(request, response, url) {
       if (request.method !== 'GET' || url.pathname !== COMMENT_DOCUMENT_PATH) return false
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-      response.end('<!doctype html><title>Wework comment link fixture</title><p>ok</p>')
+      response.end(
+        `<!doctype html><title>Wework comment link fixture</title><p>${COMMENT_DOCUMENT_TEXT}</p>`
+      )
       return true
     },
 

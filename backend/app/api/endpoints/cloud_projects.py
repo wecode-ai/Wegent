@@ -205,8 +205,6 @@ def create_cloud_project(
     return _project_response(db, project, current_user)
 
 
-# MIGRATION-CANDIDATE(api="GET /api/v1/cloud-projects/:project_id"): remove after final confirmation.
-# @router.get("/{project_id}", response_model=CloudProjectResponse)
 @legacy_router.get("/{project_id}", response_model=CloudProjectResponse)
 def get_cloud_project(
     project_id: int,

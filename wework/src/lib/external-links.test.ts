@@ -34,6 +34,7 @@ afterEach(() => {
   })
   openWindowMock.mockReset()
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 
 describe('external link helpers', () => {
@@ -102,5 +103,35 @@ describe('external link helpers', () => {
       )
     )
     cleanup()
+  })
+
+  test('keeps URL credentials and private paths out of link diagnostics', async () => {
+    vi.stubGlobal('open', openWindowMock)
+    const log = vi.spyOn(console, 'info').mockImplementation(() => {})
+
+    await openExternalUrl(
+      'https://alice:password@example.com/private-document?token=secret#private-section'
+    )
+
+    expect(log).toHaveBeenCalledWith(
+      '[Wework][external-link]',
+      expect.objectContaining({ event: 'opened', url: 'https://example.com' })
+    )
+  })
+
+  test('preserves open failures without logging sensitive error messages', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    const error = new Error('Failed to open https://example.com/private-document?token=secret')
+    desktopHostMock.mockRejectedValueOnce(error)
+    const log = vi.spyOn(console, 'info').mockImplementation(() => {})
+
+    await expect(openExternalUrl('https://example.com/private-document')).rejects.toBe(error)
+
+    expect(log).toHaveBeenCalledWith(
+      '[Wework][external-link]',
+      expect.objectContaining({ event: 'failed', error: 'Error', url: 'https://example.com' })
+    )
+    expect(JSON.stringify(log.mock.calls)).not.toContain('private-document')
+    expect(JSON.stringify(log.mock.calls)).not.toContain('secret')
   })
 })

@@ -1,0 +1,39 @@
+{
+  "0.1.0-rc.8": {
+    "roles": ["workbench"],
+    "assets": {
+      "linux-x64": {
+        "dshVersion": "0.1.0-rc.8",
+        "sourceFingerprint": "d23cbed96a329405134644e0ecc491f02b712a4872a251a3bfe13d7da3805063",
+        "archiveSha256": "dd0aeb3d374b1510660c02ad6bc0ad6ad903a33a8c0bfeda019a4d2084ce27dc",
+        "archiveBytes": 37390459,
+        "downloadUrl": "https://github.com/wecode-ai/Wegent/releases/download/wework-updater/harness-runtime-linux-x64-dsh-0.1.0-rc.8-d23cbed96a329405134644e0ecc491f02b712a4872a251a3bfe13d7da3805063.tar.gz",
+        "assetName": "harness-runtime-linux-x64-dsh-0.1.0-rc.8-d23cbed96a329405134644e0ecc491f02b712a4872a251a3bfe13d7da3805063.tar.gz"
+      },
+      "macos-arm64": {
+        "dshVersion": "0.1.0-rc.8",
+        "sourceFingerprint": "046a1be8dd608ded207385c999492eb421b128dd6814659be0718d49eade52ee",
+        "archiveSha256": "851c43285f1d3627b632c1470f151c0131ce43fa32097c2f3eae484e13998f5f",
+        "archiveBytes": 36795040,
+        "downloadUrl": "https://github.com/wecode-ai/Wegent/releases/download/wework-updater/harness-runtime-macos-arm64-dsh-0.1.0-rc.8-046a1be8dd608ded207385c999492eb421b128dd6814659be0718d49eade52ee.tar.gz",
+        "assetName": "harness-runtime-macos-arm64-dsh-0.1.0-rc.8-046a1be8dd608ded207385c999492eb421b128dd6814659be0718d49eade52ee.tar.gz"
+      },
+      "macos-x64": {
+        "dshVersion": "0.1.0-rc.8",
+        "sourceFingerprint": "046a1be8dd608ded207385c999492eb421b128dd6814659be0718d49eade52ee",
+        "archiveSha256": "c0d76c7178d450e4cc2b27c1d0235096dd02ae2f1459efb67c7cdb7cde408a5d",
+        "archiveBytes": 37875669,
+        "downloadUrl": "https://github.com/wecode-ai/Wegent/releases/download/wework-updater/harness-runtime-macos-x64-dsh-0.1.0-rc.8-046a1be8dd608ded207385c999492eb421b128dd6814659be0718d49eade52ee.tar.gz",
+        "assetName": "harness-runtime-macos-x64-dsh-0.1.0-rc.8-046a1be8dd608ded207385c999492eb421b128dd6814659be0718d49eade52ee.tar.gz"
+      },
+      "windows-x64": {
+        "dshVersion": "0.1.0-rc.8",
+        "sourceFingerprint": "3a98e0dfca8c54fb507389a51372d0e44a73f59753b754b35fd94cba23a589fd",
+        "archiveSha256": "839b3460e912686254d39059d77f0e50ae6d8f968212fac1568259c4b8efd83b",
+        "archiveBytes": 41394925,
+        "downloadUrl": "https://github.com/wecode-ai/Wegent/releases/download/wework-updater/harness-runtime-windows-x64-dsh-0.1.0-rc.8-3a98e0dfca8c54fb507389a51372d0e44a73f59753b754b35fd94cba23a589fd.tar.gz",
+        "assetName": "harness-runtime-windows-x64-dsh-0.1.0-rc.8-3a98e0dfca8c54fb507389a51372d0e44a73f59753b754b35fd94cba23a589fd.tar.gz"
+      }
+    }
+  }
+}

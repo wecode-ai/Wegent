@@ -1,6 +1,16 @@
 import { createHash } from 'node:crypto'
 import { createReadStream, createWriteStream } from 'node:fs'
-import { access, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  access,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
 import path from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
@@ -144,10 +154,33 @@ async function runtimeSources() {
       }
     })
   )
-  return sources
+  const published = JSON.parse(await readFile(path.join(source, 'published-runtimes.json'), 'utf8'))
+  const pinned = Object.entries(published).flatMap(([dshVersion, runtime]) => {
+    const descriptor = runtime.assets[runtimePlatform()]
+    if (!descriptor) return []
+    if (descriptor.dshVersion !== dshVersion) {
+      throw new Error(`Published DSH descriptor version mismatch: ${dshVersion}`)
+    }
+    return [
+      {
+        dshVersion,
+        roles: runtime.roles,
+        publishedDescriptor: { ...descriptor, downloadUrl: `${baseUrl}/${descriptor.assetName}` },
+      },
+    ]
+  })
+  return [...pinned, ...sources]
 }
 
 function runtimeIdentity(runtime) {
+  if (runtime.publishedDescriptor) {
+    return {
+      ...runtime,
+      ...runtime.publishedDescriptor,
+      assetPath: path.join(assetDirectory, runtime.publishedDescriptor.assetName),
+      descriptorName: runtime.publishedDescriptor.assetName.replace(/\.tar\.gz$/, '.json'),
+    }
+  }
   const sourceFingerprint = createHash('sha256')
     .update(archiveFormatVersion)
     .update('\0')
@@ -288,6 +321,15 @@ async function pruneMaterializedRuntimes(descriptors) {
   } catch {
     return
   }
+  const canonicalRoot = await realpath(materializedRoot)
+  for (const fingerprint of [...retained]) {
+    try {
+      const content = await realpath(path.join(materializedRoot, fingerprint))
+      if (path.dirname(content) === canonicalRoot) retained.add(path.basename(content))
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error
+    }
+  }
   await Promise.all(
     entries
       .filter(entry => entry.isDirectory() && !retained.has(entry.name))
@@ -398,18 +440,22 @@ try {
     const descriptors = await Promise.all(
       runtimes.map(async runtime => {
         let descriptor = null
-        try {
-          const cached = JSON.parse(
-            await readFile(path.join(assetDirectory, runtime.descriptorName), 'utf8')
-          )
-          await access(runtime.assetPath)
-          descriptor = validateDescriptor(cached, runtime)
-          await ensurePublishedAsset(descriptor, runtime)
-        } catch {
-          descriptor = await reusePublishedRuntime(runtime)
+        if (runtime.publishedDescriptor) {
+          descriptor = validateDescriptor(runtime.publishedDescriptor, runtime)
+        } else {
+          try {
+            const cached = JSON.parse(
+              await readFile(path.join(assetDirectory, runtime.descriptorName), 'utf8')
+            )
+            await access(runtime.assetPath)
+            descriptor = validateDescriptor(cached, runtime)
+            await ensurePublishedAsset(descriptor, runtime)
+          } catch {
+            descriptor = await reusePublishedRuntime(runtime)
+          }
+          descriptor ??= await buildRuntime(runtime)
         }
-        descriptor ??= await buildRuntime(runtime)
-        if (materializeRequested) {
+        if (materializeRequested && !runtime.publishedDescriptor) {
           await materializeRuntime(runtime, descriptor)
         }
         return runtime.roles.map(role => ({ ...descriptor, role }))

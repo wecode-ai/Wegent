@@ -13,13 +13,15 @@ runtimes used by Wework. It never reads or modifies a user's personal `~/.dsh`
 profile.
 
 The bundled Core Runtime is `0.2.0-rc.2`. The default Workbench Runtime is
-`0.2.0-rc.2`, with `0.1.0-rc.8` retained for existing app requirements.
+`0.2.0-rc.2`. Installers include only that default version's archive;
+legacy `0.1.0-rc.8` is downloaded when an app requires it.
 Each version declares `wework.runtimeRoles` in its manifest and shares one
 archive and immutable materialized directory across roles. The catalog retains
 one entry per role, pointing to the same asset name, fingerprint, and checksum.
 Each dynamic smart-app tab launches an isolated DSH
-process. Every `runtimes/<version>` directory owns an exact manifest and
-lockfile.
+process. The default `runtimes/<version>` directory owns an exact manifest and
+lockfile. Legacy assets are pinned per platform in `published-runtimes.json`
+and are never rebuilt using the current machine's signing identity.
 
 The archive's `runtime.json` declares supported `roles`; its published archive
 descriptor does not contain a single role. Core loads `@wegent/dsh-app-wework`,
@@ -33,7 +35,31 @@ Workbench is verified only for installation, startup, page
 reachability, View embedding, tab-scoped shutdown, and credential isolation;
 it does not repeat the Core Executor integration gate.
 
-Run:
+The packaged `runtimes.json` lists bundled defaults under `runtimes` and pinned
+legacy descriptors under `downloadableRuntimes`, including the exact version,
+source fingerprint, archive size, SHA-256, and download URL. Core startup only
+materializes the bundled version. App startup, project scripts, and isolated
+verification select and prepare only the highest catalog version satisfying
+`requirements.dsh`. Requirements outside the catalog fail explicitly.
+
+The default download base is
+`https://github.com/wecode-ai/Wegent/releases/download/wework-updater/`, with
+asset names `harness-runtime-<platform>-<arch>-dsh-<version>-<fingerprint>.tar.gz`.
+Set `WEWORK_HARNESS_RUNTIME_BASE_URL` at build time to override it. Runtime
+downloads use the pinned catalog URL rather than a floating latest release.
+Builds prepare and publish only the default archive for future reuse. Pinned
+legacy assets remain in the existing Release and are not rebuilt, downloaded,
+or uploaded during packaging, nor included in installers or the Core DSH component.
+
+Downloads require HTTPS and stream-check size and SHA-256 before publishing
+the archive cache and extracting it. Downloads abort after 60 seconds without
+progress. Host app startup and verification requests use a 15-minute budget;
+ordinary requests retain their existing budget. Archives live under `archives/` in the
+runtime cache root; extracted directories are keyed by source fingerprint.
+Concurrent requests for one fingerprint share preparation. Materialized runtimes
+work offline. Cached archives are verified again before re-extraction, and corrupt
+archives are downloaded again. Failures remove temporary files and surface an
+error; a later request can attempt preparation again.
 
 ```bash
 cd wework

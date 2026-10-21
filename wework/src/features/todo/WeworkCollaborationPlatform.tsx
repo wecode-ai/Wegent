@@ -1,4 +1,9 @@
+import { useStandInProjects } from './useStandInProjects'
+import { StandInIcon } from './StandInIcon'
+import { bindProjectStandInApi } from '@/api/standIn'
 import { WorkspaceRunnerRegistrationDialog } from '@/features/collaboration/WorkspaceRunnerRegistrationDialog'
+import { StandInSettingsPage } from './StandInSettingsPage'
+import { StandInPopover } from './StandInPopover'
 import { createLocalWorkspaceApi, LOCAL_WORKSPACE_ID } from './localWorkspaceApi'
 import { createWeworkPlatformApi, withoutDefaultWorkItemProject } from './weworkPlatformApi'
 // eslint-disable-next-line react-refresh/only-export-components
@@ -40,7 +45,7 @@ import {
 } from '@/api/deliveries'
 import { loopItemLocalProject } from '@/api/localProjectAssociation'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useDesktopMarkdownServices } from '@/components/chat/useDesktopMarkdownServices'
+import { useCollaborationMarkdownServices } from './useCollaborationMarkdownServices'
 import { AddCloudDeviceDialog } from '@/components/settings/AddCloudDeviceDialog'
 import { TransientNotice } from '@/components/common/TransientNotice'
 import { resolveDeviceResourceSettingsOptions } from './deviceResourceSettings'
@@ -91,7 +96,10 @@ import type {
 import { getRuntimeWorkDeviceNamesById, getWorkbenchDeviceNamesById } from '@/lib/workbench-device'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import { runtimeConversationKey } from '@/features/workbench/runtimeConversationCache'
-import { hydrateRuntimeTaskAddress } from '@/features/workbench/workbenchRuntimeHelpers'
+import {
+  findRuntimeTask,
+  hydrateRuntimeTaskAddress,
+} from '@/features/workbench/workbenchRuntimeHelpers'
 import {
   isRuntimeTaskExecutionRunning,
   runtimeTaskTrackingExecutionStatus,
@@ -288,6 +296,7 @@ export interface WeworkCollaborationPlatformProps {
   runtimeTaskLifecycle?: RuntimeTaskLifecycleStoreSnapshot
   services: WorkbenchServices
   startupActive?: boolean
+  workspaceActive?: boolean
   activeProjectRef?: RuntimeProjectSpaceRef | null
   defaultProjectRequested?: boolean
   focusedItemId?: string | null
@@ -386,7 +395,7 @@ export function WeworkSharedProject({
     conversationKey: string
     taskRequest?: RuntimeTaskCreateRequest | null
     dispatch?: IssueTaskDispatchInput
-    humanWorkBinding?: NonNullable<CollaborationIssue['human_work']>['ai_task_binding']
+    humanTaskBinding?: CollaborationIssue['human_task_binding']
   } | null>(null)
   const latestProjectRef = useRef(project)
   const previousProjectPropRef = useRef(project)
@@ -461,8 +470,40 @@ export function WeworkSharedProject({
     }),
     [api, hasFullWorkspaceAccess, project.id, project.project_store, workspace.id]
   )
+  const standInWorkspaceApi = useMemo(
+    () => ({
+      ...scopedApi,
+      standIn:
+        services.standInApi && services.getLocalRuntimeSidebarIdentity
+          ? bindProjectStandInApi(
+              services.standInApi,
+              Number(userId),
+              project.project_store === 'local' ? 'local' : 'cloud',
+              services.getLocalRuntimeSidebarIdentity
+            )
+          : scopedApi.standIn,
+    }),
+    [
+      scopedApi,
+      services.standInApi,
+      services.getLocalRuntimeSidebarIdentity,
+      userId,
+      project.project_store,
+    ]
+  )
   const projectHost = useMemo<CollaborationHostAdapter>(
     () => ({
+      renderProjectHeaderAction: currentProject => (
+        <StandInPopover
+          key={currentProject.id}
+          api={standInWorkspaceApi}
+          project={currentProject}
+          devices={devices}
+          readLocalIdentity={services.getLocalRuntimeSidebarIdentity}
+          services={services}
+          userId={Number(userId)}
+        />
+      ),
       capabilities: {
         automation: true,
         dingtalkAitable: true,
@@ -513,6 +554,10 @@ export function WeworkSharedProject({
     }),
     [
       focusedItemId,
+      devices,
+      standInWorkspaceApi,
+      services,
+      userId,
       detailServices?.modelApi,
       location.issueId,
       location.projectSettingsSection,
@@ -522,10 +567,6 @@ export function WeworkSharedProject({
       notify,
       project.id,
       project.project_store,
-      services.agentResourceApi,
-      services.deviceApi,
-      services.localProjectChatAgentApi,
-      services.pluginApi,
       setLocation,
       workspace.id,
     ]
@@ -720,15 +761,13 @@ export function WeworkSharedProject({
         return
       }
       clearNotice()
-      const humanWorkBinding = issue.human_work?.can_submit
-        ? issue.human_work.ai_task_binding
-        : null
+      const humanTaskBinding = issue.human_task_binding ?? null
       const currentProject = latestProjectRef.current
       setTaskComposer({
         issue,
         conversationKey: `${issue.id}:new:${++taskComposerSequenceRef.current}`,
         dispatch,
-        humanWorkBinding,
+        humanTaskBinding,
         taskRequest: {
           schemaVersion: 2,
           runtime: 'codex',
@@ -748,17 +787,17 @@ export function WeworkSharedProject({
                   humanAssignmentId: dispatch.humanAssignmentId,
                 },
               }
-            : humanWorkBinding
+            : humanTaskBinding
               ? {
                   cloudProjectId: String(currentProject.id),
                   origin: {
                     type: 'issue_dispatch',
                     cloudProjectId: String(currentProject.id),
                     loopItemId: issue.id,
-                    dispatchId: humanWorkBinding.dispatchId,
-                    roundId: humanWorkBinding.dispatchRoundId,
-                    assignmentId: humanWorkBinding.assignmentId,
-                    humanAssignmentId: humanWorkBinding.humanAssignmentId,
+                    dispatchId: humanTaskBinding.dispatchId,
+                    roundId: humanTaskBinding.dispatchRoundId,
+                    assignmentId: humanTaskBinding.assignmentId,
+                    humanAssignmentId: humanTaskBinding.humanAssignmentId,
                   },
                 }
               : {}),
@@ -894,16 +933,7 @@ export function WeworkSharedProject({
         initialTaskInput={
           taskComposer.dispatch
             ? `${workItemComposerReference(project, taskComposer.issue)} ${issueDispatchPersonalTaskInput(taskComposer.dispatch)}`
-            : taskComposer.humanWorkBinding
-              ? [
-                  workItemComposerReference(project, taskComposer.issue),
-                  taskComposer.issue.title,
-                  taskComposer.issue.description,
-                  t('todo.human_work_ai_prompt'),
-                ]
-                  .filter(Boolean)
-                  .join('\n\n')
-              : workItemComposerReference(project, taskComposer.issue)
+            : workItemComposerReference(project, taskComposer.issue)
         }
         initialAddress={taskComposer.address}
         onClose={() => setTaskComposer(null)}
@@ -928,7 +958,7 @@ export function WeworkSharedProject({
                   dispatchRoundId: taskComposer.dispatch.roundId,
                   assignmentId: taskComposer.dispatch.assignmentId,
                 }
-              : (taskComposer.humanWorkBinding ?? null)
+              : (taskComposer.humanTaskBinding ?? null)
           )
           const projectRef = {
             projectStore: project.project_store,
@@ -1136,6 +1166,16 @@ export function WeworkSharedProject({
                     ) ?? false,
                   modelSelection: binding.modelSelection,
                   executionContext: binding.executionContext,
+                  runtimeAddress: workspaceExecutionAddress(
+                    binding,
+                    runtimeWork,
+                    issue.id,
+                    project.project_store
+                  ),
+                  runtimeTask: findRuntimeTask(runtimeWork, {
+                    deviceId: binding.deviceId,
+                    taskId: binding.taskId,
+                  }),
                 }) as CloudTodoBoardTaskBinding
             )
             return (
@@ -1148,6 +1188,7 @@ export function WeworkSharedProject({
                     } as unknown as CloudLoopItem
                   }
                   taskBindings={boardTaskBindings}
+                  getRuntimeTranscript={services.runtimeWorkApi?.getRuntimeTranscript}
                   unread={false}
                   onClick={onOpen}
                   onArchive={onDelete ?? (() => undefined)}
@@ -1175,7 +1216,7 @@ export function WeworkSharedProject({
 }
 
 export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformProps) {
-  const markdownServices = useDesktopMarkdownServices()
+  const markdownServices = useCollaborationMarkdownServices()
   return (
     <MarkdownServicesProvider value={markdownServices}>
       <WeworkCollaborationPlatformContent {...props} />
@@ -1184,7 +1225,8 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
 }
 
 function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformProps) {
-  const { i18n } = useTranslation('common')
+  const { i18n, t } = useTranslation('common')
+  const standInProjects = useStandInProjects(props.services, props.devices, Number(props.user.id))
   const cloudConnection = useOptionalCloudConnection()
   const [cloudLoginOpen, setCloudLoginOpen] = useState(false)
   const api = props.services.sharedWorkspaceApi
@@ -1259,10 +1301,33 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
       locale,
     ]
   )
-  const platformApi = useMemo(
-    () => createWeworkPlatformApi(api, localProjectApi),
-    [api, localProjectApi]
-  )
+  const platformApi = useMemo(() => {
+    const platform = createWeworkPlatformApi(api, localProjectApi)
+    if (!platform || !props.services.standInApi || !props.services.getLocalRuntimeSidebarIdentity)
+      return platform
+    const standIn = async (projectId: string) => {
+      const project = await platform.projects.get(projectId)
+      return bindProjectStandInApi(
+        props.services.standInApi!,
+        Number(props.user.id),
+        project.project_store === 'local' ? 'local' : 'cloud',
+        props.services.getLocalRuntimeSidebarIdentity!
+      )
+    }
+    return {
+      ...platform,
+      standIn: {
+        get: async (projectId: string, deviceId?: string, id?: string) =>
+          (await standIn(projectId)).get(projectId, deviceId, id),
+        save: async (
+          projectId: string,
+          settings: import('@wegent/collaboration').WorkspaceStandInSettings
+        ) => (await standIn(projectId)).save(projectId, settings),
+        run: async (projectId: string, issueId: string, deviceId: string, id?: string) =>
+          (await standIn(projectId)).run!(projectId, issueId, deviceId, id),
+      },
+    }
+  }, [api, localProjectApi, props.services, props.user.id])
   const navigationApis = useMemo(
     () =>
       [
@@ -1406,6 +1471,28 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
         locale={locale}
         onReady={handleReady}
         host={{
+          renderStandInPage: ({ projects }) => (
+            <StandInSettingsPage
+              api={platformApi}
+              projects={projects}
+              services={props.services}
+              devices={props.devices ?? []}
+              userId={Number(props.user.id)}
+            />
+          ),
+          renderProjectSidebarBadge: project =>
+            standInProjects.has(
+              `${project.project_store === 'local' ? 'local' : 'cloud'}:${project.id}`
+            ) ? (
+              <span
+                className="collaboration-project-sidebar-badge flex shrink-0 text-text-secondary"
+                title={t('standIn.project_enabled')}
+                aria-label={t('standIn.project_enabled')}
+                data-testid={`stand-in-project-${project.id}`}
+              >
+                <StandInIcon enabled />
+              </span>
+            ) : null,
           currentUser: {
             id: Number(props.user.id),
             name: collaborationUserName,
@@ -1414,7 +1501,15 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
             authenticated: cloudConnection.isConnected,
             requestLogin: () => setCloudLoginOpen(true),
           },
-          renderIssueComposer: props => <WeworkIssueHomeComposer {...props} />,
+          renderIssueComposer: composerProps => (
+            <WeworkIssueHomeComposer
+              {...composerProps}
+              api={platformApi}
+              userId={Number(props.user.id)}
+              services={props.services}
+              devices={props.devices ?? []}
+            />
+          ),
           loadProjectCollaborationGroupGenerationModels: async () => {
             const response = await props.services.modelApi.listModels()
             const models = response.data.filter(
@@ -1718,7 +1813,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
           )
         }}
       />
-      <WeworkCollaborationEmbeddedBrowserHost />
+      <WeworkCollaborationEmbeddedBrowserHost workspaceActive={props.workspaceActive ?? true} />
     </div>
   )
 }

@@ -13,7 +13,7 @@ interface OpenExternalUrlOptions {
 function diagnosticUrl(value: string): string | null {
   try {
     const url = new URL(value)
-    return `${url.protocol}//${url.host}${url.pathname}`
+    return `${url.protocol}//${url.host}`
   } catch {
     return null
   }
@@ -91,7 +91,7 @@ export async function openExternalUrl(
     return true
   } catch (error) {
     logExternalLink('failed', value, source, {
-      error: error instanceof Error ? error.message : String(error),
+      error: error instanceof Error ? error.name : typeof error,
     })
     throw error
   }

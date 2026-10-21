@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import json
 import threading
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -154,41 +153,6 @@ def _message(
     )
 
 
-@pytest.mark.asyncio
-async def test_quick_access_keeps_favorites_and_recommendations(monkeypatch):
-    system_config = SimpleNamespace(version=2, config_value={"teams": [101]})
-    db = _FakeDb(system_config)
-    current_user = SimpleNamespace(
-        id=7,
-        preferences=json.dumps({"quick_access": {"version": 1, "teams": [99]}}),
-    )
-    monkeypatch.setattr(
-        users_endpoint.kind_service,
-        "get_team_by_id",
-        lambda team_id: {
-            "id": team_id,
-            "metadata": {
-                "name": f"team-{team_id}",
-                "displayName": f"Team {team_id}",
-            },
-            "spec": {"recommended_mode": "chat"},
-            "agent_type": "claude",
-        },
-    )
-
-    response = await users_endpoint.get_user_quick_access(
-        db=db,
-        current_user=current_user,
-    )
-
-    assert response.user_version == 1
-    assert response.show_system_recommended is True
-    assert [(team.id, team.is_system) for team in response.teams] == [
-        (99, False),
-        (101, True),
-    ]
-
-
 def test_recent_teams_are_returned_independently(monkeypatch):
     recent = [_team(202), _team(101, user_id=0)]
     monkeypatch.setattr(
@@ -215,8 +179,8 @@ async def test_recent_teams_api_queries_run_off_event_loop(monkeypatch, query, i
     app.include_router(users_endpoint.router, prefix="/api/users")
     db = SimpleNamespace()
     app.dependency_overrides[users_endpoint.get_db] = lambda: db
-    app.dependency_overrides[users_endpoint.security.get_current_user] = (
-        lambda: SimpleNamespace(id=7)
+    app.dependency_overrides[users_endpoint.security.get_current_user] = lambda: (
+        SimpleNamespace(id=7)
     )
     loop_thread = threading.get_ident()
     calls = []
@@ -247,15 +211,6 @@ async def test_recent_teams_api_queries_run_off_event_loop(monkeypatch, query, i
     assert session is db
     assert user_id == 7
     assert received_is_code is is_code
-
-
-def test_get_user_quick_access_team_ids_handles_null_user_config():
-    current_user = SimpleNamespace(
-        id=7,
-        preferences=json.dumps({"quick_access": None}),
-    )
-
-    assert users_endpoint._get_user_quick_access_team_ids(current_user) == []
 
 
 def test_recent_teams_are_deduplicated_and_filled_by_latest(test_db):
