@@ -11,6 +11,7 @@ from app.models.resource_member import ResourceMember
 from app.models.share_link import ResourceType
 from app.schemas.base_role import BaseRole
 from app.schemas.workspace import WorkspaceAgentCreate
+from app.services.collaboration_permissions import RESOURCE_USE_ROLES
 from app.services.share import team_share_service
 from app.services.workspaces.access import require_workspace_role
 from app.services.workspaces.resource_mapping import agent_values
@@ -76,7 +77,7 @@ class WorkspaceAgentService:
             resource_type=ResourceType.TEAM.value,
             resource_id=team_id,
         )
-        if existing is not None:
+        if existing is not None and existing.role in RESOURCE_USE_ROLES:
             return existing
         require_workspace_role(db, workspace_id, user_id, BaseRole.Developer)
         team = team_share_service.get_resource(db, team_id, user_id)
@@ -107,12 +108,13 @@ class WorkspaceAgentService:
         team = team_share_service.get_resource(db, values.team_id, user_id)
         if team is None or team.kind != "Team" or not team.is_active:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent Team not found")
-        if resource_grant(
+        existing = resource_grant(
             db,
             workspace_id=workspace_id,
             resource_type=ResourceType.TEAM.value,
             resource_id=values.team_id,
-        ):
+        )
+        if existing is not None and existing.role in RESOURCE_USE_ROLES:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 "Agent is already available in this Workspace",
