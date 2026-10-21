@@ -169,41 +169,6 @@
   background: rgb(0 0 0 / 0.35);
 }
 
-.shared-issue-detail-confirm-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 100;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgb(0 0 0 / 0.35);
-}
-
-.shared-issue-detail-confirm {
-  width: min(420px, calc(100vw - 32px));
-  border: 1px solid rgb(var(--color-border));
-  border-radius: 14px;
-  padding: 20px;
-  background: rgb(var(--color-bg-surface));
-  box-shadow: 0 20px 50px rgb(0 0 0 / 0.2);
-}
-
-.shared-issue-detail-confirm h2 {
-  margin: 0;
-  font-size: 16px;
-}
-
-.shared-issue-detail-confirm p {
-  margin: 10px 0 18px;
-  color: rgb(var(--color-text-secondary));
-}
-
-.shared-issue-detail-confirm > div {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
 .collaboration-dialog {
   width: min(520px, 100%);
   border: 1px solid rgb(var(--color-border));
