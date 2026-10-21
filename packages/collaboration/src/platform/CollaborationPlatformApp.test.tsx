@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { IssueDetail } from "../IssueDetail";
 import { ResourceDestinationDialog } from "./ResourceDestinationDialog";
+import { AgentFormDialog, type AgentDeleteAction } from "../agent-form";
 import { collaborationMessages, type CollaborationLocale } from "../i18n";
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import { createSharedAgentBindingInput } from "../project-agent-config";
@@ -774,6 +775,43 @@ async function change(
   });
 }
 
+function AgentSettingsEditor({ deletion }: { deletion?: AgentDeleteAction }) {
+  return (
+    <AgentFormDialog
+      busy={false}
+      deletion={deletion}
+      description="Agent settings"
+      labels={{
+        advanced: "Advanced",
+        advancedDescription: "",
+        cancel: "Cancel",
+        close: "Close",
+        owner: "Owner",
+      }}
+      onClose={() => undefined}
+      onSave={() => undefined}
+      ownerLabel="Personal"
+      prompt={{
+        label: "Prompt",
+        onChange: () => undefined,
+        testId: "agent-settings-prompt",
+        value: "",
+      }}
+      saveDisabled={false}
+      saveLabel="Save"
+      savingLabel="Saving"
+      testIds={{
+        backdrop: "agent-settings-backdrop",
+        close: "agent-settings-close",
+        dialog: "agent-settings",
+        error: "agent-settings-error",
+        save: "agent-settings-save",
+      }}
+      title="Agent settings"
+    />
+  );
+}
+
 function PlatformHarness({
   cloudAccess,
   api,
@@ -1070,6 +1108,72 @@ describe("CollaborationPlatformApp real component flow", () => {
       ),
     ).toBeNull();
   });
+  it.each(["local", "cloud"] as const)(
+    "deletes a %s agent from its settings through the resource API",
+    async (location) => {
+      const resource = { ...agent, location, version: 3 };
+      const { api } = createApi({
+        initialResources: { agents: [resource], execution_environments: [] },
+      });
+      const editor = vi.fn((props: { deletion?: AgentDeleteAction }) => (
+        <AgentSettingsEditor deletion={props.deletion} />
+      ));
+      await render(
+        <PlatformHarness
+          api={api}
+          projectAgentConfiguration={
+            {
+              renderAgentEditor: editor,
+              renderLocalAgentEditor: editor,
+            } as unknown as CollaborationPlatformHostAdapter["projectAgentConfiguration"]
+          }
+        />,
+      );
+      await click(byTestId("collaboration-primary-agents"));
+      await click(byTestId(`collaboration-agents-settings-${resource.id}`));
+      await click(byTestId("agent-settings-delete"));
+      expect(api.resources?.removeAgent).not.toHaveBeenCalled();
+      await click(byTestId("collaboration-delete-agent-confirm"));
+      expect(api.resources?.removeAgent).toHaveBeenCalledExactlyOnceWith(
+        resource,
+      );
+      expect(
+        container.querySelector('[data-testid="agent-settings"]'),
+      ).toBeNull();
+      expect(
+        container.querySelector(
+          `[data-testid="collaboration-agents-row-${resource.id}"]`,
+        ),
+      ).toBeNull();
+    },
+  );
+
+  it("keeps protected local agents undeletable in settings", async () => {
+    const resource = { ...agent, location: "local" as const, deletable: false };
+    const { api } = createApi({
+      initialResources: { agents: [resource], execution_environments: [] },
+    });
+    const editor = vi.fn((props: { deletion?: AgentDeleteAction }) => (
+      <AgentSettingsEditor deletion={props.deletion} />
+    ));
+    await render(
+      <PlatformHarness
+        api={api}
+        projectAgentConfiguration={
+          {
+            renderLocalAgentEditor: editor,
+          } as unknown as CollaborationPlatformHostAdapter["projectAgentConfiguration"]
+        }
+      />,
+    );
+    await click(byTestId("collaboration-primary-agents"));
+    await click(byTestId(`collaboration-agents-settings-${resource.id}`));
+    expect(
+      container.querySelector('[data-testid="agent-settings-delete"]'),
+    ).toBeNull();
+    expect(api.resources?.removeAgent).not.toHaveBeenCalled();
+  });
+
   it("does not expose deletion for a protected agent resource", async () => {
     const protectedAgent = {
       ...agent,

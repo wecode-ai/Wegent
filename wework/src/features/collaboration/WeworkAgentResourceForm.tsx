@@ -11,6 +11,7 @@ import {
   agentPluginBinding,
   createAgentResourceName,
   resolveAgentPromptCapabilityReferences,
+  type AgentDeleteAction,
   type ProjectAgentOwnerOption,
   type UnifiedAgentCapabilityMode,
 } from '@wegent/collaboration'
@@ -37,6 +38,7 @@ interface WeworkAgentResourceFormProps {
   api: AgentResourceApi
   /** Team id of the Agent resource to edit. Omit to create a new resource. */
   editingTeamId?: number
+  deletion?: AgentDeleteAction
   deviceApi?: Pick<WorkbenchServices['deviceApi'], 'listDevices' | 'listSkills'>
   namespace: string
   onClose(): void
@@ -58,6 +60,7 @@ export function WeworkAgentResourceForm({
   projectId,
   deviceApi,
   editingTeamId,
+  deletion,
   namespace,
   onClose,
   onSaved,
@@ -282,6 +285,7 @@ export function WeworkAgentResourceForm({
 
   return (
     <AgentFormDialog
+      deletion={editing ? deletion : undefined}
       runtimeTab={runtimeTab}
       advanced={
         <>
