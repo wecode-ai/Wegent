@@ -225,13 +225,17 @@ export default function ConnectorAppList() {
     setLoading(true)
     try {
       const adminApps = await adminApis.getConnectorApps()
-      // The user projection only drives the authorize button; a failure there
-      // must not hide the administrator catalog.
-      const userApps = await adminApis.getUserConnectorApps().catch(() => [])
       setApps(adminApps)
-      setConnectionStatusBySlug(
-        Object.fromEntries(userApps.map(app => [app.slug, app.connection.status]))
-      )
+      try {
+        // The user projection only drives the authorize button; a failure there
+        // must not hide the catalog or reset every status to "unauthorized".
+        const userApps = await adminApis.getUserConnectorApps()
+        setConnectionStatusBySlug(
+          Object.fromEntries(userApps.map(app => [app.slug, app.connection.status]))
+        )
+      } catch {
+        // Keep the last known connection statuses.
+      }
     } catch (error) {
       toast({
         variant: 'destructive',

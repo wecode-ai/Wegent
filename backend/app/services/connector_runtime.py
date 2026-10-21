@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import builtins
 import json
 import logging
 import time
@@ -46,11 +45,11 @@ def _exception_texts(error: BaseException, depth: int = 0) -> list[str]:
     if depth > 8:
         return []
     texts = [f"{type(error).__name__}: {error}"]
-    # ``ExceptionGroup`` is a built-in only from Python 3.11; the backend still
-    # supports 3.10, where this path must simply skip group unwrapping.
-    group_type = getattr(builtins, "BaseExceptionGroup", None)
-    if group_type is not None and isinstance(error, group_type):
-        for item in error.exceptions:
+    # ``ExceptionGroup`` is built in only from Python 3.11; Python 3.10 may
+    # provide the backported type, so duck-type the nested exceptions instead.
+    children = getattr(error, "exceptions", None)
+    if isinstance(children, (list, tuple)):
+        for item in children:
             texts.extend(_exception_texts(item, depth + 1))
     cause = error.__cause__ or error.__context__
     if cause is not None and cause is not error:

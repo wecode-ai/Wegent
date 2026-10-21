@@ -692,6 +692,8 @@
       "title": "应用连接",
       "unavailable": "这个应用当前不可用，可能已被管理员停用或移除了访问权限。",
       "upstream_error": "上游异常：{{message}}",
+      "missing_slug_title": "缺少应用标识",
+      "missing_slug_description": "授权链接中没有包含应用信息。",
       "authorization_declined": "已取消授权",
       "authorization_timeout": "授权超时，请重试",
       "popup_blocked": "浏览器拦截了授权窗口，请允许弹出窗口后重试",

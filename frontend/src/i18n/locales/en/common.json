@@ -692,6 +692,8 @@
       "title": "App Connections",
       "unavailable": "This app is unavailable. An administrator may have disabled it or removed your access.",
       "upstream_error": "Upstream error: {{message}}",
+      "missing_slug_title": "Missing connector app",
+      "missing_slug_description": "The authorization link did not include a connector app.",
       "authorization_declined": "Authorization canceled",
       "authorization_timeout": "Authorization timed out. Try again",
       "popup_blocked": "The authorization window was blocked. Allow pop-ups and try again",

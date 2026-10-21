@@ -8,6 +8,7 @@ import { useEffect, useCallback, useState } from 'react'
 import { useRouter } from 'next/navigation'
 
 import { useToast } from '@/hooks/use-toast'
+import { useTranslation } from '@/hooks/useTranslation'
 import { paths } from '@/config/paths'
 import { getCodingEntryHref, openNavigationHref } from '@/config/coding-route'
 import { taskApis } from '@/apis/tasks'
@@ -30,6 +31,7 @@ type OpenDialogDetail = {
 export default function SchemeURLDialogBridge() {
   const router = useRouter()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [isMcpProviderConfigOpen, setIsMcpProviderConfigOpen] = useState(false)
   const [mcpProviderId, setMcpProviderId] = useState<string>('dingtalk')
   const [mcpProviderServiceId, setMcpProviderServiceId] = useState<string>('docs')
@@ -122,8 +124,8 @@ export default function SchemeURLDialogBridge() {
         if (typeof slug !== 'string' || !slug) {
           toast({
             variant: 'destructive',
-            title: 'Missing connector app slug',
-            description: 'The authorization link did not include a connector app.',
+            title: t('common:integrations.connector_apps.missing_slug_title'),
+            description: t('common:integrations.connector_apps.missing_slug_description'),
           })
           return
         }
