@@ -8,7 +8,7 @@ const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const scoped = selector => `${CONTENT} ${selector}`
 
 export async function createCollaborationBoardIssue(control, title, status, timeoutMs) {
-  await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
+  await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   const dialog = scoped('[data-testid="collaboration-issue-create-dialog"]')
   await control.command('waitFor', `${dialog} [data-testid="cloud-todo-create-panel"]`, {
     visible: true,

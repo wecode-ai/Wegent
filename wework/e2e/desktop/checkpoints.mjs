@@ -16,6 +16,7 @@ export const DESKTOP_CHECKPOINTS = [
   'collaboration-local-agent-dispatch',
   'stand-in',
   'stand-in-cloud',
+  'stand-in-permissions',
   'stand-in-workspace',
   'stand-in-controls',
   'collaboration-remote-agent-dispatch',

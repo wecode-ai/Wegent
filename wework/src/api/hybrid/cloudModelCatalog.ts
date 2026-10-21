@@ -1,26 +1,21 @@
 import type { UnifiedModel } from '@/types/api'
 
-const REQUEST_TIMEOUT_MS = 10_000
-
 /** Cache cloud models and refresh only on initial load or an explicit request. */
-export function createCloudModelCatalog(load: (signal: AbortSignal) => Promise<UnifiedModel[]>) {
+export function createCloudModelCatalog(
+  load: (signal: AbortSignal, forceRefresh: boolean) => Promise<UnifiedModel[]>
+) {
   let models: UnifiedModel[] = []
   let loadStarted = false
   let request: AbortController | null = null
-  let requestTimer: number | undefined
   const listeners = new Set<() => void>()
 
-  function refresh() {
+  function loadCatalog(forceRefresh: boolean) {
     if (request) return
     loadStarted = true
     const controller = new AbortController()
     request = controller
-    requestTimer = window.setTimeout(() => {
-      controller.abort(new DOMException('Cloud model request timed out', 'TimeoutError'))
-    }, REQUEST_TIMEOUT_MS)
-
     void Promise.resolve()
-      .then(() => load(controller.signal))
+      .then(() => load(controller.signal, forceRefresh))
       .then(nextModels => {
         if (controller.signal.aborted || request !== controller) return
         models = nextModels
@@ -32,15 +27,14 @@ export function createCloudModelCatalog(load: (signal: AbortSignal) => Promise<U
       })
       .finally(() => {
         if (request !== controller) return
-        window.clearTimeout(requestTimer)
         request = null
       })
   }
 
   return {
-    refresh,
+    refresh: () => loadCatalog(true),
     loadIfNeeded() {
-      if (!loadStarted) refresh()
+      if (!loadStarted) loadCatalog(false)
     },
     getModels(): UnifiedModel[] {
       return models
@@ -49,7 +43,6 @@ export function createCloudModelCatalog(load: (signal: AbortSignal) => Promise<U
       listeners.add(listener)
       return () => {
         if (!listeners.delete(listener) || listeners.size > 0) return
-        window.clearTimeout(requestTimer)
         if (request) {
           const controller = request
           request = null

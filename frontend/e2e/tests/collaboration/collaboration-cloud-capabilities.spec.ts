@@ -7,6 +7,7 @@ import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import {
   openBlankProjectCreation,
+  selectCollaborationProjectView,
   webApi,
   writeSharedComposer,
 } from '../../utils/collaboration-test-support'
@@ -513,10 +514,11 @@ test.describe('Collaboration cloud capabilities', () => {
       await expect(page.getByTestId(`collaboration-workspace-${workspace.id}`)).toContainText(
         workspace.name
       )
+      // Project metadata can show a read-only parent label before the workspace catalog arrives.
+      await page.getByTestId(`collaboration-workspace-home-${workspace.id}`).click()
+      await expect(page).toHaveURL(`/collaboration/workspaces/${workspace.id}`)
       const workspaceToggle = page.getByTestId(`collaboration-workspace-toggle-${workspace.id}`)
-      if ((await workspaceToggle.getAttribute('aria-expanded')) !== 'true') {
-        await workspaceToggle.click()
-      }
+      await expect(workspaceToggle).toHaveAttribute('aria-expanded', 'true')
       const projectNavigation = page.getByTestId(`collaboration-workspace-project-${project.id}`)
       await expect(projectNavigation).toContainText(project.name)
       await captureEvidence(page, 'web-01-project-home')
@@ -924,6 +926,7 @@ test.describe('Collaboration cloud capabilities', () => {
         })
         .toBe('public')
 
+      await page.getByTestId('cloud-project-manage-tags-toggle').click()
       await page.getByRole('button', { name: /新建标签|New tag/ }).click()
       await page.getByTestId('cloud-project-tag-create-input').fill(tagName)
       await page.getByTestId('cloud-project-tag-create-confirm').click()
@@ -945,7 +948,7 @@ test.describe('Collaboration cloud capabilities', () => {
             `/api/v1/cloud-projects/${encodeURIComponent(project.id)}`
           )
         ).board_config?.statuses.length ?? 0
-      await page.getByTestId('collaboration-tab-board').click()
+      await selectCollaborationProjectView(page, 'board')
       await page.getByTestId('collaboration-board-settings').click()
       await expect(page.getByTestId('project-board-settings-dialog')).toBeVisible()
       await page.getByTestId('cloud-board-status-add').click()

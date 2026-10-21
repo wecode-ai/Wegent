@@ -86,7 +86,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await configureFirstProjectExecutionEnvironment(control, ACTIVE_CONTENT, uiTimeoutMs)
       await control.command('click', board('[data-testid="collaboration-tab-board"]'))
 
-      await control.command('click', board('[data-testid="collaboration-empty-project-create"]'))
+      await control.command(
+        'clickWhenEnabled',
+        board('[data-testid="collaboration-empty-project-create"]')
+      )
       await control.command('waitFor', board('[data-testid="cloud-todo-title"]'), {
         timeoutMs: uiTimeoutMs,
       })

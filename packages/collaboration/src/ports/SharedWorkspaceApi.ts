@@ -862,7 +862,7 @@ export interface SharedWorkspaceRuntimeProfilesApi {
 export interface SharedWorkspaceAgentsApi {
   list(
     projectId: string,
-    options?: { includeArchived?: boolean },
+    options?: { includeArchived?: boolean; forceRefresh?: boolean },
   ): Promise<WorkspaceProjectAgent[]>;
   create(
     projectId: string,

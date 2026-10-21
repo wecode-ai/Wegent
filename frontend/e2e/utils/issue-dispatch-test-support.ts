@@ -5,7 +5,10 @@
 import { expect, type APIRequestContext, type Locator, type Page } from '@playwright/test'
 import { ADMIN_USER } from '../config/test-users'
 import { createApiClient } from './api-client'
-import { openBlankProjectCreation } from './collaboration-test-support'
+import {
+  openBlankProjectCreation,
+  selectCollaborationProjectView,
+} from './collaboration-test-support'
 import {
   authHeaders,
   clearToolScenario,
@@ -34,6 +37,7 @@ export interface IssueDispatchMockModel {
 interface ProjectAgent {
   id: string
   name: string
+  wegentTeamId: number
 }
 
 function encoded(value: string): string {
@@ -176,7 +180,7 @@ export async function initializeProjectExecutionEnvironment(page: Page): Promise
     'data-preparation-state',
     'ready'
   )
-  await page.getByTestId('collaboration-tab-board').click()
+  await selectCollaborationProjectView(page, 'board')
 }
 
 export async function addProjectMember(page: Page, userName: string): Promise<string> {

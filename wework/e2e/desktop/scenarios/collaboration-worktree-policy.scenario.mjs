@@ -74,7 +74,7 @@ async function configurePolicy(control, policy) {
 
 async function createIssue(control, label) {
   await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
-  await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
+  await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), { value: label })
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
     value: MARKER,

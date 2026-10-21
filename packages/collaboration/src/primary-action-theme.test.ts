@@ -18,7 +18,7 @@ describe("collaboration primary action theme", () => {
   it("allows the host to override primary actions while preserving neutral defaults", () => {
     const sources = [
       source("./platform/base.css"),
-      source("./project-agent-config/ProjectAgentConfiguration.module.css"),
+      source("./project-agent-config/ProjectAgentPicker.tsx"),
     ];
 
     for (const css of sources) {

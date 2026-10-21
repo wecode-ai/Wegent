@@ -6,6 +6,8 @@ sidebar_position: 36
 
 Spaces define the administrative boundary. Projects inherit space membership by default. Resources participate through explicit use grants and project bindings. Lists and mutations share one server-side authorization policy. This document is a human-approved product contract, protected by tests.
 
+Project details reuse the project list's permission query and response construction (CP13), preserving inherited space roles and permission sources. Stand-in saves read project details to authorize execution, so details must not use the legacy query that reduces inherited roles to Viewer. The `stand-in-permissions` desktop E2E checkpoint covers successful saves by inherited administrators and members, Viewer denial, and restricted-project access boundaries; the shared desktop CI runs this checkpoint.
+
 ```mermaid
 flowchart TD
     User[User] -->|membership and role| Space[Space]
