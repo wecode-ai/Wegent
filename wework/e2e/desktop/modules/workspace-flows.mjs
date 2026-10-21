@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { verifyWorkspaceTabReturn } from './workspace-tab-return.mjs'
+import { verifyNewTaskBoardAssociation } from './new-task-board-association.mjs'
 
 import {
   ensureExperimentalFeaturesDisabled,
@@ -1773,6 +1774,8 @@ async function verifyExistingTaskBoardAssociation(
   if (captureScreenshots) {
     await captureVerificationScreenshot(control, 'workspace-10-existing-card-linked.png')
   }
+  await verifyNewTaskBoardAssociation(control, targetProjectName, existingTargetTitle)
+  await control.command('click', `[data-testid="${taskTabTestId}"]`)
 }
 
 function workspaceTabIds(snapshot, kind) {

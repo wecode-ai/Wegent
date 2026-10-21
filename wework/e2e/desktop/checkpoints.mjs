@@ -49,8 +49,21 @@ export const DESKTOP_CHECKPOINTS = [
   'plugin-development',
   'plugin-auto-update',
   'plugin-account-auth',
+  'plugin-account-auth-password',
+  'plugin-account-auth-transfer',
+  'plugin-account-auth-oauth',
+  'plugin-account-auth-dws',
+  'plugin-account-auth-conversation',
+  'plugin-account-auth-github',
+
   'plugin-uninstall-resilience',
+  'plugin-uninstall-lost-response',
+  'plugin-uninstall-unknown-result',
+  'plugin-uninstall-restart-recovery',
+  'plugin-uninstall-reinstall-race',
+
   'plugin-composer-long-list',
+  'plugin-toggle-persistence',
   'plugin-workspace-publication',
   'project-ai-settings',
   'model-routing',
@@ -101,12 +114,23 @@ export const DESKTOP_CHECKPOINTS = [
   'temporary-chat',
   'workspace-attachments',
   'rendering-extensions',
+  'streaming-text',
+  'streaming-content',
+  'streaming-tools',
+  'streaming-timers',
+  'streaming-scroll',
+  'streaming-message-order',
+  'streaming-subagents',
+
   'change-request-status',
   'git-commit-generation',
   'claude-runtime',
   'local-file-preview',
   'local-harness',
   'harness-apps',
+  'harness-app-development',
+  'harness-app-lifecycle',
+
   'browser-multi-tabs',
   'embedded-browser',
   'browser-toolbar-actions',
@@ -126,3 +150,52 @@ export const PLUGIN_SEGMENTS = [
   'skill-mention-rendering',
   'sites-plugin-auto-install',
 ]
+
+export const DESKTOP_CHECKPOINT_GROUPS = new Map([
+  [
+    'plugin-account-auth',
+    [
+      'plugin-account-auth-password',
+      'plugin-account-auth-transfer',
+      'plugin-account-auth-oauth',
+      'plugin-account-auth-dws',
+      'plugin-account-auth-conversation',
+      'plugin-account-auth-github',
+    ],
+  ],
+  [
+    'plugin-uninstall-resilience',
+    [
+      'plugin-uninstall-lost-response',
+      'plugin-uninstall-unknown-result',
+      'plugin-uninstall-restart-recovery',
+      'plugin-uninstall-reinstall-race',
+    ],
+  ],
+  ['harness-apps', ['harness-app-development', 'harness-app-lifecycle']],
+  [
+    'streaming-text',
+    [
+      'streaming-content',
+      'streaming-tools',
+      'streaming-timers',
+      'streaming-scroll',
+      'streaming-message-order',
+      'streaming-subagents',
+    ],
+  ],
+  [
+    'browser-annotation',
+    ['browser-annotation-core', 'browser-annotation-anchors', 'browser-annotation-design'],
+  ],
+  [
+    'cloud-git-worktree',
+    [
+      'cloud-worktree-capability',
+      'cloud-worktree-create',
+      'cloud-worktree-queued-cancel',
+      'cloud-worktree-tools',
+      'cloud-worktree-archive-restore',
+    ],
+  ],
+])

@@ -1207,6 +1207,7 @@ async function main() {
     process.env.WEWORK_E2E_CONTROL_SERVER_PORT = new URL(control.controlUrl).port
     desktopScenario = await loadDesktopScenario(process.env.WEWORK_E2E_DESKTOP_SCENARIO_MODULE, {
       appIdentifier,
+      checkpoint: SELECTED_DESKTOP_SEGMENT,
       captureScreenshot: (control, name, selector) =>
         captureVerificationScreenshot(control, name, selector),
       codexSqliteHome,
@@ -1306,7 +1307,7 @@ async function main() {
     }
 
     const needsPackagedHarnessRuntime =
-      SELECTED_DESKTOP_SEGMENT === 'harness-apps' ||
+      SELECTED_DESKTOP_SEGMENT?.startsWith('harness-app-') ||
       (RUNS_PLUGIN_E2E && shouldRunPluginSegment('core-dsh-ui-plugin-composition'))
     const usesReleasePackageRuntimeAssets =
       desktopScenario?.usesReleasePackageRuntimeAssets === true

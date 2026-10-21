@@ -134,6 +134,25 @@ describe('WorkItemComposerGuide', () => {
     expect(onSelectProject).toHaveBeenCalledWith(teamProject)
   })
 
+  test('reopens Issue selection for the current draft project', async () => {
+    const user = userEvent.setup()
+    const onSelectProject = vi.fn()
+    render(
+      <WorkItemComposerGuide
+        project={teamProject}
+        projects={[teamProject]}
+        toolbar
+        onSelectProject={onSelectProject}
+      />
+    )
+
+    await user.click(screen.getByTestId('project-space-context-pill'))
+    const selected = screen.getByTestId('work-item-workspace-option-team-work')
+    expect(selected).toHaveAttribute('aria-selected', 'true')
+    await user.click(selected)
+    expect(onSelectProject).toHaveBeenCalledExactlyOnceWith(teamProject)
+  })
+
   test('uses the goal as primary context and only shows sibling tasks', async () => {
     const api = {
       listTaskBindings: vi.fn().mockResolvedValue(taskBindings),
@@ -410,7 +429,7 @@ describe('WorkItemComposerGuide', () => {
     expect(trigger).toHaveFocus()
   })
 
-  test('preserves the selected project behavior and dismisses on outside click', async () => {
+  test('dismisses outside clicks and reselects the project for a bound Issue', async () => {
     const user = userEvent.setup()
     const onSelectProject = vi.fn()
     const { rerender } = render(
@@ -421,12 +440,9 @@ describe('WorkItemComposerGuide', () => {
       />
     )
     await user.click(screen.getByTestId('project-space-context-pill'))
-    await user.click(projectOptions().getByRole('option'))
-    expect(onSelectProject).not.toHaveBeenCalled()
-
-    await user.click(screen.getByTestId('project-space-context-pill'))
     await user.click(document.body)
     expect(screen.queryByTestId('work-item-context-menu')).not.toBeInTheDocument()
+    expect(onSelectProject).not.toHaveBeenCalled()
 
     rerender(
       <WorkItemComposerGuide
@@ -438,6 +454,6 @@ describe('WorkItemComposerGuide', () => {
     )
     await user.click(screen.getByTestId('work-item-change-board'))
     await user.click(projectOptions().getByRole('option'))
-    expect(onSelectProject).toHaveBeenCalledWith(teamProject)
+    expect(onSelectProject).toHaveBeenCalledExactlyOnceWith(teamProject)
   })
 })

@@ -108,10 +108,7 @@ function WorkItemComposerGuideContent({
       triggerRef={triggerRef}
       containerRef={containerRef}
       onClose={closeMenu}
-      onSelect={option => {
-        const selected = option.id === project?.id && option.project_store === project.project_store
-        if (!selected || resolvedItem) onSelectProject?.(option)
-      }}
+      onSelect={option => onSelectProject?.(option)}
       onRemoveProject={onRemoveProject}
     />
   ) : null
