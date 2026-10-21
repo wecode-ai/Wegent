@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { act, useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -75,7 +75,21 @@ function setup(store: 'local' | 'backend', mode: 'create' | 'edit' = 'edit') {
     },
     members: { list: vi.fn(async () => []) },
     projects: { listCollaborationGroups: vi.fn(async () => []) },
-    attachments: { list: vi.fn(async () => []) },
+    attachments: {
+      list: vi.fn(async () => []),
+      upload: vi.fn(async (issueId: string, file: File) => ({
+        id: file.name,
+        loop_item_id: issueId,
+        display_name: file.name,
+        content_type: file.type,
+        size_bytes: file.size,
+        sha256: 'hash',
+        created_by_user_id: 1,
+        created_at: '2026-10-21T00:00:00Z',
+        markdown_url: `wegent://attachments/${file.name}`,
+        markdown: '',
+      })),
+    },
     collaborators: { list: vi.fn(async () => []) },
     taskBindings: { list: vi.fn(async () => []) },
     deliveries: { list: vi.fn(async () => []) },
@@ -114,6 +128,7 @@ function setup(store: 'local' | 'backend', mode: 'create' | 'edit' = 'edit') {
   return {
     api,
     source,
+    item,
     onCreated,
     bindings,
     updateProject: (values: Record<string, unknown>) => {
@@ -272,6 +287,77 @@ describe('workspace Agent selection from the Issue assignee picker', () => {
       status: 'in_progress',
       assignee_agent_id: 'project-binding',
     })
+  })
+
+  it('clears a committed assignee removed from the failed create draft', async () => {
+    const { api, item, onCreated } = setup('local', 'create')
+    api.issues.assign.mockRejectedValueOnce(new Error('Assignment response lost'))
+    const user = await chooseSource('create')
+    await user.click(screen.getByTestId('cloud-todo-create-confirm'))
+    expect(await screen.findByText('Assignment response lost')).toBeVisible()
+    api.issues.get.mockResolvedValue({ ...item, assignee_agent_id: 'project-binding', version: 3 })
+    await user.click(screen.getByTestId('cloud-todo-create-assignee'))
+    await user.click(await screen.findByTestId('cloud-todo-create-assignee-option-empty'))
+    await user.click(screen.getByTestId('cloud-todo-create-confirm'))
+    await waitFor(() => expect(onCreated).toHaveBeenCalledOnce())
+    expect(api.issues.create).toHaveBeenCalledOnce()
+    expect(api.issues.assign).toHaveBeenCalledOnce()
+    expect(api.issues.update).toHaveBeenCalledExactlyOnceWith('ISSUE-1', {
+      version: 3,
+      assigneeUserId: null,
+      assigneeAgentId: null,
+      assigneeTeamId: null,
+    })
+  })
+
+  it('preserves creation automation when the draft never selected an assignee', async () => {
+    const { api, item, onCreated } = setup('backend', 'create')
+    api.issues.create.mockResolvedValue({ ...item, assignee_agent_id: 'automation-agent' })
+    await userEvent.setup().click(screen.getByTestId('cloud-todo-create-confirm'))
+    await waitFor(() => expect(onCreated).toHaveBeenCalledOnce())
+    expect(api.issues.assign).not.toHaveBeenCalled()
+    expect(api.issues.update).not.toHaveBeenCalled()
+    expect(onCreated.mock.calls[0][0].assignee_agent_id).toBe('automation-agent')
+  })
+
+  it('reuses completed and still-running uploads while retrying only the failed file', async () => {
+    const { api, onCreated } = setup('local', 'create')
+    const files = ['first.txt', 'failed.txt', 'late.txt'].map(
+      name => new File([name], name, { type: 'text/plain' })
+    )
+    const upload = api.attachments.upload.getMockImplementation()!
+    let releaseLate!: () => void
+    const late = new Promise<void>(resolve => {
+      releaseLate = resolve
+    })
+    let fail = true
+    api.attachments.upload.mockImplementation(async (issueId, file) => {
+      if (file.name === 'failed.txt' && fail) {
+        fail = false
+        throw new Error('One upload failed')
+      }
+      if (file.name === 'late.txt') await late
+      return upload(issueId, file)
+    })
+    const user = await chooseSource('create')
+    await user.upload(screen.getByTestId('cloud-todo-attachment-input'), files)
+    await user.click(screen.getByTestId('cloud-todo-create-confirm'))
+    expect(await screen.findByText('One upload failed')).toBeVisible()
+    api.issues.get.mockResolvedValue(await api.issues.assign.mock.results[0].value)
+    await user.click(screen.getByTestId('cloud-todo-create-confirm'))
+    await waitFor(() => expect(api.attachments.upload).toHaveBeenCalledTimes(4))
+    expect(onCreated).not.toHaveBeenCalled()
+    expect(api.attachments.upload.mock.calls.map(([, file]) => file.name)).toEqual([
+      'first.txt',
+      'failed.txt',
+      'late.txt',
+      'failed.txt',
+    ])
+    await act(async () => releaseLate())
+    await waitFor(() => expect(onCreated).toHaveBeenCalledOnce())
+    expect(api.issues.create).toHaveBeenCalledOnce()
+    expect(api.issues.assign).toHaveBeenCalledOnce()
+    expect(api.agents.create).toHaveBeenCalledOnce()
   })
 
   it('retains installed assignees when the workspace catalog cannot be loaded', async () => {

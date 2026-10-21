@@ -747,7 +747,7 @@ export function TodoEditor(props: TodoEditorProps) {
   const showPanelControls = props.showPanelControls !== false;
   const showFullscreenControl = props.showFullscreenControl !== false;
   const item = editProps?.item ?? null;
-  const createIssue = useIssueCreation(editorPort.issues);
+  const creation = useIssueCreation(editorPort);
   const [securityBusy, setSecurityBusy] = useState(false);
   const isAITableEdit =
     item !== null && editProps?.project?.task_provider === "dingtalk_aitable";
@@ -1556,16 +1556,18 @@ export function TodoEditor(props: TodoEditorProps) {
       overrides: Partial<SharedIssueDetailCreateInput> = {},
     ): Promise<CloudLoopItem> => {
       const target = await resolveAssigneeTarget(assigneeTarget);
-      let created = await createIssue(props.project.id, {
-        ...createInput,
-        ...overrides,
-      });
+      const progress = await creation.create(
+        props.project.id,
+        { ...createInput, ...overrides },
+        Boolean(target),
+      );
+      let created = progress.issue;
       // Human ownership must be part of creation so task.created automation
       // cannot start AI work before a follow-up assignment reaches the server.
-      if (target && target !== issueAssigneeTarget(created)) {
+      if (progress.syncAssignee && target !== issueAssigneeTarget(created)) {
         created = await persistAssignee(created, target, notifyAssignee);
       }
-      await uploadAttachments(created.id, pendingFiles);
+      await creation.upload(created.id, pendingFiles);
       if (draftKey) {
         localStorage.removeItem(draftKey);
         draftAttachmentStore.delete(draftKey);
