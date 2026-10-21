@@ -161,7 +161,7 @@ function WorkItemComposerGuideContent({
               data-testid={`work-item-workspace-option-${String(option.id).replace(/[^a-zA-Z0-9_-]/g, '-')}`}
               onClick={() => {
                 closeMenu()
-                if (!selected || resolvedItem) onSelectProject?.(option)
+                onSelectProject?.(option)
               }}
               className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted"
             >
