@@ -13,6 +13,7 @@ export type ApplicationCapability =
   | 'open_experience'
   | 'configure_environment'
   | 'manage_access'
+  | 'view_analytics'
 export type EnvironmentVariableType = 'plain' | 'secret'
 
 export interface PlainEnvironmentVariable {
@@ -159,7 +160,21 @@ export interface UpdateSiteAccessInput {
   subjects: string[]
 }
 
+export interface SiteAnalyticsRange {
+  start_date: string
+  end_date: string
+}
+
+export interface SiteAnalytics extends SiteAnalyticsRange {
+  project_id: string
+  timezone: 'Asia/Shanghai'
+  totals: { pv: number; uv: number }
+  daily: Array<{ date: string; pv: number; uv: number }>
+  queried_at: string
+}
+
 export interface SitesApi {
+  getSiteAnalytics(siteid: string, range: SiteAnalyticsRange): Promise<SiteAnalytics>
   listApplicationTypes(): Promise<ApplicationTypeListResponse>
   listSites(input: ListSitesInput): Promise<SiteListResponse>
   publishSite(siteid: string): Promise<Site>
@@ -200,6 +215,10 @@ export function createSitesApi(baseUrl: string, options: SitesApiOptions = {}): 
   })
 
   return {
+    getSiteAnalytics(siteid, range) {
+      const params = new URLSearchParams({ start_date: range.start_date, end_date: range.end_date })
+      return client.get(`/sites/${encodeURIComponent(siteid)}/analytics?${params.toString()}`)
+    },
     listApplicationTypes() {
       return client.get('/sites/app-types')
     },
@@ -281,6 +300,7 @@ export function createUnavailableSitesApi(): SitesApi {
     deleteSite: unavailable,
     getEnvironmentVariables: unavailable,
     patchEnvironmentVariables: unavailable,
+    getSiteAnalytics: unavailable,
     listCollaborators: unavailable,
     addCollaborator: unavailable,
     removeCollaborator: unavailable,

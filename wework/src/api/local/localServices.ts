@@ -1,3 +1,4 @@
+import { createStandInExecutorApi } from '@/api/standIn'
 import { createLocalProjectDevicePluginApi } from '@/api/projectDevicePlugins'
 import { requestRunnerSelection } from '@/lib/runner-selection'
 import {
@@ -4583,6 +4584,10 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       },
     },
     runtimeWorkApi,
+    standInApi: createStandInExecutorApi(async (method, payload, deviceId) => {
+      if (deviceId !== (await getLocalDeviceId())) throw new Error('executor-not-local')
+      return request(method, payload)
+    }),
     composerCatalogApi: createRuntimeComposerApi(
       {
         request: async (method, params, deviceId) => {

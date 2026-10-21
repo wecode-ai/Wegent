@@ -416,14 +416,17 @@ async function seedDesktopE2ECloudConnection(): Promise<void> {
     runtimeConfig.localModelsCatalogReady ??
     import.meta.env.VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY === 'true'
   const config = normalizeCloudBackendUrl(backendUrl)
+  const token = runtimeConfig.cloudToken ?? import.meta.env.VITE_WEWORK_E2E_CLOUD_TOKEN?.trim()
+  const response = await fetch(`${config.apiBaseUrl}/users/me`, {
+    headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(10000),
+  })
+  if (!response.ok) throw new Error(`E2E cloud identity returned ${response.status}`)
+  const user = await response.json()
   saveStoredCloudConnection({
     ...config,
     webUrl: config.backendUrl,
-    user: {
-      id: 9001,
-      user_name: 'wework-desktop-e2e-cloud-user',
-      email: 'desktop-e2e@wework.local',
-    },
+    user,
     connectedAt: new Date().toISOString(),
   })
   const localModels =
@@ -1067,7 +1070,12 @@ async function pressNativeDesktopControlKey(
   const recordKey = (event: KeyboardEvent) => received.push(event)
   window.addEventListener(eventType, recordKey, true)
   try {
-    await invokeDesktopHost('e2e.pressKey', { windowLabel, key, phase })
+    await invokeDesktopHost('e2e.pressKey', {
+      windowLabel,
+      key,
+      phase,
+      focus: false,
+    })
     await waitForDesktopControlTick()
     if (!received.some(event => event.isTrusted && event.target === element)) {
       throw new Error(
@@ -1808,6 +1816,25 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return JSON.stringify(await invokeDesktopHost('e2e.getTraySnapshot'))
     case 'getApplicationMenuSnapshot':
       return JSON.stringify(await invokeDesktopHost('e2e.getApplicationMenuSnapshot'))
+    case 'openProcessExplorer':
+      await invokeDesktopHost('developer.openProcessExplorer')
+      return ''
+    case 'getProcessExplorerWindowSnapshot':
+      return JSON.stringify(await invokeDesktopHost('e2e.getProcessExplorerWindowSnapshot'))
+    case 'setProcessExplorerWindowSize': {
+      const request = JSON.parse(command.value ?? '{}') as {
+        width?: number
+        height?: number
+      }
+      await invokeDesktopHost('e2e.setProcessExplorerWindowSize', {
+        width: request.width,
+        height: request.height,
+      })
+      return ''
+    }
+    case 'closeProcessExplorerWindow':
+      await invokeDesktopHost('e2e.closeProcessExplorerWindow')
+      return ''
     case 'activateApplicationMenu': {
       const request = JSON.parse(command.value ?? '{}') as { id?: string; windowLabel?: string }
       return JSON.stringify(
@@ -3266,6 +3293,7 @@ function installDesktopControlClient() {
     !url ||
     (windowLabel !== 'main' &&
       windowLabel !== 'popout-window' &&
+      windowLabel !== 'process-explorer' &&
       !windowLabel.startsWith('workspace-') &&
       !windowLabel.startsWith('plugin-development-')) ||
     window.location.pathname.startsWith('/system-drag')
