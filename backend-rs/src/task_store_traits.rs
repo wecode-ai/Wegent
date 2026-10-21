@@ -12,6 +12,7 @@ use async_trait::async_trait;
 use brz_mysql::{MysqlResult, MysqlRow};
 use chrono::NaiveDateTime;
 
+use crate::task_store_detail::TaskDocumentRow;
 use crate::task_store_edit::MessageEditTables;
 use crate::task_store_listing::{OwnedTaskPage, SubtaskListing};
 use crate::task_store_subtask_content::SubtaskContentField;
@@ -311,7 +312,7 @@ pub trait TaskStore:
         &self,
         task_id: i64,
         owner_user_id: i64,
-    ) -> MysqlResult<Option<MysqlRow>>;
+    ) -> MysqlResult<Option<TaskDocumentRow>>;
 
     /// `subtask_store.list_ids_by_task`: the task's subtask ids.
     async fn list_subtask_ids_by_task(&self, task_id: i64) -> MysqlResult<Vec<MysqlRow>>;
@@ -357,7 +358,7 @@ pub trait TaskStore:
         &self,
         task_id: i64,
         client_origin: Option<&str>,
-    ) -> MysqlResult<Option<MysqlRow>>;
+    ) -> MysqlResult<Option<TaskDocumentRow>>;
 
     /// `_owner_matches_task_id`: whether `owner_user_id` owns the task, or is
     /// the only user its subtasks belong to.

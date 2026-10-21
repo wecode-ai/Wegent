@@ -15,44 +15,101 @@ use serde_json::Value;
 /// MySQL prefixes the zlib stream with the uncompressed length as a
 /// little-endian `u32`. The detail queries use this representation to shrink
 /// compressible JSON values before the driver receives the result set.
-fn decode_mysql_compressed_json_bytes<T: DeserializeOwned>(payload: &[u8]) -> Option<T> {
-    let length = payload.get(..4)?;
-    let expected = u32::from_le_bytes(length.try_into().ok()?) as usize;
+fn decode_mysql_compressed_json_bytes<T: DeserializeOwned>(
+    payload: &[u8],
+) -> Result<T, &'static str> {
+    let length = payload
+        .get(..4)
+        .ok_or("MySQL compressed JSON length header")?;
+    let expected = u32::from_le_bytes(
+        length
+            .try_into()
+            .map_err(|_| "MySQL compressed JSON length header")?,
+    ) as usize;
     let mut decoded = Vec::with_capacity(expected);
-    flate2::read::ZlibDecoder::new(payload.get(4..)?)
-        .read_to_end(&mut decoded)
-        .ok()?;
+    flate2::read::ZlibDecoder::new(
+        payload
+            .get(4..)
+            .ok_or("MySQL compressed JSON zlib payload")?,
+    )
+    .read_to_end(&mut decoded)
+    .map_err(|_| "MySQL compressed JSON zlib payload")?;
     if decoded.len() != expected {
-        return None;
+        return Err("MySQL compressed JSON matching decoded length");
     }
-    brz_json::from_slice(&decoded).ok()
+    brz_json::from_slice(&decoded).map_err(|_| "JSON after MySQL decompression")
 }
 
-/// Decode one non-null JSON column projected through MySQL `COMPRESS()`.
-pub(crate) fn mysql_compressed_json<T: DeserializeOwned>(
-    row: &MysqlRow,
-    column: &str,
-) -> MysqlResult<T> {
-    let payload = row.get_required::<Vec<u8>>(column)?;
-    decode_mysql_compressed_json_bytes(&payload).ok_or_else(|| MysqlError::Decode {
-        column: column.to_owned(),
-        expected: "compressed JSON",
-    })
+fn decode_mysql_compressed_json_chunk_values<T: DeserializeOwned>(
+    mut chunks: Vec<(i64, Vec<u8>)>,
+    declared_compressed_bytes: usize,
+) -> Result<T, &'static str> {
+    chunks.sort_by_key(|(index, _)| *index);
+    for (expected, (actual, _)) in chunks.iter().enumerate() {
+        if *actual != expected as i64 {
+            return Err("ordered MySQL compressed JSON chunks");
+        }
+    }
+    let actual_bytes: usize = chunks.iter().map(|(_, chunk)| chunk.len()).sum();
+    if actual_bytes != declared_compressed_bytes {
+        return Err("complete MySQL compressed JSON chunks");
+    }
+    let mut payload = Vec::with_capacity(actual_bytes);
+    for (_, chunk) in chunks {
+        payload.extend(chunk);
+    }
+    decode_mysql_compressed_json_bytes(&payload)
 }
 
-/// Decode one nullable JSON column projected through MySQL `COMPRESS()`.
-pub(crate) fn optional_mysql_compressed_json<T: DeserializeOwned>(
-    row: &MysqlRow,
-    column: &str,
+/// Decode one nullable JSON document projected as ordered, bounded chunks of
+/// MySQL `COMPRESS()` output. Every row repeats the declared compressed byte
+/// length, so a missing or truncated chunk fails before zlib decoding.
+pub(crate) fn mysql_compressed_json_chunks<T: DeserializeOwned>(
+    rows: &[MysqlRow],
+    chunk_column: &str,
+    length_column: &str,
 ) -> MysqlResult<Option<T>> {
-    row.get::<Vec<u8>>(column)?
-        .map(|payload| {
-            decode_mysql_compressed_json_bytes(&payload).ok_or_else(|| MysqlError::Decode {
-                column: column.to_owned(),
-                expected: "compressed JSON",
-            })
+    let first = rows.first().ok_or_else(|| MysqlError::Decode {
+        column: chunk_column.to_owned(),
+        expected: "at least one MySQL compressed JSON chunk",
+    })?;
+    if first.get::<Vec<u8>>(chunk_column)?.is_none() {
+        if rows.len() == 1 {
+            return Ok(None);
+        }
+        return Err(MysqlError::Decode {
+            column: chunk_column.to_owned(),
+            expected: "one NULL MySQL compressed JSON chunk",
+        });
+    }
+
+    let declared = first.get_required::<i64>(length_column)?;
+    let declared = usize::try_from(declared).map_err(|_| MysqlError::Decode {
+        column: length_column.to_owned(),
+        expected: "non-negative MySQL compressed JSON length",
+    })?;
+    let chunks = rows
+        .iter()
+        .map(|row| {
+            let repeated_length = row.get_required::<i64>(length_column)?;
+            if usize::try_from(repeated_length).ok() != Some(declared) {
+                return Err(MysqlError::Decode {
+                    column: length_column.to_owned(),
+                    expected: "consistent MySQL compressed JSON length",
+                });
+            }
+            Ok((
+                row.get_required::<i64>("chunk_index")?,
+                row.get_required::<Vec<u8>>(chunk_column)?,
+            ))
         })
-        .transpose()
+        .collect::<MysqlResult<Vec<_>>>()?;
+    decode_mysql_compressed_json_chunk_values(chunks, declared)
+        .map(Some)
+        .map_err(|expected| MysqlError::Decode {
+            column: chunk_column.to_owned(),
+            expected,
+        })
 }
 
 /// Serialize an optional opaque value at a response boundary. Input null and
@@ -296,23 +353,48 @@ mod tests {
     }
 
     #[test]
-    fn mysql_compressed_json_decodes_a_document_larger_than_one_packet() {
+    fn mysql_compressed_json_chunks_decode_a_document_larger_than_one_packet() {
         let value = json!({"result": "x".repeat(17 * 1024 * 1024)});
         let payload = brz_json::to_vec(&value).unwrap();
         let compressed = mysql_compress(&payload);
+        let chunks = compressed
+            .chunks(4096)
+            .enumerate()
+            .map(|(index, chunk)| (index as i64, chunk.to_vec()))
+            .collect();
 
-        let decoded: Value = decode_mysql_compressed_json_bytes(&compressed).unwrap();
+        let decoded: OpaqueJson =
+            decode_mysql_compressed_json_chunk_values(chunks, compressed.len()).unwrap();
 
-        assert_eq!(decoded, value);
+        assert_eq!(decoded.to_value(), value);
         assert!(compressed.len() < 1024 * 1024);
     }
 
     #[test]
-    fn mysql_compressed_json_rejects_a_mismatched_length_header() {
+    fn mysql_compressed_json_chunks_reject_a_mismatched_length_header() {
         let mut compressed = mysql_compress(br#"{"ok":true}"#);
         compressed[..4].copy_from_slice(&99u32.to_le_bytes());
+        let chunks = vec![(0, compressed.clone())];
 
-        assert!(decode_mysql_compressed_json_bytes::<Value>(&compressed).is_none());
+        assert_eq!(
+            decode_mysql_compressed_json_chunk_values::<Value>(chunks, compressed.len()),
+            Err("MySQL compressed JSON matching decoded length")
+        );
+    }
+
+    #[test]
+    fn mysql_compressed_json_chunks_reject_a_missing_middle_chunk() {
+        let compressed = mysql_compress(br#"{"ok":true}"#);
+        let split = compressed.len() / 2;
+        let chunks = vec![
+            (0, compressed[..split].to_vec()),
+            (2, compressed[split..].to_vec()),
+        ];
+
+        assert_eq!(
+            decode_mysql_compressed_json_chunk_values::<Value>(chunks, compressed.len()),
+            Err("ordered MySQL compressed JSON chunks")
+        );
     }
 
     #[test]

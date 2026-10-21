@@ -19,11 +19,14 @@ pub(crate) struct TaskRow {
     pub client_origin: Option<String>,
 }
 
-fn decode_task_row(row: &MysqlRow) -> brz_mysql::MysqlResult<TaskRow> {
+fn decode_task_row(
+    document: &crate::task_store::TaskDocumentRow,
+) -> brz_mysql::MysqlResult<TaskRow> {
+    let row = &document.row;
     Ok(TaskRow {
         id: row.get_required("id")?,
         user_id: row.get_required("user_id")?,
-        json: crate::json_compat::mysql_compressed_json(row, "json")?,
+        json: document.json.to_value(),
         project_id: row.get("project_id")?,
         client_origin: row.get("client_origin")?,
     })
@@ -186,7 +189,10 @@ pub(crate) struct SubtaskRow {
     pub reply_to_subtask_id: Option<i64>,
 }
 
-fn decode_subtask_row(row: &MysqlRow) -> brz_mysql::MysqlResult<SubtaskRow> {
+fn decode_subtask_row(
+    document: &crate::task_store::SubtaskDocumentRow,
+) -> brz_mysql::MysqlResult<SubtaskRow> {
+    let row = &document.row;
     Ok(SubtaskRow {
         id: row.get_required("id")?,
         user_id: row.get_required("user_id")?,
@@ -204,7 +210,7 @@ fn decode_subtask_row(row: &MysqlRow) -> brz_mysql::MysqlResult<SubtaskRow> {
         parent_id: row.get("parent_id")?,
         status: row.get_required("status")?,
         progress: row.get_required("progress")?,
-        result: crate::json_compat::optional_mysql_compressed_json(row, "result")?,
+        result: document.result.clone(),
         error_message: row.get("error_message")?,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,

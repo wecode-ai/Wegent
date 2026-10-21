@@ -172,15 +172,19 @@ fn decode_task_row(row: &MysqlRow) -> MysqlResult<TaskRow> {
     })
 }
 
-fn decode_compressed_task_row(row: &MysqlRow) -> MysqlResult<TaskRow> {
+fn decode_compressed_task_row(
+    document: &crate::task_store::TaskDocumentRow,
+) -> MysqlResult<TaskRow> {
+    let row = &document.row;
     Ok(TaskRow {
         id: row.get_required("id")?,
         user_id: row.get_required("user_id")?,
-        json: crate::json_compat::optional_mysql_compressed_json(row, "json")?.map(Json),
+        json: Some(Json(document.json.to_value())),
     })
 }
 
-fn decode_subtask_row(row: &MysqlRow) -> MysqlResult<SubtaskRow> {
+fn decode_subtask_row(document: &crate::task_store::SubtaskDocumentRow) -> MysqlResult<SubtaskRow> {
+    let row = &document.row;
     Ok(SubtaskRow {
         id: row.get_required("id")?,
         user_id: row.get_required("user_id")?,
@@ -189,7 +193,10 @@ fn decode_subtask_row(row: &MysqlRow) -> MysqlResult<SubtaskRow> {
         prompt: row.get("prompt")?,
         message_id: row.get_required("message_id")?,
         status: row.get_required("status")?,
-        result: crate::json_compat::optional_mysql_compressed_json(row, "result")?.map(Json),
+        result: document
+            .result
+            .as_ref()
+            .map(|result| Json(result.to_value())),
         created_at: row.get("created_at")?,
         sender_user_id: row.get_required("sender_user_id")?,
     })

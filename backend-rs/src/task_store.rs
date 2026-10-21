@@ -44,6 +44,11 @@ pub enum ContextPolicy {
 }
 
 pub use crate::task_store_create::*;
+pub use crate::task_store_detail::{
+    SubtaskDocumentRow, TaskDocumentRow, active_task_by_id_statement,
+    subtask_documents_from_chunks, subtasks_by_message_ordered_statement,
+    task_by_id_owned_statement, task_document_from_chunks,
+};
 pub use crate::task_store_edit::*;
 pub use crate::task_store_project_count::{TaskStoreProjectCount, count_active_project_tasks_read};
 pub use crate::task_store_public_share::TaskStorePublicShare;
@@ -437,13 +442,15 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
         &self,
         task_id: i64,
         owner_user_id: i64,
-    ) -> MysqlResult<Option<MysqlRow>> {
-        self.mysql
-            .fetch_optional(
+    ) -> MysqlResult<Option<TaskDocumentRow>> {
+        let rows = self
+            .mysql
+            .fetch_all(
                 task_by_id_owned_statement(TASKS_TABLE),
                 (task_id, owner_user_id),
             )
-            .await
+            .await?;
+        task_document_from_chunks(rows)
     }
 
     async fn list_subtask_ids_by_task(&self, task_id: i64) -> MysqlResult<Vec<MysqlRow>> {
@@ -497,12 +504,13 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
         &self,
         task_id: i64,
         client_origin: Option<&str>,
-    ) -> MysqlResult<Option<MysqlRow>> {
+    ) -> MysqlResult<Option<TaskDocumentRow>> {
         let sql = active_task_by_id_statement(TASKS_TABLE, true, client_origin.is_some());
-        match client_origin {
-            Some(origin) => self.mysql.fetch_optional(sql, (task_id, origin)).await,
-            None => self.mysql.fetch_optional(sql, (task_id,)).await,
-        }
+        let rows = match client_origin {
+            Some(origin) => self.mysql.fetch_all(sql, (task_id, origin)).await?,
+            None => self.mysql.fetch_all(sql, (task_id,)).await?,
+        };
+        task_document_from_chunks(rows)
     }
 
     async fn task_owner_matches(&self, task_id: i64, owner_user_id: i64) -> MysqlResult<bool> {

@@ -8,13 +8,6 @@
 /// The `tasks` table the single-table store reads.
 pub const TASKS_TABLE: &str = "tasks";
 
-/// Full task projection used by detail reads that decode the document in
-/// Rust. Compressing the JSON column shrinks large, compressible values before
-/// transport while preserving the `json` label expected by the decoders.
-const TASK_DETAIL_PROJECTION: &str = "id, user_id, kind, name, namespace, \
-COMPRESS(CAST(json AS CHAR CHARACTER SET utf8mb4)) AS json, is_active, \
-created_at, updated_at, project_id, client_origin, is_group_chat";
-
 /// `task_store.list_by_ids` (`db.query(TaskResource).filter(TaskResource.id.in_(task_ids))`):
 /// the 12-column `tasks` projection read from `table`, with one `?` per id in
 /// the source's textual order. The caller issues no statement at all for an
@@ -400,42 +393,6 @@ pub fn subtasks_by_task_statement(table: &str) -> String {
     )
 }
 
-/// `task_store.get_by_id` restricted to one owner, read from `table`: the full
-/// task projection of that owner's task.
-pub fn task_by_id_owned_statement(table: &str) -> String {
-    format!(
-        "SELECT {TASK_DETAIL_PROJECTION} \
-         \nFROM {table} \nWHERE id = ? AND user_id = ? \n LIMIT 1"
-    )
-}
-
-/// `task_store.get_active_non_deleted_task` on `table`: the active task of one
-/// id. `json_delete_filter` adds the base store's `text()` JSON deletion
-/// predicate, which the sharded store applies in Rust instead; `client_origin`
-/// adds the endpoint's optional origin filter.
-///
-/// Compress `json` so large task documents are transferred as a compact value
-/// and decoded after receipt.
-pub fn active_task_by_id_statement(
-    table: &str,
-    json_delete_filter: bool,
-    client_origin: bool,
-) -> String {
-    let mut sql = format!(
-        "SELECT {TASK_DETAIL_PROJECTION}
-         FROM {table}
-         WHERE id = ? AND kind = 'Task' AND is_active IN (1, 2)"
-    );
-    if json_delete_filter {
-        sql.push_str(" AND JSON_EXTRACT(json, '$.status.status') != 'DELETE'");
-    }
-    if client_origin {
-        sql.push_str(" AND client_origin = ?");
-    }
-    sql.push_str(" LIMIT 1");
-    sql
-}
-
 /// `ShardedSubtaskStore._owner_matches_task_id`'s task-table probe on `table`.
 pub fn owner_matches_task_id_statement(table: &str) -> String {
     format!("SELECT id \nFROM {table} \nWHERE id = ? AND user_id = ? \n LIMIT 1")
@@ -516,20 +473,6 @@ const SUBTASK_LABELED_COLUMNS: &str = "{t}.id AS {t}_id, {t}.user_id AS {t}_user
     {t}.created_at AS {t}_created_at, {t}.updated_at AS {t}_updated_at, \
     {t}.completed_at AS {t}_completed_at, {t}.sender_type AS {t}_sender_type, \
     {t}.sender_user_id AS {t}_sender_user_id, {t}.reply_to_subtask_id AS {t}_reply_to_subtask_id";
-
-/// `subtask_store.list_by_task_ordered` with the source's default `order_by`,
-/// read from `table`: ordered `message_id ASC, created_at ASC`.
-pub fn subtasks_by_message_ordered_statement(table: &str) -> String {
-    format!(
-        "SELECT id, user_id, task_id, team_id, title, bot_ids, `role`, executor_namespace, executor_name, \
-        executor_deleted_at, prompt, message_id, parent_id, status, progress, \
-        COMPRESS(CAST(result AS CHAR CHARACTER SET utf8mb4)) AS result, error_message, \
-        created_at, updated_at, completed_at, sender_type, sender_user_id, reply_to_subtask_id \n    \
-        FROM {table} \n    \
-        WHERE task_id = ? \n    \
-        ORDER BY message_id ASC, created_at ASC"
-    )
-}
 
 /// `subtask_store.list_by_task_ordered` with `exclude_deleted=True` and the
 /// default `order_by` (`message_id`, `created_at`), read from `table`

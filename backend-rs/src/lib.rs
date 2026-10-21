@@ -234,6 +234,7 @@ mod task_skills;
 pub mod task_store;
 mod task_store_create;
 mod task_store_default;
+mod task_store_detail;
 mod task_store_edit;
 mod task_store_listing;
 mod task_store_project;

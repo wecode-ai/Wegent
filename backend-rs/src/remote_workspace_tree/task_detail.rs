@@ -88,14 +88,19 @@ pub(crate) struct TaskRow {
 }
 
 /// Decode one row of the task projection (unqualified column names).
-fn decode_task_row(row: &brz_mysql::MysqlRow) -> brz_mysql::MysqlResult<TaskRow> {
+fn decode_task_row(
+    document: &crate::task_store::TaskDocumentRow,
+) -> brz_mysql::MysqlResult<TaskRow> {
+    let row = &document.row;
     Ok(TaskRow {
         id: row.get_required("id")?,
         user_id: row.get_required("user_id")?,
         kind: row.get_required("kind")?,
         name: row.get_required("name")?,
         namespace: row.get_required("namespace")?,
-        json: Json(crate::json_compat::mysql_compressed_json(row, "json")?),
+        json: Json(JsonProjection {
+            value: document.json.project(),
+        }),
         is_active: row.get_required("is_active")?,
         created_at: row.get_required("created_at")?,
         updated_at: row.get_required("updated_at")?,
@@ -249,7 +254,7 @@ async fn load_task_by_owner(
     task_store: &dyn crate::task_store::TaskStore,
     task_id: u64,
     owner_user_id: i64,
-) -> Result<Option<brz_mysql::MysqlRow>, ApiError> {
+) -> Result<Option<crate::task_store::TaskDocumentRow>, ApiError> {
     task_store
         .get_task_owned(task_id as i64, owner_user_id)
         .await
@@ -297,7 +302,7 @@ where
     // 1. `get_active_non_deleted_task`: kind Task, is_active IN (1, 2). A
     //    legacy id pushes the JSON DELETE check into the base-table render;
     //    a shard read applies it after the row load.
-    let task_row: Option<brz_mysql::MysqlRow> = task_store
+    let task_row: Option<crate::task_store::TaskDocumentRow> = task_store
         .get_active_task_by_id(task_id as i64, None)
         .await
         .map_err(internal_mysql)?;
@@ -627,7 +632,10 @@ fn window_fork_history(subtasks: &mut Vec<SubtaskRow>) {
 }
 
 /// Decode one row of the subtask projection (unqualified column names).
-fn decode_subtask_row(row: &brz_mysql::MysqlRow) -> brz_mysql::MysqlResult<SubtaskRow> {
+fn decode_subtask_row(
+    document: &crate::task_store::SubtaskDocumentRow,
+) -> brz_mysql::MysqlResult<SubtaskRow> {
+    let row = &document.row;
     Ok(SubtaskRow {
         id: row.get_required("id")?,
         user_id: row.get_required("user_id")?,
@@ -644,7 +652,11 @@ fn decode_subtask_row(row: &brz_mysql::MysqlRow) -> brz_mysql::MysqlResult<Subta
         parent_id: row.get_required("parent_id")?,
         status: row.get_required("status")?,
         progress: row.get_required("progress")?,
-        result: Json(crate::json_compat::mysql_compressed_json(row, "result")?),
+        result: Json(document.result.clone().ok_or_else(|| {
+            brz_mysql::MysqlError::UnexpectedNull {
+                column: "result_chunk".to_string(),
+            }
+        })?),
         error_message: row.get("error_message")?,
         created_at: row.get_required("created_at")?,
         updated_at: row.get_required("updated_at")?,
