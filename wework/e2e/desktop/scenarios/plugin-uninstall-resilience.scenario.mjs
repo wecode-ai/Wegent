@@ -3,6 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { CLOUD_DEVICE_ID } from '../modules/shared.mjs'
 import { PluginFaultProxy } from '../modules/plugin-fault-proxy.mjs'
+import { verifyPluginWriteCoordination } from '../modules/plugin-write-coordination.mjs'
 import {
   accountPlugin,
   assertInstallButton,
@@ -47,7 +48,7 @@ export async function createDesktopScenario({
     )
   const pendingRows = item =>
     cloud.queryDatabase(
-      'SELECT state FROM plugin_device_installations WHERE user_id = %s AND installed_kind_id = %s AND device_id = %s',
+      'SELECT state, error_code, attempt_count, last_sync_at, updated_at, desired_release_id, actual_release_id FROM plugin_device_installations WHERE user_id = %s AND installed_kind_id = %s AND device_id = %s',
       [1, item.installedId, CLOUD_DEVICE_ID]
     )
 
@@ -161,8 +162,20 @@ export async function createDesktopScenario({
   async function restartRecovery(control) {
     const { item, runtimePath, remoteHome } = await heldCleanup(control, 'restart-pending')
     // Stop real processes, losing the in-memory in-flight set while retaining MySQL.
+    const beforeStop = await pendingRows(item)
+    const stopStartedAt = Date.now()
     await cloud.stopBackend()
-    assert.ok((await pendingRows(item)).some(row => row.state === 'uninstalling'))
+    const afterStop = await pendingRows(item)
+    evidence.push({
+      case: 'restart-persisted-state-diagnostics',
+      beforeStop,
+      afterStop,
+      stopDurationMs: Date.now() - stopStartedAt,
+    })
+    assert.ok(
+      afterStop.some(row => row.state === 'uninstalling'),
+      `Persisted cleanup changed while stopping the backend: ${JSON.stringify({ beforeStop, afterStop })}`
+    )
     await cloud.launchBackend()
     deviceProxy.pauseDeviceDelivery(false)
     await Promise.all([
@@ -271,6 +284,15 @@ export async function createDesktopScenario({
         'Remote device bypassed fault proxy'
       )
       try {
+        await verifyPluginWriteCoordination({
+          cloud,
+          control,
+          apiProxy,
+          deviceProxy,
+          localDeviceId: local.device_id,
+          evidence,
+          timeoutMs: workbenchReadyTimeoutMs,
+        })
         await lostResponse(control)
         await unknownResult(control)
         await restartRecovery(control)
@@ -279,6 +301,7 @@ export async function createDesktopScenario({
       } finally {
         apiProxy.rule = () => null
         deviceProxy.pauseDeviceDelivery(false)
+        deviceProxy.pauseDeviceAcknowledgements(false)
         await writeFile(
           join(resultDir, 'plugin-uninstall-evidence.json'),
           JSON.stringify({ evidence, requests: apiProxy.requests }, null, 2)

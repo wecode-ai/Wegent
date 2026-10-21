@@ -184,7 +184,11 @@ class PluginMarketplaceService:
             payload = row.json if isinstance(row.json, dict) else {}
             spec = payload.get("spec") if isinstance(payload.get("spec"), dict) else {}
             source = spec.get("source") if isinstance(spec.get("source"), dict) else {}
-            if source.get("type") != "marketplace":
+            # Kind-backed catalogs use a different ID space from Plugin/Release.
+            if (
+                source.get("type") != "marketplace"
+                or source.get("providerKey") == "wegent-marketplace"
+            ):
                 continue
             plugin_key = str(source.get("pluginKey") or "").strip()
             if not plugin_key:
@@ -231,28 +235,6 @@ class PluginMarketplaceService:
                 db, row=row, user_id=user_id, plugin_key=plugin_key
             ):
                 changed += 1
-
-        # Drop device-install rows that still point at inactive/uninstalled kinds.
-        # These leftovers surface as “devices failed to synchronize” after catalog
-        # reimports even when the visible plugin (e.g. EchoID) is already healthy.
-        stale_device_rows = (
-            db.query(PluginDeviceInstallation)
-            .filter(PluginDeviceInstallation.user_id == user_id)
-            .all()
-        )
-        active_ids = {row.id for row in rows}
-        for device_row in stale_device_rows:
-            kind = db.get(Kind, device_row.installed_kind_id)
-            if (
-                device_row.installed_kind_id in active_ids
-                and kind
-                and kind.is_active
-                and ((kind.json or {}).get("spec") or {}).get("installState")
-                != "uninstalled"
-            ):
-                continue
-            db.delete(device_row)
-            changed += 1
 
         if changed:
             db.commit()

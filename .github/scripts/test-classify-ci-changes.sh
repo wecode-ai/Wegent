@@ -519,6 +519,12 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/plugin-uninstall-resilience.scenario.mjs" \
   "wework/e2e/desktop/modules/plugin-fault-proxy.mjs" \
+  "wework/e2e/desktop/modules/plugin-write-coordination.mjs" \
+  "wework/e2e/desktop/modules/plugin-write-lease.mjs" \
+  "wework/e2e/desktop/support/plugin-write-lease.py" \
+  "backend/app/services/device/plugin_reconciliation.py" \
+  "backend/app/services/plugin_device_sync.py" \
+  "backend/app/services/plugin_installation_operations.py" \
   "wework/scripts/plugin-fault-proxy.test.mjs"
 
 assert_desktop_case "long plugin list selects its independent cloud checkpoint" \

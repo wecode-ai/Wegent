@@ -36,6 +36,8 @@ from app.services.plugin_package_parser import (
     plugin_package_parser,
 )
 
+pytestmark = pytest.mark.usefixtures("plugin_write_sessions")
+
 
 class ChunkedUpload:
     def __init__(self, chunks: list[bytes]):

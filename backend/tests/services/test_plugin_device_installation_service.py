@@ -1,3 +1,6 @@
+import asyncio
+import threading
+from contextlib import contextmanager
 from unittest.mock import Mock
 
 import pytest
@@ -9,6 +12,7 @@ from app.schemas.device import (
     DeviceCapabilitySyncResult,
 )
 from app.services import plugin_device_installation_service as module
+from app.services import plugin_write_operations
 from app.services.plugin_device_installation_service import (
     PluginDeviceInstallationService,
 )
@@ -55,7 +59,7 @@ def test_record_sync_response_does_not_retry_other_database_errors(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_device_enumeration_does_not_restore_uninstalled_plugin(
-    test_db, test_user, monkeypatch
+    test_db, test_user, monkeypatch, plugin_write_sessions
 ):
     installed, release = _device_install(test_db, test_user.id)
 
@@ -78,7 +82,7 @@ async def test_device_enumeration_does_not_restore_uninstalled_plugin(
 
 @pytest.mark.asyncio
 async def test_device_enumeration_does_not_overwrite_newer_desired_release(
-    test_db, test_user, monkeypatch
+    test_db, test_user, monkeypatch, plugin_write_sessions
 ):
     installed, release = _device_install(test_db, test_user.id)
 
@@ -122,3 +126,96 @@ def test_old_uninstall_ack_preserves_reinstalled_device_state(test_db, test_user
     )
 
     assert test_db.query(PluginDeviceInstallation).one().state == "pending"
+
+
+@pytest.mark.asyncio
+async def test_all_device_materialization_waits_in_its_own_worker_session(monkeypatch):
+    loop = asyncio.get_running_loop()
+    loop_thread = threading.get_ident()
+    started = asyncio.Event()
+    release = threading.Event()
+    sessions = []
+    request_db = Mock()
+
+    class TrackedSession:
+        def __init__(self):
+            self.threads = [threading.get_ident()]
+            self.closed = False
+            sessions.append(self)
+
+        def touch(self):
+            self.threads.append(threading.get_ident())
+
+        def query(self, *args):
+            self.touch()
+            return self
+
+        def filter_by(self, **kwargs):
+            self.touch()
+            return self
+
+        def populate_existing(self):
+            self.touch()
+            return self
+
+        def first(self):
+            self.touch()
+            return None
+
+        def commit(self):
+            self.touch()
+
+        def close(self):
+            self.touch()
+            self.closed = True
+
+    @contextmanager
+    def session():
+        db = TrackedSession()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    async def devices(db, user_id):
+        assert db is request_db
+        assert threading.get_ident() == loop_thread
+        assert sessions == []
+        return [{"device_id": "desktop"}]
+
+    def acquire(db, user_id):
+        db.touch()
+        assert db is not request_db
+        assert threading.get_ident() != loop_thread
+        request_db.close.assert_called_once_with()
+        loop.call_soon_threadsafe(started.set)
+        assert release.wait(5), "Test did not release the database operation"
+
+    monkeypatch.setattr(module.device_service, "get_all_devices", devices)
+    monkeypatch.setattr(module, "acquire_plugin_write_lock", acquire)
+    monkeypatch.setattr(plugin_write_operations, "get_db_session", session)
+    monkeypatch.setattr(
+        plugin_write_operations, "configure_plugin_session", lambda db: db.touch()
+    )
+
+    task = asyncio.create_task(
+        PluginDeviceInstallationService().ensure_pending_for_all_devices(
+            request_db,
+            user_id=7,
+            installed_kind_id=11,
+            desired_release_id=13,
+        )
+    )
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5)
+        assert not task.done()
+        assert not release.is_set()
+    finally:
+        release.set()
+        await asyncio.wait_for(task, timeout=5)
+
+    request_db.close.assert_called_once_with()
+    assert len(sessions) == 1
+    assert sessions[0].closed
+    assert len(set(sessions[0].threads)) == 1
+    assert sessions[0].threads[0] != loop_thread

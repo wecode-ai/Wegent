@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.api.endpoints.installed_plugins import _ensure_installed_plugin_on_device
 from app.models.kind import Kind
 from app.models.plugin_marketplace import PluginDeviceInstallation
 from app.schemas.device import DeviceCapabilityItemResult, DeviceCapabilitySyncResult
@@ -18,8 +17,11 @@ from app.services.plugin_device_identity import (
 from app.services.plugin_device_installation_service import (
     plugin_device_installation_service,
 )
+from app.services.plugin_device_sync import ensure_installed_plugin_on_device
 from app.services.plugin_marketplace_service import plugin_marketplace_service
 from tests.services.test_plugin_marketplace_v2 import _device_install
+
+pytestmark = pytest.mark.usefixtures("plugin_write_sessions")
 
 
 @pytest.fixture
@@ -164,7 +166,7 @@ async def test_installed_state_without_target_release_still_syncs(
     monkeypatch.setattr(
         device_capability_sync_service, "sync_installed_plugin_to_device", sync
     )
-    await _ensure_installed_plugin_on_device(
+    await ensure_installed_plugin_on_device(
         test_db,
         user_id=test_user.id,
         device_id="electron-app",

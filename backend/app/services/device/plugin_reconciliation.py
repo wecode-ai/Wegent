@@ -1,5 +1,6 @@
 """Reconcile account-managed plugins without changing independent capabilities."""
 
+import asyncio
 from typing import Any
 
 from fastapi import HTTPException
@@ -29,6 +30,17 @@ def desired_plugins(user_id: int, device_id: str) -> dict[str, Any]:
         # and MCPs as a request to delete them. The scope acknowledgement is required.
         return device_capability_sync_service.build_desired_plugins(
             db, user_id=user_id, device_id=device_id
+        )
+
+
+def record_reconciliation_result(
+    user_id: int, result: DeviceCapabilitySyncResult
+) -> None:
+    """Create, use and close the acknowledgement session in its worker."""
+    with get_db_session() as db:
+        configure_plugin_session(db)
+        plugin_device_installation_service.record_device_sync_result(
+            db, user_id=user_id, result=result
         )
 
 
@@ -64,7 +76,7 @@ def reconciliation_failure_detail(result: DeviceCapabilitySyncResult) -> str:
 async def reconcile_device_plugins(
     user_id: int, device_id: str
 ) -> PluginDeviceSyncResponse:
-    payload = desired_plugins(user_id, device_id)
+    payload = await asyncio.to_thread(desired_plugins, user_id, device_id)
     # Re-read after the device round trip. An install/uninstall may have committed
     # while a package was downloading; never acknowledge an obsolete snapshot.
     for _ in range(3):
@@ -79,15 +91,11 @@ async def reconcile_device_plugins(
             raise HTTPException(502, reconciliation_failure_detail(result))
         if result.scope != "plugins":
             raise HTTPException(409, "Update the desktop runtime to reconcile plugins")
-        latest = desired_plugins(user_id, device_id)
+        latest = await asyncio.to_thread(desired_plugins, user_id, device_id)
         if plugin_snapshot(latest) != plugin_snapshot(payload):
             payload = latest
             continue
-        with get_db_session() as db:
-            configure_plugin_session(db)
-            plugin_device_installation_service.record_device_sync_result(
-                db, user_id=user_id, result=result
-            )
+        await asyncio.to_thread(record_reconciliation_result, user_id, result)
         return PluginDeviceSyncResponse(
             deviceId=device_id,
             pendingCount=0,

@@ -1153,8 +1153,11 @@ classify_path() {
   case "$path" in
     backend/app/api/endpoints/installed_plugins.py | \
       backend/app/api/ws/device_namespace.py | \
+      backend/app/services/device/plugin_reconciliation.py | \
       backend/app/services/device/plugin_removal_sync.py | \
       backend/app/services/plugin_device_installation_service.py | \
+      backend/app/services/plugin_device_sync.py | \
+      backend/app/services/plugin_installation_operations.py | \
       backend/app/services/plugin_marketplace_service.py | \
       wework/src/api/pluginUninstall* | wework/src/api/plugins.ts | \
       wework/src/features/plugins/pluginInventory* | \
@@ -1182,6 +1185,9 @@ classify_path() {
       select_target "cloud:plugin-composer-long-list"
       ;;
     wework/e2e/desktop/scenarios/plugin-uninstall-resilience.scenario.mjs | \
+      wework/e2e/desktop/modules/plugin-write-coordination.mjs | \
+      wework/e2e/desktop/modules/plugin-write-lease.mjs | \
+      wework/e2e/desktop/support/plugin-write-lease.py | \
       wework/scripts/plugin-fault-proxy.test.mjs | \
       wework/e2e/desktop/modules/plugin-fault-proxy*)
       select_target "cloud:plugin-uninstall-resilience"

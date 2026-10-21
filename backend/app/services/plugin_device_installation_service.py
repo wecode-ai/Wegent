@@ -7,6 +7,7 @@
 import logging
 import time
 from datetime import datetime
+from functools import partial
 
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
@@ -25,10 +26,8 @@ from app.services.plugin_device_identity import (
     plugin_device_id,
     reconcile_plugin_device_rows,
 )
-from app.services.plugin_write_coordination import (
-    acquire_plugin_write_lock,
-    configure_plugin_session,
-)
+from app.services.plugin_write_coordination import acquire_plugin_write_lock
+from app.services.plugin_write_operations import run_plugin_operation
 
 logger = logging.getLogger(__name__)
 
@@ -48,11 +47,37 @@ class PluginDeviceInstallationService:
         desired_release_id: int,
         reset_failures: bool = False,
     ) -> None:
-        """Materialize desired state for registered online and offline devices."""
+        """Materialize devices after the authoritative install has committed."""
         # Device enumeration may await online-status providers. Keep it outside
         # the write lease, then re-read the account's desired state under it.
-        configure_plugin_session(db)
         devices = await device_service.get_all_devices(db, user_id)
+        device_ids = [
+            device_id for device in devices if (device_id := self._device_id(device))
+        ]
+        # Enumeration must not leave a request transaction open during the write.
+        db.close()
+        await run_plugin_operation(
+            partial(
+                self._ensure_pending_for_devices,
+                user_id=user_id,
+                installed_kind_id=installed_kind_id,
+                desired_release_id=desired_release_id,
+                device_ids=device_ids,
+                reset_failures=reset_failures,
+            )
+        )
+
+    def _ensure_pending_for_devices(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        installed_kind_id: int,
+        desired_release_id: int,
+        device_ids: list[str],
+        reset_failures: bool,
+    ) -> None:
+        """Revalidate and materialize desired state inside one worker transaction."""
         acquire_plugin_write_lock(db, user_id)
         installed = (
             db.query(Kind)
@@ -74,15 +99,12 @@ class PluginDeviceInstallationService:
             db.commit()
             return
         reconcile_plugin_device_rows(db, user_id)
-        device_ids: set[str] = set()
-        for device in devices:
-            device_id = self._device_id(device)
-            if not device_id or device_id in device_ids:
+        seen_device_ids: set[str] = set()
+        for submitted_device_id in device_ids:
+            device_id = plugin_device_id(db, user_id, submitted_device_id)
+            if not device_id or device_id in seen_device_ids:
                 continue
-            device_id = plugin_device_id(db, user_id, device_id)
-            if device_id in device_ids:
-                continue
-            device_ids.add(device_id)
+            seen_device_ids.add(device_id)
             row = self._device_row(db, installed_kind_id, device_id)
             if not row:
                 row = PluginDeviceInstallation(
