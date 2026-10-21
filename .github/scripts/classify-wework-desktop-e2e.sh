@@ -17,6 +17,7 @@ core_segments=(
   stand-in-workspace
   stand-in-controls
   stand-in-cloud
+  stand-in-permissions
   collaboration-remote-agent-dispatch
   collaboration-local-group-coordinate
   collaboration-remote-group-coordinate
@@ -209,7 +210,7 @@ core_shards=(
   local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification,collaboration-issue-mcp-comments,latest-conversation-history
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,model-overload-recovery
   model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy
-  collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details,stand-in-cloud
+  collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-permissions
   rendering-extensions,streaming-content,streaming-tools,streaming-timers
   streaming-scroll,streaming-message-order,streaming-subagents
   # Preserve the fixed interaction latency budget without CPU contention from other apps.
@@ -381,6 +382,7 @@ select_collaboration_dispatch_checkpoints() {
   select_target "core:stand-in-workspace"
   select_target "core:stand-in-controls"
   select_target "core:stand-in-cloud"
+  select_target "core:stand-in-permissions"
   select_target "core:collaboration-remote-agent-dispatch"
   select_target "core:collaboration-local-group-coordinate"
   select_target "core:collaboration-remote-group-coordinate"
@@ -770,11 +772,16 @@ classify_wework_path() {
       select_target "core:collaboration-group-onboarding"
       return
       ;;
+    wework/e2e/desktop/scenarios/stand-in-permissions.scenario.mjs)
+      select_target "core:stand-in-permissions"
+      return
+      ;;
     wework/e2e/desktop/scenarios/stand-in-controls.scenario.mjs|wework/e2e/desktop/scenarios/stand-in.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-cloud.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-workspace.scenario.mjs|wework/src/features/todo/StandInComposer*|wework/src/features/todo/StandInSettingsPage*|wework/src/features/todo/useStandInModels*|wework/src/features/todo/IssueStandInControl*|wework/src/features/todo/StandInIcon.tsx|wework/src/features/todo/useStandInProjects.ts|wework/src/features/todo/useStandInProjects.test.tsx|wework/src/features/todo/StandInPopover.tsx|wework/src/features/todo/StandInPopover.test.tsx|wework/src/api/standIn.ts|wework/src/api/standIn.test.ts|executor/src/runtime_work/handler/stand_in.rs|executor/src/task_runtime/stand_in.rs)
       select_target "core:stand-in"
       select_target "core:stand-in-workspace"
       select_target "core:stand-in-controls"
       select_target "core:stand-in-cloud"
+      select_target "core:stand-in-permissions"
       return
       ;;
     wework/e2e/desktop/scenarios/collaboration-local-agent-dispatch.scenario.mjs)
