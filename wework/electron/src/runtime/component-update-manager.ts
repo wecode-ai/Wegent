@@ -20,9 +20,9 @@ import { copyManagedPlugin } from './managed-plugin-files.js'
 import { pipeline } from 'node:stream/promises'
 import { publishImmutableDirectory } from './immutable-directory.js'
 import * as tar from 'tar'
-import { hashComponentPath, sha256 } from './component-content-hash.js'
+import { hashComponentPath, sha256 } from './component-content-hash.mjs'
 
-export { hashComponentPath } from './component-content-hash.js'
+export { hashComponentPath } from './component-content-hash.mjs'
 
 export const MANAGED_COMPONENT_IDS = [
   'coreDsh',

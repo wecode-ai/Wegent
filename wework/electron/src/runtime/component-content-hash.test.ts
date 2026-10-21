@@ -21,7 +21,7 @@ vi.mock('node:fs', async importOriginal => {
   }
 })
 
-import { hashComponentPath } from './component-content-hash.js'
+import { hashComponentPath } from './component-content-hash.mjs'
 
 test('bounds concurrent file reads while preserving the canonical digest', async () => {
   const root = await mkdtemp(join(tmpdir(), 'wework-component-hash-'))

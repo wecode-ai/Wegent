@@ -32,7 +32,7 @@ async function fixture() {
   return { sourceRoot, targetRoot }
 }
 
-test('concurrent processes publish one complete tree without copying tests', async () => {
+test('plain Node processes publish one complete tree without a TypeScript loader', async () => {
   const options = await fixture()
   const script = `
     const { stageProcessExplorer } = await import(${JSON.stringify(moduleUrl)});
@@ -42,6 +42,9 @@ test('concurrent processes publish one complete tree without copying tests', asy
   const results = await Promise.allSettled(
     Array.from({ length: 6 }, () =>
       execute(process.execPath, [
+        ...(process.allowedNodeEnvironmentFlags.has('--no-experimental-strip-types')
+          ? ['--no-experimental-strip-types']
+          : []),
         '--input-type=module',
         '--eval',
         script,

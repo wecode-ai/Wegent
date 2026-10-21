@@ -1,1 +1,1 @@
-export { hashComponentPath } from '../../electron/src/runtime/component-content-hash.ts'
+export { hashComponentPath } from '../../electron/src/runtime/component-content-hash.mjs'

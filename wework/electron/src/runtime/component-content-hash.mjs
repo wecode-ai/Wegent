@@ -6,14 +6,16 @@ import { pipeline } from 'node:stream/promises'
 
 const MAX_FILE_READS = 8
 
-export async function hashComponentPath(path: string): Promise<string> {
+/** @param {string} path @returns {Promise<string>} */
+export async function hashComponentPath(path) {
   const metadata = await lstat(path)
   if (metadata.isFile()) return sha256(path)
   if (!metadata.isDirectory()) throw new Error(`Unsupported component entry: ${path}`)
   let active = 0
-  const waiting: Array<() => void> = []
-  const hashFile = async (file: string): Promise<string> => {
-    if (active === MAX_FILE_READS) await new Promise<void>(resolve => waiting.push(resolve))
+  /** @type {Array<() => void>} */
+  const waiting = []
+  const hashFile = async file => {
+    if (active === MAX_FILE_READS) await new Promise(resolve => waiting.push(resolve))
     else active += 1
     try {
       return await sha256(file)
@@ -26,11 +28,13 @@ export async function hashComponentPath(path: string): Promise<string> {
   return hashTree(path, '', hashFile)
 }
 
-async function hashTree(
-  root: string,
-  relative: string,
-  hashFile: (path: string) => Promise<string>
-): Promise<string> {
+/**
+ * @param {string} root
+ * @param {string} relative
+ * @param {(path: string) => Promise<string>} hashFile
+ * @returns {Promise<string>}
+ */
+async function hashTree(root, relative, hashFile) {
   const entries = await readdir(join(root, relative), { withFileTypes: true })
   entries.sort((left, right) => left.name.localeCompare(right.name))
   const contents = await Promise.all(
@@ -48,7 +52,8 @@ async function hashTree(
   return hash.digest('hex')
 }
 
-export async function sha256(path: string): Promise<string> {
+/** @param {string} path @returns {Promise<string>} */
+export async function sha256(path) {
   const hash = createHash('sha256')
   await pipeline(createReadStream(path), hash)
   return hash.digest('hex')
