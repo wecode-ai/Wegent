@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { Readable } from 'node:stream'
 
 import { PluginFaultProxy } from './plugin-fault-proxy.mjs'
+import { createCachedHistoryTask, verifyCachedHistorySearch } from './cached-history-search.mjs'
 import { ensureExperimentalFeaturesEnabled } from './preferences-automation-flows.mjs'
 import {
   TERMINAL_HISTORY_SEARCH_CASES,
@@ -134,8 +135,11 @@ async function seedHistory(cloud, taskId) {
   }
   delete task.runtime_handle?.completedTranscriptMessages
   delete task.runtime_handle?.completedTranscriptThreadId
+  const cachedTask = createCachedHistoryTask(task)
+  index.tasks[cachedTask.local_task_id] = cachedTask
   await writeFile(indexPath, `${JSON.stringify(index)}\n`)
   await cloud.restartCloudExecutor()
+  return cachedTask
 }
 
 async function waitForPane(control, predicate, description, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) {
@@ -154,6 +158,7 @@ export function createCloudHistorySearchVerification() {
   let proxy
   let scope
   let taskId
+  let cachedTaskId
   let fault
   const evidence = []
   const appEnvironment = {}
@@ -165,12 +170,13 @@ export function createCloudHistorySearchVerification() {
       appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL = proxy.url
       proxy.rule = (entry, request) => {
         const read = request.historySearch
-        if (!read || read.taskId !== taskId) return null
+        if (!read || ![taskId, cachedTaskId].includes(read.taskId)) return null
         const bound =
           read.projectSession?.projectId === scope?.projectId &&
           read.projectSession?.issueId === scope?.issueId
         // Keep only fixture identities and stages, never bodies, cursors, or credentials.
         entry.projectBound = bound
+        entry.cachedHistory = read.taskId === cachedTaskId
         entry.stage = entry.path === SEARCH_PATH ? 'search' : read.afterCursor ? 'after' : 'before'
         if (!bound || !fault?.matches(entry, read)) return null
         const selected = fault
@@ -215,7 +221,8 @@ export function createCloudHistorySearchVerification() {
         assert.ok(taskId)
         const address = { deviceId: created.deviceId, taskId, workspacePath: created.workspacePath }
         const task = await cloud.waitForRuntimeTask(address)
-        await seedHistory(cloud, taskId)
+        const cachedTask = await seedHistory(cloud, taskId)
+        cachedTaskId = cachedTask.local_task_id
 
         await request('/api/admin/setup-complete', {})
         const workspace = await request('/api/v1/workspaces', {
@@ -407,6 +414,52 @@ export function createCloudHistorySearchVerification() {
           ).length >= 2,
           'The UI did not use the real project-bound cloud search route'
         )
+        const cachedAddress = { ...address, taskId: cachedTask.local_task_id }
+        await cloud.waitForRuntimeTask(cachedAddress)
+        await request(`/api/v1/loop-items/${issue.id}/tasks`, {
+          ...cachedAddress,
+          taskTitle: cachedTask.title,
+          executionContext: {
+            runtime: cachedTask.runtime,
+            workspacePath,
+            threadId: cachedTask.thread_id,
+          },
+        })
+        const cachedBinding = (await request(`/api/v1/loop-items/${issue.id}/tasks`)).find(
+          binding => binding.task_id === cachedTask.local_task_id
+        )
+        assert.ok(cachedBinding, 'The cached cloud history task was not bound to the Issue')
+        await control.command('openWeworkScheme', 'body', {
+          value: `wework://boards/${project.id}/issues/${issue.id}`,
+        })
+        await control.command(
+          'clickWhenEnabled',
+          `[data-testid="cloud-todo-open-task-conversation-${cachedBinding.id}"]`,
+          { timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
+        )
+        await control.command('clickWhenEnabled', '[data-testid="ai-chat-open-runtime-task"]')
+        await waitForPane(
+          control,
+          pane =>
+            pane?.currentRuntimeTask?.taskId === cachedTask.local_task_id &&
+            !pane.transcript.loading,
+          'The cached cloud history task did not open',
+          WORKBENCH_READY_TIMEOUT_MS
+        )
+        await verifyCachedHistorySearch(control, query =>
+          request(SEARCH_PATH, { ...cachedAddress, projectSession: scope, query })
+        )
+        const cachedReads = proxy.requests.filter(
+          entry => entry.cachedHistory && entry.projectBound && entry.status === 200
+        )
+        assert.ok(
+          cachedReads.filter(entry => entry.path === SEARCH_PATH).length >= 3 &&
+            cachedReads.some(entry => entry.path === TRANSCRIPT_PATH && entry.stage === 'before'),
+          'Cached matches must load through the real project-bound cloud routes'
+        )
+        evidence.push({
+          cachedHistory: 'project-bound search, terminal visibility and restoration',
+        })
       } finally {
         fault = undefined
         proxy.rule = () => null

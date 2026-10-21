@@ -9,6 +9,22 @@ export const TERMINAL_HISTORY_TURN_COUNT = 80
 const ERROR_MARKER = 'WEWORK_E2E_TERMINAL_ERROR_BODY'
 const ERROR_BODY = `API error: ${ERROR_MARKER}`
 const PARTIAL = 'The operation was interrupted after useful output'
+const PLUGIN_QUERY = 'WEWORK_E2E_PLUGIN_HISTORY_BODY'
+const PLUGIN_BODY = `${PLUGIN_QUERY} appears before the result. ${PLUGIN_QUERY} appears again.`
+// The hidden transport payload must not contribute a third occurrence.
+const PLUGIN_MARKER = `[WEGENT_PLUGIN_RESULT]${JSON.stringify({
+  schemaVersion: 1,
+  taskId: 'terminal-history-plugin-fixture',
+  relativePath: 'plugins/history-search-fixture',
+  name: 'history-search-fixture',
+  displayName: 'History Search Fixture',
+  description: PLUGIN_QUERY,
+  version: '0.1.0',
+  listingType: 'plugin',
+  logo: '',
+  sha256: 'a'.repeat(64),
+  status: 'ready',
+})}`
 const TURNS = [
   { index: 40, status: 'interrupted', text: 'interrupted', phase: 'commentary' },
   {
@@ -21,10 +37,24 @@ const TURNS = [
   { index: 42, status: 'completed', text: 'interrupted', phase: 'final_answer' },
   { index: 43, status: 'interrupted', text: PARTIAL, phase: 'commentary' },
   { index: 44, status: 'completed', text: ERROR_BODY, phase: 'final_answer' },
+  {
+    index: 45,
+    status: 'completed',
+    text: `${PLUGIN_BODY}\n${PLUGIN_MARKER}`,
+    visibleText: PLUGIN_BODY,
+    phase: 'final_answer',
+  },
 ]
 export const TERMINAL_HISTORY_SEARCH_CASES = [
   { query: 'interrupted', matches: [TURNS[2], TURNS[3]] },
   { query: ERROR_MARKER, matches: [TURNS[4]] },
+  {
+    query: PLUGIN_QUERY,
+    matches: [
+      { ...TURNS[5], occurrence: 0 },
+      { ...TURNS[5], occurrence: 1 },
+    ],
+  },
 ]
 const FIND = '[data-testid="conversation-find-input"]'
 const COUNT =
@@ -119,7 +149,8 @@ export async function waitForHighlightedHistoryMatch(
   control,
   text,
   timeoutMs = DEFAULT_STEP_TIMEOUT_MS,
-  content = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="user-message-content"]`
+  content = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="user-message-content"]`,
+  expectedOccurrence
 ) {
   await control.command('waitFor', content, { text })
   const scroller = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll"]`
@@ -136,6 +167,7 @@ export async function waitForHighlightedHistoryMatch(
       actual.ranges.some(
         range =>
           range.text.toLowerCase() === query &&
+          (expectedOccurrence === undefined || range.occurrence === expectedOccurrence) &&
           range.height > 0 &&
           range.top >= viewport.top &&
           range.bottom <= viewport.bottom
@@ -160,7 +192,13 @@ export async function verifyTerminalHistorySearch(control, timeoutMs = DEFAULT_S
         await control.command('clickWhenEnabled', '[data-testid="conversation-find-next-button"]')
       }
       await control.command('waitFor', COUNT, { text: `${index + 1} / ${matches.length}` })
-      await waitForHighlightedHistoryMatch(control, match.text, timeoutMs, ANSWERS)
+      await waitForHighlightedHistoryMatch(
+        control,
+        match.visibleText ?? match.text,
+        timeoutMs,
+        ANSWERS,
+        match.occurrence
+      )
       assert.equal(
         Number(
           await control.command(

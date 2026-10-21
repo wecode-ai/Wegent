@@ -12,6 +12,23 @@ function message(id: string, content: string): WorkbenchMessage {
   return { id, content, role: 'assistant', status: 'done', createdAt: '2026-10-14T00:00:00Z' }
 }
 
+function pluginResultMarker(overrides: Record<string, unknown> = {}): string {
+  return `[WEGENT_PLUGIN_RESULT]${JSON.stringify({
+    schemaVersion: 1,
+    taskId: 'task',
+    relativePath: 'plugins/result',
+    name: 'result',
+    displayName: 'Hidden needle metadata',
+    description: 'Plugin result',
+    version: '1',
+    listingType: 'plugin',
+    logo: '',
+    sha256: 'a'.repeat(64),
+    status: 'ready',
+    ...overrides,
+  })}`
+}
+
 function FindHarness(props: Parameters<typeof useConversationFind>[0]) {
   return <ConversationFindBar find={useConversationFind(props, true)} />
 }
@@ -109,6 +126,145 @@ describe('persisted conversation find', () => {
     expect(loadBefore).not.toHaveBeenCalled()
     expect(loadGap).not.toHaveBeenCalled()
     expect(search).toHaveBeenCalledTimes(1)
+  })
+
+  test('resolves hydrated item occurrences after hiding a valid plugin result marker', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const targets = [0, 1].map(occurrence => ({
+      itemId: 'old-item',
+      occurrence,
+      cursor: 'old-cursor',
+    }))
+    const search = vi.fn().mockResolvedValue({ matches: targets, totalMatches: 2, isCapped: false })
+    let finishHydration!: () => void
+    const hydrate = vi.fn(
+      () =>
+        new Promise<void>(resolve => {
+          finishHydration = resolve
+        })
+    )
+    const props: Parameters<typeof useConversationFind>[0] = {
+      messages: [message('latest', 'latest')],
+      onSearchTranscript: search,
+      onEnsureSearchMatch: hydrate,
+    }
+    const { result, rerender } = renderHook(props => useConversationFind(props, true), {
+      initialProps: props,
+    })
+    act(() => {
+      fireEvent.keyDown(window, { key: 'f', metaKey: true })
+      result.current.changeQuery('needle')
+    })
+    await act(async () => vi.advanceTimersByTime(150))
+    expect(hydrate).toHaveBeenCalledOnce()
+    const content = `needle **needle**\n${pluginResultMarker()}`
+    rerender({
+      ...props,
+      searchMessages: [
+        {
+          ...message('projected-old', content),
+          runtimeDisplayItems: [{ id: 'old-item', type: 'assistant_text', content }],
+        },
+      ],
+    })
+    await act(async () => finishHydration())
+    expect(result.current.searchTarget).toMatchObject({
+      messageId: 'projected-old',
+      occurrence: 0,
+      source: 'page',
+    })
+    act(() => result.current.step(1))
+    expect(result.current.searchTarget).toMatchObject({ occurrence: 1, source: 'page' })
+    await act(async () => vi.advanceTimersByTime(1500))
+    expect(result.current.result).toEqual({ matches: 2, active: 2, isCapped: false })
+    expect(result.current.historyFailed).toBe(false)
+    expect(result.current.isLoading).toBe(false)
+    expect(hydrate).toHaveBeenCalledOnce()
+  })
+
+  test('deduplicates plugin result items shared by live messages, reading pages and persisted search', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const content = `needle\n${pluginResultMarker()}`
+    const item = { id: 'shared-item', type: 'assistant_text' as const, content }
+    const search = vi.fn().mockResolvedValue({
+      matches: [{ itemId: item.id, occurrence: 0, cursor: 'shared-cursor' }],
+      totalMatches: 1,
+      isCapped: false,
+    })
+    const hydrate = vi.fn()
+    const { result } = renderHook(() =>
+      useConversationFind(
+        {
+          messages: [{ ...message('live-projection', content), runtimeDisplayItems: [item] }],
+          searchMessages: [
+            {
+              ...message('page-projection', `older\n\n${content}`),
+              runtimeDisplayItems: [
+                { id: 'preceding-item', type: 'assistant_text', content: 'older' },
+                item,
+              ],
+            },
+          ],
+          onSearchTranscript: search,
+          onEnsureSearchMatch: hydrate,
+        },
+        true
+      )
+    )
+    act(() => {
+      fireEvent.keyDown(window, { key: 'f', metaKey: true })
+      result.current.changeQuery('needle')
+    })
+    await act(async () => vi.advanceTimersByTime(150))
+    expect(result.current.result).toEqual({ matches: 1, active: 1, isCapped: false })
+    expect(result.current.searchTarget).toMatchObject({
+      messageId: 'page-projection',
+      occurrence: 0,
+      source: 'page',
+    })
+    expect(hydrate).not.toHaveBeenCalled()
+  })
+
+  test.each([
+    ['invalid JSON', '[WEGENT_PLUGIN_RESULT]not-json needle'],
+    [
+      'unsafe relative path',
+      pluginResultMarker({ relativePath: '../result', displayName: 'invalid needle' }),
+    ],
+  ])('keeps an %s plugin marker searchable by item', async (_reason, marker) => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const content = `needle\n${marker}`
+    const search = vi.fn().mockResolvedValue({
+      matches: [0, 1].map(occurrence => ({ itemId: 'item', occurrence, cursor: 'cursor' })),
+      totalMatches: 2,
+      isCapped: false,
+    })
+    const hydrate = vi.fn()
+    const { result } = renderHook(() =>
+      useConversationFind(
+        {
+          messages: [
+            {
+              ...message('projection', content),
+              runtimeDisplayItems: [{ id: 'item', type: 'assistant_text', content }],
+            },
+          ],
+          onSearchTranscript: search,
+          onEnsureSearchMatch: hydrate,
+        },
+        true
+      )
+    )
+    act(() => {
+      fireEvent.keyDown(window, { key: 'f', metaKey: true })
+      result.current.changeQuery('needle')
+    })
+    await act(async () => vi.advanceTimersByTime(150))
+    expect(result.current.result).toEqual({ matches: 2, active: 1, isCapped: false })
+    act(() => result.current.step(1))
+    expect(result.current.searchTarget).toMatchObject({ messageId: 'projection', occurrence: 1 })
+    expect(result.current.historyFailed).toBe(false)
+    expect(hydrate).not.toHaveBeenCalled()
   })
 
   test('deduplicates persisted and streaming matches by runtime item and resolves changed projection ids', async () => {

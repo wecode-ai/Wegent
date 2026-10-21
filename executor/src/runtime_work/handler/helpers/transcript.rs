@@ -117,10 +117,7 @@ pub(super) fn remove_superseded_transcript_turns(
     }
 
     messages.retain(|message| {
-        string_field(message, "turnId")
-            .or_else(|| string_field(message, "turn_id"))
-            .or_else(|| string_field(message, "subtaskId"))
-            .or_else(|| string_field(message, "subtask_id"))
+        transcript_message_turn_id(message)
             .map_or(true, |turn_id| !superseded_turn_ids.contains(&turn_id))
     });
 }
@@ -345,6 +342,13 @@ fn transcript_response(input: TranscriptResponseInput) -> Value {
     })
 }
 
+fn transcript_message_turn_id(message: &Value) -> Option<String> {
+    string_field(message, "turnId")
+        .or_else(|| string_field(message, "turn_id"))
+        .or_else(|| string_field(message, "subtaskId"))
+        .or_else(|| string_field(message, "subtask_id"))
+}
+
 fn transcript_canonical_turns(
     messages: &[Value],
     item_source: TranscriptTurnItemSource,
@@ -357,11 +361,7 @@ fn transcript_canonical_turns(
             .get("messageIndex")
             .or_else(|| message.get("message_index"))
             .and_then(Value::as_u64);
-        let Some(turn_id) = string_field(message, "turnId")
-            .or_else(|| string_field(message, "turn_id"))
-            .or_else(|| string_field(message, "subtaskId"))
-            .or_else(|| string_field(message, "subtask_id"))
-        else {
+        let Some(turn_id) = transcript_message_turn_id(message) else {
             continue;
         };
         let turn_index = if let Some(index) = turn_indexes.get(&turn_id).copied() {

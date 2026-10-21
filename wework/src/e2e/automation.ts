@@ -2405,25 +2405,27 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const containers = findDesktopControlElements(command.selector).filter(
         element => element.textContent?.trim() === command.text
       )
+      const query =
+        document.querySelector<HTMLInputElement>('[data-testid="conversation-find-input"]')
+          ?.value ?? ''
+      const needle = query.trim().toLowerCase()
       const highlights = CSS.highlights as unknown as Iterable<[string, Iterable<Range>]>
       const ranges = Array.from(highlights)
         .filter(([name]) => /^conversation-search-.+-active$/.test(name))
         .flatMap(([, highlight]) => Array.from(highlight))
-        .filter(
-          range =>
-            !range.collapsed &&
-            containers.some(
-              element =>
-                element.contains(range.startContainer) && element.contains(range.endContainer)
-            )
-        )
-        .map(range => {
+        .flatMap(range => {
+          const container = containers.find(
+            element =>
+              element.contains(range.startContainer) && element.contains(range.endContainer)
+          )
+          if (range.collapsed || !container) return []
+          const prefix = range.cloneRange()
+          prefix.selectNodeContents(container)
+          prefix.setEnd(range.startContainer, range.startOffset)
+          const occurrence = needle ? prefix.toString().toLowerCase().split(needle).length - 1 : 0
           const { top, bottom, left, right, width, height } = range.getBoundingClientRect()
-          return { text: range.toString(), top, bottom, left, right, width, height }
+          return [{ text: range.toString(), occurrence, top, bottom, left, right, width, height }]
         })
-      const query =
-        document.querySelector<HTMLInputElement>('[data-testid="conversation-find-input"]')
-          ?.value ?? ''
       return JSON.stringify({ query, ranges })
     }
     case 'startElementMetricsSampling': {

@@ -150,6 +150,7 @@ pub(super) fn cached_search_match_response(
         let start = index.saturating_sub(limit / 2);
         (start, start.saturating_add(limit).min(all_messages.len()))
     };
+    let (start, end) = cached_search_complete_turn_window(&all_messages, start, end);
     let messages = all_messages[start..end].to_vec();
     let boundary_cursor = |message: Option<&Value>| {
         message.and_then(|message| {
@@ -182,6 +183,41 @@ pub(super) fn cached_search_match_response(
     })))
 }
 
+fn cached_search_complete_turn_window(
+    messages: &[Value],
+    mut start: usize,
+    mut end: usize,
+) -> (usize, usize) {
+    let mut turn_ranges = HashMap::<String, (usize, usize)>::new();
+    for (index, message) in messages.iter().enumerate() {
+        if let Some(turn_id) = transcript_message_turn_id(message) {
+            turn_ranges.entry(turn_id).or_insert((index, index + 1)).1 = index + 1;
+        }
+    }
+    // Every returned turn needs its full projection, including adjacent context turns.
+    // Enqueue only newly covered intervals so interleaved turns scan each message once.
+    let mut pending = vec![(start, end)];
+    while let Some((scan_start, scan_end)) = pending.pop() {
+        for message in &messages[scan_start..scan_end] {
+            let Some(turn_id) = transcript_message_turn_id(message) else {
+                continue;
+            };
+            let &(turn_start, turn_end) = turn_ranges
+                .get(&turn_id)
+                .expect("all canonical turns have indexed boundaries");
+            if turn_start < start {
+                pending.push((turn_start, start));
+                start = turn_start;
+            }
+            if turn_end > end {
+                pending.push((end, turn_end));
+                end = turn_end;
+            }
+        }
+    }
+    (start, end)
+}
+
 fn transcript_search_response(matches: Vec<Value>, total: usize, capped: bool) -> Value {
     json!({
         "success": true,
@@ -204,8 +240,7 @@ fn search_cached_transcript(messages: &[Value], query: &str, limit: usize) -> Va
         if !matches!(role.as_str(), "user" | "assistant") {
             continue;
         }
-        let turn_id =
-            string_field(message, "turnId").or_else(|| string_field(message, "subtaskId"));
+        let turn_id = transcript_message_turn_id(message);
         let Some(message_id) = string_field(message, "id") else {
             continue;
         };
@@ -340,6 +375,10 @@ fn cached_message_search_sources(
     sources.push((message_id, assistant_search_text(&content)));
     sources
 }
+
+#[cfg(test)]
+#[path = "transcript_search_hydration_tests.rs"]
+mod hydration_tests;
 
 #[cfg(test)]
 mod tests {

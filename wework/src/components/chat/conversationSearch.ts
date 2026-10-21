@@ -4,6 +4,7 @@ import remarkParse from 'remark-parse'
 import remarkGfm from 'remark-gfm'
 import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
 import type { AsyncRequestUserInputReply } from '@wegent/chat-core/runtime-user-input'
+import { stripPluginWorkspaceResultMarkers } from '@wegent/chat-core/plugin-workspace-result'
 import {
   getAssistantSearchTextSources,
   getUserMessageTextContent,
@@ -99,7 +100,7 @@ function searchUnits(message: WorkbenchMessage, text?: string): SearchUnit[] | n
     const block = blocks.get(item.id)
     const source =
       item.type === 'assistant_text'
-        ? item.content
+        ? stripPluginWorkspaceResultMarkers(item.content)
         : block?.type === 'text' && visibleSources.has(block.content)
           ? block.content
           : ''
