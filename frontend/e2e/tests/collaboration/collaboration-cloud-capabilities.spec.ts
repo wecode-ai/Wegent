@@ -514,8 +514,8 @@ test.describe('Collaboration cloud capabilities', () => {
       await expect(page.getByTestId(`collaboration-workspace-${workspace.id}`)).toContainText(
         workspace.name
       )
-      // Selecting the workspace owns expansion; catalog loading can change a toggle before click.
-      await page.getByTestId(`collaboration-workspace-${workspace.id}`).click()
+      // Project metadata can show a read-only parent label before the workspace catalog arrives.
+      await page.getByTestId(`collaboration-workspace-home-${workspace.id}`).click()
       await expect(page).toHaveURL(`/collaboration/workspaces/${workspace.id}`)
       const workspaceToggle = page.getByTestId(`collaboration-workspace-toggle-${workspace.id}`)
       await expect(workspaceToggle).toHaveAttribute('aria-expanded', 'true')
