@@ -7,6 +7,7 @@ const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 
 export function createDesktopScenario({ uiTimeoutMs }) {
   let cloud
+  let cloudEnvironment
   let user
   let ownerToken
   let workspace
@@ -63,7 +64,9 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       'click',
       `${CONTENT} [data-testid="collaboration-workspace-project-${project.id}"]`
     )
+    await control.command('waitFor', `${CONTENT} [data-testid="collaboration-tab-board"]`)
     await control.command('click', `${CONTENT} [data-testid="collaboration-tab-board"]`)
+    await control.command('waitFor', `${CONTENT} [data-testid="stand-in-open"]`)
   }
 
   return {
@@ -120,8 +123,11 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         201
       )
     },
+    setCloudEnvironment(environment) {
+      cloudEnvironment = environment
+    },
     async verify(control) {
-      const desktop = await cloud.waitForConnectedAppDevice()
+      const desktop = await cloudEnvironment.waitForConnectedAppDevice()
       await request(
         cloud.authToken,
         `/v1/workspaces/${workspace.id}/execution-environments`,
