@@ -1500,6 +1500,8 @@ class LoopItemService:
                 "security_level",
             )
         )
+        if "assignee_agent_id" in values.model_fields_set:
+            updates["assignee_agent_id"] = values.assignee_agent_id or ""
         if "assignee_team_id" in values.model_fields_set:
             team_id = values.assignee_team_id
             if team_id:
@@ -1510,7 +1512,6 @@ class LoopItemService:
                 updates["assignee_agent_id"] = ""
         elif "assignee_agent_id" in values.model_fields_set:
             agent_id = values.assignee_agent_id
-            updates["assignee_agent_id"] = agent_id or ""
             if agent_id:
                 agent = db.get(ProjectChatAgent, agent_id)
                 if (
