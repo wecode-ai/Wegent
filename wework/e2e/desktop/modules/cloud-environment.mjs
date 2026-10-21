@@ -533,6 +533,8 @@ class RealCloudEnvironment {
           '127.0.0.1',
           '--port',
           '0',
+          '--timeout-keep-alive',
+          '2400',
         ],
         {
           cwd: join(repoDir, 'backend'),
