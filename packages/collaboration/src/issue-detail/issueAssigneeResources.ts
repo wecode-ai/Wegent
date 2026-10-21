@@ -42,6 +42,7 @@ export function createIssueAssigneeResources(
 
   async function sources(
     project: IssueAssigneeResourceProject,
+    forceRefresh = false,
   ): Promise<CollaborationOwnedAgent[]> {
     const local = project.project_store === "local";
     if (
@@ -61,7 +62,10 @@ export function createIssueAssigneeResources(
       )
         return [];
     }
-    const resources = await api.workspaces.listAgents(project.workspace_id);
+    const resources = await api.workspaces.listAgents(
+      project.workspace_id,
+      forceRefresh ? { forceRefresh: true } : undefined,
+    );
     return resources.filter(
       (resource) =>
         resource.status === "available" &&
@@ -77,8 +81,8 @@ export function createIssueAssigneeResources(
     resourceId: string,
   ): Promise<string> {
     const [resources, bindings] = await Promise.all([
-      sources(project),
-      api.agents.list(project.id),
+      sources(project, true),
+      api.agents.list(project.id, { forceRefresh: true }),
     ]);
     const resource = resources.find((candidate) => candidate.id === resourceId);
     if (!resource) throw new Error("Workspace Agent is no longer available");
@@ -92,10 +96,12 @@ export function createIssueAssigneeResources(
       }
       return existing.id;
     }
-    const created = await api.agents.create!(
-      project.id,
-      createResourceAgentBindingInput(resource),
-    );
+    const input = createResourceAgentBindingInput(resource);
+    const created = await api.agents.create!(project.id, {
+      ...input,
+      // Bind an existing grant; never restore a grant revoked after the read.
+      ...(resource.team_id ? { shareWithWorkspace: false } : {}),
+    });
     return created.id;
   }
 

@@ -171,7 +171,7 @@ describe('workspace Agent selection from the Issue assignee picker', () => {
         'project',
         store === 'local'
           ? source.project_binding_input
-          : { name: source.name, runtime: 'wegent', wegentTeamId: 42, shareWithWorkspace: true }
+          : { name: source.name, runtime: 'wegent', wegentTeamId: 42, shareWithWorkspace: false }
       )
       expect(api.agents.create.mock.invocationCallOrder[0]).toBeLessThan(
         api.issues.assign.mock.invocationCallOrder[0]

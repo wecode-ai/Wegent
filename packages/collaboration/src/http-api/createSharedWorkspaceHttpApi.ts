@@ -221,8 +221,11 @@ export function createSharedWorkspaceHttpApi(
   transport: SharedWorkspaceHttpTransport,
 ): SharedWorkspaceHttpApi {
   const cache = getClientRequestCache(transport);
-  const get = <T>(endpoint: string, maxAgeMs?: number) =>
-    cache.get(endpoint, () => transport.get<T>(endpoint), maxAgeMs);
+  const get = <T>(endpoint: string, maxAgeMs?: number) => {
+    // A save-time revalidation must not join an older in-flight catalog read.
+    if (maxAgeMs === 0) cache.invalidate(endpoint);
+    return cache.get(endpoint, () => transport.get<T>(endpoint), maxAgeMs);
+  };
   const invalidateAgents = (projectId?: string) => {
     if (projectId)
       cache.invalidate(`/v1/cloud-projects/${encoded(projectId)}/chat-agents`);
@@ -316,9 +319,10 @@ export function createSharedWorkspaceHttpApi(
           `/v1/workspaces/${encoded(workspaceId)}/members/${encoded(userId)}`,
         );
       },
-      async listAgents(workspaceId) {
+      async listAgents(workspaceId, options) {
         const response = await get<{ items: unknown[] }>(
           `/v1/workspaces/${encoded(workspaceId)}/agents`,
+          options?.forceRefresh ? 0 : undefined,
         );
         return response.items.map((item) =>
           mapCollaborationOwnedAgentDto(record(item)),

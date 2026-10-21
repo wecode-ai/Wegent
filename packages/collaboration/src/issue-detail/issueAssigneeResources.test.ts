@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { CollaborationOwnedAgent } from "../types";
 import type { WorkspaceProjectAgent } from "../ports/SharedWorkspaceApi";
 import type { SharedIssueDetailWorkspaceApi } from "./createSharedIssueDetailPort";
+import { createSharedWorkspaceHttpApi } from "../http-api/createSharedWorkspaceHttpApi";
 import {
   createIssueAssigneeResources,
   type IssueAssigneeResourceProject,
@@ -60,6 +61,60 @@ function setup(resources = [source]) {
 }
 
 describe("workspace resources in the Issue assignee directory", () => {
+  it("revalidates an externally revoked grant through the cached HTTP adapter", async () => {
+    let resources = [{ ...source, id: 42 }];
+    const post = vi.fn().mockResolvedValue({ id: "new-binding" });
+    const get = vi
+      .fn()
+      .mockImplementation(async (endpoint: string) =>
+        endpoint.endsWith("/chat-agents") ? [] : { items: resources },
+      );
+    const api = createSharedWorkspaceHttpApi({
+      get,
+      post,
+      patch: vi.fn(),
+      delete: vi.fn(),
+    });
+    const directory = createIssueAssigneeResources(api);
+    const [resource] = await directory.list(project);
+    resources = [];
+
+    await expect(directory.bind(project, resource.id)).rejects.toThrow(
+      "no longer available",
+    );
+    expect(post).not.toHaveBeenCalled();
+    expect(
+      get.mock.calls.filter(([endpoint]) => endpoint.endsWith("/space/agents")),
+    ).toHaveLength(2);
+  });
+
+  it("reuses a binding added externally after the project directory was cached", async () => {
+    let bindings: Record<string, unknown>[] = [];
+    const post = vi.fn().mockResolvedValue({ id: "duplicate-binding" });
+    const api = createSharedWorkspaceHttpApi({
+      get: vi
+        .fn()
+        .mockImplementation(async (endpoint: string) =>
+          endpoint.endsWith("/chat-agents")
+            ? bindings
+            : { items: [{ ...source, id: 42 }] },
+        ),
+      post,
+      patch: vi.fn(),
+      delete: vi.fn(),
+    });
+    const directory = createIssueAssigneeResources(api);
+    const [resource] = await directory.list(project);
+    bindings = [
+      { id: "external-binding", wegent_team_id: 42, status: "active" },
+    ];
+
+    await expect(directory.bind(project, resource.id)).resolves.toBe(
+      "external-binding",
+    );
+    expect(post).not.toHaveBeenCalled();
+  });
+
   it("lists an unbound shared Agent and explicitly binds it once before reuse", async () => {
     const { api, directory } = setup();
     expect(await directory.list(project)).toEqual([source]);
@@ -74,7 +129,7 @@ describe("workspace resources in the Issue assignee directory", () => {
       name: source.name,
       runtime: "wegent",
       wegentTeamId: 42,
-      shareWithWorkspace: true,
+      shareWithWorkspace: false,
     });
     expect(await directory.list(project)).toEqual([]);
     expect(await directory.bind(project, source.id)).toBe("binding");

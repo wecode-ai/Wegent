@@ -132,10 +132,11 @@ export function createWeworkPlatformApi(
           ? localApi.workspaces!.removeMember(workspaceId, memberUserId)
           : cloudApi.workspaces!.removeMember(workspaceId, memberUserId)
       },
-      listAgents(workspaceId) {
-        return isLocalWorkspace(workspaceId)
-          ? localApi.workspaces!.listAgents(workspaceId)
-          : cloudApi.workspaces!.listAgents(workspaceId)
+      listAgents(workspaceId, options) {
+        const api = isLocalWorkspace(workspaceId) ? localApi : cloudApi
+        return options
+          ? api.workspaces!.listAgents(workspaceId, options)
+          : api.workspaces!.listAgents(workspaceId)
       },
       addAgent(workspaceId, input) {
         return isLocalWorkspace(workspaceId)
