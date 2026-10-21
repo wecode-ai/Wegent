@@ -35,7 +35,7 @@ def agent_values(
         "id": team.id,
         "workspace_id": grant.entity_id,
         "team_id": team.id,
-        "name": team.name,
+        "name": agent_display_name(team),
         "namespace": team.namespace,
         "owner_type": owner_type,
         "owner_id": owner_id,
@@ -166,6 +166,18 @@ def owner_values(
         str(resource.user_id),
         owner.user_name if owner is not None else "",
         int(resource.user_id),
+    )
+
+
+def agent_display_name(team: Kind) -> str:
+    """Use the user-facing Team name throughout collaboration catalogs."""
+    payload = team.json if isinstance(team.json, dict) else {}
+    metadata = payload.get("metadata")
+    display_name = metadata.get("displayName") if isinstance(metadata, dict) else None
+    return (
+        display_name
+        if isinstance(display_name, str) and display_name.strip()
+        else team.name
     )
 
 

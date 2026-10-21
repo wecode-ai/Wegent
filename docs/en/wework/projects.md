@@ -76,6 +76,12 @@ Wework automatically maintains a **Current device agent** in the local space, so
 
 When two or more agents are selected, the creation flow recommends organizing them into a collaboration group. After confirming, choose a generation model and optionally add collaboration instructions in the task composer. Wework progressively generates the leader, member responsibilities, assignment principles, and suggested workflow. You can edit the result before saving and update it later in project settings.
 
+### Use workspace agents in a project
+
+After creating or adding an agent under the workspace's **Settings → Collaboration participants → Agents**, a project administrator can select it under **Project settings → Agents → Add agent → Existing agents** and add it to the project. Catalogs show the display name entered during creation, or the resource name when no display name is set. Once added, the agent can be selected as an Issue owner or called through an @ mention.
+
+Workspace sharing grants use permission, while a project binding determines where the agent is available. Neither grants permission to edit its source definition. Execution still requires an authorized project device and model.
+
 ### Set cloud board access
 
 Cloud projects have two access modes: **Private** and **Public**. A public project grants every signed-in user the Viewer (read-only) or Developer (create and edit issues) role. A private project is available only through existing grants. Project roles are Owner, Maintainer, Developer, and Viewer. Owners manage the project and members; Maintainers can also manage issue security. Developers and above can assign the issue owner, and the issue creator can always assign their own issue.

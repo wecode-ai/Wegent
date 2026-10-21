@@ -4,7 +4,11 @@ import { createDispatchIssueBoundaryRegression } from '../modules/dispatch-issue
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { verifyExecutionActivityOrder } from '../modules/issue-execution-activity-order.mjs'
 import { readProjectChatMessages } from '../modules/project-chat-snapshot.mjs'
-import { selectCloudAgentModel } from '../modules/workspace-flows.mjs'
+import {
+  createSharedWorkspaceAgent,
+  createWorkspaceAndProject,
+  waitForValue,
+} from '../modules/remote-agent-setup.mjs'
 import {
   assistantMessage,
   codexRequestKind,
@@ -27,8 +31,6 @@ import {
   resultDir,
 } from '../modules/shared.mjs'
 import {
-  openDirectProjectCreation,
-  openProjectAgentCreator,
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
   selectCollaborationIssueAgent,
@@ -101,18 +103,6 @@ async function requestJson(baseUrl, token, pathname, options = {}) {
   return body
 }
 
-async function waitForValue(load, predicate, message, timeoutMs) {
-  const deadline = Date.now() + timeoutMs
-  let latest = null
-  while (Date.now() < deadline) {
-    latest = await load()
-    const result = predicate(latest)
-    if (result) return result === true ? latest : result
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-  assert.fail(`${message}: ${JSON.stringify(latest)}`)
-}
-
 async function waitForPromise(promise, message, timeoutMs) {
   let timer
   try {
@@ -125,82 +115,6 @@ async function waitForPromise(promise, message, timeoutMs) {
   } finally {
     clearTimeout(timer)
   }
-}
-
-async function createWorkspaceAndProject(control, request, timeoutMs) {
-  await control.command('click', scoped('[data-testid="collaboration-workspace-create"]'))
-  await control.command('fill', scoped('[data-testid="collaboration-workspace-name-input"]'), {
-    value: WORKSPACE,
-  })
-  await control.command(
-    'clickWhenEnabled',
-    scoped('[data-testid="collaboration-workspace-create-confirm"]'),
-    { timeoutMs }
-  )
-  const workspace = await waitForValue(
-    async () => (await request('/api/v1/workspaces')).items,
-    items => items?.find(item => item.name === WORKSPACE),
-    'Wework UI did not persist the workspace',
-    timeoutMs
-  )
-
-  await control.command(
-    'waitFor',
-    scoped('[data-testid="collaboration-workspace-project-create"]'),
-    {
-      visible: true,
-      timeoutMs,
-    }
-  )
-  await openDirectProjectCreation(control, CONTENT)
-  await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {
-    value: PROJECT,
-  })
-  await control.command('click', scoped('[data-testid="collaboration-project-create-advanced"]'))
-  await control.command('click', scoped('[data-testid="cloud-project-task-provider-local"]'))
-  await control.command(
-    'clickWhenEnabled',
-    scoped('[data-testid="collaboration-project-create-confirm"]'),
-    { timeoutMs }
-  )
-  const project = await waitForValue(
-    async () => (await request(`/api/v1/workspaces/${workspace.id}/projects`)).items,
-    items => items?.find(item => item.name === PROJECT),
-    'Wework UI did not persist the project',
-    timeoutMs
-  )
-  await control.command('waitFor', scoped('[data-testid="collaboration-project-create-confirm"]'), {
-    visible: false,
-    timeoutMs,
-  })
-  await control.command('waitFor', scoped('[data-testid="collaboration-tab-board"]'), {
-    timeoutMs,
-  })
-  return project
-}
-
-async function createAgent(control, request, projectId, timeoutMs, environmentId) {
-  await control.command('click', scoped('[data-testid="collaboration-project-settings-agents"]'))
-  await openProjectAgentCreator(
-    control,
-    scoped('[data-testid="project-agent-add"]'),
-    timeoutMs,
-    'wework-agent-resource-creator'
-  )
-  await control.command('fill', '[data-testid="wework-agent-display-name"]', { value: AGENT })
-  await selectCloudAgentModel(control, request, MODEL, timeoutMs, environmentId)
-  await control.command('fill', '[data-testid="wework-agent-system-prompt"]', {
-    value: `${MARKER}。直接执行当前 Issue，不创建工作流、不调用负责人或协作小组。`,
-  })
-  await control.command('clickWhenEnabled', '[data-testid="wework-agent-resource-create"]', {
-    timeoutMs,
-  })
-  return waitForValue(
-    () => request(`/api/v1/cloud-projects/${projectId}/chat-agents`),
-    agents => agents.find(agent => agent.name === AGENT),
-    'Wework UI did not persist the agent',
-    timeoutMs
-  )
 }
 
 async function createAndAssignIssue(control, request, projectId, agent, timeoutMs, title = ISSUE) {
@@ -861,7 +775,12 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await selectCollaborationDomain(control, CONTENT, 'cloud')
-      project = await createWorkspaceAndProject(control, request, uiTimeoutMs)
+      project = await createWorkspaceAndProject(control, request, {
+        contentSelector: CONTENT,
+        workspaceName: WORKSPACE,
+        projectName: PROJECT,
+        timeoutMs: uiTimeoutMs,
+      })
       await verifyUnconfiguredAssignment(
         control,
         request,
@@ -882,7 +801,15 @@ export function createDesktopScenario({
         0,
         'Direct assignment must work with an authorized runner and no code repository'
       )
-      const agent = await createAgent(control, request, project.id, uiTimeoutMs, remoteDevice.id)
+      const agent = await createSharedWorkspaceAgent(control, request, {
+        contentSelector: CONTENT,
+        project,
+        name: AGENT,
+        model: MODEL,
+        environmentId: remoteDevice.id,
+        systemPrompt: `${MARKER}。直接执行当前 Issue，不创建工作流、不调用负责人或协作小组。`,
+        timeoutMs: uiTimeoutMs,
+      })
       issue = await createAndAssignIssue(control, request, project.id, agent, uiTimeoutMs)
 
       try {
