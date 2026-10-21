@@ -18,6 +18,7 @@ import type {
   UserPreferences,
   DefaultTeamsResponse,
   WelcomeConfigResponse,
+  TaskType,
 } from '@/types/api'
 import type { NotificationChannelInfo } from '@/types/subscription'
 
@@ -51,6 +52,12 @@ export interface SearchUsersResponse {
     email?: string
   }>
   total: number
+}
+
+export interface RecentTeamsOptions {
+  includeFallback?: boolean
+  mode?: TaskType
+  signal?: AbortSignal
 }
 
 /**
@@ -282,8 +289,16 @@ export const userApis = {
     return request
   },
 
-  async getRecentTeams(isCode = false): Promise<QuickAccessTeam[]> {
-    return apiClient.get(`/users/recent-teams?is_code=${isCode}`)
+  async getRecentTeams(
+    isCode = false,
+    options: RecentTeamsOptions = {}
+  ): Promise<QuickAccessTeam[]> {
+    const params = new URLSearchParams({ is_code: String(isCode) })
+    if (options.includeFallback !== undefined) {
+      params.set('include_fallback', String(options.includeFallback))
+    }
+    if (options.mode) params.set('mode', options.mode)
+    return apiClient.get(`/users/recent-teams?${params}`, { signal: options.signal })
   },
 
   async getQuickLaunch(): Promise<QuickLaunchResponse> {

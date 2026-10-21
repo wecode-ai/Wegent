@@ -3,16 +3,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { ChatArea } from '@/features/tasks/components/chat'
-import type { Team } from '@/types/api'
+import type { Team, TaskType } from '@/types/api'
 
 const mockSendMessage = jest.fn()
 const mockHandleSendMessage = jest.fn()
 const mockToast = jest.fn()
 const mockSetSelectedDeviceId = jest.fn()
+const mockRouter = { push: jest.fn(), replace: jest.fn() }
 
 const mockSelectedTeam = {
   id: 7,
@@ -47,10 +48,28 @@ const mockSelectedTaskDetail = {
 let mockChatAreaTeam = mockSelectedTeam
 let mockNewChatTeam: Team | null = null
 let mockNewChat = false
+let mockNewChatParams = new URLSearchParams()
+let mockUserId = 1
+let mockTaskType: TaskType = 'chat'
+let mockRecentTeamIds: number[] = []
+let mockRecentTeamsLoading = false
 let mockEarlyDefaultTeam: Team | null = null
+let mockUseStatefulSelection = false
+let mockAutoSentTeamIds: Array<number | null> = []
 const mockHandleTeamChange = jest.fn()
 const mockFindDefaultTeam = (teams: Team[]) =>
-  teams.find(team => team.default_for_modes?.includes('chat')) ?? null
+  teams.find(team => team.default_for_modes?.includes(mockTaskType)) ?? null
+
+jest.mock('@/features/common/UserContext', () => ({
+  useUser: () => ({ user: { id: mockUserId } }),
+}))
+
+jest.mock('@/features/tasks/hooks/useRecentTaskTeams', () => ({
+  useRecentTaskTeams: (_mode: string, enabled: boolean) => ({
+    recentTeamIds: enabled ? mockRecentTeamIds : [],
+    isLoading: enabled && mockRecentTeamsLoading,
+  }),
+}))
 
 jest.mock('@/features/tasks/hooks/useDefaultTeam', () => ({
   useDefaultTeam: (_mode: string, enabled: boolean) => (enabled ? mockEarlyDefaultTeam : null),
@@ -81,9 +100,13 @@ const mockStageInfo = {
 }
 
 jest.mock('next/navigation', () => ({
-  useSearchParams: () => new URLSearchParams(mockNewChat ? '' : 'taskId=42'),
-  useRouter: () => ({ push: jest.fn() }),
+  useSearchParams: () => (mockNewChat ? mockNewChatParams : new URLSearchParams('taskId=42')),
+  useRouter: () => mockRouter,
   usePathname: () => '/chat',
+}))
+
+jest.mock('@/contexts/SocketContext', () => ({
+  useSocket: () => ({ isConnected: true }),
 }))
 
 jest.mock('@/contexts/DeviceContext', () => ({
@@ -130,66 +153,83 @@ jest.mock('@/features/tasks/hooks/useChatStatusIndicator', () => ({
 }))
 
 jest.mock('@/features/tasks/components/chat/useChatAreaState', () => ({
-  useChatAreaState: () => ({
-    selectedTeam: mockNewChat ? mockNewChatTeam : mockChatAreaTeam,
-    handleTeamChange: mockHandleTeamChange,
-    findDefaultTeamForMode: mockFindDefaultTeam,
-    defaultTeam: null,
-    restoreDefaultTeam: jest.fn(),
-    isUsingDefaultTeam: false,
-    selectedModel: mockChatAreaSelectedModel,
-    setSelectedModel: jest.fn(),
-    forceOverride: false,
-    setForceOverride: jest.fn(),
-    selectedRepo: null,
-    setSelectedRepo: jest.fn(),
-    selectedBranch: null,
-    setSelectedBranch: jest.fn(),
-    effectiveRequiresWorkspace: false,
-    setRequiresWorkspaceOverride: jest.fn(),
-    taskInputMessage: '',
-    setTaskInputMessage: jest.fn(),
-    enableDeepThinking: false,
-    setEnableDeepThinking: jest.fn(),
-    enableClarification: false,
-    setEnableClarification: jest.fn(),
-    enableCorrectionMode: false,
-    enableCorrectionWebSearch: false,
-    correctionModelId: null,
-    correctionModelName: null,
-    handleCorrectionModeToggle: jest.fn(),
-    externalApiParams: {},
-    handleExternalApiParamsChange: jest.fn(),
-    handleAppModeChange: jest.fn(),
-    attachmentState: {
-      attachments: mockChatAreaAttachments,
-      uploadingFiles: new Map(),
-      errors: new Map(),
-    },
-    resetAttachment: jest.fn(),
-    isAttachmentReadyToSend: true,
-    shouldHideToolbarStatus: false,
-    shouldHideChatInput: false,
-    selectedContexts: [],
-    resetContexts: jest.fn(),
-    setSelectedContexts: jest.fn(),
-    addExistingAttachment: jest.fn(),
-    handleFileSelect: jest.fn(),
-    handleAttachmentRemove: jest.fn(),
-    setIsDragging: jest.fn(),
-    isDragging: false,
-    randomTip: 'tip',
-    randomSlogan: 'slogan',
-  }),
+  useChatAreaState: () => {
+    const { useState, useCallback } = jest.requireActual<typeof import('react')>('react')
+    const [selectedTeam, setSelectedTeam] = useState<Team | null>(null)
+    const handleTeamChange = useCallback((team: Team | null) => {
+      mockHandleTeamChange(team)
+      setSelectedTeam(team)
+    }, [])
+    return {
+      selectedTeam: mockUseStatefulSelection
+        ? selectedTeam
+        : mockNewChat
+          ? mockNewChatTeam
+          : mockChatAreaTeam,
+      handleTeamChange: mockUseStatefulSelection ? handleTeamChange : mockHandleTeamChange,
+      findDefaultTeamForMode: mockFindDefaultTeam,
+      defaultTeam: null,
+      restoreDefaultTeam: jest.fn(),
+      isUsingDefaultTeam: false,
+      selectedModel: mockChatAreaSelectedModel,
+      setSelectedModel: jest.fn(),
+      forceOverride: false,
+      setForceOverride: jest.fn(),
+      selectedRepo: null,
+      setSelectedRepo: jest.fn(),
+      selectedBranch: null,
+      setSelectedBranch: jest.fn(),
+      effectiveRequiresWorkspace: false,
+      setRequiresWorkspaceOverride: jest.fn(),
+      taskInputMessage: '',
+      setTaskInputMessage: jest.fn(),
+      enableDeepThinking: false,
+      setEnableDeepThinking: jest.fn(),
+      enableClarification: false,
+      setEnableClarification: jest.fn(),
+      enableCorrectionMode: false,
+      enableCorrectionWebSearch: false,
+      correctionModelId: null,
+      correctionModelName: null,
+      handleCorrectionModeToggle: jest.fn(),
+      externalApiParams: {},
+      handleExternalApiParamsChange: jest.fn(),
+      handleAppModeChange: jest.fn(),
+      attachmentState: {
+        attachments: mockChatAreaAttachments,
+        uploadingFiles: new Map(),
+        errors: new Map(),
+      },
+      resetAttachment: jest.fn(),
+      isAttachmentReadyToSend: true,
+      shouldHideToolbarStatus: false,
+      shouldHideChatInput: false,
+      selectedContexts: [],
+      resetContexts: jest.fn(),
+      setSelectedContexts: jest.fn(),
+      addExistingAttachment: jest.fn(),
+      handleFileSelect: jest.fn(),
+      handleAttachmentRemove: jest.fn(),
+      setIsDragging: jest.fn(),
+      isDragging: false,
+      randomTip: 'tip',
+      randomSlogan: 'slogan',
+    }
+  },
 }))
 
 jest.mock('@/features/tasks/components/chat/useChatStreamHandlers', () => ({
-  useChatStreamHandlers: () => ({
+  useChatStreamHandlers: ({ selectedTeam }: { selectedTeam: Team | null }) => ({
     pendingTaskId: null,
     isStreaming: false,
     isStopping: false,
     hasPendingUserMessage: false,
-    handleSendMessage: mockHandleSendMessage,
+    handleSendMessage: mockUseStatefulSelection
+      ? async (...args: unknown[]) => {
+          mockAutoSentTeamIds.push(selectedTeam?.id ?? null)
+          await mockHandleSendMessage(...args)
+        }
+      : mockHandleSendMessage,
     handleSendMessageWithModel: jest.fn(),
     handleRetry: jest.fn(),
     handleCancelTask: jest.fn(),
@@ -333,7 +373,8 @@ jest.mock('@/lib/scheme', () => ({
   useSchemeMessageActions: jest.fn(),
 }))
 jest.mock('@/features/tasks/components/params', () => ({
-  QueryParamAutoSend: () => <div data-testid="query-param-auto-send" />,
+  QueryParamAutoSend: jest.requireActual('@/features/tasks/components/params/QueryParamAutoSend')
+    .default,
 }))
 jest.mock('@/features/tasks/hooks/useSkillSelector', () => ({
   useSkillSelector: () => ({
@@ -405,7 +446,13 @@ describe('ChatArea pipeline next-step dialog', () => {
     jest.clearAllMocks()
     mockChatAreaTeam = mockSelectedTeam
     mockNewChat = false
+    mockNewChatParams = new URLSearchParams()
+    mockUserId = 1
+    mockTaskType = 'chat'
+    mockRecentTeamIds = []
+    mockRecentTeamsLoading = false
     mockEarlyDefaultTeam = null
+    mockUseStatefulSelection = false
     mockHandleTeamChange.mockReset()
     mockChatAreaSelectedModel = null
     mockChatAreaAttachments = []
@@ -703,12 +750,19 @@ describe('ChatArea selection while the catalog loads', () => {
 
   beforeEach(() => {
     mockNewChat = true
+    mockNewChatParams = new URLSearchParams()
+    mockUserId = 1
+    mockTaskType = 'chat'
+    mockRecentTeamIds = []
+    mockRecentTeamsLoading = false
     mockNewChatTeam = null
     mockEarlyDefaultTeam = null
+    mockUseStatefulSelection = false
     mockTaskMessages = new Map()
     mockHandleTeamChange.mockReset().mockImplementation((team: Team | null) => {
       mockNewChatTeam = team
     })
+    mockHandleSendMessage.mockReset().mockResolvedValue(undefined)
   })
 
   it.each(['present', 'removed', 'empty', 'failed'] as const)(
@@ -741,6 +795,185 @@ describe('ChatArea selection while the catalog loads', () => {
       expect(mockNewChatTeam?.id ?? null).toBe(
         outcome === 'removed' ? 8 : outcome === 'empty' ? null : 7
       )
+    }
+  )
+
+  it('restores the latest available same-mode agent before the configured default', () => {
+    const recentTeam = { ...mockSelectedTeam, bind_mode: ['chat'] } as Team
+    const incompatibleTeam = { ...mockSelectedTeam, id: 9, bind_mode: ['code'] } as Team
+    mockRecentTeamIds = [999, incompatibleTeam.id, recentTeam.id]
+
+    render(
+      <ChatArea
+        teams={[defaultTeam, incompatibleTeam, recentTeam]}
+        isTeamsLoading={false}
+        taskType="chat"
+        teamModeFilter="all"
+      />
+    )
+
+    expect(mockNewChatTeam?.id).toBe(recentTeam.id)
+  })
+
+  it('keeps agent A after creating another task and restores A in a fresh tab', () => {
+    const agentA = { ...mockSelectedTeam, bind_mode: ['chat'] } as Team
+    const catalog = [defaultTeam, agentA]
+    mockNewChat = false
+    mockRecentTeamIds = [defaultTeam.id]
+    const currentTab = render(<ChatArea teams={catalog} isTeamsLoading={false} taskType="chat" />)
+    expect(mockHandleTeamChange).toHaveBeenLastCalledWith(agentA)
+
+    mockNewChat = true
+    mockNewChatTeam = agentA
+    currentTab.rerender(<ChatArea teams={catalog} isTeamsLoading={false} taskType="chat" />)
+    expect(mockNewChatTeam.id).toBe(agentA.id)
+    currentTab.unmount()
+    mockNewChatTeam = null
+    mockRecentTeamIds = [agentA.id]
+
+    render(<ChatArea teams={catalog} isTeamsLoading={false} taskType="chat" />)
+    expect(mockHandleTeamChange).toHaveBeenLastCalledWith(agentA)
+  })
+
+  it('uses the configured default, then the first candidate when history is empty', () => {
+    const firstTeam = { ...mockSelectedTeam, bind_mode: ['chat'] } as Team
+    const first = render(
+      <ChatArea teams={[firstTeam, defaultTeam]} isTeamsLoading={false} taskType="chat" />
+    )
+    expect(mockNewChatTeam?.id).toBe(defaultTeam.id)
+    first.unmount()
+    mockNewChatTeam = null
+
+    render(<ChatArea teams={[firstTeam]} isTeamsLoading={false} taskType="chat" />)
+    expect(mockHandleTeamChange).toHaveBeenLastCalledWith(firstTeam)
+  })
+
+  it('replaces a provisional default after catalog and history finish loading', () => {
+    const recentTeam = { ...mockSelectedTeam, bind_mode: ['chat'] } as Team
+    mockEarlyDefaultTeam = defaultTeam
+    mockRecentTeamsLoading = true
+    const { rerender } = render(<ChatArea teams={[]} isTeamsLoading taskType="chat" />)
+    expect(mockNewChatTeam?.id).toBe(defaultTeam.id)
+
+    rerender(<ChatArea teams={[defaultTeam, recentTeam]} isTeamsLoading={false} taskType="chat" />)
+    expect(mockNewChatTeam?.id).toBe(defaultTeam.id)
+    mockRecentTeamIds = [recentTeam.id]
+    mockRecentTeamsLoading = false
+    rerender(<ChatArea teams={[defaultTeam, recentTeam]} isTeamsLoading={false} taskType="chat" />)
+    expect(mockNewChatTeam?.id).toBe(recentTeam.id)
+  })
+
+  it('preserves a manual choice when history arrives later', () => {
+    const manualTeam = { ...mockSelectedTeam, bind_mode: ['chat'] } as Team
+    const catalog = [defaultTeam, manualTeam]
+    mockRecentTeamsLoading = true
+    const { rerender } = render(<ChatArea teams={catalog} isTeamsLoading={false} taskType="chat" />)
+    fireEvent.click(screen.getByTestId('quick-access-cards'))
+    expect(mockNewChatTeam?.id).toBe(manualTeam.id)
+    mockHandleTeamChange.mockClear()
+
+    mockRecentTeamIds = [defaultTeam.id]
+    mockRecentTeamsLoading = false
+    rerender(<ChatArea teams={catalog} isTeamsLoading={false} taskType="chat" />)
+    expect(mockHandleTeamChange).not.toHaveBeenCalled()
+    expect(mockNewChatTeam?.id).toBe(manualTeam.id)
+  })
+
+  it('honors an explicit URL agent before history and keeps a later manual choice', () => {
+    const manualTeam = { ...mockSelectedTeam, bind_mode: ['chat'] } as Team
+    const catalog = [defaultTeam, manualTeam]
+    mockNewChatParams = new URLSearchParams(`teamId=${defaultTeam.id}`)
+    mockRecentTeamIds = [manualTeam.id]
+    const { rerender } = render(<ChatArea teams={catalog} isTeamsLoading={false} taskType="chat" />)
+    expect(mockNewChatTeam?.id).toBe(defaultTeam.id)
+    fireEvent.click(screen.getByTestId('quick-access-cards'))
+    mockHandleTeamChange.mockClear()
+
+    rerender(<ChatArea teams={catalog} isTeamsLoading={false} taskType="chat" />)
+    expect(mockHandleTeamChange).not.toHaveBeenCalled()
+    expect(mockNewChatTeam?.id).toBe(manualTeam.id)
+  })
+
+  it('keeps an explicitly supplied new-task agent', () => {
+    mockRecentTeamIds = [defaultTeam.id]
+    render(
+      <ChatArea
+        teams={[defaultTeam, mockSelectedTeam]}
+        selectedTeamForNewTask={mockSelectedTeam}
+        isTeamsLoading={false}
+        taskType="chat"
+      />
+    )
+    expect(mockHandleTeamChange).not.toHaveBeenCalled()
+  })
+
+  it('restores each mode independently when switching without remounting', () => {
+    const chatTeam = { ...mockSelectedTeam, bind_mode: ['chat'] } as Team
+    const codeTeam = { ...mockSelectedTeam, id: 9, bind_mode: ['code'] } as Team
+    const catalog = [defaultTeam, chatTeam, codeTeam]
+    mockRecentTeamIds = [chatTeam.id]
+    const { rerender } = render(<ChatArea teams={catalog} isTeamsLoading={false} taskType="chat" />)
+    expect(mockNewChatTeam?.id).toBe(chatTeam.id)
+
+    mockTaskType = 'code'
+    mockRecentTeamIds = [codeTeam.id]
+    rerender(<ChatArea teams={catalog} isTeamsLoading={false} taskType="code" />)
+    expect(mockNewChatTeam?.id).toBe(codeTeam.id)
+
+    mockTaskType = 'chat'
+    mockRecentTeamIds = [chatTeam.id]
+    rerender(<ChatArea teams={catalog} isTeamsLoading={false} taskType="chat" />)
+    expect(mockNewChatTeam?.id).toBe(chatTeam.id)
+  })
+
+  it('restores the signed-in users own history after an account switch', () => {
+    const recentTeam = { ...mockSelectedTeam, bind_mode: ['chat'] } as Team
+    const catalog = [defaultTeam, recentTeam]
+    mockRecentTeamIds = [recentTeam.id]
+    const { rerender } = render(<ChatArea teams={catalog} isTeamsLoading={false} taskType="chat" />)
+    expect(mockNewChatTeam?.id).toBe(recentTeam.id)
+
+    mockUserId = 2
+    mockRecentTeamIds = [defaultTeam.id]
+    rerender(<ChatArea teams={catalog} isTeamsLoading={false} taskType="chat" />)
+    expect(mockNewChatTeam?.id).toBe(defaultTeam.id)
+  })
+
+  it.each([true, false])(
+    'waits for delayed history before auto-sending once with a configured default: %s',
+    async hasConfiguredDefault => {
+      jest.useFakeTimers()
+      mockUseStatefulSelection = true
+      mockNewChatParams = new URLSearchParams('q=hello&autosend=true')
+      mockRecentTeamsLoading = true
+      const recentTeam = { ...mockSelectedTeam, bind_mode: ['chat'] } as Team
+      const catalog = hasConfiguredDefault ? [defaultTeam, recentTeam] : [recentTeam]
+      mockAutoSentTeamIds = []
+
+      try {
+        const view = render(<ChatArea teams={catalog} isTeamsLoading={false} taskType="chat" />)
+        await act(async () => {
+          jest.advanceTimersByTime(400)
+        })
+        expect(mockHandleSendMessage).not.toHaveBeenCalled()
+
+        mockRecentTeamIds = [recentTeam.id]
+        mockRecentTeamsLoading = false
+        view.rerender(<ChatArea teams={catalog} isTeamsLoading={false} taskType="chat" />)
+        await act(async () => {
+          jest.advanceTimersByTime(400)
+        })
+
+        expect(mockAutoSentTeamIds).toEqual([recentTeam.id])
+        expect(mockHandleSendMessage).toHaveBeenCalledWith('hello')
+        await act(async () => {
+          jest.advanceTimersByTime(1000)
+        })
+        expect(mockHandleSendMessage).toHaveBeenCalledTimes(1)
+        view.unmount()
+      } finally {
+        jest.useRealTimers()
+      }
     }
   )
 })

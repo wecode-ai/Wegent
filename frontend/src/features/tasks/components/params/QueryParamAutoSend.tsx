@@ -9,7 +9,7 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import { useSocket } from '@/contexts/SocketContext'
 import type { Team } from '@/types/api'
 
-/** Timeout (ms) for waiting WebSocket connection before giving up */
+/** Timeout (ms) for waiting for auto-send prerequisites before giving up */
 const WS_READY_TIMEOUT = 10_000
 
 /** Polling interval (ms) for checking readiness conditions */
@@ -20,6 +20,8 @@ interface QueryParamAutoSendProps {
   teams: Team[]
   /** Whether teams have finished loading */
   isTeamsLoading: boolean
+  /** Whether the final initial team selection has committed */
+  isTeamSelectionReady: boolean
   /** Currently selected team */
   selectedTeam: Team | null
   /** Callback to change the selected team */
@@ -41,7 +43,7 @@ interface QueryParamAutoSendProps {
  * - Only fires when `q` is present and non-empty, and no `taskId` exists.
  * - `q` content is always prefilled into the input box immediately on mount.
  * - Auto-send only happens when `autoSend=true` is present in the URL.
- * - Waits for WebSocket connection + teams loaded before sending.
+ * - Waits for WebSocket connection, teams loaded, and final team selection before sending.
  * - Clears `q`, `teamId`, `teamName`, `teamNamespace`, and `autoSend` from URL after sending (taskId is
  *   set by the normal send flow).
  * - Uses a ref guard to guarantee the message is sent at most once, even
@@ -50,6 +52,7 @@ interface QueryParamAutoSendProps {
 export default function QueryParamAutoSend({
   teams,
   isTeamsLoading,
+  isTeamSelectionReady,
   selectedTeam,
   onTeamChange,
   onSendMessage,
@@ -68,6 +71,7 @@ export default function QueryParamAutoSend({
   // Keep latest values in refs so setTimeout callbacks always read current state
   const isConnectedRef = useRef(isConnected)
   const isTeamsLoadingRef = useRef(isTeamsLoading)
+  const isTeamSelectionReadyRef = useRef(isTeamSelectionReady)
   const teamsRef = useRef(teams)
   const selectedTeamRef = useRef(selectedTeam)
   const onTeamChangeRef = useRef(onTeamChange)
@@ -80,6 +84,10 @@ export default function QueryParamAutoSend({
   useEffect(() => {
     isTeamsLoadingRef.current = isTeamsLoading
   }, [isTeamsLoading])
+
+  useEffect(() => {
+    isTeamSelectionReadyRef.current = isTeamSelectionReady
+  }, [isTeamSelectionReady])
 
   useEffect(() => {
     teamsRef.current = teams
@@ -115,6 +123,7 @@ export default function QueryParamAutoSend({
     url.searchParams.delete('teamId')
     url.searchParams.delete('teamName')
     url.searchParams.delete('teamNamespace')
+    url.searchParams.delete('autoSend')
     url.searchParams.delete('autosend')
     router.replace(url.pathname + url.search)
   }, [router])
@@ -173,42 +182,39 @@ export default function QueryParamAutoSend({
 
     // Wait for prerequisites then send
     let cancelled = false
+    let completed = false
+    let timeoutId: ReturnType<typeof setTimeout> | undefined
+    let requestedTeamId: number | null = null
     const startTime = Date.now()
+
+    const finishWithoutSending = () => {
+      completed = true
+      clearQueryParams()
+    }
+
+    const waitForReadiness = () => {
+      if (Date.now() - startTime > WS_READY_TIMEOUT) {
+        finishWithoutSending()
+        return
+      }
+      timeoutId = setTimeout(tryExecute, POLL_INTERVAL)
+    }
 
     const tryExecute = () => {
       if (cancelled) return
       if (userInteractedRef.current) {
         // User interacted, cancel auto-send but still clean URL params
-        clearQueryParams()
+        finishWithoutSending()
         return
       }
-
-      const elapsed = Date.now() - startTime
 
       // Read latest values from refs to avoid stale closure
       const connected = isConnectedRef.current
       const teamsLoading = isTeamsLoadingRef.current
       const currentTeams = teamsRef.current
 
-      // Check WebSocket readiness
-      if (!connected) {
-        if (elapsed > WS_READY_TIMEOUT) {
-          // Timeout - clean up params and give up
-          clearQueryParams()
-          return
-        }
-        // Retry after a short delay; polling is handled via setTimeout
-        setTimeout(tryExecute, POLL_INTERVAL)
-        return
-      }
-
-      // Check teams loaded
-      if (teamsLoading || currentTeams.length === 0) {
-        if (elapsed > WS_READY_TIMEOUT) {
-          clearQueryParams()
-          return
-        }
-        setTimeout(tryExecute, POLL_INTERVAL)
+      if (!connected || teamsLoading || currentTeams.length === 0) {
+        waitForReadiness()
         return
       }
       // Switch team if requested (by ID or by name+namespace)
@@ -224,30 +230,31 @@ export default function QueryParamAutoSend({
         )
       }
 
-      if (targetTeam) {
-        const currentSelectedTeam = selectedTeamRef.current
-        if (currentSelectedTeam?.id !== targetTeam.id) {
+      const currentSelectedTeam = selectedTeamRef.current
+      if (targetTeam && currentSelectedTeam?.id !== targetTeam.id) {
+        if (requestedTeamId !== targetTeam.id) {
+          requestedTeamId = targetTeam.id
           onTeamChangeRef.current(targetTeam)
-          // Allow a tick for the team change to propagate
-          setTimeout(() => {
-            if (!cancelled && !userInteractedRef.current) {
-              executeAutoSend(decodedMessage)
-            }
-          }, POLL_INTERVAL)
-          return
         }
+        waitForReadiness()
+        return
       }
-      // Team not found or already selected - fall through to use current/default team
 
+      if (!isTeamSelectionReadyRef.current || !currentSelectedTeam) {
+        waitForReadiness()
+        return
+      }
+      // An unknown URL target retains the existing current-team behavior.
       executeAutoSend(decodedMessage)
     }
 
     const executeAutoSend = (message: string) => {
       if (cancelled || userInteractedRef.current) {
-        clearQueryParams()
+        finishWithoutSending()
         return
       }
       // Clean URL params before sending; the send handler will set taskId
+      completed = true
       clearQueryParams()
       onSendMessageRef.current(message).catch(() => {
         // Error handling is done inside onSendMessage (toast etc.)
@@ -259,6 +266,8 @@ export default function QueryParamAutoSend({
 
     return () => {
       cancelled = true
+      clearTimeout(timeoutId)
+      if (!completed) processedRef.current = false
     }
     // We intentionally use a minimal dependency array.
     // The ref guards and the cancelled flag prevent double execution.

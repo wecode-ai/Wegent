@@ -60,6 +60,7 @@ from app.services.team_access_policy import (
     team_usage_summary,
 )
 from app.stores.tasks import task_store
+from app.stores.tasks.interfaces import RecentTeamMode
 from shared.telemetry.decorators import trace_sync
 from shared.utils.crypto import decrypt_sensitive_data, is_data_encrypted
 
@@ -589,12 +590,16 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         user_id: int,
         is_code: bool = False,
         limit: int = 5,
+        include_fallback: bool = True,
+        mode: RecentTeamMode | None = None,
     ) -> List[Dict[str, Any]]:
-        """Return recent accessible Teams for code or non-code tasks."""
+        """Return recent Teams with optional fallback; exact mode overrides is_code."""
         if limit <= 0:
             return []
 
-        recent_refs = self._get_recent_team_refs(db, user_id, is_code=is_code)
+        recent_refs = self._get_recent_team_refs(
+            db, user_id, is_code=is_code, mode=mode
+        )
 
         selected_teams, selected_identities = self._query_recent_team_kinds(
             db,
@@ -604,7 +609,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         )
 
         fallback_rows = []
-        if len(selected_teams) < limit:
+        if include_fallback and len(selected_teams) < limit:
             accessible_query = self._build_accessible_teams_query(
                 db,
                 user_id=user_id,
@@ -630,16 +635,20 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         user_id: int,
         *,
         is_code: bool,
+        mode: RecentTeamMode | None = None,
     ) -> list[tuple[str, str, int | None]]:
         recent_tasks = task_store.list_recent_task_team_refs(
             db,
             user_id=user_id,
             limit=self.RECENT_TEAM_TASK_SCAN_LIMIT,
+            mode=mode,
         )
         recent_refs: list[tuple[str, str, int | None]] = []
         for task in recent_tasks:
             task_type = str(task.task_type or "chat")
-            if (task_type == "code") != is_code:
+            if mode is not None and task_type != mode:
+                continue
+            if mode is None and (task_type == "code") != is_code:
                 continue
             team_ref = task.team_ref
             if not isinstance(team_ref, dict):

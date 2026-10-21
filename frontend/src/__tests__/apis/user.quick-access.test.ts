@@ -110,6 +110,24 @@ describe('userApis.getQuickAccess', () => {
 
     await userApis.getRecentTeams(true)
 
-    expect(apiClient.get).toHaveBeenCalledWith('/users/recent-teams?is_code=true')
+    expect(apiClient.get).toHaveBeenCalledWith('/users/recent-teams?is_code=true', {
+      signal: undefined,
+    })
+  })
+
+  test('requests only task history for an exact mode and supports cancellation', async () => {
+    ;(apiClient.get as jest.Mock).mockResolvedValueOnce([])
+    const controller = new AbortController()
+
+    await userApis.getRecentTeams(false, {
+      includeFallback: false,
+      mode: 'chat',
+      signal: controller.signal,
+    })
+
+    expect(apiClient.get).toHaveBeenCalledWith(
+      '/users/recent-teams?is_code=false&include_fallback=false&mode=chat',
+      { signal: controller.signal }
+    )
   })
 })
