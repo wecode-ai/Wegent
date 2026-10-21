@@ -1,14 +1,12 @@
 use super::*;
 use std::future::ready;
 
-fn task() -> RuntimeTaskLink {
-    let mut task = RuntimeTaskLink::new_pending(
-        "side-task".to_owned(),
-        "/side-workspace".to_owned(),
-        "Side task".to_owned(),
-    );
-    task.project_plugin_ids = vec!["project-tool@local".to_owned()];
-    task
+fn task() -> ComposerCatalogScope {
+    ComposerCatalogScope {
+        task_id: Some("side-task".to_owned()),
+        workspace_path: Some("/side-workspace".to_owned()),
+        project_plugin_ids: vec!["project-tool@local".to_owned()],
+    }
 }
 
 fn empty_store() -> Value {
@@ -184,4 +182,57 @@ async fn composer_catalog_rejects_malformed_lists_and_store_failure() {
     .await
     .unwrap_err();
     assert_eq!(error.code, "store_unreadable");
+}
+
+#[tokio::test]
+async fn workspace_composer_catalog_uses_context_without_creating_a_task() {
+    for path in [
+        None,
+        Some(std::env::temp_dir().to_string_lossy().into_owned()),
+    ] {
+        let scope =
+            workspace_catalog_scope(&json!({"scope": "workspace", "workspacePath": path})).unwrap();
+        assert!(scope.task_id.is_none());
+        let mut calls = Vec::new();
+        let mut replies = VecDeque::from([
+            json!({"data": []}),
+            json!({"marketplaces": []}),
+            json!({"data": []}),
+        ]);
+        let result = read_catalog_snapshot(
+            &scope,
+            true,
+            |method, params| {
+                calls.push((method, params));
+                ready(Ok(replies.pop_front().unwrap()))
+            },
+            ready(Ok(empty_store())),
+        )
+        .await
+        .unwrap();
+        assert!(result["taskId"].is_null());
+        assert_eq!(result["scope"], "workspace");
+        assert_eq!(result["workspacePath"], path.as_deref().unwrap_or_default());
+        let cwds: Vec<&str> = path.as_deref().into_iter().collect();
+        assert_eq!(calls[1].1["cwds"], json!(cwds));
+        assert_eq!(calls[2].1["cwds"], json!(cwds));
+    }
+}
+
+#[test]
+fn workspace_composer_catalog_rejects_mixed_scope_and_unavailable_paths() {
+    let error = workspace_catalog_scope(&json!({"scope": "workspace", "taskId": "task"}))
+        .err()
+        .unwrap();
+    assert_eq!(error.code, "bad_request");
+    for path in [
+        json!(""),
+        json!("/nonexistent-wework-composer-workspace"),
+        json!(1),
+    ] {
+        let error = workspace_catalog_scope(&json!({"scope": "workspace", "workspacePath": path}))
+            .err()
+            .unwrap();
+        assert_eq!(error.code, "missing_workspace");
+    }
 }
