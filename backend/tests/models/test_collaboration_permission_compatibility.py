@@ -23,11 +23,10 @@ def test_cp01_no_new_database_columns_or_pending_migration(test_db):
     assert not {"workspace_id", "membership_mode"} & set(
         LoopNode.__table__.columns.keys()
     )
-    scripts = ScriptDirectory.from_config(Config("alembic.ini"))
-    # Retiring the branch-only plugin index does not change collaboration schemas.
-    assert scripts.get_current_head() == "c0e9f8d7a612"
-    assert scripts.get_revision("c0e9f8d7a612").down_revision == "b9d8e7a6c501"
-    assert scripts.get_revision("b9d8e7a6c501").down_revision == "f3a7c9e1b2d4"
+    assert (
+        ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
+        == "f3a7c9e1b2d4"
+    )
 
 
 def test_cp01_new_project_preserves_v1_containment(test_db, scope):

@@ -35,6 +35,12 @@ def add_policy(db, **changes):
     return row
 
 
+def test_shared_kind_model_has_no_account_policy_unique_index():
+    assert "uq_kinds_account_auth_policy" not in {
+        index.name for index in Kind.__table__.indexes
+    }
+
+
 def test_first_policy_is_reused_without_creating_other_resources(test_db):
     before = test_db.query(Kind).count()
 

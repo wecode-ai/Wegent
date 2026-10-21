@@ -142,10 +142,12 @@ successor's lock.
 2. Check historical policies using their complete identity. Reconcile duplicate
    preferences, references, and revisions without silently selecting or deleting
    records.
-3. In `backend`, run `uv run alembic upgrade head`. Fresh environments do not create
-   the policy unique index; a cleanup migration removes it if an earlier branch
-   version created it. Preserve Alembic revision IDs and the migration chain to
-   avoid orphaned versions preventing startup.
+3. This change includes no Alembic migration. The migration chain matches main,
+   so the plugin refactor requires no database upgrade. Only test databases that
+   ran an earlier version of this PR need manual cleanup before switching code:
+   remove the retired index and restore the branch revision to its main parent.
+   Maintainers perform this one-time test database cleanup outside the production
+   migration chain.
 4. Check Redis availability and confirm that Python and active Rust writers use
    the same key, TTL, and business revision protocol before enabling plugin writes.
 
@@ -162,10 +164,10 @@ retain their existing protocol; no client release is required.
 
 ## Regression verification
 
-Local verification passed: 556 plugin, shared-lock, API, migration, and model
-compatibility tests, plus 51 real MySQL/Redis regressions. Rust passed 2789 unit
-tests, one doctest, formatting checks, and Clippy. No desktop E2E
-or new CI run was performed in this round. The `test-plugin-auth-mysql` CI job
+Plugin, shared-lock, API, and model compatibility tests, plus real MySQL/Redis
+concurrency regressions, have local validation. Rust passed 2789 unit tests,
+one doctest, formatting checks, and Clippy. No desktop E2E was run in this round;
+the PR Checks show the latest CI results. The `test-plugin-auth-mysql` CI job
 runs real MySQL and Redis concurrency regressions. Desktop scenarios retain
 their isolated databases and Alembic migrations without extra coordination data
 initialization.

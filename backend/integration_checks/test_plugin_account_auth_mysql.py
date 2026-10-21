@@ -1,21 +1,17 @@
 """Real Redis/InnoDB transaction races against disposable local services."""
 
-import importlib.util
 import json
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from datetime import timedelta
-from pathlib import Path
 
 import pytest
 from pydantic import SecretStr
-from sqlalchemy import create_engine, event, inspect, select, text
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
-from alembic.migration import MigrationContext
-from alembic.operations import Operations
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.plugin_account_auth import (
@@ -158,125 +154,6 @@ def test_inactive_policy_row_is_reactivated_with_its_stored_preference(context):
         )
         assert row.is_active is True
         assert row.json == {"spec": {"enabled": False, "revision": 2}}
-
-
-def _policy_migration(filename):
-    path = Path(__file__).parents[1] / "alembic/versions" / filename
-    spec = importlib.util.spec_from_file_location(
-        "mysql_policy_identity_migration", path
-    )
-    assert spec and spec.loader
-    migration = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migration)
-    return migration
-
-
-def _has_policy_index(connection) -> bool:
-    return bool(
-        connection.scalar(
-            text(
-                "SELECT COUNT(*) FROM information_schema.statistics "
-                "WHERE table_schema = DATABASE() AND table_name = 'kinds' "
-                "AND index_name = 'uq_kinds_account_auth_policy'"
-            )
-        )
-    )
-
-
-def _column_layout(connection) -> list[tuple]:
-    inspector = inspect(connection)
-    primary_key = inspector.get_pk_constraint("kinds")["constrained_columns"]
-    return [
-        (
-            column["name"],
-            str(column["type"]),
-            column["nullable"],
-            column["default"],
-            column["name"] in primary_key,
-        )
-        for column in inspector.get_columns("kinds")
-    ]
-
-
-def _insert_migration_policy(connection, user_id: int, *, kind: str):
-    return connection.execute(
-        Kind.__table__.insert().values(
-            user_id=user_id,
-            kind=kind,
-            namespace="plugin-auth",
-            name="account",
-            json={"spec": {"enabled": False, "revision": 7}},
-            is_active=True,
-        )
-    ).inserted_primary_key[0]
-
-
-@pytest.mark.parametrize("legacy_index", [False, True])
-def test_mysql_policy_migration_round_trip_preserves_preferences_and_kind_names(
-    context, legacy_index
-):
-    retired = _policy_migration("20261020_b9d8e7a6c501_unique_account_auth_policy.py")
-    cleanup = _policy_migration(
-        "20261021_c0e9f8d7a612_remove_account_auth_policy_index.py"
-    )
-    engine = context.sessions.kw["bind"]
-    with engine.connect() as connection:
-        original_columns = _column_layout(connection)
-        policy_id = _insert_migration_policy(
-            connection, context.user_id, kind="ConnectorAuthPolicy"
-        )
-        unrelated_ids = [
-            _insert_migration_policy(connection, context.user_id, kind="UnrelatedKind")
-            for _ in range(2)
-        ]
-        connection.commit()
-        try:
-            assert not _has_policy_index(connection)
-            if legacy_index:
-                connection.execute(
-                    text(
-                        "CREATE UNIQUE INDEX uq_kinds_account_auth_policy ON kinds "
-                        "((CASE WHEN kind = 'ConnectorAuthPolicy' "
-                        "AND namespace = 'plugin-auth' AND name = 'account' "
-                        "THEN user_id ELSE NULL END))"
-                    )
-                )
-                connection.commit()
-            statements = []
-
-            def record_sql(_conn, _cursor, statement, _params, _context, _many):
-                statements.append(statement)
-
-            event.listen(connection, "before_cursor_execute", record_sql)
-            with Operations.context(MigrationContext.configure(connection)):
-                retired.upgrade()
-                cleanup.upgrade()
-                cleanup.upgrade()
-                cleanup.downgrade()
-                retired.downgrade()
-            event.remove(connection, "before_cursor_execute", record_sql)
-            ddl = [
-                statement
-                for statement in statements
-                if statement.split()[0].upper() in {"CREATE", "ALTER", "DROP"}
-            ]
-            assert len(ddl) == int(legacy_index)
-            assert all("DROP INDEX" in statement.upper() for statement in ddl)
-            assert not _has_policy_index(connection)
-            assert len(set(unrelated_ids)) == 2
-            assert connection.scalar(select(Kind.json).where(Kind.id == policy_id)) == {
-                "spec": {"enabled": False, "revision": 7}
-            }
-            assert _column_layout(connection) == original_columns
-            _insert_migration_policy(
-                connection, context.user_id, kind="ConnectorAuthPolicy"
-            )
-            connection.commit()
-        finally:
-            connection.rollback()
-            with Operations.context(MigrationContext.configure(connection)):
-                cleanup.upgrade()
-            connection.commit()
 
 
 def test_local_logout_commits_while_an_unrelated_transaction_holds_the_user_row(
