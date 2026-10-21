@@ -2471,7 +2471,7 @@ export function WorkspaceBrowserTabPanel({
                 if (currentPageUrl) setAddress(currentPageUrl)
               }}
               placeholder={t('workbench.browser_url_placeholder')}
-              className="h-8 w-full rounded-md border border-border bg-surface px-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-primary focus:bg-background"
+              className="workbench-chrome-input h-8 w-full rounded-md border-0 bg-surface px-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:bg-background"
             />
           </form>
           <BrowserToolbarButton
