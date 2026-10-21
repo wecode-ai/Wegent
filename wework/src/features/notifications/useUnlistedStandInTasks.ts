@@ -10,7 +10,7 @@ export function useUnlistedStandInTasks(
   snapshot: RuntimeTaskLifecycleStoreSnapshot,
   reader?: StandInExecutorApi,
   runtimeApi?: WorkbenchServices['runtimeWorkApi']
-) {
+): RuntimeTaskReminderItem[] {
   const [loaded, setLoaded] = useState<Map<string, RuntimeTaskReminderItem>>(new Map())
   const attempted = useRef(new Map<string, string>())
   const ordinary = useRef(new Set<string>())
@@ -126,6 +126,6 @@ export function useUnlistedStandInTasks(
       ...[...loaded.values()].filter(
         item => !visible.has(item.key) && snapshot.tasks.has(item.key)
       ),
-    ]
+    ].map(item => ({ ...item, lifecycle: snapshot.tasks.get(item.key) }))
   }, [items, loaded, snapshot.tasks])
 }

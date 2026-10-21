@@ -29,6 +29,7 @@ import type { WorkbenchServices } from './workbenchServices'
 import type {
   RuntimeTaskLifecycleStore,
   RuntimeTaskLifecycleStoreSnapshot,
+  RuntimeTaskLifecycleSnapshot,
 } from './runtimeTaskLifecycle'
 
 export interface RuntimeTaskReminderItem {
@@ -37,6 +38,7 @@ export interface RuntimeTaskReminderItem {
   task: RuntimeTaskSummary
   workspace: RuntimeDeviceWorkspace
   projectName: string
+  lifecycle?: RuntimeTaskLifecycleSnapshot
 }
 
 export interface RuntimeTaskReminderState {

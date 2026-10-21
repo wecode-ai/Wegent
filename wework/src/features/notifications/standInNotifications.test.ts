@@ -2,8 +2,36 @@ import { describe, expect, it } from 'vitest'
 import { mergeStandInNotifications, standInState } from './standInNotifications'
 
 import { assignment, runtimeItem } from './standInNotifications.fixtures'
+import { RuntimeTaskMachine } from '@/features/workbench/runtimeTaskLifecycle/RuntimeTaskMachine'
 
 describe('stand-in notification projection', () => {
+  it.each([
+    ['succeeded', 'completed'],
+    ['failed', 'failed'],
+    ['cancelled', 'cancelled'],
+  ] as const)('uses the current %s lifecycle over a stale running task', (outcome, expected) => {
+    const machine = new RuntimeTaskMachine(runtimeItem.address)
+    machine.dispatch({
+      type: 'executor_snapshot_received',
+      address: runtimeItem.address,
+      task: runtimeItem.task,
+    })
+    machine.dispatch({ type: 'turn_started', turnId: 'turn' })
+    machine.dispatch({ type: 'executor_settled' })
+    machine.dispatch({ type: 'turn_settled', turnId: 'turn', outcome })
+    const item = { ...runtimeItem, lifecycle: machine.getSnapshot() }
+    expect(standInState(item).status).toBe(expected)
+  })
+
+  it('shows a new running turn over a stale completed task summary', () => {
+    const task = { ...runtimeItem.task, running: false, status: 'done' }
+    const machine = new RuntimeTaskMachine(runtimeItem.address)
+    machine.dispatch({ type: 'executor_snapshot_received', address: runtimeItem.address, task })
+    machine.dispatch({ type: 'turn_started', turnId: 'new-turn' })
+    const item = { ...runtimeItem, task, lifecycle: machine.getSnapshot() }
+    expect(standInState(item).status).toBe('running')
+  })
+
   it.each(['', 'invalid'])('handles invalid creation timestamps: %s', createdAt => {
     const result = mergeStandInNotifications(
       [],
