@@ -393,7 +393,7 @@ jobs:
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/resources/bin/wegent-executor
           WEWORK_E2E_CODEX_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
           WEWORK_E2E_ISOLATED_XVFB: "true"
-          WEWORK_E2E_PARALLEL_CHECKPOINTS: "2"
+          WEWORK_E2E_PARALLEL_CHECKPOINTS: "4"
           WEWORK_E2E_PARALLEL_SCOPE: core
           WEWORK_E2E_BACKEND_RS_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/backend-rs/wegent-backend-rs
           WEWORK_E2E_SCREENSHOTS: ${{ contains(matrix.segments, 'harness-apps') && 'harness-milestones' || 'all' }}
@@ -413,7 +413,8 @@ jobs:
             cp .github/scripts/run-wework-executor-with-gdb.sh "$WEWORK_E2E_EXECUTOR_BIN.gdb"
             export WEWORK_E2E_EXECUTOR_BIN="$WEWORK_E2E_EXECUTOR_BIN.gdb"
           fi
-          node wework/e2e/desktop/run-checkpoints.mjs \
+          node .github/scripts/run-with-resource-logging.mjs \
+            node wework/e2e/desktop/run-checkpoints.mjs \
             --parallel-segments "$WEWORK_E2E_SEGMENTS"
 
       - name: Prune transient Wework desktop E2E caches
@@ -837,7 +838,7 @@ jobs:
           gh --version
 
       - name: Prepare the pinned native DWS compiler for account authentication E2E
-        if: contains(matrix.segments, 'plugin-account-auth')
+        if: contains(matrix.segments, 'plugin-account-auth-dws')
         uses: actions/setup-go@v6
         with:
           go-version: "1.25.9"
@@ -852,7 +853,7 @@ jobs:
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/resources/bin/wegent-executor
           WEWORK_E2E_BACKEND_RS_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/backend-rs/wegent-backend-rs
           WEWORK_E2E_ISOLATED_XVFB: "true"
-          WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"
+          WEWORK_E2E_PARALLEL_CHECKPOINTS: "4"
           WEWORK_E2E_PARALLEL_SCOPE: cloud
           WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
           WEWORK_E2E_DWS_FIXTURE_DIR: ${{ github.workspace }}/.ci-artifacts/dws-account-auth
@@ -863,7 +864,7 @@ jobs:
           test -x "$WEWORK_E2E_CODEX_BIN"
 
           dws_pid=""
-          if [[ "$WEWORK_E2E_SEGMENTS" == *plugin-account-auth* ]]; then
+          if [[ "$WEWORK_E2E_SEGMENTS" == *plugin-account-auth-dws* ]]; then
             rm -rf "$WEWORK_E2E_DWS_FIXTURE_DIR"
             mkdir -p "$WEWORK_E2E_DWS_FIXTURE_DIR"
             (
@@ -885,7 +886,8 @@ jobs:
           fi
 
           status=0
-          node wework/e2e/desktop/run-checkpoints.mjs \
+          node .github/scripts/run-with-resource-logging.mjs \
+            node wework/e2e/desktop/run-checkpoints.mjs \
             --parallel-segments "$WEWORK_E2E_SEGMENTS" ||
             status=$?
           if [[ -n "$dws_pid" ]]; then
