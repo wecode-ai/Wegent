@@ -457,11 +457,10 @@ projectTest(
   async ({ page, scheduledProject: { path } }) => {
     const switchAccount = async (username: string, password: string) => {
       await page.goto('/settings')
-      await page.locator('button.rounded-full').first().click()
-      await page
-        .locator('button')
-        .filter({ hasText: /Logout|退出|Sign out/i })
-        .click()
+      const toggle = page.getByTestId('task-sidebar').getByTestId('user-floating-menu-toggle')
+      await toggle.click()
+      await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+      await page.getByTestId('task-sidebar').getByTestId('user-floating-menu-logout').click()
       await page.waitForURL(/\/login/)
       await page.locator('input[name="user_name"]').fill(username)
       await page.locator('input[name="password"]').fill(password)

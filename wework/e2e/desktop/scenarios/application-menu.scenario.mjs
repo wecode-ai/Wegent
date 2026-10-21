@@ -403,19 +403,24 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) 
         timeoutMs: uiTimeoutMs,
       })
 
-      // Filtering matches the process and hides the others.
+      // Search also matches launch arguments, so a PID need not identify a unique row.
+      const helperName = await explorerCommand(
+        'getText',
+        `[data-testid="process-explorer-row-${helperPid}"] td:first-child`
+      )
+      assert.ok(helperName.trim(), 'The Chromium helper has no searchable process name')
       await explorerCommand('fill', '[data-testid="process-explorer-filter"]', {
-        value: String(processExplorer.applicationPid),
+        value: helperName.trim(),
       })
       await waitForWindowElementCount(
         explorerCommand,
-        `[data-testid="process-explorer-row-${processExplorer.applicationPid}"]`,
+        `[data-testid="process-explorer-row-${helperPid}"]`,
         1,
         uiTimeoutMs
       )
       await waitForWindowElementCount(
         explorerCommand,
-        `[data-testid="process-explorer-row-${helperPid}"]`,
+        `[data-testid="process-explorer-row-${processExplorer.applicationPid}"]`,
         0,
         uiTimeoutMs
       )

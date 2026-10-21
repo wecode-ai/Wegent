@@ -588,10 +588,13 @@ def test_board_snapshot_returns_first_screen_dependencies(
     assert snapshot["agents"] == []
 
 
+@pytest.mark.parametrize("other_lane_first", [False, True])
 def test_loop_item_reorder_orders_one_lane(
     test_client: TestClient,
     test_token: str,
     delivery_project: CloudProject,
+    test_db: Session,
+    other_lane_first: bool,
 ) -> None:
     headers = _auth(test_token)
 
@@ -607,6 +610,14 @@ def test_loop_item_reorder_orders_one_lane(
     first = create("First")
     second = create("Second")
     other_lane = create("Other lane", status="pending")
+    initial_order = (
+        [other_lane, first, second] if other_lane_first else [first, second, other_lane]
+    )
+    for rank, item in enumerate(initial_order):
+        test_db.query(LoopItem).filter(LoopItem.id == item["id"]).update(
+            {LoopItem.sort_order: rank}
+        )
+    test_db.commit()
 
     response = test_client.post(
         f"/api/v1/cloud-projects/{delivery_project.id}/loop-items/reorder",
@@ -636,11 +647,20 @@ def test_loop_item_reorder_orders_one_lane(
         == "pending"
     )
 
-    # Moving a TODO to another lane resets its manual position to the top.
-    moved = test_client.patch(
+    refreshed_second = next(item for item in listed if item["id"] == second["id"])
+    assert refreshed_second["version"] == second["version"] + 1
+    stale = test_client.patch(
         f"/api/v1/loop-items/{second['id']}",
         headers=headers,
         json={"version": second["version"], "status": "pending"},
+    )
+    assert stale.status_code == 409
+
+    # Continue from the refreshed version after a persisted reorder.
+    moved = test_client.patch(
+        f"/api/v1/loop-items/{second['id']}",
+        headers=headers,
+        json={"version": refreshed_second["version"], "status": "pending"},
     )
     assert moved.status_code == 200
     assert moved.json()["sort_order"] == 0

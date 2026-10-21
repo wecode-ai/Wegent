@@ -196,6 +196,9 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         { text: name, value: 'local-sorting-project', timeoutMs: uiTimeoutMs }
       )
       await control.command('click', '[data-e2e-anchor-id="local-sorting-project"]')
+      await control.command('waitFor', scoped('[data-testid="collaboration-tab-board"]'), {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
     }
     await expectRules(control, 'pending', 'priority-desc')
