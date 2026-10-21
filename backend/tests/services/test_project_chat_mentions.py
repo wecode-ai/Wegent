@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.ws import wework_runtime_namespace
-from app.models.delivery import CloudProject, LoopItem
+from app.models.delivery import CloudProject, LoopItem, LoopItemCollaborator
 from app.models.kind import Kind
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import ResourceMember
@@ -86,6 +86,69 @@ def mention_request(
             {"type": "user", "id": str(recipient.id), "label": recipient.user_name}
         ],
     )
+
+
+@pytest.mark.parametrize("source", ["Workspace", "CloudProject"])
+@pytest.mark.parametrize("role", ["Developer", "Viewer", "Maintainer"])
+@pytest.mark.parametrize("related", [False, True])
+@pytest.mark.parametrize("reply", [False, True])
+def test_cp14_issue_mentions_require_recipient_visibility(
+    test_db, test_user, mention_scope, source, role, related, reply
+):
+    """Restricted Issue content and reply previews require recipient read access."""
+    project, workspace, recipient, item, schedule = mention_scope
+    item.metadata_json = {"security_level": "related"}
+    grant_member(
+        test_db,
+        source,
+        workspace.id if source == "Workspace" else project.id,
+        recipient.id,
+        role,
+    )
+    if related:
+        test_db.add(LoopItemCollaborator(loop_item_id=item.id, user_id=recipient.id))
+    test_db.commit()
+    request = mention_request(project, recipient, item.id)
+    if reply:
+        root = project_chat_service.send(
+            test_db,
+            user_id=test_user.id,
+            user_name=test_user.user_name,
+            request=ProjectChatSend(
+                client_message_id=str(uuid.uuid4()),
+                project_id=project.id,
+                task_id=item.id,
+                content="Confidential root comment",
+            ),
+        )
+        request.reply_to_message_id = root.message.message_id
+
+    if related or role == "Maintainer":
+        result = project_chat_service.send(
+            test_db,
+            user_id=test_user.id,
+            user_name=test_user.user_name,
+            request=request,
+        )
+        assert result.created
+        test_db.expire_all()
+        assert test_db.query(WeworkNotification).one().user_id == recipient.id
+        assert test_db.query(ProjectChatMessage).count() == 1 + int(reply)
+        schedule.assert_called_once()
+    else:
+        with pytest.raises(HTTPException) as error:
+            project_chat_service.send(
+                test_db,
+                user_id=test_user.id,
+                user_name=test_user.user_name,
+                request=request,
+            )
+        assert error.value.status_code == 422
+        assert error.value.detail == "Mentioned user cannot view this issue"
+        test_db.rollback()
+        assert test_db.query(ProjectChatMessage).count() == int(reply)
+        assert test_db.query(WeworkNotification).count() == 0
+        schedule.assert_not_called()
 
 
 @pytest.mark.parametrize("issue_thread", [False, True])

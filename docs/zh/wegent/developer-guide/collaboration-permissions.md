@@ -133,6 +133,8 @@ sequenceDiagram
 
 回归入口：
 
+- 提及通知遵守 CP03、CP05、CP08、CP13 和 CP14：接收人必须是当前有效项目成员，Issue 评论和回复预览还要求接收人可读取该 Issue；任一接收人校验失败时，消息与通知一起回滚。`test_project_chat_mentions.py` 覆盖权限矩阵；`frontend/e2e/tests/collaboration/project-mentions.spec.ts` 通过真实 WebSocket、持久化历史和接收人收件箱验证两种评论入口，并覆盖浏览器选择继承成员后发送及刷新。该场景由 `e2e-tests.yml` 的 Chromium 项目调用。
+
 - Rust 已接管的项目列表和项目执行设备查询遵循同一 CP 契约。`test_rust_collaboration_permissions_mysql.py` 在真实 MySQL 上执行 Rust 使用的 SQL，核对角色组合、受限继承、项目访客、公开只读及撤权；Rust 单元测试保护来源字段与设备授权交集。Python 服务测试保留相同业务断言，迁移接口的 HTTP 断言沿现有桌面 CI 场景运行。
 
 - API 角色矩阵与资源契约：`test_collaboration_permission_contract.py`、`test_collaboration_permission_resources.py`、`test_workspace_shared_agents.py`。

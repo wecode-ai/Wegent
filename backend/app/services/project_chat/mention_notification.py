@@ -6,6 +6,8 @@ from sqlalchemy.orm import Session
 from app.models.delivery import CloudProject, LoopItem
 from app.schemas.project_chat import ProjectChatMention
 from app.services.cloud_project_visibility import project_participant_ids
+from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.loop_items.access import can_view_item
 from app.services.notification_copy import comment_preview, mention_message
 from app.services.notification_target import board_notification_target
 from app.services.wework_notifications import create_notification
@@ -32,7 +34,14 @@ def notify_project_chat_mentions(
 
     if not mentions:
         return
-    member_ids = project_participant_ids(db, project)
+    recipient_ids = _mentioned_member_ids(
+        mentions, project_participant_ids(db, project)
+    )
+    if item is not None:
+        for recipient_id in recipient_ids:
+            access = require_cloud_project_role(db, int(project.id), recipient_id)
+            if not can_view_item(db, access, item, recipient_id):
+                raise HTTPException(422, "Mentioned user cannot view this issue")
 
     preview = comment_preview(content)
     target = board_notification_target(db, project, item)
@@ -43,7 +52,7 @@ def notify_project_chat_mentions(
         target=target,
         reply_preview=reply_preview,
     )
-    for recipient_id in _mentioned_member_ids(mentions, member_ids):
+    for recipient_id in recipient_ids:
         if recipient_id == actor_user_id:
             continue
         create_notification(
