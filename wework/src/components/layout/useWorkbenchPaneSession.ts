@@ -49,7 +49,6 @@ import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProvid
 import { persistAttachmentReferences } from '@/lib/attachments'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import {
-  applyRequestUserInputResponseToBlock,
   findRequestUserInputPayload,
   isAsyncRequestUserInputPayload,
   requestUserInputPayloadKey,
@@ -134,7 +133,7 @@ import {
   subscribeRuntimeConversation,
   subscribeRuntimeTransportReplaced,
   takeInterruptedRuntimeConversationGuidance,
-  updateRuntimeConversationBlocks,
+  prepareRuntimeConversationUserInputResponse,
 } from '@/features/workbench/runtimeConversationCache'
 import {
   createRuntimeUserMessage,
@@ -1167,21 +1166,22 @@ export function useWorkbenchPaneSession({
     [dispatchMessages]
   )
 
-  const applyLocalRequestUserInputResponse = useCallback(
+  const prepareLocalRequestUserInputResponse = useCallback(
     (response: RequestUserInputResponse) => {
-      if (!currentRuntimeTask) return
+      if (!currentRuntimeTask) return () => undefined
       const previousCount = messagesRef.current.length
-      const nextMessages = updateRuntimeConversationBlocks(currentRuntimeTask, block =>
-        applyRequestUserInputResponseToBlock(block, response)
-      )
-      setMessages(nextMessages)
-      debugRuntimePaneMessageFlow('request-user-input-response-applied', {
-        address: runtimeAddressDebug(currentRuntimeTask),
-        requestUserInputKey: requestUserInputResponseKey(response),
-        previousCount,
-        nextCount: nextMessages.length,
-        nextMessages: summarizeWorkbenchMessages(nextMessages),
-      })
+      const commit = prepareRuntimeConversationUserInputResponse(currentRuntimeTask, response)
+      return () => {
+        const nextMessages = commit()
+        setMessages(nextMessages)
+        debugRuntimePaneMessageFlow('request-user-input-response-applied', {
+          address: runtimeAddressDebug(currentRuntimeTask),
+          requestUserInputKey: requestUserInputResponseKey(response),
+          previousCount,
+          nextCount: nextMessages.length,
+          nextMessages: summarizeWorkbenchMessages(nextMessages),
+        })
+      }
     },
     [currentRuntimeTask]
   )
@@ -1746,6 +1746,7 @@ export function useWorkbenchPaneSession({
     ): Promise<boolean> => {
       if (!currentRuntimeTask) return false
 
+      const applyResponse = prepareLocalRequestUserInputResponse(response)
       const message = requestUserInputResponseText(response)
       const requestUserInputKey = requestUserInputResponseKey(response)
       const runtimeModelOverride = options.forceDefaultCollaborationMode
@@ -1793,11 +1794,11 @@ export function useWorkbenchPaneSession({
           return next
         })
       }
-      applyLocalRequestUserInputResponse(response)
+      applyResponse()
       return true
     },
     [
-      applyLocalRequestUserInputResponse,
+      prepareLocalRequestUserInputResponse,
       currentRuntimeTask,
       getRuntimeModelFields,
       projectChat,
