@@ -24,6 +24,10 @@ impl HttpDependencies {
         }
     }
 
+    pub(crate) fn client(&self) -> &Client {
+        &self.client
+    }
+
     /// GET `{base}/executor-manager/sandboxes/{task_id}`. The metric name is
     /// stabilized because the task id is high-cardinality.
     pub fn sandbox_status_endpoint(&self, task_id: i64) -> Result<Endpoint> {

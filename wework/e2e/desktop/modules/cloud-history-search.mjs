@@ -251,8 +251,8 @@ export function createCloudHistorySearchVerification() {
         })
         const project = await request(`/api/v1/workspaces/${workspace.id}/projects`, {
           name: 'Cloud history search',
-          projectKey: 'CLOUDSEARCH',
-          taskProvider: 'local',
+          project_key: 'CLOUDSEARCH',
+          task_provider: 'local',
           visibility: 'private',
         })
         const issuePath = `/api/v1/cloud-projects/${project.id}/loop-items`

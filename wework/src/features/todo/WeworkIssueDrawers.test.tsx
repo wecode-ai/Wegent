@@ -46,7 +46,7 @@ beforeEach(() => {
   taskBindings = []
   chatMountCount = 0
   latestExecutionEnvironment = undefined
-  issue.human_work = undefined
+  issue.human_task_binding = undefined
 })
 afterAll(() => {
   if (originalGetAnimations) {
@@ -506,21 +506,7 @@ describe('Wework Issue conversation drawers', () => {
       dispatchRoundId: 'round-1',
       assignmentId: 'assignment-1',
     }
-    issue.human_work = {
-      assignment_id: binding.assignmentId,
-      ai_task_binding: binding,
-      assignee_user_id: 1,
-      reviewer_user_id: 2,
-      submission_message_id: null,
-      submitted_by_user_id: null,
-      state: 'none',
-      result: '',
-      return_reason: '',
-      ai_draft_delivery_id: null,
-      can_start: false,
-      can_submit: true,
-      can_review: false,
-    }
+    issue.human_task_binding = binding
     render(
       <Project
         executionEnvironment={{

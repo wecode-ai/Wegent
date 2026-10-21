@@ -11,6 +11,7 @@ import {
   extractZipFixture,
 } from '../modules/zip-fixtures.mjs'
 import { telemetryEvents } from '../modules/response-protocol.mjs'
+import { waitForEmbeddedBrowserVisibility } from '../modules/embedded-browser-visibility.mjs'
 import { verifySmartAppMarketplaceIdentity } from '../modules/smart-app-marketplace-identity.mjs'
 import { packagedResourcesRoot } from '../modules/workbench-schema-compatibility.mjs'
 import {
@@ -78,44 +79,6 @@ async function waitForElementCount(control, selector, expected, timeoutMs, messa
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error(message)
-}
-
-async function waitForEmbeddedBrowserVisibility(
-  control,
-  label,
-  previewSelector,
-  expectedVisible,
-  timeoutMs,
-  message
-) {
-  const startedAt = Date.now()
-  let lastState = null
-  let lastError = null
-  while (Date.now() - startedAt < timeoutMs) {
-    const previewError = await control.command(
-      'getText',
-      `${previewSelector} [data-testid="smart-app-development-preview-error"]`
-    )
-    if (previewError) {
-      throw new Error(`Smart app development preview failed: ${previewError}`)
-    }
-    try {
-      lastState = JSON.parse(
-        await control.command('getEmbeddedBrowserPageState', 'body', {
-          value: label,
-        })
-      )
-      const ready = expectedVisible ? lastState.url && lastState.isLoading === false : true
-      if (lastState.visible === expectedVisible && ready) {
-        return lastState
-      }
-    } catch (error) {
-      // Reloading temporarily removes the native browser before opening its replacement.
-      lastError = error instanceof Error ? error.message : String(error)
-    }
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-  throw new Error(`${message}: ${JSON.stringify({ lastState, lastError })}`)
 }
 
 async function waitForManifestPlugin(manifestPath, pluginSpec, timeoutMs) {
@@ -801,10 +764,10 @@ export async function createDesktopScenario({
       await waitForEmbeddedBrowserVisibility(
         control,
         developmentBrowserLabel,
-        developmentPreviewSelector,
         false,
         120_000,
-        'The inactive Smart app preview reclaimed the native browser after reloading'
+        'The inactive Smart app preview did not restore a hidden native browser after reloading',
+        developmentPreviewSelector
       )
       await captureScreenshot(control, 'harness-apps-03b2-preview-task-scoped.png', 'body')
       await control.command('click', `[data-testid="${developmentTaskTabTestId}"]`)
@@ -823,10 +786,10 @@ export async function createDesktopScenario({
       await waitForEmbeddedBrowserVisibility(
         control,
         developmentBrowserLabel,
-        developmentPreviewSelector,
         true,
         uiTimeoutMs,
-        'Returning to the Smart app development task did not restore its native browser'
+        'Returning to the Smart app development task did not restore its native browser',
+        developmentPreviewSelector
       )
       const developmentBrowserTabSelector =
         '[role="tab"][data-testid^="right-workspace-browser-tab-"]'

@@ -989,6 +989,14 @@ export function createHybridWorkbenchServices(
     },
   }
 
+  const standInApiForDevice = async (deviceId: string) => {
+    const identity = await getLocalRuntimeSidebarIdentity()
+    const api =
+      deviceId === identity?.deviceId ? localServices.standInApi : cloudServices.standInApi
+    if (!api) throw new Error('Executor settings are unavailable')
+    return api
+  }
+
   const hybridRuntimeWorkApi: NonNullable<WorkbenchServices['runtimeWorkApi']> = {
     materializeRuntimeTask(data) {
       return cloudServices.runtimeWorkApi!.materializeRuntimeTask(data)
@@ -1668,6 +1676,41 @@ export function createHybridWorkbenchServices(
     },
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
+    standInApi: {
+      async catalog(deviceId) {
+        return (await standInApiForDevice(deviceId)).catalog(deviceId)
+      },
+      async run(projectId, issueId, userId, projectStore, deviceId, standInId) {
+        return (await standInApiForDevice(deviceId)).run(
+          projectId,
+          issueId,
+          userId,
+          projectStore,
+          deviceId,
+          standInId
+        )
+      },
+      async list(userId, deviceId, includeDisabled) {
+        return (await standInApiForDevice(deviceId)).list(userId, deviceId, includeDisabled)
+      },
+      async get(projectId, userId, projectStore, deviceId, standInId) {
+        return (await standInApiForDevice(deviceId)).get(
+          projectId,
+          userId,
+          projectStore,
+          deviceId,
+          standInId
+        )
+      },
+      async save(projectId, userId, projectStore, settings) {
+        return (await standInApiForDevice(settings.executionDeviceId)).save(
+          projectId,
+          userId,
+          projectStore,
+          settings
+        )
+      },
+    },
     projectDevicePluginApi,
     automationApi,
     attachmentApi: {

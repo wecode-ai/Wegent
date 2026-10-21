@@ -20,6 +20,7 @@ const KEYS: Record<string, string> = {
   R: 'R',
   S: 'S',
   T: 'T',
+  W: 'W',
   x: 'x',
 }
 
@@ -49,7 +50,8 @@ export async function sendE2EKey(
   key: string,
   focusWindow: () => void | Promise<void>,
   environment: NodeJS.ProcessEnv = process.env,
-  phase: E2EKeyPhase = 'press'
+  phase: E2EKeyPhase = 'press',
+  focus = true
 ) {
   requireE2EControl(environment)
   const parts = key.split('+')
@@ -60,8 +62,10 @@ export async function sendE2EKey(
   }
   requireAvailableContents(contents)
   const modifiers: KeyboardInputEvent['modifiers'] = parts.map(part => MODIFIERS[part])
-  await focusWindow()
-  contents.focus()
+  if (focus) {
+    await focusWindow()
+    contents.focus()
+  }
   if (phase !== 'up') {
     contents.sendInputEvent({ type: 'keyDown', keyCode, modifiers })
   }

@@ -43,8 +43,6 @@ def assign_round_owner(
         replace_root_assignments=True,
     )
     metadata = dict(item.metadata_json or {})
-    if item.assignee_user_id != (int(member_id) if human else None):
-        metadata.pop("human_work", None)
     loop_item_service.record_assignment_change(
         metadata,
         user_id,

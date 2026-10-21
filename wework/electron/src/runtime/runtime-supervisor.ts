@@ -4,7 +4,7 @@ import {
   type SpawnOptionsWithoutStdio,
 } from 'node:child_process'
 import { EventEmitter, once } from 'node:events'
-import { readdirSync, readFileSync } from 'node:fs'
+import { readdir, readFile } from 'node:fs/promises'
 import { RotatingLog, type RotatingLogOptions } from './rotating-log.js'
 import { resolveSpawnCommand } from './spawn-command.js'
 
@@ -312,7 +312,7 @@ async function waitForProcessGroupExit(
   const deadline = Date.now() + timeoutMs
   let firstDeadAt: number | null = null
   while (true) {
-    const state = inspectProcessGroup(processGroupId)
+    const state = await inspectProcessGroup(processGroupId)
     const now = Date.now()
     if (state === 'absent') return true
     if (state === 'dead') {
@@ -329,53 +329,42 @@ async function waitForProcessGroupExit(
   }
 }
 
-function inspectProcessGroup(processGroupId: number): 'absent' | 'dead' | 'present' {
+async function inspectProcessGroup(processGroupId: number): Promise<'absent' | 'dead' | 'present'> {
   try {
     process.kill(-processGroupId, 0)
-    if (process.platform === 'linux') {
-      const hasLiveMembers = linuxProcessGroupHasLiveMembers(processGroupId)
-      if (hasLiveMembers === false) return 'dead'
-    }
-    return 'present'
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code
     if (code === 'ESRCH') return 'absent'
     if (code === 'EPERM') return 'present'
     throw error
   }
-}
+  if (process.platform !== 'linux') return 'present'
 
-function linuxProcessGroupHasLiveMembers(processGroupId: number): boolean | null {
-  let entries: string[]
-  try {
-    entries = readdirSync('/proc')
-  } catch {
-    return null
-  }
-  let foundMember = false
-  for (const entry of entries) {
-    if (!/^\d+$/.test(entry)) continue
-    let stat: string
+  // Container PID 1 may leave exited descendants unreaped. kill(-pgid, 0)
+  // still sees their group, but zombies cannot run or respond to SIGKILL.
+  for (const pid of await readdir('/proc')) {
+    if (!/^\d+$/.test(pid)) continue
+    let value: string
     try {
-      stat = readFileSync(`/proc/${entry}/stat`, 'utf8')
+      value = await readFile(`/proc/${pid}/stat`, 'utf8')
     } catch (error) {
-      // Processes may disappear while the group is being inspected.
-      const code = (error as NodeJS.ErrnoException).code
-      if (code === 'ENOENT' || code === 'ESRCH') continue
-      return null
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
+      throw error
     }
-    const commandEnd = stat.lastIndexOf(')')
-    if (commandEnd === -1) return null
-    const [state, , group] = stat
-      .slice(commandEnd + 1)
+    // comm is parenthesized and may itself contain spaces or parentheses.
+    const endOfName = value.lastIndexOf(')')
+    const [state, , group] = value
+      .slice(endOfName + 2)
       .trim()
       .split(/\s+/)
-    if (Number(group) !== processGroupId) continue
-    foundMember = true
-    // Orphaned zombies can outlive their parent in containers without an init reaper.
-    if (state !== 'Z' && state !== 'X' && state !== 'x') return true
+    if (endOfName < 0 || !state || !group || !Number.isSafeInteger(Number(group))) {
+      throw new Error(`Invalid process stat for PID ${pid}`)
+    }
+    if (Number(group) === processGroupId && !['Z', 'X', 'x'].includes(state)) {
+      return 'present'
+    }
   }
-  return foundMember ? false : null
+  return 'dead'
 }
 
 function signalProcessTree(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {

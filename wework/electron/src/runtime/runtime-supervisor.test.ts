@@ -1,13 +1,14 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import * as fs from 'node:fs'
+import * as fsPromises from 'node:fs/promises'
 import { mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test, vi, type MockInstance } from 'vitest'
 import { RuntimeSupervisor, terminateProcessTree } from './runtime-supervisor.js'
 
-vi.mock('node:fs', { spy: true })
+vi.mock('node:fs/promises', { spy: true })
 
 const crashThenStayAlive = `
 import { readFileSync, writeFileSync } from 'node:fs'
@@ -53,15 +54,15 @@ describe('RuntimeSupervisor', () => {
     )
   })
 
-  test('keeps waiting when Linux process-group members cannot be inspected', async () => {
+  test('rejects when Linux process-group members cannot be inspected', async () => {
     await withLinuxProcessGroup(
       () => {
         throw Object.assign(new Error('Permission denied'), { code: 'EACCES' })
       },
       async child => {
-        await expect(terminateProcessTree(child, 25)).rejects.toThrow(
-          'Timed out waiting for process group 42 to exit'
-        )
+        await expect(terminateProcessTree(child, 25)).rejects.toMatchObject({
+          code: 'EACCES',
+        })
       }
     )
   })
@@ -114,11 +115,7 @@ describe('RuntimeSupervisor', () => {
       let scans = 0
       await withLinuxProcessGroup(
         killed => {
-          scans += 1
-          if (!killed && scans === 2) {
-            if (observation === 'unknown') {
-              throw Object.assign(new Error('Permission denied'), { code: 'EACCES' })
-            }
+          if (!killed && scans === 2 && observation === 'live') {
             return [linuxStat(12, 'S')]
           }
           return [linuxStat(12, 'Z')]
@@ -129,6 +126,12 @@ describe('RuntimeSupervisor', () => {
           await stopped
 
           expect(kill).toHaveBeenCalledWith(-42, 'SIGKILL')
+        },
+        killed => {
+          scans += 1
+          if (!killed && scans === 2 && observation === 'unknown') {
+            throw Object.assign(new Error('Permission denied'), { code: 'EPERM' })
+          }
         }
       )
     }
@@ -341,7 +344,8 @@ async function withLinuxProcessGroup(
   check: (
     child: ChildProcessWithoutNullStreams,
     kill: MockInstance<typeof process.kill>
-  ) => Promise<void>
+  ) => Promise<void>,
+  inspect?: (killed: boolean) => void
 ): Promise<void> {
   const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
   const child = Object.assign(new EventEmitter(), {
@@ -351,14 +355,14 @@ async function withLinuxProcessGroup(
   }) as unknown as ChildProcessWithoutNullStreams
   let killed = false
   let snapshot: string[] = []
-  const list = vi.spyOn(fs, 'readdirSync').mockImplementation(() => {
+  const list = vi.spyOn(fsPromises, 'readdir').mockImplementation(async () => {
     snapshot = stats(killed)
     // Include an unrelated live group and a process that disappears during inspection.
-    return ['1', ...snapshot.map(stat => stat.split(' ')[0]), '15'] as unknown as ReturnType<
-      typeof fs.readdirSync
+    return ['1', ...snapshot.map(stat => stat.split(' ')[0]), '15'] as unknown as Awaited<
+      ReturnType<typeof fsPromises.readdir>
     >
   })
-  const read = vi.spyOn(fs, 'readFileSync').mockImplementation(path => {
+  const read = vi.spyOn(fsPromises, 'readFile').mockImplementation(async path => {
     const pid = Number(String(path).split('/')[2])
     if (pid === 1) return '1 (init) S 0 1 0 0 0'
     const stat = snapshot.find(value => value.startsWith(`${pid} `))
@@ -366,6 +370,7 @@ async function withLinuxProcessGroup(
     throw Object.assign(new Error('Process exited'), { code: 'ENOENT' })
   })
   const kill = vi.spyOn(process, 'kill').mockImplementation((_pid, signal) => {
+    if (signal === 0) inspect?.(killed)
     if (signal === 'SIGTERM') queueMicrotask(() => child.emit('exit', 0, null))
     if (signal === 'SIGKILL') killed = true
     return true
