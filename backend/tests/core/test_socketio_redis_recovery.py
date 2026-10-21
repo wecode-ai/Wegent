@@ -8,6 +8,7 @@ import json
 import socket
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
@@ -129,16 +130,36 @@ class RedisSubscriptionServer:
                 heartbeat.cancel()
                 await asyncio.gather(heartbeat, return_exceptions=True)
             writer.close()
-            await writer.wait_closed()
-            self.handlers.discard(task)
-            if not self.handlers:
-                self.connections_closed.set()
+            try:
+                await writer.wait_closed()
+            except ConnectionResetError:
+                # The client can reset a stalled connection while reconnecting.
+                pass
+            finally:
+                self.handlers.discard(task)
+                if not self.handlers:
+                    self.connections_closed.set()
 
     async def close(self) -> None:
         tasks = tuple(self.handlers)
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_subscription_cleanup_after_client_resets_connection() -> None:
+    stub = RedisSubscriptionServer(partial_response=True)
+    reader = asyncio.StreamReader()
+    reader.feed_eof()
+    writer = MagicMock(spec=asyncio.StreamWriter)
+    writer.wait_closed = AsyncMock(side_effect=ConnectionResetError)
+
+    await stub.handle(reader, writer)
+
+    writer.close.assert_called_once()
+    assert not stub.handlers
+    assert stub.connections_closed.is_set()
 
 
 @pytest_asyncio.fixture(params=[True, False], ids=["partial-response", "idle"])
