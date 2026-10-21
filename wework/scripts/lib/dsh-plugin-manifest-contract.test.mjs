@@ -6,10 +6,63 @@ import { afterEach, describe, expect, test } from 'vitest'
 import { validateDshWebPluginManifests } from './dsh-plugin-manifest-contract.mjs'
 
 const DSH_VERSION = '0.2.0-rc.2'
+const CORDIS_PACKAGE = '@deepseek-ai/cordis'
 const CORDIS_VERSION = '~4.0.4'
 const RENDERER_PACKAGE = '@deepseek-ai/dsh-client-ui-renderer'
 const RUNTIME_PACKAGE = '@deepseek-ai/dsh-client-runtime'
+const PUBLIC_PLUGIN = '@wegent/public-plugin'
+const EXTENSION_PLUGIN = '@wegent/internal-extension'
 const fixtureRoots = []
+const peerCompatibilityCases = [
+  {
+    expectedPeer: CORDIS_PACKAGE,
+    label: 'a public plugin with the wrong Cordis peer',
+    pluginOptions: { cordisVersion: '~9.0.0' },
+    targetName: PUBLIC_PLUGIN,
+  },
+  {
+    expectedPeer: RENDERER_PACKAGE,
+    label: 'a public plugin with the wrong renderer peer',
+    pluginOptions: { rendererVersion: '9.0.0' },
+    targetName: PUBLIC_PLUGIN,
+  },
+  {
+    expectedPeer: CORDIS_PACKAGE,
+    label: 'a public plugin without the Cordis peer',
+    pluginOptions: { includeCordisPeer: false },
+    targetName: PUBLIC_PLUGIN,
+  },
+  {
+    expectedPeer: RENDERER_PACKAGE,
+    label: 'a public plugin without the renderer peer',
+    pluginOptions: { includeRendererPeer: false },
+    targetName: PUBLIC_PLUGIN,
+  },
+  {
+    expectedPeer: CORDIS_PACKAGE,
+    label: 'an extension plugin with the wrong Cordis peer',
+    pluginOptions: { cordisVersion: '~9.0.0' },
+    targetName: EXTENSION_PLUGIN,
+  },
+  {
+    expectedPeer: RENDERER_PACKAGE,
+    label: 'an extension plugin with the wrong renderer peer',
+    pluginOptions: { rendererVersion: '9.0.0' },
+    targetName: EXTENSION_PLUGIN,
+  },
+  {
+    expectedPeer: CORDIS_PACKAGE,
+    label: 'an extension plugin without the Cordis peer',
+    pluginOptions: { includeCordisPeer: false },
+    targetName: EXTENSION_PLUGIN,
+  },
+  {
+    expectedPeer: RENDERER_PACKAGE,
+    label: 'an extension plugin without the renderer peer',
+    pluginOptions: { includeRendererPeer: false },
+    targetName: EXTENSION_PLUGIN,
+  },
+]
 
 afterEach(async () => {
   await Promise.all(fixtureRoots.splice(0).map(root => rm(root, { recursive: true })))
@@ -17,45 +70,38 @@ afterEach(async () => {
 
 describe('DSH plugin manifest contract', () => {
   test('accepts compatible public and extension web plugins', async () => {
-    const fixture = await createFixture([
-      webPlugin('@wegent/public-plugin'),
-      webPlugin('@wegent/internal-extension'),
-    ])
+    const fixture = await createFixture([webPlugin(PUBLIC_PLUGIN), webPlugin(EXTENSION_PLUGIN)])
 
     await expect(validateFixture(fixture)).resolves.toBeUndefined()
   })
 
-  test.each([
-    [
-      'uniformly wrong peer versions',
-      {
-        cordisVersion: '~9.0.0',
-        rendererVersion: '9.0.0',
-      },
-    ],
-    ['uniformly missing peer versions', { includePeers: false }],
-  ])('rejects %s', async (_label, pluginOptions) => {
-    const fixture = await createFixture([
-      webPlugin('@wegent/public-plugin', pluginOptions),
-      webPlugin('@wegent/internal-extension', pluginOptions),
-    ])
+  test.each(peerCompatibilityCases)(
+    'rejects $label',
+    async ({ expectedPeer, pluginOptions, targetName }) => {
+      const fixture = await createFixture([
+        webPlugin(PUBLIC_PLUGIN, targetName === PUBLIC_PLUGIN ? pluginOptions : undefined),
+        webPlugin(EXTENSION_PLUGIN, targetName === EXTENSION_PLUGIN ? pluginOptions : undefined),
+      ])
 
-    await expect(validateFixture(fixture)).rejects.toThrow(/peerDependencies/)
-  })
+      await expect(validateFixture(fixture)).rejects.toThrow(
+        `${targetName} peerDependencies.${expectedPeer}`
+      )
+    }
+  )
 
-  test('rejects an incompatible extension plugin', async () => {
+  test('rejects an extension plugin that injects the client runtime', async () => {
     const fixture = await createFixture([
-      webPlugin('@wegent/public-plugin'),
-      webPlugin('@wegent/internal-extension', { injectRuntime: true }),
+      webPlugin(PUBLIC_PLUGIN),
+      webPlugin(EXTENSION_PLUGIN, { injectRuntime: true }),
     ])
 
     await expect(validateFixture(fixture)).rejects.toThrow(
-      `@wegent/internal-extension dsh.client.inject must not include ${RUNTIME_PACKAGE}`
+      `${EXTENSION_PLUGIN} dsh.client.inject must not include ${RUNTIME_PACKAGE}`
     )
   })
 
   test('rejects a declared plugin without a manifest', async () => {
-    const fixture = await createFixture([webPlugin('@wegent/public-plugin'), null])
+    const fixture = await createFixture([webPlugin(PUBLIC_PLUGIN), null])
 
     await expect(validateFixture(fixture)).rejects.toMatchObject({ code: 'ENOENT' })
   })
@@ -99,7 +145,8 @@ function webPlugin(
   name,
   {
     cordisVersion = CORDIS_VERSION,
-    includePeers = true,
+    includeCordisPeer = true,
+    includeRendererPeer = true,
     injectRuntime = false,
     rendererVersion = DSH_VERSION,
   } = {}
@@ -112,14 +159,10 @@ function webPlugin(
         platform: 'web',
       },
     },
-    ...(includePeers
-      ? {
-          peerDependencies: {
-            '@deepseek-ai/cordis': cordisVersion,
-            [RENDERER_PACKAGE]: rendererVersion,
-          },
-        }
-      : {}),
+    peerDependencies: {
+      ...(includeCordisPeer ? { [CORDIS_PACKAGE]: cordisVersion } : {}),
+      ...(includeRendererPeer ? { [RENDERER_PACKAGE]: rendererVersion } : {}),
+    },
   }
 }
 
