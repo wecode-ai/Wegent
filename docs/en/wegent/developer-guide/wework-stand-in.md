@@ -4,7 +4,11 @@ sidebar_position: 42
 
 # Wework Stand-in
 
-The AI Stand-in button beside New Issue opens quick project configuration. My Stand-ins in the sidebar provides a project-based list. Stand-in is off by default with the current device selected. The compact disabled entry expands into an editor when enabled. Saving enables handling of future assignments to yourself. Cancel, outside clicks, and Escape discard unsaved edits.
+The AI Stand-in button beside New Issue opens quick project configuration. My Stand-ins in the sidebar provides a project-based list. The panel separates the automatic handling switch from Stand-in settings. Automatic handling is off by default with the current device selected. Settings remain editable and can be saved for manual delegation while automatic handling is off.
+
+For an existing configuration without pending edits, the switch persists immediately. It is locked during persistence, and a failed request retains the confirmed state and displays an error. First activation or pending edits keep the switch off and change the primary action to Save and enable automatic handling. Cancel leaves it off. The ordinary Save settings action preserves the current automatic handling state. Turning automatic handling off stops new assignments while retaining settings and running tasks; it does not save the configuration draft.
+
+Cancel, outside clicks, and Escape discard unsaved edits without undoing a persisted switch. Switch updates preserve draft edits and refresh their version for subsequent saves. Executor metadata such as timestamps does not count as a configuration edit.
 
 Settings belong to each Executor and live in its local SQLite store. For cloud projects, select an owned connected cloud device to read and edit that device's configuration. Device switches load the selected device's version. Settings on other devices remain independent. Configuring another device does not require contacting an offline old device or transferring ownership. An offline device's settings become editable after reconnection.
 
@@ -20,21 +24,25 @@ The selected Executor checks assignments periodically and calls the ordinary `ru
 
 Each poll checks the ordinary assignment identity and existing task bindings to avoid creating the same assignment again. Ordinary task creation has no atomic cross-device deduplication: two devices reading an unbound assignment simultaneously may each create a task. Stand-in adds no server lock or queue. Users review and submit results through existing flows; Stand-in adds no delivery or review lifecycle. A failed creation RPC rolls back the Issue binding just like manual creation. Recorded failed tasks remain available through existing task recovery and are not repeatedly started by subsequent polls.
 
-Focused tests cover durable versioned settings, independent tag rules, assignment age, existing binding filtering, device switching, and sidebar configuration merging and updates. The `stand-in`, `stand-in-workspace`, and `stand-in-cloud` desktop checkpoints run in existing CI. Only model responses are replaced; storage, task execution, cloud APIs, and device connections use real implementations.
+Focused tests cover durable versioned settings, independent tag rules, assignment age, existing binding filtering, device switching, and sidebar configuration merging and updates. The `stand-in`, `stand-in-workspace`, `stand-in-cloud`, and `stand-in-controls` desktop checkpoints run in existing CI. Only model responses are replaced; storage, task execution, cloud APIs, and device connections use real implementations.
 
 ## Verification plan
 
 Use isolated Electron instances, projects, accounts, and Executor data. Cloud cases also start a real backend, database, and remote Executor. Each checkpoint establishes its own prerequisites and disables configurations before environment teardown. Actual results and failure evidence belong in the PR.
 
-| Case                   | Steps                                                           | Expected result                                                |
-| ---------------------- | --------------------------------------------------------------- | -------------------------------------------------------------- |
-| Defaults and cancel    | Open settings, edit instructions, cancel                        | Disabled on the current device; edits discarded                |
-| Enable and reload      | Save, then reload                                               | Open eyes, sidebar mask, and selection bar persist             |
-| Automatic execution    | Assign new work after enabling; leave board                     | Ordinary Runtime task completes and remains linked             |
-| Exclusions and disable | Check historical, other-user, unassigned, and post-disable work | No execution; assignee unchanged                               |
-| Version recovery       | Save a stale draft after an external update, reopen             | Conflict retains draft; reopen loads current version           |
-| Agent                  | Select a project Agent and assign work                          | Existing instructions and model reach native execution         |
-| Tag routing            | Configure review/docs rules and assign tagged work              | Each uses its own instructions; ambiguous work is skipped      |
-| Repeated polling       | Edit processed work and wait multiple polls                     | One linked task and model request per assignment               |
-| Cloud device           | Select remote Executor, save, reopen                            | Configuration belongs to remote device; local remains disabled |
-| Existing binding       | Enable matching rules on another device and wait multiple polls | Already-linked assignments are not recreated                   |
+| Case                   | Steps                                                           | Expected result                                                  |
+| ---------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Defaults and cancel    | Open settings, edit instructions, cancel                        | Disabled on the current device; edits discarded                  |
+| Independent settings   | Edit and save settings with automatic handling off              | Settings persist without enabling automatic handling             |
+| Immediate switch       | Enable a saved configuration, disable it, then cancel           | Switch persists immediately and cancellation does not undo it    |
+| Enable pending edits   | Edit settings, enable, then save and enable                     | Remains off until confirmation; activation uses the new settings |
+| Disable with a draft   | Edit an enabled configuration, disable, then continue editing   | Only automatic handling changes; draft and new version retained  |
+| Enable and reload      | Save, then reload                                               | Open eyes, sidebar mask, and selection bar persist               |
+| Automatic execution    | Assign new work after enabling; leave board                     | Ordinary Runtime task completes and remains linked               |
+| Exclusions and disable | Check historical, other-user, unassigned, and post-disable work | No execution; assignee unchanged                                 |
+| Version recovery       | Save a stale draft after an external update, reopen             | Conflict retains draft; reopen loads current version             |
+| Agent                  | Select a project Agent and assign work                          | Existing instructions and model reach native execution           |
+| Tag routing            | Configure review/docs rules and assign tagged work              | Each uses its own instructions; ambiguous work is skipped        |
+| Repeated polling       | Edit processed work and wait multiple polls                     | One linked task and model request per assignment                 |
+| Cloud device           | Select remote Executor, save, reopen                            | Configuration belongs to remote device; local remains disabled   |
+| Existing binding       | Enable matching rules on another device and wait multiple polls | Already-linked assignments are not recreated                     |
