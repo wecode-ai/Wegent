@@ -479,7 +479,8 @@ async function prepareHarnessRuntimeRoots(appBinary) {
   const runtimeRoot = join(resultDir, 'harness-runtime')
   await rm(runtimeRoot, { recursive: true, force: true })
   await mkdir(runtimeRoot, { recursive: true })
-  for (const runtime of catalog.runtimes) {
+  const runtimes = new Map(catalog.runtimes.map(runtime => [runtime.sourceFingerprint, runtime]))
+  for (const runtime of runtimes.values()) {
     const archivePath = join(packagedResources, runtime.assetName)
     const extracted = join(runtimeRoot, runtime.sourceFingerprint)
     await mkdir(extracted, { recursive: true })

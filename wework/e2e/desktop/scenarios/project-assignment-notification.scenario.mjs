@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 
+import { verifySilentIssueSaves } from '../modules/issue-save-notification-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   assistantMessage,
@@ -248,7 +249,15 @@ async function createWorkspaceAndProject(control, request, uiTimeoutMs) {
   return project
 }
 
-async function createIssue(control, projectId, request, owner, uiTimeoutMs, title = ISSUE) {
+async function createIssue(
+  control,
+  projectId,
+  request,
+  owner,
+  uiTimeoutMs,
+  title = ISSUE,
+  { notifyAssignee = true, beforeSave } = {}
+) {
   await control.command('waitFor', scoped('[data-testid="collaboration-tab-board"]'), {
     timeoutMs: uiTimeoutMs,
   })
@@ -266,9 +275,35 @@ async function createIssue(control, projectId, request, owner, uiTimeoutMs, titl
     'click',
     `[data-testid="cloud-todo-create-assignee-option-user:${owner.id}"]`
   )
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-create-confirm"]'), {
-    timeoutMs: uiTimeoutMs,
+  assert.equal(
+    Number(
+      await control.command('getElementCount', '[data-testid="wework-assignment-notify-confirm"]')
+    ),
+    0,
+    'Selecting an assignee must not open a notification confirmation dialog'
+  )
+  await control.command('waitFor', scoped('[data-testid="cloud-todo-create-confirm"]'), {
+    text: '保存并通知',
   })
+  await control.command('click', scoped('[data-testid="cloud-todo-create-confirm-options"]'))
+  const silentSave = '[data-testid="cloud-todo-create-confirm-without-notification"]'
+  await control.command('waitFor', silentSave, { text: '仅保存不通知', visible: true })
+  await control.command('press', silentSave, { key: 'Escape' })
+  await waitForValue(
+    () => control.command('getElementCount', silentSave),
+    value => Number(value) === 0,
+    'Escape must dismiss the save notification menu',
+    uiTimeoutMs
+  )
+  await beforeSave?.()
+  if (notifyAssignee) {
+    await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-create-confirm"]'), {
+      timeoutMs: uiTimeoutMs,
+    })
+  } else {
+    await control.command('click', scoped('[data-testid="cloud-todo-create-confirm-options"]'))
+    await control.command('click', silentSave, { visible: true })
+  }
   return waitForValue(
     async () => (await request(`/api/v1/cloud-projects/${projectId}/loop-items`)).items,
     items => items.find(item => item.title === title),
@@ -812,6 +847,17 @@ export function createDesktopScenario({
         filename => captureScreenshot(control, filename, CONTENT)
       )
       assert.equal(modelRequestCount, modelRequestsBeforeManualWork, '纯人工分支触发了 AI 模型请求')
+      await verifySilentIssueSaves({
+        control,
+        projectId: project.id,
+        owner,
+        request: ownerRequest,
+        requestJson: (token, path, options) => requestJson(backendUrl, token, path, options),
+        createIssue,
+        waitForValue,
+        uiTimeoutMs,
+        capture: filename => captureScreenshot(control, filename, CONTENT),
+      })
     },
 
     diagnostics() {
