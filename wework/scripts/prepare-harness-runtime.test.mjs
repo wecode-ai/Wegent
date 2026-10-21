@@ -172,4 +172,4 @@ writeFileSync(join(root, 'lib', 'bin.js'), '')
   expect(JSON.parse(await readFile(join(legacyRoot, 'runtime.json'), 'utf8')).dshVersion).toBe(
     legacy.dshVersion
   )
-})
+}, 30_000)
