@@ -12,8 +12,11 @@ import {
 import type { UnifiedModel } from '@/types/api'
 import { createModelLoadingTrace, logModelLoading } from '@/lib/model-loading-diagnostics'
 
+type NativeCatalog = Pick<RunnerEnvironment, 'models' | 'catalog_error'>
+
 export interface RunnerCatalogApi {
-  listRunnerEnvironments(projectId?: string): Promise<RunnerEnvironment[]>
+  listEnvironments(projectId?: string): Promise<RunnerEnvironment[]>
+  listNativeModels(environment: RunnerEnvironment, projectId?: string): Promise<NativeCatalog>
   listModels(): Promise<UnifiedModel[]>
 }
 
@@ -21,9 +24,11 @@ interface RoutingDraft {
   executionPolicy: AgentExecutionPolicy | null
   modelMode: 'fixed' | 'user_select'
   model: RunnerModelIdentity | null
-  initializeEnvironment: boolean
   initializeModel: boolean
+  unchanged: boolean
 }
+
+const errorMessage = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause))
 
 export function useAgentRouting(
   api: RunnerCatalogApi,
@@ -31,13 +36,17 @@ export function useAgentRouting(
   projectId?: string,
   {
     cloudOnly = false,
-    creationDefaults,
+    creation = false,
+    defer = false,
   }: {
     cloudOnly?: boolean
-    creationDefaults?: { preferredDeviceIds: string[] }
+    creation?: boolean
+    defer?: boolean
   } = {}
 ) {
   const [traceId] = useState(createModelLoadingTrace)
+  const [activated, setActivated] = useState(!defer)
+  const activate = useCallback(() => setActivated(true), [])
   const [catalog, setCatalog] = useState<{
     api: RunnerCatalogApi
     projectId?: string
@@ -49,161 +58,179 @@ export function useAgentRouting(
     models: UnifiedModel[]
     error: string | null
   } | null>(null)
+  const [nativeCatalog, setNativeCatalog] = useState<{
+    api: RunnerCatalogApi
+    projectId?: string
+    environment: RunnerEnvironment
+    result: NativeCatalog
+  } | null>(null)
   const environmentLoading =
-    catalog === null || catalog.api !== api || catalog.projectId !== projectId
-  const cloudLoading = cloudCatalog === null || cloudCatalog.api !== api
-  const environments = useMemo(
-    () => (environmentLoading ? [] : catalog.environments),
-    [environmentLoading, catalog]
-  )
-  const error =
-    [environmentLoading ? null : catalog.error, cloudLoading ? null : cloudCatalog.error]
-      .filter(Boolean)
-      .join(' · ') || null
-  const cloudModels = useMemo(
-    () => cloudRunnerModels(cloudLoading ? [] : cloudCatalog.models),
-    [cloudLoading, cloudCatalog]
+    activated && (catalog === null || catalog.api !== api || catalog.projectId !== projectId)
+  const inventory = useMemo(
+    () => (catalog?.api === api && catalog.projectId === projectId ? catalog.environments : []),
+    [api, catalog, projectId]
   )
   const [draft, setDraft] = useState<RoutingDraft>(() => ({
-    executionPolicy: creationDefaults ? { mode: 'fixed', environment_id: '' } : null,
+    executionPolicy: creation ? { mode: 'project_pool' } : null,
     modelMode: 'fixed',
     model: null,
-    initializeEnvironment: Boolean(creationDefaults),
-    initializeModel: Boolean(creationDefaults),
+    initializeModel: creation,
+    unchanged: false,
   }))
-
   const setExecutionPolicy = useCallback(
     (policy: AgentExecutionPolicy | null) => {
-      setDraft(draft => ({ ...draft, executionPolicy: policy, initializeEnvironment: false }))
+      setDraft(current => ({
+        ...current,
+        executionPolicy: policy,
+        unchanged: false,
+        // A device's native identity cannot be carried to another device.
+        model: current.model?.source === 'cloud' ? current.model : null,
+      }))
     },
     [setDraft]
   )
   const setModelMode = useCallback(
     (mode: 'fixed' | 'user_select') => {
       logModelLoading(traceId, 'agent.model_mode_selected', { fixed: mode === 'fixed' })
-      setDraft(draft => ({ ...draft, modelMode: mode, initializeModel: false }))
+      setDraft(current => ({
+        ...current,
+        modelMode: mode,
+        initializeModel: false,
+        unchanged: false,
+      }))
     },
     [setDraft, traceId]
   )
   const setModel = useCallback(
     (model: RunnerModelIdentity | null) => {
       logModelLoading(traceId, 'agent.model_selected', { selected: model !== null })
-      setDraft(draft => ({ ...draft, model, initializeModel: false }))
+      setDraft(current => ({ ...current, model, initializeModel: false, unchanged: false }))
     },
     [setDraft, traceId]
   )
 
   useEffect(() => {
+    if (!activated) return
     let active = true
-    void api
-      .listRunnerEnvironments(projectId)
-      .then(environments => {
-        logModelLoading(traceId, 'agent.runner_catalog_loaded', {
+    void api.listEnvironments(projectId).then(
+      environments => {
+        logModelLoading(traceId, 'agent.runner_inventory_loaded', {
           environments: environments.length,
-          models: environments.flatMap(environment => environment.models).length,
-          defaultModels: environments
-            .flatMap(environment => environment.models)
-            .filter(model => model.is_default).length,
         })
         if (active) setCatalog({ api, projectId, environments, error: null })
-      })
-      .catch(cause => {
-        if (active)
-          setCatalog({
-            api,
-            projectId,
-            environments: [],
-            error: cause instanceof Error ? cause.message : String(cause),
-          })
-      })
-
+      },
+      cause =>
+        active && setCatalog({ api, projectId, environments: [], error: errorMessage(cause) })
+    )
     return () => {
       active = false
     }
-  }, [api, projectId, traceId])
+  }, [activated, api, projectId, traceId])
+
+  let initializedDraft = draft
+  const { executionPolicy } = draft
+  const selectedEnvironment =
+    executionPolicy?.mode === 'fixed'
+      ? inventory.find(environment => environment.id === executionPolicy.environment_id)
+      : undefined
+  const environmentSelected = Boolean(
+    executionPolicy && (executionPolicy.mode !== 'fixed' || selectedEnvironment)
+  )
+  // New forms need their cloud default before runtime settings are opened.
+  const cloudActivated = creation || activated
+  const cloudLoading = cloudActivated && environmentSelected && cloudCatalog?.api !== api
+  const nativeLoading =
+    activated &&
+    !cloudOnly &&
+    Boolean(selectedEnvironment) &&
+    !(
+      nativeCatalog?.api === api &&
+      nativeCatalog.projectId === projectId &&
+      nativeCatalog.environment === selectedEnvironment
+    )
 
   useEffect(() => {
+    if (!cloudActivated || !environmentSelected) return
     let active = true
-    void api
-      .listModels()
-      .then(models => {
-        if (active) setCloudCatalog({ api, models, error: null })
-      })
-      .catch(cause => {
-        if (active)
-          setCloudCatalog({
-            api,
-            models: [],
-            error: cause instanceof Error ? cause.message : String(cause),
-          })
-      })
+    void api.listModels().then(
+      models => active && setCloudCatalog({ api, models, error: null }),
+      cause => active && setCloudCatalog({ api, models: [], error: errorMessage(cause) })
+    )
     return () => {
       active = false
     }
-  }, [api])
+  }, [cloudActivated, api, environmentSelected])
 
-  // Snapshot defaults once when catalogs settle, before rendering the form.
-  let initializedDraft = draft
-  if (creationDefaults && draft.initializeEnvironment && !environmentLoading) {
-    const eligible = environments.filter(
-      environment =>
-        environment.runtimes?.includes(runtime) ||
-        environment.models.some(model => model.runtime === runtime)
+  useEffect(() => {
+    if (!activated || cloudOnly || !selectedEnvironment) return
+    let active = true
+    void api.listNativeModels(selectedEnvironment, projectId).then(
+      result => {
+        logModelLoading(traceId, 'agent.native_catalog_loaded', { models: result.models.length })
+        if (active) setNativeCatalog({ api, projectId, environment: selectedEnvironment, result })
+      },
+      cause =>
+        active &&
+        setNativeCatalog({
+          api,
+          projectId,
+          environment: selectedEnvironment,
+          result: { models: [], catalog_error: errorMessage(cause) },
+        })
     )
-    const preferred = creationDefaults.preferredDeviceIds
-      .map(id => eligible.find(environment => environment.device_key === id))
-      .find(Boolean)
-    const environment = preferred ?? (eligible.length === 1 ? eligible[0] : undefined)
-    initializedDraft = {
-      ...initializedDraft,
-      initializeEnvironment: false,
-      executionPolicy: environment
-        ? { mode: 'fixed', environment_id: environment.id }
-        : draft.executionPolicy,
+    return () => {
+      active = false
     }
-  }
+  }, [activated, api, cloudOnly, projectId, selectedEnvironment, traceId])
 
-  const { executionPolicy } = initializedDraft
+  const environments = useMemo(
+    () =>
+      inventory.map(environment =>
+        !nativeLoading &&
+        nativeCatalog?.api === api &&
+        nativeCatalog.projectId === projectId &&
+        nativeCatalog.environment === environment
+          ? { ...environment, ...nativeCatalog.result }
+          : environment
+      ),
+    [api, inventory, nativeCatalog, nativeLoading, projectId]
+  )
   const candidates = useMemo(
     () => policyEnvironments(environments, executionPolicy, Boolean(projectId)),
     [environments, executionPolicy, projectId]
+  )
+  const cloudModels = useMemo(
+    () => cloudRunnerModels(cloudCatalog?.api === api ? cloudCatalog.models : []),
+    [api, cloudCatalog]
   )
   const models = useMemo(
     () => policyModels(candidates, runtime, executionPolicy, cloudModels, cloudOnly),
     [candidates, runtime, executionPolicy, cloudModels, cloudOnly]
   )
+  // Allocation policies can use cloud models before device inventory arrives.
   const loading =
-    executionPolicy?.mode === 'fixed'
-      ? environmentLoading || (cloudLoading && !models.some(model => model.source !== 'cloud'))
-      : cloudLoading
-  const defaultModel =
-    models.find(model => model.is_default) ??
-    (!cloudLoading && models.length === 1 ? models[0] : undefined)
-
+    (executionPolicy?.mode === 'fixed' && environmentLoading) ||
+    (cloudLoading && models.length === 0)
   if (
     initializedDraft.initializeModel &&
+    cloudActivated &&
+    environmentSelected &&
     !loading &&
-    executionPolicy?.mode === 'fixed' &&
-    candidates.length === 1 &&
-    (defaultModel || !cloudLoading)
+    !cloudLoading
   ) {
-    logModelLoading(traceId, 'agent.model_default_initialized', {
-      models: models.length,
-      defaultModels: models.filter(model => model.is_default).length,
-      selected: Boolean(defaultModel),
-    })
-    initializedDraft = {
-      ...initializedDraft,
-      initializeModel: false,
-      model: defaultModel
-        ? {
-            runtime: defaultModel.runtime,
-            provider: defaultModel.provider,
-            model_id: defaultModel.model_id,
-            source: defaultModel.source ?? 'native',
-            ...(defaultModel.cloud_model ? { cloud_model: defaultModel.cloud_model } : {}),
-          }
-        : initializedDraft.model,
+    const defaultModel = models[0]
+    if (defaultModel && (defaultModel.source === 'cloud' || !nativeLoading)) {
+      initializedDraft = {
+        ...initializedDraft,
+        initializeModel: false,
+        model: {
+          runtime: defaultModel.runtime,
+          provider: defaultModel.provider,
+          model_id: defaultModel.model_id,
+          source: defaultModel.source ?? 'native',
+          ...(defaultModel.cloud_model ? { cloud_model: defaultModel.cloud_model } : {}),
+        },
+      }
     }
   }
   if (initializedDraft !== draft) setDraft(initializedDraft)
@@ -220,13 +247,23 @@ export function useAgentRouting(
         executionPolicy: policy ?? null,
         modelMode: modelPolicy?.mode ?? 'fixed',
         model: modelPolicy?.model ?? null,
-        initializeEnvironment: false,
         initializeModel: false,
+        unchanged: true,
       })
     },
     [setDraft]
   )
+  const error =
+    [
+      catalog?.api === api && catalog.projectId === projectId ? catalog.error : null,
+      cloudCatalog?.api === api ? cloudCatalog.error : null,
+    ]
+      .filter(Boolean)
+      .join(' · ') || null
   return {
+    activated,
+    activate,
+    hasProject: Boolean(projectId),
     environments,
     candidates,
     executionPolicy,
@@ -240,9 +277,12 @@ export function useAgentRouting(
     cloudModels,
     loading,
     environmentLoading,
+    nativeLoading,
     error,
     modelAvailable,
-    valid: validEnvironment && (modelMode === 'user_select' || modelAvailable),
+    valid:
+      (!activated && draft.unchanged && executionPolicy !== null && modelPolicy !== null) ||
+      (validEnvironment && (modelMode === 'user_select' || modelAvailable)),
     load,
   }
 }

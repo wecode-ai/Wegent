@@ -1,6 +1,7 @@
 import { runnerModelKey, type RunnerEnvironment } from '@wegent/collaboration'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { useAgentRouting } from './useAgentRouting'
+import { AgentEnvironmentPicker } from './AgentEnvironmentPicker'
 
 type Routing = ReturnType<typeof useAgentRouting>
 const accountSources = (environment: RunnerEnvironment) =>
@@ -28,17 +29,19 @@ export function AgentEnvironmentFields({
       : undefined
   return (
     <div className="space-y-3">
-      <label className="block space-y-1 text-sm">
+      <div className="block space-y-1 text-sm">
         <span>{t('workbench.runner_environment')}</span>
-        <select
-          className={selectClass}
-          data-testid={`${prefix}-environment`}
+        <AgentEnvironmentPicker
+          testId={`${prefix}-environment`}
           disabled={disabled}
+          loading={routing.environmentLoading}
+          environments={routing.environments}
+          selectionOnly={selectionOnly}
+          projectScoped={routing.hasProject}
           value={
             policy?.mode === 'fixed' ? policy.environment_id : policy ? `policy:${policy.mode}` : ''
           }
-          onChange={event => {
-            const value = event.target.value
+          onChange={value =>
             routing.setExecutionPolicy(
               value === 'policy:project_pool'
                 ? { mode: 'project_pool' }
@@ -46,35 +49,9 @@ export function AgentEnvironmentFields({
                   ? { mode: 'user_select' }
                   : { mode: 'fixed', environment_id: value }
             )
-          }}
-        >
-          <option value="">{t('workbench.runner_choose_environment')}</option>
-          {policy?.mode === 'fixed' && policy.environment_id && !environment ? (
-            <option value={policy.environment_id} disabled>
-              {policy.environment_id}
-              {!routing.environmentLoading && ` · ${t('workbench.runner_environment_unavailable')}`}
-            </option>
-          ) : null}
-          {(['user', 'workspace'] as const).map(owner => {
-            const environments = routing.environments.filter(item => item.owner_type === owner)
-            return environments.length ? (
-              <optgroup key={owner} label={t(`workbench.runner_owner_${owner}`)}>
-                {environments.map(item => (
-                  <option key={item.id} value={item.id}>
-                    {item.name} · {t(`workbench.runner_status_${item.status}`)}
-                  </option>
-                ))}
-              </optgroup>
-            ) : null
-          })}
-          <optgroup label={t('workbench.runner_other_allocation')}>
-            <option value="policy:project_pool">{t('workbench.runner_project_pool')}</option>
-            {!selectionOnly && (
-              <option value="policy:user_select">{t('workbench.runner_user_select')}</option>
-            )}
-          </optgroup>
-        </select>
-      </label>
+          }
+        />
+      </div>
       {environment ? (
         <p className="text-xs text-text-muted">
           {t(`workbench.runner_owner_${environment.owner_type}`)} ·{' '}
@@ -187,7 +164,9 @@ export function AgentModelFields({
           {routing.model && !routing.modelAvailable && (
             <option value={runnerModelKey(routing.model)} disabled>
               {routing.model.model_id}
-              {!routing.loading && ` · ${t('workbench.runner_model_unavailable')}`}
+              {!routing.loading &&
+                !routing.nativeLoading &&
+                ` · ${t('workbench.runner_model_unavailable')}`}
             </option>
           )}
           {routing.models.map(model => (
@@ -218,6 +197,7 @@ export function AgentModelFields({
       )}
       {environmentSelected &&
         !routing.loading &&
+        !routing.nativeLoading &&
         routing.models.length === 0 &&
         !chooseAtRuntime && (
           <p className="text-xs text-text-muted">{t('workbench.runner_no_models')}</p>
@@ -249,6 +229,7 @@ export function AgentModelFields({
         routing.modelMode === 'fixed' &&
         routing.model &&
         !routing.modelAvailable &&
+        !(routing.nativeLoading && routing.model.source !== 'cloud') &&
         !routing.loading && (
           <p role="alert" className="text-xs text-destructive">
             {t('workbench.runner_model_conflict')}

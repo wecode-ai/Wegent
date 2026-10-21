@@ -5,6 +5,7 @@
 import { expect, test, type APIRequestContext, type Page, type TestInfo } from '@playwright/test'
 import {
   openBlankProjectCreation,
+  selectCollaborationProjectView,
   writeSharedComposer,
 } from '../../utils/collaboration-test-support'
 import { initializeProjectExecutionEnvironment } from '../../utils/issue-dispatch-test-support'
@@ -261,7 +262,7 @@ test.describe('Collaboration module', () => {
       updatedIssueTitle
     )
 
-    await page.getByTestId('collaboration-tab-board').click()
+    await selectCollaborationProjectView(page, 'board')
     await expect(page).toHaveURL(new RegExp(`${escaped(projectPath)}$`))
     await expect(page.getByTestId('cloud-todo-column-pending')).toContainText(updatedIssueTitle)
 

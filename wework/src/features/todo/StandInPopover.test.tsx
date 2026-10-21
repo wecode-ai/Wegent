@@ -8,6 +8,7 @@ import type {
   WorkspaceStandInSettings,
 } from '@wegent/collaboration'
 import { StandInPopover } from './StandInPopover'
+import { createLocalProjectChatAgentApi } from '@/api/local/localDelivery'
 
 function fixture(initial: Partial<WorkspaceStandInSettings> = {}) {
   let settings: WorkspaceStandInSettings = {
@@ -49,6 +50,25 @@ function fixture(initial: Partial<WorkspaceStandInSettings> = {}) {
 }
 
 describe('StandInPopover', () => {
+  it('shows an Agent created outside the cached client when opened', async () => {
+    const { props } = fixture()
+    let records: Array<{ id: string; name: string; runtime: string; status: string }> = []
+    const request = vi.fn(async () => records)
+    const localAgents = createLocalProjectChatAgentApi(request, 1)
+    props.api.agents.list = (projectId, options) => localAgents.list(projectId, options)
+    await props.api.agents.list(props.project.id)
+    records = [{ id: 'external', name: 'External Agent', runtime: 'codex', status: 'active' }]
+    const user = userEvent.setup()
+    render(<StandInPopover {...props} />)
+    expect(request).toHaveBeenCalledOnce()
+    await user.click(screen.getByTestId('stand-in-open'))
+    expect(await screen.findByRole('option', { name: 'External Agent' })).toHaveValue('external')
+    expect(request).toHaveBeenCalledTimes(2)
+    const toggle = await screen.findByTestId('stand-in-auto')
+    await user.click(toggle)
+    expect(request).toHaveBeenCalledTimes(2)
+  })
+
   it('locks the switch during persistence and accepts server metadata without inventing edits', async () => {
     const { props, save } = fixture({ executionDeviceId: 'current', version: 2 })
     let finishSave!: (settings: WorkspaceStandInSettings) => void
