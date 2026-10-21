@@ -109,6 +109,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'stand-in-cloud': './scenarios/stand-in-cloud.scenario.mjs',
   'stand-in-permissions': './scenarios/stand-in-permissions.scenario.mjs',
   'stand-in-workspace': './scenarios/stand-in-workspace.scenario.mjs',
+  'stand-in-controls': './scenarios/stand-in-controls.scenario.mjs',
   'collaboration-remote-agent-dispatch':
     './scenarios/collaboration-remote-agent-dispatch.scenario.mjs',
   'collaboration-local-group-coordinate':
@@ -197,6 +198,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'stand-in-cloud',
   'stand-in-permissions',
   'stand-in-workspace',
+  'stand-in-controls',
   'collaboration-remote-agent-dispatch',
   'collaboration-local-group-coordinate',
   'collaboration-remote-group-coordinate',
