@@ -2013,7 +2013,7 @@ describe("CollaborationPlatformApp real component flow", () => {
       expect.objectContaining({ includeDefaultAgent: true }),
     );
     expect(api.agents.create).toHaveBeenCalledWith(project.id, {
-      name: "当前设备智能体",
+      name: "current-device-agent",
       displayName: "当前设备智能体",
       runtime: "codex",
       model: null,
@@ -2070,7 +2070,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     await click(byTestId("collaboration-project-create-confirm"));
 
     expect(api.agents.create).toHaveBeenCalledWith(project.id, {
-      name: "当前设备智能体",
+      name: "current-device-agent",
       displayName: "当前设备智能体",
       runtime: "codex",
       model: null,
