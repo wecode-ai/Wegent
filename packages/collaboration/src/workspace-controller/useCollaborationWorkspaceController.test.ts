@@ -236,34 +236,37 @@ describe("collaboration workspace controller", () => {
     expect(api.issues.getBoardSnapshot).toHaveBeenCalledTimes(2);
   });
 
-  it("invalidates an in-flight board read after an external Issue change", async () => {
-    state = { ...state, projects: [project] };
-    const { api, commands } = createController();
-    const previous = {
-      items: [issue],
-      members: [],
-      agents: [],
-      taskBindings: [],
-    };
-    const reassigned = { ...issue, version: 3, assignee_user_id: 1 };
-    const updated = { ...previous, items: [reassigned] };
-    const pending = deferred<typeof previous>();
-    vi.mocked(api.issues.getBoardSnapshot)
-      .mockReturnValueOnce(pending.promise)
-      .mockResolvedValueOnce(updated);
+  it.each(["reassignment", "restore"])(
+    "invalidates an in-flight board read after %s",
+    async (change) => {
+      state = { ...state, projects: [project] };
+      const { api, commands } = createController();
+      const previous = {
+        items: change === "restore" ? [] : [issue],
+        members: [],
+        agents: [],
+        taskBindings: [],
+      };
+      const reassigned = { ...issue, version: 3, assignee_user_id: 1 };
+      const updated = { ...previous, items: [reassigned] };
+      const pending = deferred<typeof previous>();
+      vi.mocked(api.issues.getBoardSnapshot)
+        .mockReturnValueOnce(pending.promise)
+        .mockResolvedValueOnce(updated);
 
-    const oldRefresh = commands.loadProjectSnapshot(project.id);
-    const changedRefresh = commands.loadProjectSnapshot(project.id, {
-      invalidate: true,
-    });
-    expect(api.issues.getBoardSnapshot).toHaveBeenCalledTimes(2);
-    await changedRefresh;
-    expect(state.projectItems[project.id]).toEqual([reassigned]);
+      const oldRefresh = commands.loadProjectSnapshot(project.id);
+      const changedRefresh = commands.loadProjectSnapshot(project.id, {
+        invalidate: true,
+      });
+      expect(api.issues.getBoardSnapshot).toHaveBeenCalledTimes(2);
+      await changedRefresh;
+      expect(state.projectItems[project.id]).toEqual([reassigned]);
 
-    pending.resolve(previous);
-    await oldRefresh;
-    expect(state.projectItems[project.id]).toEqual([reassigned]);
-  });
+      pending.resolve(previous);
+      await oldRefresh;
+      expect(state.projectItems[project.id]).toEqual([reassigned]);
+    },
+  );
 
   it("keeps a successful project catalog when My Work fails", async () => {
     const api = createApi();

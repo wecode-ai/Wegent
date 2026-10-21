@@ -57,7 +57,9 @@ async function addLocalAgent(control, timeoutMs) {
   await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
 
   await control.command('click', scoped('[data-testid="collaboration-project-settings-agents"]'))
-  await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'))
+  await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
+    timeoutMs,
+  })
   await control.command('waitFor', '[data-testid="project-agent-wegent-team"]', { timeoutMs })
   const existingAgents = await control.command(
     'getText',
