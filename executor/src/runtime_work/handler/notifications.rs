@@ -163,8 +163,18 @@ impl RuntimeWorkRpcHandler {
         message: &Value,
     ) {
         let notification = codex_notification(message);
-        if notification.method == "item/plan/delta" {
-            self.record_active_codex_plan_delta(local_task_id, turn_id, notification.params);
+        let text_item_type = match notification.method.as_str() {
+            "item/plan/delta" => Some("plan"),
+            "item/agentMessage/delta" => Some("agentMessage"),
+            _ => None,
+        };
+        if let Some(text_item_type) = text_item_type {
+            self.record_active_codex_text_delta(
+                local_task_id,
+                turn_id,
+                notification.params,
+                text_item_type,
+            );
             return;
         }
         if !matches!(
@@ -231,51 +241,6 @@ impl RuntimeWorkRpcHandler {
         if let Some(progress) = progress.filter(|text| !text.is_empty()) {
             self.project_queue_progress(local_task_id, &progress);
         }
-    }
-
-    fn record_active_codex_plan_delta(&self, local_task_id: &str, turn_id: &str, params: &Value) {
-        let Some(item_id) = string_field(params, "itemId")
-            .or_else(|| string_field(params, "item_id"))
-            .filter(|item_id| !item_id.is_empty())
-        else {
-            return;
-        };
-        let Some(delta) = raw_string_field(params, "delta").filter(|delta| !delta.is_empty())
-        else {
-            return;
-        };
-        let Ok(mut active_items) = self.active_codex_transcript_items.lock() else {
-            return;
-        };
-        let Some(transcript) = active_items.get_mut(local_task_id) else {
-            return;
-        };
-        if transcript.turn_id != turn_id {
-            transcript.turn_id = turn_id.to_owned();
-            transcript.items.clear();
-        }
-        if let Some(existing) = transcript
-            .items
-            .iter_mut()
-            .find(|existing| string_field(existing, "id").as_deref() == Some(item_id.as_str()))
-        {
-            if string_field(existing, "type").as_deref() != Some("plan") {
-                return;
-            }
-            let text = raw_string_field(existing, "text").unwrap_or_default();
-            if let Some(object) = existing.as_object_mut() {
-                object.insert("text".to_owned(), Value::String(format!("{text}{delta}")));
-                object.insert("status".to_owned(), Value::String("inProgress".to_owned()));
-            }
-            return;
-        }
-        transcript.items.push(json!({
-            "id": item_id,
-            "type": "plan",
-            "text": delta,
-            "status": "inProgress",
-            "createdAt": now_ms(),
-        }));
     }
 
     pub(super) fn merge_active_codex_transcript(&self, local_task_id: &str, thread: &mut Value) {

@@ -688,7 +688,12 @@ fn assistant_message_phase(
     match assistant_message_phase_name(item).as_deref() {
         Some("analysis") => AssistantMessagePhase::Process,
         Some("commentary") if fold_commentary => AssistantMessagePhase::Process,
-        None if has_later_process => AssistantMessagePhase::Process,
+        None if has_later_process
+            || string_field(item, "status")
+                .is_some_and(|status| normalized_phase_or_status(status) == "inprogress") =>
+        {
+            AssistantMessagePhase::Process
+        }
         _ => AssistantMessagePhase::Final,
     }
 }
