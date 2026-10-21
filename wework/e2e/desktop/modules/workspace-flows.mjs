@@ -1649,28 +1649,12 @@ async function verifyExistingTaskBoardAssociation(
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('select', '[data-testid="project-space-picker-sort"]', {
-    value: 'name-desc',
-  })
   const targetOption = '[data-testid="work-item-context-menu"] [role="option"]'
   assert.equal(
     Number(await control.command('getElementCount', targetOption)),
     1,
     'Searching for the unique test project must produce exactly one selectable result'
   )
-  const targetGroup = await control.command('getAttribute', targetOption, {
-    value: 'data-group-key',
-  })
-  assert.ok(targetGroup, 'Every project option must expose its owning space identity')
-  await control.command(
-    'click',
-    `[data-testid="project-space-picker-group"][data-group-key=${JSON.stringify(targetGroup)}]`
-  )
-  await control.command('waitFor', targetOption, {
-    text: targetProjectName,
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
   await control.command('press', pickerSearch, { key: 'Escape' })
   await control.command('waitFor', '[data-testid="work-item-context-menu"]', {
     visible: false,

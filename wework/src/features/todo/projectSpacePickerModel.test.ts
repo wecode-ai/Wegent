@@ -118,14 +118,21 @@ describe('project space picker model', () => {
   })
 
   test('breaks identical-name ties by space and identity independently of catalog order', () => {
-    const entries = projectSpacePickerEntries([project('b', '周报'), project('a', '周报')], labels)
-
-    expect(sortProjectSpaceEntries(entries, 'name-asc', 'zh-CN').map(entry => entry.key)).toEqual([
-      'backend:a',
-      'backend:b',
-    ])
-    expect(sortProjectSpaceEntries([...entries].reverse(), 'name-asc', 'zh-CN')).toEqual(
-      sortProjectSpaceEntries(entries, 'name-asc', 'zh-CN')
+    const spaceA = { id: 'a', public_id: 'ws-a', name: 'Space A' }
+    const spaceB = { id: 'b', public_id: 'ws-b', name: 'Space B' }
+    const entries = projectSpacePickerEntries(
+      [
+        project('b', '周报', { workspace_context: spaceB }),
+        project('z', '周报', { workspace_context: spaceA }),
+        project('a', '周报', { workspace_context: spaceA }),
+      ],
+      labels
     )
+
+    for (const order of ['name-asc', 'name-desc'] as const) {
+      const sorted = sortProjectSpaceEntries(entries, order, 'zh-CN')
+      expect(sorted.map(entry => entry.key)).toEqual(['backend:a', 'backend:z', 'backend:b'])
+      expect(sortProjectSpaceEntries([...entries].reverse(), order, 'zh-CN')).toEqual(sorted)
+    }
   })
 })
