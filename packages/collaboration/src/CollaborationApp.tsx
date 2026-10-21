@@ -832,10 +832,12 @@ export function CollaborationApp({
                               refreshOrder: async (target) => {
                                 await commands.loadProjectSnapshot(
                                   target.cloud_project_id,
-                                  { invalidate: true },
+                                  { invalidate: true, throwOnError: true },
                                 );
                               },
                             },
+                          }).catch(() => {
+                            // The workspace commands already report save and load failures.
                           });
                         }}
                         onCreateIssue={requestIssueCreate}

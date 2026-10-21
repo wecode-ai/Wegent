@@ -6,6 +6,7 @@ import { useEffect, useMemo, useReducer, useRef } from "react";
 
 import { collectIssueSubtreeIds, removeIssueSubtree } from "../board";
 import { isIssueVersionConflict } from "../issue-detail/issueVersionConflict";
+import { mergePersistedBoardMove } from "../project-board/useStandardCloudBoardController";
 import type {
   SharedWorkspaceApi,
   WorkspaceBoardSnapshot,
@@ -90,7 +91,7 @@ export interface CollaborationWorkspaceControllerCommands {
   ): Promise<void>;
   loadProjectSnapshot(
     projectId: string,
-    options?: { invalidate?: boolean },
+    options?: { invalidate?: boolean; throwOnError?: boolean },
   ): Promise<WorkspaceBoardSnapshot | null>;
   loadMoreExternalColumn(status: string): Promise<void>;
   getIssue(issueId: string): Promise<CollaborationIssue | null>;
@@ -255,7 +256,7 @@ export type CollaborationWorkspaceControllerAction =
   | { type: "remove-project"; projectId: string }
   | { type: "replace-issues"; issues: CollaborationIssue[] }
   | { type: "append-issue"; issue: CollaborationIssue }
-  | { type: "replace-issue"; issue: CollaborationIssue }
+  | { type: "replace-issue"; issue: CollaborationIssue; positioned?: boolean }
   | { type: "remove-issue"; issueId: string }
   | { type: "replace-attachments"; attachments: CollaborationAttachment[] }
   | { type: "replace-comments"; comments: CollaborationComment[] }
@@ -578,27 +579,30 @@ export function collaborationWorkspaceControllerReducer(
           ],
         },
       };
-    case "replace-issue":
+    case "replace-issue": {
+      const replace = (items: CollaborationIssue[]) =>
+        action.positioned
+          ? mergePersistedBoardMove(items, action.issue)
+          : items.map((item) =>
+              item.id === action.issue.id
+                ? newestIssue(item, action.issue)
+                : item,
+            );
       return {
         ...state,
         selectedIssue:
           state.selectedIssue?.id === action.issue.id
             ? newestIssue(state.selectedIssue, action.issue)
             : state.selectedIssue,
-        issues: state.issues.map((item) =>
-          item.id === action.issue.id ? newestIssue(item, action.issue) : item,
-        ),
+        issues: replace(state.issues),
         projectItems: {
           ...state.projectItems,
-          [action.issue.cloud_project_id]: (
-            state.projectItems[action.issue.cloud_project_id] ?? []
-          ).map((item) =>
-            item.id === action.issue.id
-              ? newestIssue(item, action.issue)
-              : item,
+          [action.issue.cloud_project_id]: replace(
+            state.projectItems[action.issue.cloud_project_id] ?? [],
           ),
         },
       };
+    }
     case "remove-issue": {
       // The server soft deletes the whole subtree, so drop descendants too.
       const removedIds = collectIssueSubtreeIds(state.issues, action.issueId);
@@ -1128,6 +1132,7 @@ export function createCollaborationWorkspaceControllerCommands({
         if (mutationGeneration !== projectMutationGeneration(projectId))
           return null;
         reportError(messages.loadFailed, "load");
+        if (options?.throwOnError) throw new Error(messages.loadFailed);
         return null;
       }
     },
@@ -1322,7 +1327,11 @@ export function createCollaborationWorkspaceControllerCommands({
       try {
         const issue = await api.issues.update(issueId, input);
         markProjectMutated(issue.cloud_project_id);
-        dispatch({ type: "replace-issue", issue });
+        dispatch({
+          type: "replace-issue",
+          issue,
+          positioned: !!input.position,
+        });
         return issue;
       } catch (error) {
         if (!input.position || !(await reportPositionConflict(issueId, error)))
@@ -1335,7 +1344,11 @@ export function createCollaborationWorkspaceControllerCommands({
       try {
         const issue = await api.issues.assign(projectId, issueId, input);
         markProjectMutated(projectId);
-        dispatch({ type: "replace-issue", issue });
+        dispatch({
+          type: "replace-issue",
+          issue,
+          positioned: !!input.position,
+        });
         return issue;
       } catch (error) {
         if (!input.position || !(await reportPositionConflict(issueId, error)))

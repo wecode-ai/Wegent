@@ -208,6 +208,70 @@ projectTest(
   }
 )
 
+projectTest(
+  'keeps three committed sibling positions through a failed snapshot refresh and recovery',
+  async ({ page, scheduledProject: { path, issueId } }) => {
+    const projectId = path.split('/').at(-1)!
+    const create = (title: string) =>
+      webApi<Resource>(page, `/api/v1/cloud-projects/${projectId}/loop-items`, {
+        method: 'POST',
+        body: { title, priority: 'high', status: 'pending' },
+      })
+    const second = await create('Recovery B')
+    const third = await create('Recovery C')
+    await webApi(page, `/api/v1/cloud-projects/${projectId}/loop-items/reorder`, {
+      method: 'POST',
+      body: { parent_id: null, status: null, item_ids: [issueId, second.id, third.id] },
+    })
+    await page.goto(path)
+    const sort = page.getByTestId('cloud-board-sort-by-pending')
+    await sort.click()
+    await page.getByTestId('cloud-board-sort-by-pending-manual').click()
+    await sort.click()
+    const cards = page
+      .getByTestId('cloud-todo-column-pending')
+      .locator('article[data-testid^="collaboration-issue-"]')
+    const expectOrder = async () => {
+      await expect(cards).toHaveCount(3)
+      for (const [index, id] of [second.id, issueId, third.id].entries())
+        await expect(cards.nth(index)).toHaveAttribute('data-testid', `collaboration-issue-${id}`)
+    }
+    const snapshotUrl = `**/api/v1/cloud-projects/${projectId}/board-snapshot`
+    let droppedSnapshots = 0
+    await page.route(snapshotUrl, async route => {
+      // Fetch from the real backend before interrupting response delivery.
+      const response = await route.fetch()
+      expect(response.ok()).toBe(true)
+      droppedSnapshots += 1
+      await route.abort('failed')
+    })
+    try {
+      const saved = page.waitForResponse(
+        response =>
+          response.request().method() === 'PATCH' &&
+          response.url().endsWith(`/loop-items/${issueId}`)
+      )
+      await dragBefore(page, 'pending', issueId, 'pending', third.id)
+      expect((await saved).ok()).toBe(true)
+      await expect(page.getByRole('alert').filter({ hasText: /load|加载/i })).toBeVisible()
+      expect(droppedSnapshots).toBeGreaterThan(0)
+      await expectOrder()
+    } finally {
+      await page.unroute(snapshotUrl)
+    }
+    const snapshot = await webApi<{ items: Array<Resource & { sort_order: number }> }>(
+      page,
+      `/api/v1/cloud-projects/${projectId}/board-snapshot`
+    )
+    expect(snapshot.items.sort((a, b) => a.sort_order - b.sort_order).map(item => item.id)).toEqual(
+      [second.id, issueId, third.id]
+    )
+    await page.reload()
+    await expectOrder()
+    await expect(page.getByRole('alert').filter({ hasText: /load|加载/i })).toHaveCount(0)
+  }
+)
+
 async function dragBefore(
   page: Page,
   sourceLane: string,

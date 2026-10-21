@@ -79,6 +79,7 @@ import {
   createStandardCloudBoardColumns,
   createProjectBoardSortLabels,
   executeStandardCloudBoardMutation,
+  mergePersistedBoardMove,
   ProjectBoardBody,
   ProjectBoardGroupPicker,
   useStandardCloudBoardController,
@@ -3112,7 +3113,9 @@ export function CloudTodoWorkspace({
       const locatedUpdated = { ...updated, project_store: item.project_store }
       if (itemProject?.location === 'local') {
         setItems(current =>
-          current.map(candidate => (candidate.id === updated.id ? locatedUpdated : candidate))
+          mutation.position
+            ? mergePersistedBoardMove(current, locatedUpdated)
+            : current.map(candidate => (candidate.id === updated.id ? locatedUpdated : candidate))
         )
       }
       setSelectedItem(current => (current?.id === updated.id ? locatedUpdated : current))
@@ -3167,6 +3170,7 @@ export function CloudTodoWorkspace({
             if (itemProject.location === 'cloud') {
               await cloudWorkspace.commands.loadProjectSnapshot(String(item.cloud_project_id), {
                 invalidate: true,
+                throwOnError: true,
               })
             } else {
               const saved = await itemApi!.listLoopItems(item.cloud_project_id)

@@ -15,6 +15,10 @@ import {
 } from '../modules/workspace-flows.mjs'
 
 import { createCollaborationBoardIssue } from '../modules/collaboration-board-issue.mjs'
+import {
+  dragBoardCard,
+  waitForBoardValue as waitForValue,
+} from '../modules/collaboration-board-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const scoped = selector => `${CONTENT} ${selector}`
@@ -24,17 +28,6 @@ const sortSelector = lane => scoped(`[data-testid="${sortId(lane)}"]`)
 const cardSelector = id => scoped(`[data-testid="cloud-todo-card-${id}"]`)
 const dropSelector = id => scoped(`[data-testid="cloud-todo-card-drop-${id}"]`)
 
-async function waitForValue(load, expected, message, timeoutMs) {
-  const deadline = Date.now() + timeoutMs
-  let actual
-  while (Date.now() < deadline) {
-    actual = await load()
-    if (JSON.stringify(actual) === JSON.stringify(expected)) return
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-  assert.deepEqual(actual, expected, message)
-}
-
 async function dragCard(control, id, beforeId, timeoutMs, sourceLane, targetLane = sourceLane) {
   const source = sourceLane
     ? `${laneSelector(sourceLane)} [data-testid="cloud-todo-card-${id}"]`
@@ -42,20 +35,7 @@ async function dragCard(control, id, beforeId, timeoutMs, sourceLane, targetLane
   const target = targetLane
     ? `${laneSelector(targetLane)} [data-testid="cloud-todo-card-drop-${beforeId}"]`
     : dropSelector(beforeId)
-  await control.command('scrollIntoView', source)
-  await control.command('scrollIntoView', target)
-  await control.command('dragStart', source, { target })
-  try {
-    await control.command('waitFor', '[data-testid="project-board-drag-overlay"]', {
-      timeoutMs,
-    })
-  } finally {
-    await control.command('dragEnd', source, { target })
-  }
-  await control.command('waitFor', '[data-testid="project-board-drag-overlay"]', {
-    visible: false,
-    timeoutMs,
-  })
+  await dragBoardCard(control, source, target, timeoutMs)
 }
 
 async function dragToLaneTail(control, id, lane, timeoutMs) {

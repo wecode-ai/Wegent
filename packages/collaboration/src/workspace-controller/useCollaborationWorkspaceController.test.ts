@@ -1139,6 +1139,82 @@ describe("collaboration workspace controller", () => {
     expect(api.issues.reorder).not.toHaveBeenCalled();
   });
 
+  it.each(["update", "assign"])(
+    "keeps all committed ranks when %s refresh fails and recovers",
+    async (kind) => {
+      const siblings = [
+        issue,
+        { ...issue, id: "issue-2", sort_order: 1 },
+        { ...issue, id: "issue-3", sort_order: 2 },
+      ];
+      const saved = {
+        ...issue,
+        sort_order: 1,
+        version: 2,
+        updated_at: "2026-10-21T00:00:00Z",
+      };
+      state = {
+        ...state,
+        project,
+        projects: [project],
+        issues: siblings,
+        projectItems: { [project.id]: siblings },
+      };
+      const api = createApi();
+      api.issues.update = vi.fn().mockResolvedValue(saved);
+      api.issues.assign = vi.fn().mockResolvedValue(saved);
+      api.issues.getBoardSnapshot = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("offline"));
+      const { commands } = createController(api);
+      if (kind === "update") {
+        await commands.updateIssue(issue.id, {
+          version: 1,
+          position: { beforeItemId: "issue-3" },
+        });
+      } else {
+        await commands.assignIssue(project.id, issue.id, {
+          version: 1,
+          assigneeType: "user",
+          assigneeId: "1",
+          notifyAssignee: false,
+          position: { beforeItemId: "issue-3" },
+        });
+      }
+      await expect(
+        commands.loadProjectSnapshot(project.id, {
+          invalidate: true,
+          throwOnError: true,
+        }),
+      ).rejects.toThrow("load failed");
+      const ranks = () =>
+        state.issues
+          .slice()
+          .sort((a, b) => a.sort_order - b.sort_order)
+          .map((item) => [item.id, item.sort_order]);
+      expect(ranks()).toEqual([
+        ["issue-2", 0],
+        [issue.id, 1],
+        ["issue-3", 2],
+      ]);
+      expect(state.projectItems[project.id]).toEqual(state.issues);
+      expect(state.errorSource).toBe("load");
+      api.issues.getBoardSnapshot = vi.fn().mockResolvedValue({
+        items: state.issues.map((item) => ({ ...item, version: 2 })),
+        members: [],
+        agents: [],
+        taskBindings: [],
+      });
+      await commands.loadProjectSnapshot(project.id, { invalidate: true });
+      expect(ranks()).toEqual([
+        ["issue-2", 0],
+        [issue.id, 1],
+        ["issue-3", 2],
+      ]);
+      expect(state.error).toBeNull();
+    },
+  );
+
   it("passes fields and position through one update and reloads all sibling ranks", async () => {
     const api = createApi();
     const saved = { ...issue, sort_order: 1, status: "completed", version: 7 };

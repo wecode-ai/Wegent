@@ -47,6 +47,32 @@ export interface StandardCloudBoardStatus {
   name: string;
 }
 
+/** Apply a committed position without replacing other cards' concurrent fields. */
+export function mergePersistedBoardMove<T extends StandardCloudBoardItem>(
+  items: T[],
+  saved: T,
+): T[] {
+  const current = items.find((item) => item.id === saved.id);
+  if ((current?.version ?? -1) >= (saved.version ?? 0)) return items;
+  const siblings = items
+    .filter(
+      (item) =>
+        item.id !== saved.id &&
+        item.parent_id === saved.parent_id &&
+        item.cloud_project_id === saved.cloud_project_id,
+    )
+    .sort((a, b) => compareProjectBoardItems(a, b, []));
+  siblings.splice(saved.sort_order, 0, saved);
+  const positions = new Map(siblings.map((item, index) => [item.id, index]));
+  return items.map((item) => {
+    if (item.id === saved.id) return saved;
+    const position = positions.get(item.id);
+    return position === undefined || position === item.sort_order
+      ? item
+      : { ...item, sort_order: position };
+  });
+}
+
 export interface StandardCloudBoardAssignee {
   id: string;
   name: string;

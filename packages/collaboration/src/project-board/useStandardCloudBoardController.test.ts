@@ -10,6 +10,7 @@ import {
   createStandardCloudBoardColumns,
   executeStandardCloudBoardMutation,
   filterStandardCloudBoardItems,
+  mergePersistedBoardMove,
   resolveStandardCloudBoardDrop,
   resolveStandardCloudBoardMutation,
   type StandardCloudBoardHostExtensions,
@@ -524,6 +525,38 @@ describe("standard cloud board controller", () => {
         position: { beforeItemId: null },
       },
     ]);
+  });
+});
+
+describe("committed board positions", () => {
+  it("rebases sibling ranks without overwriting concurrent fields or other parents", () => {
+    const first = {
+      ...items[0],
+      id: "a",
+      parent_id: null,
+      sort_order: 0,
+      version: 1,
+    };
+    const second = {
+      ...first,
+      id: "b",
+      sort_order: 1,
+      title: "Concurrent title",
+      tags: ["new"],
+      version: 4,
+    };
+    const third = { ...first, id: "c", sort_order: 2 };
+    const child = { ...first, id: "child", parent_id: "a" };
+    const saved = { ...first, version: 2, sort_order: 1 };
+    const result = mergePersistedBoardMove(
+      [first, second, third, child],
+      saved,
+    );
+    expect(result).toEqual([saved, { ...second, sort_order: 0 }, third, child]);
+    expect(mergePersistedBoardMove(result, { ...first, sort_order: 0 })).toBe(
+      result,
+    );
+    expect(mergePersistedBoardMove(result, saved)).toBe(result);
   });
 });
 

@@ -95,6 +95,20 @@ vi.mock('@dnd-kit/core', async importOriginal => {
         <button
           type="button"
           hidden
+          data-testid="mock-dnd-drag-before-third"
+          onClick={() =>
+            props.onDragEnd?.({
+              active: activeCard(),
+              over: {
+                id: 'todo-card:["in_progress","WEG-3"]',
+                data: { current: { columnKey: 'in_progress' } },
+              },
+            } as DragEndEvent)
+          }
+        />
+        <button
+          type="button"
+          hidden
           data-testid="mock-dnd-drag-to-in-progress"
           onClick={() =>
             props.onDragEnd?.({
@@ -4902,6 +4916,72 @@ describe('CloudTodoWorkspace', () => {
 
     await waitFor(() => expect(requestCatalogs).toHaveBeenCalledTimes(1))
     expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute('data-task-id', inboxItem.id)
+  })
+
+  it('keeps all three local sibling ranks when a backward move refresh fails and recovers', async () => {
+    const localProject = { ...project, project_store: 'local' as const }
+    const siblings = [
+      item,
+      { ...item, id: 'WEG-2', sort_order: 1 },
+      { ...item, id: 'WEG-3', sort_order: 2 },
+    ]
+    const savedItems = [
+      { ...item, sort_order: 1, version: item.version + 1, updated_at: '2026-10-21T00:00:00Z' },
+      { ...siblings[1], sort_order: 0, version: item.version + 1 },
+      siblings[2],
+    ]
+    let committed = false
+    let offline = true
+    const localApi = services().deliveryApi!
+    localApi.listCloudProjects = vi.fn(async () => ({ items: [localProject] }))
+    localApi.listLoopItems = vi.fn(async () => {
+      if (committed && offline) throw new Error('Order refresh failed')
+      return { items: committed ? savedItems : siblings }
+    })
+    localApi.updateLoopItem = vi.fn(async () => {
+      committed = true
+      return savedItems[0]
+    })
+    const cloudApi = services().deliveryApi!
+    cloudApi.listCloudProjects = vi.fn(async () => ({ items: [] }))
+    const props = {
+      user: { id: 1, user_name: 'local', email: 'local@example.com' } as User,
+      localProjects: [],
+      services: services({
+        deliveryApi: cloudApi,
+        projectSpaceApis: { local: localApi, cloud: cloudApi, defaultLocation: 'local' },
+      }),
+    }
+    const view = render(<CloudTodoWorkspace {...props} />)
+    await userEvent.click(await screen.findByTestId('cloud-sidebar-project-11'))
+    await screen.findByTestId('cloud-todo-card-WEG-3')
+    await userEvent.click(screen.getByTestId('cloud-board-sort-by-in_progress'))
+    await userEvent.click(screen.getByTestId('cloud-board-sort-by-in_progress-manual'))
+    await userEvent.click(screen.getByTestId('cloud-board-sort-by-in_progress'))
+    fireEvent.click(screen.getByTestId('mock-dnd-drag-before-third'))
+    await screen.findByText('Order refresh failed')
+    const order = () =>
+      Array.from(
+        screen
+          .getByTestId('cloud-todo-column-in_progress')
+          .querySelectorAll('article[data-testid^="cloud-todo-card-drop-"]')
+      ).map(card => card.getAttribute('data-testid'))
+    expect(order()).toEqual([
+      'cloud-todo-card-drop-WEG-2',
+      'cloud-todo-card-drop-WEG-1',
+      'cloud-todo-card-drop-WEG-3',
+    ])
+    offline = false
+    view.unmount()
+    render(<CloudTodoWorkspace {...props} />)
+    await userEvent.click(await screen.findByTestId('cloud-sidebar-project-11'))
+    await screen.findByTestId('cloud-todo-card-WEG-3')
+    expect(order()).toEqual([
+      'cloud-todo-card-drop-WEG-2',
+      'cloud-todo-card-drop-WEG-1',
+      'cloud-todo-card-drop-WEG-3',
+    ])
+    expect(localApi.updateLoopItem).toHaveBeenCalledTimes(1)
   })
 
   it.each(['write', 'refresh'])(
