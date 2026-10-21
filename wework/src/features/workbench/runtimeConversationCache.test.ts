@@ -562,6 +562,39 @@ describe('runtimeConversationCache', () => {
     ).toBe('replacement request activity')
   })
 
+  test.each(['abort', 'complete'] as const)(
+    'keeps task history when an overlapping drawer hydration finishes with %s',
+    finish => {
+      const drawerToken = beginRuntimeConversationHydration(address)
+      applyRuntimeConversationAction(address, {
+        type: 'user_added',
+        message: {
+          id: 'follow-up',
+          role: 'user',
+          content: 'Buffered follow up',
+          status: 'done',
+          createdAt: '2026-10-21T00:00:01Z',
+        },
+      })
+      const paneToken = beginRuntimeConversationHydration(address)
+
+      if (finish === 'abort') abortRuntimeConversationHydration(address, drawerToken)
+      else completeRuntimeConversationHydration(address, drawerToken, [])
+
+      const messages = completeRuntimeConversationHydration(address, paneToken, [
+        {
+          id: 'history-turn',
+          createdAt: '2026-10-21T00:00:00Z',
+          items: [{ id: 'history-text', type: 'assistant_text', content: 'History' }],
+          status: 'done',
+        },
+      ])
+
+      expect(messages.map(message => message.content)).toEqual(['History', 'Buffered follow up'])
+      expect(getRuntimeConversationMessages(address)).toBe(messages)
+    }
+  )
+
   test('reconciles buffered completion with the canonical hydration snapshot', () => {
     const hydrationToken = beginRuntimeConversationHydration(address)
     const content = 'Completed while the transcript was loading'

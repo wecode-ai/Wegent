@@ -10,6 +10,7 @@ from typing import Any, Literal, Optional
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.plugin_config import validate_non_secret_plugin_configs
+from app.schemas.runtime_transcript_transport import RuntimeTranscriptTransferRequest
 
 RuntimeName = Literal["codex", "claude_code"]
 RuntimeWorkspaceKind = Literal["workspace", "worktree", "chat"]
@@ -153,6 +154,23 @@ class RuntimeTranscriptRequest(RuntimeSessionReadRequest):
         default=False,
         alias="conversationContextOnly",
     )
+    refresh: Optional[bool] = None
+    navigation_only: Optional[bool] = Field(default=None, alias="navigationOnly")
+    transcript_protocol_version: Optional[int] = Field(
+        default=None, alias="transcriptProtocolVersion", strict=True, ge=1, le=2
+    )
+    transcript_transfer: Optional[RuntimeTranscriptTransferRequest] = Field(
+        default=None, alias="transcriptTransfer"
+    )
+
+    @model_validator(mode="after")
+    def validate_transcript_transfer(self) -> "RuntimeTranscriptRequest":
+        if (
+            self.transcript_transfer is not None
+            and self.transcript_protocol_version != 2
+        ):
+            raise ValueError("Transcript transfer requires protocol 2")
+        return self
 
 
 class RuntimeTranscriptSearchRequest(RuntimeSessionReadRequest):

@@ -1,8 +1,84 @@
+import { createHash } from 'node:crypto'
+import { gzipSync } from 'node:zlib'
 import { describe, expect, test, vi } from 'vitest'
 import { createRuntimeWorkApi } from './runtimeWork'
 import type { HttpClient } from './http'
 
 describe('createRuntimeWorkApi', () => {
+  test('assembles canonical HTTP history while preserving project scope on every chunk', async () => {
+    const content = Array.from({ length: 18_000 }, (_, index) =>
+      createHash('sha256').update(String(index)).digest('hex')
+    ).join('')
+    const transcript = {
+      taskId: 'task-1',
+      runtime: 'codex',
+      workspacePath: '/repo',
+      messages: [],
+      turns: [{ id: 'turn-1', items: [{ id: 'text-1', type: 'assistant_text', content }] }],
+      beforeCursor: 'older',
+      hasMoreBefore: true,
+    }
+    const bytes = gzipSync(JSON.stringify({ transcript, strings: [], references: [] }))
+    const snapshotId = createHash('sha256').update(bytes).digest('hex')
+    const chunkSize = 360 * 1024
+    expect(bytes.length).toBeGreaterThan(chunkSize)
+    const post = vi.fn(
+      async (_path: string, query: { transcriptTransfer?: { offset: number } }) => {
+        const offset = query.transcriptTransfer?.offset ?? 0
+        const end = Math.min(offset + chunkSize, bytes.length)
+        return {
+          success: true,
+          transcriptProtocolVersion: 2,
+          transfer: {
+            snapshotId,
+            encoding: 'gzip+base64+json',
+            offset,
+            nextOffset: end < bytes.length ? end : null,
+            totalBytes: bytes.length,
+            payload: bytes.subarray(offset, end).toString('base64'),
+          },
+        }
+      }
+    )
+    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
+    const request = {
+      deviceId: 'cloud-device',
+      taskId: 'task-1',
+      projectSession: { projectId: 'project-1', issueId: 'issue-1' },
+      beforeCursor: 'search-match',
+      limit: 5,
+      refresh: true,
+      navigationOnly: false,
+    }
+
+    await expect(api.getRuntimeTranscript(request)).resolves.toEqual(transcript)
+
+    const chunkCount = Math.ceil(bytes.length / chunkSize)
+    expect(post).toHaveBeenCalledTimes(chunkCount)
+    for (let index = 0; index < chunkCount; index++) {
+      expect(post).toHaveBeenNthCalledWith(index + 1, '/runtime-work/transcript', {
+        ...request,
+        transcriptProtocolVersion: 2,
+        ...(index > 0 ? { transcriptTransfer: { snapshotId, offset: index * chunkSize } } : {}),
+      })
+    }
+  })
+
+  test('preserves unversioned HTTP transcript responses from older executors', async () => {
+    const transcript = { messages: [], turns: [] }
+    const post = vi.fn().mockResolvedValue(transcript)
+    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
+
+    await expect(
+      api.getRuntimeTranscript({ deviceId: 'cloud-device', taskId: 'task-1' })
+    ).resolves.toBe(transcript)
+    expect(post).toHaveBeenCalledExactlyOnceWith('/runtime-work/transcript', {
+      deviceId: 'cloud-device',
+      taskId: 'task-1',
+      transcriptProtocolVersion: 2,
+    })
+  })
+
   test('never sends qualified local sidebar mutations through the backend transport', async () => {
     const post = vi.fn()
     const api = createRuntimeWorkApi({ post } as unknown as HttpClient)

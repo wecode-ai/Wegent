@@ -32,6 +32,7 @@ from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.device import DeviceType
 from app.schemas.project import ProjectConfig
+from app.schemas.runtime_transcript_transport import RuntimeTranscriptChunkResponse
 from app.schemas.runtime_work import (
     ArchivedConversationItem,
     ArchivedConversationProjectGroup,
@@ -445,7 +446,7 @@ async def get_runtime_transcript(
     db: Session,
     user_id: int,
     address: RuntimeTranscriptRequest,
-) -> RuntimeTranscriptResponse:
+) -> RuntimeTranscriptResponse | RuntimeTranscriptChunkResponse:
     """Read a LocalTask transcript from the owning local executor."""
 
     user_id, normalized_address = _resolve_runtime_session_read(db, user_id, address)
@@ -506,11 +507,13 @@ async def get_runtime_transcript(
         result.get("hasMoreBefore"),
         result.get("beforeCursor"),
     )
-    if not isinstance(result.get("turns"), list):
-        raise HTTPException(
-            502, "Runtime transcript response is missing canonical turns"
-        )
     try:
+        if "transcriptProtocolVersion" in result:
+            return RuntimeTranscriptChunkResponse.model_validate(result)
+        if not isinstance(result.get("turns"), list):
+            raise HTTPException(
+                502, "Runtime transcript response is missing canonical turns"
+            )
         return RuntimeTranscriptResponse.model_validate(result)
     except ValidationError as exc:
         logger.error(
@@ -3950,6 +3953,17 @@ def _runtime_transcript_payload(
         payload["includeFullContent"] = True
     if conversation_context_only:
         payload["conversationContextOnly"] = True
+    for name, alias in (
+        ("refresh", "refresh"),
+        ("navigation_only", "navigationOnly"),
+        ("transcript_protocol_version", "transcriptProtocolVersion"),
+    ):
+        value = getattr(request, name, None)
+        if value is not None:
+            payload[alias] = value
+    transfer = getattr(request, "transcript_transfer", None)
+    if transfer is not None:
+        payload["transcriptTransfer"] = transfer.model_dump(by_alias=True)
     return payload
 
 
