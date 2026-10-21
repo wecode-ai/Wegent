@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StandInExecutorApi } from '@/api/standIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { RuntimeTaskMachine } from '@/features/workbench/runtimeTaskLifecycle/RuntimeTaskMachine'
@@ -39,7 +39,55 @@ beforeEach(() => {
     turns: [],
   })
 })
+afterEach(() => vi.useRealTimers())
 describe('unlisted stand-in task discovery', () => {
+  it('recovers a rejected read without needing another lifecycle update', async () => {
+    vi.useFakeTimers()
+    readTask.mockRejectedValueOnce(new Error('Network unavailable'))
+    const current = snapshot()
+    const hook = renderHook(() => useUnlistedStandInTasks([], current, reader, runtimeApi))
+    await act(async () => {})
+    expect(readTask).toHaveBeenCalledOnce()
+    await act(async () => vi.advanceTimersByTimeAsync(500))
+    expect(hook.result.current).toHaveLength(1)
+  })
+  it('bounds rejected reads and clears scheduled retries on unmount', async () => {
+    vi.useFakeTimers()
+    readTask.mockRejectedValue(new Error('Network unavailable'))
+    const current = snapshot()
+    const hook = renderHook(() => useUnlistedStandInTasks([], current, reader, runtimeApi))
+    await act(async () => vi.advanceTimersByTimeAsync(60_000))
+    expect(readTask).toHaveBeenCalledTimes(3)
+    hook.unmount()
+    expect(vi.getTimerCount()).toBe(0)
+    readTask.mockClear()
+    const next = renderHook(() => useUnlistedStandInTasks([], current, reader, runtimeApi))
+    await act(async () => {})
+    next.unmount()
+    expect(vi.getTimerCount()).toBe(0)
+    await act(async () => vi.advanceTimersByTimeAsync(60_000))
+    expect(readTask).toHaveBeenCalledOnce()
+  })
+  it('does not retry a terminal missing-task response', async () => {
+    vi.useFakeTimers()
+    readTask.mockResolvedValue({ success: false, code: 'task_not_found' })
+    const current = snapshot()
+    renderHook(() => useUnlistedStandInTasks([], current, reader, runtimeApi))
+    await act(async () => vi.advanceTimersByTimeAsync(60_000))
+    expect(readTask).toHaveBeenCalledOnce()
+  })
+  it('ignores a scheduled retry once a newer lifecycle observation succeeds', async () => {
+    vi.useFakeTimers()
+    readTask.mockRejectedValueOnce(new Error('Network unavailable'))
+    const hook = renderHook(({ value }) => useUnlistedStandInTasks([], value, reader, runtimeApi), {
+      initialProps: { value: snapshot() },
+    })
+    await act(async () => {})
+    hook.rerender({ value: snapshot(true) })
+    await act(async () => vi.advanceTimersByTimeAsync(500))
+    expect(readTask).toHaveBeenCalledTimes(2)
+    expect(hook.result.current).toHaveLength(1)
+  })
   it('reads authoritative task metadata when sidebar project filters hide the execution', async () => {
     const current = snapshot()
     const hook = renderHook(() => useUnlistedStandInTasks([], current, reader, runtimeApi))
