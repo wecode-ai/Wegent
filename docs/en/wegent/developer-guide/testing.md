@@ -414,6 +414,27 @@ The full platform E2E suite runs daily at 02:00 UTC, and the full Wework E2E
 suite runs daily at 04:00 UTC. Scheduled runs use a different concurrency group
 from PR and merge-queue runs, so they do not cancel each other.
 
+### Wework Shared Release Regression
+
+`.github/workflows/wework-release-e2e.yml` runs a real GitHub regression for
+related same-repository PRs and supports manual dispatch. Using an Actions token
+with only `Contents: write`, it creates an isolated tag and draft release,
+executes the release workflow's actual shared-release provisioning commands,
+and verifies that an older `RELEASE_SHA` does not change an existing release's
+target, metadata, or assets. It cleans up test resources on success or failure.
+Fork PRs do not run this test because their tokens cannot write repository contents.
+
+The shared `wework-updater` title and notes are set only when it is first
+created. Later releases upload dependencies and update manifests without
+resubmitting its target commit. Workflow differences between an old target and
+main can otherwise require `Workflows: write` and cause a 403 response.
+
+Run it with an authenticated GitHub CLI:
+
+```bash
+GH_REPO=wecode-ai/Wegent bash .github/scripts/test-wework-shared-release.sh
+```
+
 ### Coverage Reports
 
 Coverage reports are automatically uploaded to Codecov (if configured).
