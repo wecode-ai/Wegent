@@ -213,7 +213,16 @@ describe('IssueComposer', () => {
       />
     )
 
-    await userEvent.type(screen.getByTestId('workspace-issue-input'), '修复创建流程')
+    const input = screen.getByTestId('workspace-issue-input')
+    await userEvent.click(input)
+    fireEvent.paste(input, {
+      clipboardData: {
+        files: [],
+        types: ['text/plain'],
+        getData: (type: string) => (type === 'text/plain' ? '修复创建流程' : ''),
+      },
+    })
+    expect(input).toHaveTextContent('修复创建流程')
     await userEvent.click(screen.getByTestId('workspace-create-task-tab'))
 
     expect(screen.getByTestId('workspace-create-task-tab')).toHaveAttribute('aria-selected', 'true')
