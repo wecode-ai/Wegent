@@ -81,6 +81,17 @@ for (const [name, eventName, action, labels, draft, label, expected] of [
 
 const gate = "needs.changes.outputs.windows_desktop_core_e2e == 'true'";
 for (const job of [
+  "wework-desktop-core-e2e",
+  "wework-desktop-windows-core-e2e",
+]) {
+  const block = workflow.split(`  ${job}:\n`)[1].split(/\n  [\w-]+:\n/)[0];
+  assert.match(
+    block,
+    /if: contains\(matrix.segments, 'collaboration-issue-mcp-comments'\)\n\s+uses: \.\/\.github\/actions\/setup-minio-e2e/,
+    `${job} must prepare real object storage for Issue MCP attachment coverage`,
+  );
+}
+for (const job of [
   "build-wework-desktop-windows-core-e2e",
   "wework-desktop-windows-core-e2e",
 ]) {

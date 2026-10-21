@@ -242,6 +242,7 @@ export function createDesktopScenario({
     toolDetailPersistenceFinalTextStarted,
   })
   const { verifyTimers, verifyScroll } = createStreamingScrollChecks({
+    modelResponseTimeoutMs,
     uiTimeoutMs,
     capture,
     releaseTimerFinalCompletion,
@@ -804,6 +805,7 @@ export function createDesktopScenario({
       }
 
       if (requestContainsInitialPrompt(body)) {
+        recordScenarioRequest('streaming_scroll_initial', body)
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
         response.end(
           sse([

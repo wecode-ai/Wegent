@@ -829,7 +829,8 @@ async function verifyLocalModelRouting({
     control,
     composerSelector,
     CHECKPOINT_TASK_PROMPT,
-    'checkpoint_task'
+    'checkpoint_task',
+    WORKBENCH_READY_TIMEOUT_MS
   )
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: CHECKPOINT_TASK_COMPLETION_TEXT,

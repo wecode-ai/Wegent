@@ -50,6 +50,29 @@ function fixture(initial: Partial<WorkspaceStandInSettings> = {}) {
 }
 
 describe('StandInPopover', () => {
+  it('waits for configuration validation before enabling a saved stand-in', async () => {
+    const model = { runtime: 'codex' as const, provider: 'local', model_id: 'default' }
+    const { props, save } = fixture({ executionDeviceId: 'current', version: 2, model })
+    let finishCatalog!: (catalog: { models: (typeof model)[] }) => void
+    const catalog = new Promise<{ models: (typeof model)[] }>(resolve => {
+      finishCatalog = resolve
+    })
+    const services = {
+      standInApi: { catalog: vi.fn(() => catalog) },
+      modelApi: { listModels: vi.fn(async () => ({ data: [] })) },
+    } as unknown as WorkbenchServices
+    const user = userEvent.setup()
+    render(<StandInPopover {...props} services={services} />)
+    await user.click(screen.getByTestId('stand-in-open'))
+    await screen.findByTestId('stand-in-prompt')
+    expect(screen.getByTestId('stand-in-auto')).toBeDisabled()
+    await act(async () => finishCatalog({ models: [model] }))
+    await waitFor(() => expect(screen.getByTestId('stand-in-auto')).toBeEnabled())
+    await user.click(screen.getByTestId('stand-in-auto'))
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+    expect(screen.queryByTestId('stand-in-enable-notice')).not.toBeInTheDocument()
+  })
+
   it('saves the loaded default model before enabling a reopened manual configuration', async () => {
     const { props, save } = fixture()
     let finishCatalog!: (catalog: { models: Record<string, unknown>[] }) => void

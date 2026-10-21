@@ -14,7 +14,7 @@ Settings belong to each Executor and live in its local SQLite store. For cloud p
 
 Configure Agent → Device → Local project → Workspace → Model. Choose an existing project Agent to retain its instructions, skills, plugins, and MCP configuration, or use the general assistant. Fixed Agent models remain locked; otherwise the device's default model is selected. Only available local projects on the selected device are offered. Use the current workspace or create a Git worktree from a selected branch. Without an explicit local project, execution inherits the project environment.
 
-While the model catalog loads, keep the model selector mounted and disable saving settings. Once ready, save the default model with the configuration so reopening does not treat default selection as an unsaved edit.
+While the model catalog loads, keep the model selector mounted and disable saving settings. Once ready, save the default model with the configuration so reopening does not treat default selection as an unsaved edit. Enabling an existing configuration waits for environment and model validation, preventing loading state from being mistaken for pending edits. Disabling an enabled Stand-in does not wait for validation.
 
 Optional instructions reuse the ordinary composer without saving placeholder text. Goal mode is available in its plus menu. The model belongs to the configuration list outside the composer; Save and Cancel share a footer. Manual Issue creation can explicitly delegate to a Stand-in while automatic handling is disabled. Attachments finish uploading before assignment and execution start.
 

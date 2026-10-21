@@ -6,6 +6,7 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import {
   reloadMainWindow,
   selectCollaborationDomain,
+  selectCollaborationProjectView,
   configureFirstProjectExecutionEnvironment,
 } from '../modules/workspace-flows.mjs'
 import {
@@ -194,7 +195,7 @@ export function createDesktopScenario({
           },
         })
         const historical = await createIssue('启用云端替身前已分配')
-        await control.command('click', `${CONTENT} [data-testid="collaboration-tab-board"]`)
+        await selectCollaborationProjectView(control, CONTENT, 'board')
         await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
         await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
         await control.command('waitFor', '[data-testid="stand-in-device"]')

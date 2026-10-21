@@ -334,7 +334,12 @@ export function StandInPopover({
           aria-busy={saving}
           aria-label={t('standIn.auto_label')}
           data-testid="stand-in-auto"
-          disabled={saving || !canConfigure || !loaded}
+          disabled={
+            saving ||
+            !canConfigure ||
+            !loaded ||
+            (!saved.enabled && saved.version > 0 && !composerValid)
+          }
           onClick={toggleAutomatic}
           className="flex w-full items-center justify-between gap-4 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-40"
         >
