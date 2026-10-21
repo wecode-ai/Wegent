@@ -399,9 +399,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           member => member.entity_type === 'workspace' && member.entity_id === String(workspace.id)
         )
         assert.ok(workspaceGrant, 'Agent creation must persist its space authorization')
+        await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
+          visible: false,
+          timeoutMs: uiTimeoutMs,
+        })
         await control.command(
           'clickWhenEnabled',
-          scoped(`[data-testid="project-agent-remove-${projectAgent.id}"]`)
+          scoped(`[data-testid="project-agent-archive-${projectAgent.id}"]`)
         )
         await control.command(
           'waitFor',
@@ -467,10 +471,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           compiled.payload.executionRequest.model_config.model_id,
           'The assigned Team model was lost during local task materialization'
         )
-        await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
-          visible: false,
-          timeoutMs: uiTimeoutMs,
-        })
         await control.command('waitFor', scoped('[data-testid^="project-agent-row-"]'), {
           text: PROJECT_AGENT_NAME,
           timeoutMs: uiTimeoutMs,
