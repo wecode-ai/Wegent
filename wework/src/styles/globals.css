@@ -3,8 +3,8 @@
 @tailwind utilities;
 
 @layer utilities {
-  /* Preserve explicit outline opt-outs against DSH's late-injected focus color. */
-  .outline-none:focus-visible {
+  /* Search and address inputs provide their own focus feedback in the chrome. */
+  .workbench-chrome-input:focus-visible {
     outline-color: transparent;
   }
 }

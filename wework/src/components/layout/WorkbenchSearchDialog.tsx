@@ -195,7 +195,7 @@ function WorkbenchSearchDialogPanel({
               }
             }}
             placeholder={t('workbench.search_conversations')}
-            className="h-full min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted"
+            className="workbench-chrome-input h-full min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted"
           />
           {loading && <Loader2 className="h-4 w-4 animate-spin text-text-muted" />}
           <button
