@@ -120,21 +120,23 @@ export function createDesktopScenario({ modelResponseTimeoutMs, workbenchReadyTi
       response.write(
         createSse(
           isReply
-            ? [...progress.start, ...textDeltaEvents(progress.itemId, PROGRESS)]
+            ? [
+                ...progress.start,
+                ...textDeltaEvents(progress.itemId, PROGRESS),
+                ...progress.finish.filter(event => event.type !== 'response.completed'),
+              ]
             : [responseCreated(id)]
         )
       )
       if (isReply) await replyReleased
       if (!response.destroyed && !response.writableEnded) {
-        response.end(
-          createSse([
-            ...(isReply
-              ? progress.finish.filter(event => event.type !== 'response.completed')
-              : []),
-            final,
-            responseCompleted(id),
-          ])
-        )
+        const output = isReply
+          ? [
+              progress.finish.find(event => event.type === 'response.output_item.done').item,
+              final.item,
+            ]
+          : [final.item]
+        response.end(createSse([final]) + createSse([responseCompleted(id, output)]))
       }
       return true
     },
