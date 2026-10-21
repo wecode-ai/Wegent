@@ -6,10 +6,10 @@
 
 from __future__ import annotations
 
+import builtins
 import json
 import logging
 import time
-import builtins
 from asyncio import gather
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
