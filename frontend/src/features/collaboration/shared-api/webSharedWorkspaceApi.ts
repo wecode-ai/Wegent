@@ -30,7 +30,7 @@ import { getToken } from '@/apis/user'
 import { getApiBaseUrl } from '@/lib/runtime-config'
 
 export interface WebWorkspaceHttpClient {
-  get<T>(endpoint: string): Promise<T>
+  get<T>(endpoint: string, options?: { cache?: RequestCache }): Promise<T>
   post<T>(endpoint: string, data?: unknown): Promise<T>
   postForm<T>(endpoint: string, data: FormData): Promise<T>
   put<T>(endpoint: string, data?: unknown): Promise<T>
@@ -625,7 +625,7 @@ export function createWebSharedWorkspaceApi(
           CollaborationBoardSnapshot & {
             task_bindings: Array<Record<string, unknown>>
           }
-        >(`/v1/cloud-projects/${encoded(projectId)}/board-snapshot`)
+        >(`/v1/cloud-projects/${encoded(projectId)}/board-snapshot`, { cache: 'no-store' })
         return {
           items: response.items,
           members: response.members,
@@ -657,6 +657,7 @@ export function createWebSharedWorkspaceApi(
             version: input.version,
             assignee_team_id: teamId,
             notify_assignee: input.notifyAssignee ?? true,
+            position: input.position,
           })
         }
         return client.post(

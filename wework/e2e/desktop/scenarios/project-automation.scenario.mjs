@@ -8,7 +8,7 @@ import {
   selectCollaborationDomain,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
-import { PluginFaultProxy } from '../modules/plugin-fault-proxy.mjs'
+import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 import {
   assertSavedCloudRouting,
   readBasicCloudDefault,
@@ -136,7 +136,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       backendUrl = cloud.backendUrl
       authToken = cloud.authToken
       await request('/api/admin/setup-complete', { method: 'POST' })
-      proxy = await new PluginFaultProxy(backendUrl).start()
+      proxy = await new TransportFaultProxy(backendUrl).start()
       appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL = proxy.url
     },
 

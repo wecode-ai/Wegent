@@ -500,7 +500,7 @@ async function waitForNativeCollaborationPlatform(
   return weworkPlatformSelector
 }
 
-async function enterLocalCollaborationWorkspace(control, contentSelector) {
+export async function enterLocalCollaborationWorkspace(control, contentSelector) {
   await waitForNativeCollaborationPlatform(control, contentSelector)
   const localWorkspaceTree = inCollaborationSidebar(
     `[data-testid="collaboration-workspace-tree-${LOCAL_COLLABORATION_WORKSPACE_ID}"]`,

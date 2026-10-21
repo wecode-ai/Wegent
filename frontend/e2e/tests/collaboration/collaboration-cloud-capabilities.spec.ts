@@ -679,15 +679,17 @@ test.describe('Collaboration cloud capabilities', () => {
       await selectGroupBy(page, project.id, 'status')
       const reorderResponse = page.waitForResponse(response => {
         const pathname = new URL(response.url()).pathname
-        return response.request().method() === 'POST' && pathname.endsWith('/loop-items/reorder')
+        return (
+          response.request().method() === 'PATCH' &&
+          pathname.endsWith(`/loop-items/${statusIssue.id}`)
+        )
       })
       await dragIssueTo(page, statusIssue.id, 'completed')
       const reordered = await reorderResponse
       expect(reordered.ok(), `Board reorder failed: ${await reordered.text()}`).toBe(true)
-      const reorderedItems = (await reordered.json()) as { items: CloudIssue[] }
-      expect(reorderedItems.items.find(item => item.id === statusIssue.id)?.status).toBe(
-        'completed'
-      )
+      const moved = (await reordered.json()) as CloudIssue
+      expect(moved.status).toBe('completed')
+      expect(reordered.request().postDataJSON()).toHaveProperty('position')
       expect((await issue(page, statusIssue.id)).status).toBe('completed')
       await page.getByTestId(`collaboration-issue-${statusIssue.id}`).scrollIntoViewIfNeeded()
       await captureEvidence(page, 'web-06-status-board')

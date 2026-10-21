@@ -44,6 +44,13 @@ import {
 } from '@/api/localProjectAssociation'
 import { desktopFileUrl } from '@/components/chat/assistantMarkdownLinks'
 
+function localTaskUpdate(
+  data: Record<string, unknown> & { version: number }
+): Record<string, unknown> & { version: number } {
+  const position = data.position as { beforeItemId: string | null } | undefined
+  return { ...data, ...(position ? { position: { before_item_id: position.beforeItemId } } : {}) }
+}
+
 type LocalRequest = <T>(
   method: string,
   params?: Record<string, unknown>,
@@ -424,7 +431,7 @@ export function createExternalIssueApi(request: LocalRequest) {
       itemId: string,
       data: Record<string, unknown> & { version: number }
     ) {
-      let todo = data
+      let todo = localTaskUpdate(data)
       if (Array.isArray(data.tags)) {
         const current = await request<LocalLoopItemRecord>('external_todos.get', {
           project: externalProjectDescriptor(project),
@@ -432,7 +439,7 @@ export function createExternalIssueApi(request: LocalRequest) {
         })
         const association = localProjectAssociationFromTags(stringList(current.metadata.tags))
         todo = {
-          ...data,
+          ...todo,
           tags: association
             ? [
                 ...visibleLoopItemTags(stringList(data.tags)),
@@ -1232,7 +1239,7 @@ export function createLocalDeliveryApi(
     },
     async updateLoopItem(itemId: string, data: Record<string, unknown> & { version: number }) {
       const projectId = await resolveProjectId(itemId)
-      let todo = data
+      let todo = localTaskUpdate(data)
       if (Array.isArray(data.tags)) {
         const current = await request<LocalLoopItemRecord>('todos.get', {
           project_id: projectId,
@@ -1240,7 +1247,7 @@ export function createLocalDeliveryApi(
         })
         const association = localProjectAssociationFromTags(stringList(current.metadata.tags))
         todo = {
-          ...data,
+          ...todo,
           tags: association
             ? [
                 ...visibleLoopItemTags(stringList(data.tags)),
@@ -1279,6 +1286,7 @@ export function createLocalDeliveryApi(
         assigneeId: string
         runnerSelection?: RunnerSelection
         notifyAssignee?: boolean
+        position?: { beforeItemId: string | null }
       }
     ) {
       const assignment =
@@ -1305,6 +1313,7 @@ export function createLocalDeliveryApi(
         todo: {
           version: data.version,
           ...assignment,
+          ...(data.position ? { position: { before_item_id: data.position.beforeItemId } } : {}),
           ...(executionPayload ? { execution_payload: executionPayload } : {}),
         },
       })
@@ -1387,7 +1396,7 @@ export function createLocalDeliveryApi(
       projectId: CloudProjectId,
       data: {
         parent_id: string | null
-        status: CloudLoopItem['status']
+        status: CloudLoopItem['status'] | null
         item_ids: string[]
       }
     ) {

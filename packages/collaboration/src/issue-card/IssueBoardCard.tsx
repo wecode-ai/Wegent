@@ -46,6 +46,7 @@ export interface IssueBoardCardProps<T extends IssueBoardCardTask> extends Omit<
   previewDisabled?: boolean;
   showOpenTaskAction?: boolean;
   dragEnabled?: boolean;
+  columnKey?: string;
   unread?: boolean;
   onMarkRead?: () => void;
   progressTaskBindings?: T[];
@@ -76,6 +77,7 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
   cardClassName,
   dragging: draggingOverride = false,
   dragEnabled = false,
+  columnKey,
   dropTarget,
   articleProps,
   articleTestId,
@@ -84,7 +86,7 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
   onOpen,
   childrenAction,
 }: IssueBoardCardProps<T>) {
-  const drag = useIssueBoardCardDrag(item.id, dragEnabled);
+  const drag = useIssueBoardCardDrag(item.id, dragEnabled, columnKey);
   const dragging = draggingOverride || drag.dragging;
   const portalTheme = useCollaborationPortalTheme();
   const needsExecutionConfiguration = issueNeedsExecutionConfiguration(item);

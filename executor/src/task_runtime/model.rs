@@ -94,6 +94,7 @@ pub struct TaskCreate {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct TaskUpdate {
+    pub position: Option<TaskPosition>,
     pub version: i64,
     pub title: Option<String>,
     pub description: Option<String>,
@@ -108,6 +109,22 @@ pub struct TaskUpdate {
     pub assignee_group_id: Option<Option<String>>,
     pub execution_payload: Option<Value>,
     pub workflow: Option<Option<Value>>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskPosition {
+    #[serde(
+        alias = "beforeItemId",
+        deserialize_with = "deserialize_position_anchor"
+    )]
+    pub before_item_id: Option<String>,
+}
+
+fn deserialize_position_anchor<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    Option::<String>::deserialize(deserializer)
 }
 
 fn deserialize_optional_user_id<'de, D: serde::Deserializer<'de>>(
@@ -358,7 +375,7 @@ pub struct LocalRuntimeCommentStart<'a> {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TaskReorder {
     pub parent_id: Option<String>,
-    pub status: String,
+    pub status: Option<String>,
     pub item_ids: Vec<String>,
 }
 

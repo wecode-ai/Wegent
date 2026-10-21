@@ -2,6 +2,7 @@ import {
   projectBoardDnd,
   projectBoardCollisionDetection,
   projectBoardDrop,
+  projectBoardActiveItemId,
   useProjectBoardSensors,
 } from "../project-board/projectBoardDnd";
 import { ProjectBoardDragOverlay } from "../project-board/ProjectBoardDragOverlay";
@@ -22,6 +23,7 @@ import {
 } from "../issue-card";
 import {
   createStandardCloudBoardColumns,
+  createProjectBoardSortLabels,
   ProjectBoardBody,
   ProjectBoardGroupPicker,
   useStandardCloudBoardController,
@@ -154,6 +156,9 @@ export function ProjectBoardAdapter({
   statuses,
   taskBindings,
 }: ProjectBoardAdapterProps) {
+  const supportsOrder = ["local", "native", "backend"].includes(
+    project.task_provider,
+  );
   const runtimeWork = useBrowserBoardRuntimeWork(
     renderIssueCard ? undefined : runtime,
     taskBindings,
@@ -224,10 +229,15 @@ export function ProjectBoardAdapter({
     extensions,
     focusStorageKey: `collaboration-board-focus:${project.id}`,
     items: issues,
+    supportsOrder,
     onGroupByChange,
     onMove: (issue, _column, _beforeItemId, mutation) =>
       onMove(issue, mutation),
     personalGroupStorageKey: null,
+    personalSortStorageKey:
+      project.current_user_id != null
+        ? `collaboration-board-column-sort:v2:${project.current_user_id}:${project.id}`
+        : null,
   });
   const display = project.card_display ?? {
     show_assignee: true,
@@ -260,15 +270,19 @@ export function ProjectBoardAdapter({
         dndContextProps={{
           sensors,
           collisionDetection: projectBoardCollisionDetection,
-          onDragStart: (event: { active: { id: string | number } }) =>
-            controller.setActiveDragItemId(String(event.active.id)),
+          onDragStart: (
+            event: Pick<Parameters<typeof projectBoardDrop>[0], "active">,
+          ) =>
+            controller.setActiveDragItemId(
+              projectBoardActiveItemId(event.active),
+            ),
           onDragCancel: () => controller.setActiveDragItemId(null),
           onDragEnd: (event: Parameters<typeof projectBoardDrop>[0]) => {
             controller.setActiveDragItemId(null);
             if (
               issues.some(
                 (issue) =>
-                  issue.id === String(event.active.id) &&
+                  issue.id === projectBoardActiveItemId(event.active) &&
                   canEditCollaborationIssue(issue),
               )
             )
@@ -284,6 +298,9 @@ export function ProjectBoardAdapter({
           exit: "退出执行阶段专注视图",
           title: "专注视图",
         }}
+        sortLabels={
+          supportsOrder ? createProjectBoardSortLabels(translate) : undefined
+        }
         getColumnDragHint={(column) =>
           controller.activeDragItemId ? `移到这里：${column.label}` : undefined
         }
@@ -422,6 +439,7 @@ export function ProjectBoardAdapter({
           const cardProps = {
             translate,
             item: issue,
+            columnKey: column.key,
             unread: false,
             reference: `${project.project_key}-${issue.sequence_number}`,
             labels: cardLabels,

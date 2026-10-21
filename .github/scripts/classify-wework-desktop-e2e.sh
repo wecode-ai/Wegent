@@ -9,6 +9,8 @@ core_segments=(
   collaboration-issue-task-discovery
   collaboration-app-queue-identity
   collaboration-issue-archive
+  collaboration-board-sorting
+  collaboration-board-move-recovery
   collaboration-first-use
   collaboration-worktree-policy
   collaboration-group-onboarding
@@ -204,7 +206,7 @@ core_shards=(
   task-status-sync,task-board-association,task-board-bulk-actions,change-request-status,git-commit-generation,context-compaction
   window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
   project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,stand-in,stand-in-workspace,stand-in-controls,collaboration-local-group-coordinate,collaboration-human-round-resume
-  resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-task-discovery,collaboration-app-queue-identity,collaboration-issue-archive,collaboration-local-group-cancellation
+  resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-task-discovery,collaboration-app-queue-identity,collaboration-issue-archive,collaboration-board-sorting,collaboration-board-move-recovery,collaboration-local-group-cancellation
   workspace-attachments,automation-lifecycle,drawing-attachment
   project-assignment-notification,priority-filter,collaboration-issue-comment-mention,collaboration-issue-comment-attachments,stand-in-notifications
   transcript-sync,background-terminals
@@ -771,6 +773,19 @@ classify_wework_path() {
       select_target "core:collaboration-app-queue-identity"
       return
       ;;
+    wework/e2e/desktop/scenarios/collaboration-board-sorting.scenario.mjs)
+      select_target "core:collaboration-board-sorting"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-board-move-recovery.scenario.mjs)
+      select_target "core:collaboration-board-move-recovery"
+      return
+      ;;
+    wework/e2e/desktop/modules/collaboration-board-flows.mjs)
+      select_target "core:collaboration-board-sorting"
+      select_target "core:collaboration-board-move-recovery"
+      return
+      ;;
     wework/e2e/desktop/scenarios/collaboration-issue-archive.scenario.mjs)
       select_target "core:collaboration-issue-archive"
       return
@@ -897,6 +912,10 @@ classify_wework_path() {
       if [[ "$path" == wework/src/features/todo/CloudTodoWorkspace* || \
         "$path" == wework/src/features/todo/WorkItemComposerGuide* ]]; then
         select_target "core:collaboration-first-use"
+      fi
+      if [[ "$path" == wework/src/features/todo/CloudTodoWorkspace* ]]; then
+        select_target "core:collaboration-board-sorting"
+        select_target "core:collaboration-board-move-recovery"
       fi
       if [[ "$path" == wework/src/components/layout/useWorkbenchCloudProjectContext* ]]; then
         select_target "core:cloud-context-resilience"
@@ -1280,8 +1299,11 @@ classify_path() {
       ;;
     wework/e2e/desktop/scenarios/plugin-uninstall-resilience.scenario.mjs | \
       wework/scripts/plugin-fault-proxy.test.mjs | \
-      wework/e2e/desktop/modules/plugin-fault-proxy*)
+      wework/e2e/desktop/modules/transport-fault-proxy*)
       select_uninstall_checkpoints
+      if [[ "$path" == wework/e2e/desktop/modules/transport-fault-proxy* ]]; then
+        select_target "core:collaboration-board-move-recovery"
+      fi
       return
       ;;
     wework/e2e/desktop/scenarios/plugin-composer-long-list.scenario.mjs)
@@ -1427,6 +1449,8 @@ classify_path() {
       select_target "core:collaboration-issue-comment-mention"
       select_target "core:collaboration-issue-comment-attachments"
       select_target "core:collaboration-issue-comment-notification"
+      select_target "core:collaboration-board-sorting"
+      select_target "core:collaboration-board-move-recovery"
       ;;
     executor/src/server/codex_model_catalog*.rs)
       select_target "core:codex-native-catalog"
