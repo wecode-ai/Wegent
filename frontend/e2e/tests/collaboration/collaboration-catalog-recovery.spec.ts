@@ -301,6 +301,10 @@ for (const outcome of ['success', 'failure'] as const) {
   }) => {
     const groupPath = (id: string) => `/api/v1/cloud-projects/${id}/collaboration-groups`
     const agentPath = (id: string) => `/api/v1/cloud-projects/${id}/chat-agents`
+    await webApi(page, `/api/v1/workspaces/${a.workspaceId}/agents`, {
+      method: 'POST',
+      body: { team_id: candidate.id },
+    })
     const createdGroups: Record<string, Resource> = {}
     const createdAgents: Record<string, Resource> = {}
     for (const fixture of [a, b]) {
@@ -370,22 +374,47 @@ for (const outcome of ['success', 'failure'] as const) {
       )
         mutations.push(new URL(request.url()).pathname)
     })
-    // Warm the real catalog in this document. The following History API navigation
-    // is handled by Next's production SPA router, preserving the groups section.
+    // Warm B in the real project controller, not just the workspace sidebar.
+    // Next's production History API navigation retains this document and groups section.
     await page.goto(`/collaboration/workspaces/${a.workspaceId}/projects`)
     await expect(page.getByTestId(`collaboration-workspace-project-${b.project.id}`)).toBeVisible()
     const timeOrigin = await page.evaluate(() => performance.timeOrigin)
+    await page.evaluate(
+      path => window.history.pushState(null, '', `${path}?view=manage&section=groups`),
+      b.path
+    )
+    await expect(
+      page.getByTestId(`collaboration-group-${createdGroups[b.project.id].id}`)
+    ).toContainText('Group B')
+    const bMetadataReads: string[] = []
+    page.on('request', request => {
+      if (
+        new URL(request.url()).pathname === `/api/v1/cloud-projects/${b.project.id}` &&
+        request.method() === 'GET'
+      )
+        bMetadataReads.push(request.url())
+    })
     await page.route(aUrl, holdA)
     if (outcome === 'failure') await page.route(bUrl, loseRealResponse)
     try {
-      await page.evaluate(path => window.history.pushState(null, '', `${path}?view=manage`), a.path)
+      await page.evaluate(
+        path => window.history.pushState(null, '', `${path}?view=manage&section=groups`),
+        a.path
+      )
       await page.getByTestId('collaboration-project-settings-groups').click()
       await aFetched
+      await expect(page.getByTestId('collaboration-project-settings-groups')).toHaveAttribute(
+        'aria-current',
+        'page'
+      )
       const bLoaded =
         outcome === 'success'
           ? page.waitForResponse(response => bUrl(new URL(response.url())) && response.ok())
           : null
-      await page.evaluate(path => window.history.pushState(null, '', `${path}?view=manage`), b.path)
+      await page.evaluate(
+        path => window.history.pushState(null, '', `${path}?view=manage&section=groups`),
+        b.path
+      )
       if (outcome === 'success') await bLoaded
       else {
         // The lost response generates a failed request rather than a browser response.
@@ -395,6 +424,10 @@ for (const outcome of ['success', 'failure'] as const) {
         await expect(
           page.getByTestId(`collaboration-group-${createdGroups[b.project.id].id}`)
         ).toContainText('Group B')
+      await expect(page.getByTestId('collaboration-project-settings-groups')).toHaveAttribute(
+        'aria-current',
+        'page'
+      )
       const aFinished = page.waitForEvent('requestfinished', request =>
         aUrl(new URL(request.url()))
       )
@@ -409,6 +442,7 @@ for (const outcome of ['success', 'failure'] as const) {
           )
       )
       expect(await page.evaluate(() => performance.timeOrigin)).toBe(timeOrigin)
+      expect(bMetadataReads).toEqual([])
       await expect(
         page.getByTestId(`collaboration-group-${createdGroups[a.project.id].id}`)
       ).toHaveCount(0)
