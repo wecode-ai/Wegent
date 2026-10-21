@@ -5,7 +5,8 @@
     "paths": {
       "@/*": ["./src/*"],
       "@wecode/*": ["./wecode/*"],
-      "@extensions/*": ["./wecode/extensions/*", "./src/extensions/*"]
+      "@extensions/*": ["./wecode/extensions/*", "./src/extensions/*"],
+      "@wegent/process-explorer": ["../packages/process-explorer/src/index.ts"]
     },
     "ignoreDeprecations": "6.0",
     "target": "es2023",

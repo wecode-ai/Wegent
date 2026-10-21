@@ -10,6 +10,7 @@ const environment = {
 function fixture() {
   const view = {
     isDestroyed: () => false,
+    isFocused: vi.fn(() => false),
     focus: vi.fn(),
     insertText: vi.fn(),
     sendInputEvent: vi.fn(),
@@ -18,6 +19,23 @@ function fixture() {
 }
 
 describe('isolated native keyboard verification', () => {
+  test.each(['key', 'text'])('preserves an already focused editor for %s input', async kind => {
+    const { view, contents, focusWindow } = fixture()
+    view.isFocused.mockReturnValue(true)
+
+    if (kind === 'key') await sendE2EKey(contents, 'Meta+Shift+B', focusWindow, environment)
+    else await sendE2EText(contents, 'editor text', focusWindow, environment)
+
+    expect(focusWindow).not.toHaveBeenCalled()
+    expect(view.focus).not.toHaveBeenCalled()
+    if (kind === 'key') {
+      expect(view.sendInputEvent.mock.calls).toEqual([
+        [{ type: 'keyDown', keyCode: 'B', modifiers: ['meta', 'shift'] }],
+        [{ type: 'keyUp', keyCode: 'B', modifiers: ['meta', 'shift'] }],
+      ])
+    } else expect(view.insertText).toHaveBeenCalledWith('editor text')
+  })
+
   test('waits for window activation before sending native input', async () => {
     const { view, contents } = fixture()
     let activate!: () => void
@@ -84,12 +102,25 @@ describe('isolated native keyboard verification', () => {
     ['Control+Shift+M', 'M', ['control', 'shift']],
     ['Shift+PageUp', 'PageUp', ['shift']],
     ['Shift+PageDown', 'PageDown', ['shift']],
+    ['Meta+W', 'W', ['meta']],
   ])('sends native shortcut %s without inserting a character', async (key, keyCode, modifiers) => {
     const { view, contents, focusWindow } = fixture()
     await sendE2EKey(contents, key as string, focusWindow, environment)
     expect(view.sendInputEvent.mock.calls).toEqual([
       [{ type: 'keyDown', keyCode, modifiers }],
       [{ type: 'keyUp', keyCode, modifiers }],
+    ])
+  })
+
+  test('can send native input without re-focusing the window', async () => {
+    const { view, contents, focusWindow } = fixture()
+    await sendE2EKey(contents, 'Enter', focusWindow, environment, 'press', false)
+    expect(focusWindow).not.toHaveBeenCalled()
+    expect(view.focus).not.toHaveBeenCalled()
+    expect(view.sendInputEvent.mock.calls).toEqual([
+      [{ type: 'keyDown', keyCode: 'Enter', modifiers: [] }],
+      [{ type: 'char', keyCode: '\r', modifiers: [] }],
+      [{ type: 'keyUp', keyCode: 'Enter', modifiers: [] }],
     ])
   })
 
@@ -124,7 +155,7 @@ describe('isolated native keyboard verification', () => {
     }
   )
 
-  test.each(['Meta+Q', 'Control+W', 'constructor', 'text', 'Unknown+B'])(
+  test.each(['Meta+Q', 'Control+Q', 'constructor', 'text', 'Unknown+B'])(
     'rejects unsupported key %s',
     async key => {
       const { view, contents, focusWindow } = fixture()

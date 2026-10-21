@@ -1,3 +1,4 @@
+import { SiteAnalyticsDialog } from './SiteAnalyticsDialog'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent, ReactNode } from 'react'
 import { AlertCircle, Boxes, Loader2, Plus, RefreshCw } from 'lucide-react'
@@ -246,6 +247,7 @@ export function SitesWorkspace({
   const [editError, setEditError] = useState<string | null>(null)
   const [pendingEnvironmentSite, setPendingEnvironmentSite] = useState<Site | null>(null)
   const [pendingCollaboratorsSite, setPendingCollaboratorsSite] = useState<Site | null>(null)
+  const [pendingAnalyticsSite, setPendingAnalyticsSite] = useState<Site | null>(null)
   const [pendingAccessSite, setPendingAccessSite] = useState<Site | null>(null)
 
   useEffect(() => {
@@ -667,6 +669,7 @@ export function SitesWorkspace({
                         onConfigureEnvironment: setPendingEnvironmentSite,
                         onManageCollaborators: setPendingCollaboratorsSite,
                         onManageAccess: setPendingAccessSite,
+                        onViewAnalytics: setPendingAnalyticsSite,
                         onDelete: siteToDelete => {
                           setDeleteError(null)
                           setPendingDeleteSite(siteToDelete)
@@ -702,6 +705,14 @@ export function SitesWorkspace({
           </>
         )}
       </div>
+      {pendingAnalyticsSite && (
+        <SiteAnalyticsDialog
+          key={pendingAnalyticsSite.siteid}
+          api={api}
+          site={pendingAnalyticsSite}
+          onClose={() => setPendingAnalyticsSite(null)}
+        />
+      )}
       {pendingDeleteSite && (
         <DeleteSiteDialog
           site={pendingDeleteSite}

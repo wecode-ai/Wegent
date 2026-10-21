@@ -19,6 +19,8 @@ function scoped(selector) {
 
 async function revealIssueCard(control, issueId, title, timeoutMs) {
   const selector = scoped(`[data-testid="collaboration-issue-${issueId}"]`)
+  // Restoring removes the archived row before the board snapshot finishes loading.
+  await control.command('waitFor', selector, { text: title, timeoutMs })
   await control.command('scrollIntoView', selector)
   await control.command('waitFor', selector, {
     text: title,

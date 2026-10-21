@@ -259,8 +259,10 @@ const sharedMessages: Record<
   "zh-CN": {
     "todo.permission_owner": "所有者",
     "todo.project_members_intro": "管理项目访问权限与成员职责。",
-    "todo.project_membership_inherit_hint": "空间成员自动获得项目访问权限，空间管理员始终可管理项目。",
-    "todo.project_membership_restricted_hint": "仅空间管理员自动加入，其他成员需直接邀请。",
+    "todo.project_membership_inherit_hint":
+      "空间成员自动获得项目访问权限，空间管理员始终可管理项目。",
+    "todo.project_membership_restricted_hint":
+      "仅空间管理员自动加入，其他成员需直接邀请。",
     "todo.project_membership_restricted_short": "仅邀请成员",
     "todo.project_member_access": "角色与来源",
     "todo.project_member_inherited_named": "继承自 {{space}}",
@@ -269,8 +271,10 @@ const sharedMessages: Record<
     "todo.project_member_owner": "本地项目所有者",
     "todo.project_members_loading": "正在加载成员…",
     "todo.project_members_empty": "暂无项目成员",
-    "todo.project_member_inherited_hint": "继承角色由空间管理，项目内不能修改或移除。",
-    "todo.project_member_capability_hint": "职责与能力在离开输入框后自动保存，帮助 AI 选择合适的负责人。",
+    "todo.project_member_inherited_hint":
+      "继承角色由空间管理，项目内不能修改或移除。",
+    "todo.project_member_capability_hint":
+      "职责与能力在离开输入框后自动保存，帮助 AI 选择合适的负责人。",
     "todo.permission_admin": "管理员",
     "todo.permission_member": "成员",
     "todo.permission_viewer": "只读成员",
@@ -286,6 +290,8 @@ const sharedMessages: Record<
     "todo.add_project_agent_description":
       "添加后会共享到父空间并向项目成员开放使用。原定义和私人凭据仍按原权限管理。",
     "common.actions": "操作",
+    "standIn.start_failed": "任务已创建，替身未能启动：",
+    "standIn.retry": "重试处理",
     "issue_creation.owner": "负责人",
     "issue_creation.user": "成员",
     "issue_creation.agent": "智能体",
@@ -432,6 +438,9 @@ const sharedMessages: Record<
     "todo.access_token": "访问令牌",
     "todo.saved": "已保存",
     "todo.save_assignment": "保存分配",
+    "todo.save_and_notify": "保存并通知",
+    "todo.save_without_notification": "仅保存不通知",
+    "todo.save_options": "保存选项",
     "todo.token_required": "需要配置令牌",
     "todo.board_layout": "看板布局",
     "todo.board_layout_description": "配置项目状态和任务卡片显示内容。",
@@ -623,10 +632,6 @@ const sharedMessages: Record<
     "todo.draft_saved": "草稿已保存",
     "todo.create_shortcut_hint": "ESC 关闭 · ⌘↵ 创建{{draft}}",
     "todo.save_shortcut_hint": "ESC 关闭 · ⌘↵ 保存",
-    "notifications.ask_title": "是否通知负责人",
-    "notifications.ask_body": "可以选择是否向负责人发送通知。",
-    "notifications.without_notification": "不通知",
-    "notifications.with_notification": "通知",
     "todo.assignment_chain_trigger": "查看指派详情",
     "todo.assignment_chain_collapse": "收起指派详情",
     "todo.assignment_chain_title": "指派详情",
@@ -721,9 +726,12 @@ const sharedMessages: Record<
   },
   en: {
     "todo.permission_owner": "Owner",
-    "todo.project_members_intro": "Manage project access and member responsibilities.",
-    "todo.project_membership_inherit_hint": "Space members inherit project access. Space administrators always manage this project.",
-    "todo.project_membership_restricted_hint": "Only space administrators inherit access. Invite other members directly.",
+    "todo.project_members_intro":
+      "Manage project access and member responsibilities.",
+    "todo.project_membership_inherit_hint":
+      "Space members inherit project access. Space administrators always manage this project.",
+    "todo.project_membership_restricted_hint":
+      "Only space administrators inherit access. Invite other members directly.",
     "todo.project_membership_restricted_short": "Invite only",
     "todo.project_member_access": "Role and source",
     "todo.project_member_inherited_named": "Inherited from {{space}}",
@@ -732,8 +740,10 @@ const sharedMessages: Record<
     "todo.project_member_owner": "Local project owner",
     "todo.project_members_loading": "Loading members…",
     "todo.project_members_empty": "No project members yet",
-    "todo.project_member_inherited_hint": "Inherited roles are managed in the space and cannot be changed or removed here.",
-    "todo.project_member_capability_hint": "Responsibilities save when you leave the field and help AI choose the right assignee.",
+    "todo.project_member_inherited_hint":
+      "Inherited roles are managed in the space and cannot be changed or removed here.",
+    "todo.project_member_capability_hint":
+      "Responsibilities save when you leave the field and help AI choose the right assignee.",
     "todo.permission_admin": "Administrator",
     "todo.permission_member": "Member",
     "todo.permission_viewer": "Viewer",
@@ -752,6 +762,8 @@ const sharedMessages: Record<
     "todo.add_project_agent_description":
       "Adding an Agent shares it with the parent space for project use. Definitions and private credentials retain their own permissions.",
     "common.actions": "Actions",
+    "standIn.start_failed": "Issue created. Stand-in could not start:",
+    "standIn.retry": "Retry",
     "issue_creation.owner": "Assignee",
     "issue_creation.user": "People",
     "issue_creation.agent": "Agents",
@@ -904,6 +916,9 @@ const sharedMessages: Record<
     "todo.access_token": "Access token",
     "todo.saved": "Saved",
     "todo.save_assignment": "Save assignment",
+    "todo.save_and_notify": "Save and notify",
+    "todo.save_without_notification": "Save without notifying",
+    "todo.save_options": "Save options",
     "todo.token_required": "A token is required",
     "todo.board_layout": "Board layout",
     "todo.board_layout_description":
@@ -1102,11 +1117,6 @@ const sharedMessages: Record<
     "todo.draft_saved": "Draft saved",
     "todo.create_shortcut_hint": "ESC close · ⌘↵ create{{draft}}",
     "todo.save_shortcut_hint": "ESC close · ⌘↵ save",
-    "notifications.ask_title": "Notify the assignee?",
-    "notifications.ask_body":
-      "Choose whether to send the assignee a notification.",
-    "notifications.without_notification": "Do not notify",
-    "notifications.with_notification": "Notify",
     "todo.assignment_chain_trigger": "View assignment details",
     "todo.assignment_chain_collapse": "Hide assignment details",
     "todo.assignment_chain_title": "Assignment details",

@@ -31,6 +31,7 @@ export interface BufferedChatInputInsertion {
 interface BufferedChatInputProps extends ChatInputProps {
   inputRef?: Ref<ChatInputHandle>
   autoFocus?: boolean
+  clearOnSubmit?: boolean
   insertion?: BufferedChatInputInsertion | null
   replaceDraftKey?: number
   onDraftEdit?: (draft: string) => void
@@ -43,6 +44,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   onChange,
   onSubmit,
   autoFocus,
+  clearOnSubmit = true,
   insertion,
   replaceDraftKey,
   onDraftEdit,
@@ -331,7 +333,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
       const submittedScopeKey = scopeKey
       const submission =
         options === undefined ? onSubmit(submittedDraft) : onSubmit(submittedDraft, options)
-      if (submittedDraft.trim()) {
+      if (clearOnSubmit && submittedDraft.trim()) {
         draftRef.current = ''
         cancelPendingFlush()
         setDraftState({ scopeKey, sourceValue: '', draft: '' })
@@ -354,7 +356,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
         restoreSubmittedDraft()
       }, restoreSubmittedDraft)
     },
-    [cancelPendingFlush, onSubmit, publishDraft, scopeKey, setComposerValue]
+    [cancelPendingFlush, clearOnSubmit, onSubmit, publishDraft, scopeKey, setComposerValue]
   )
 
   return (
