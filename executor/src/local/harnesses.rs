@@ -455,16 +455,16 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn detects_an_explicit_executable_and_reads_its_version() {
-        use std::{fs, os::unix::fs::PermissionsExt};
+        use std::os::unix::fs::symlink;
 
         let root = tempfile::tempdir().unwrap();
         let executable = root.path().join("claude");
-        fs::write(
+        // Execute an immutable fixture so parallel subprocesses cannot retain a writable inode.
+        symlink(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/harness-version.sh"),
             &executable,
-            "#!/bin/sh\nprintf '%s\\n' '2.1.228 (Claude Code)'\n",
         )
         .unwrap();
-        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
 
         let descriptors = list_local_harnesses(ListLocalHarnessesRequest {
             executable_overrides: HashMap::from([(
