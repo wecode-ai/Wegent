@@ -899,8 +899,11 @@ jobs:
           E2E_SHARD_INDEX: ${{ matrix.shardIndex }}
           E2E_USE_ISOLATED_USERS: "false"
           CI: true
+          RUNNER_PROCESS_DIAGNOSTICS: "1"
+          RUNNER_RESOURCE_LOG_PATH: ci-diagnostics/shard-${{ matrix.shardIndex }}.jsonl
         run: |
-          pnpm exec playwright test --project=chromium --project=api \
+          node ../.github/scripts/run-with-resource-logging.mjs \
+            pnpm exec playwright test --project=chromium --project=api \
             --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
 
       - name: Run Provider-native E2E tests
@@ -1010,6 +1013,14 @@ jobs:
         with:
           name: playwright-traces-${{ matrix.shardIndex }}
           path: frontend/test-results/
+          retention-days: 7
+
+      - name: Upload process diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: e2e-process-diagnostics-${{ matrix.shardIndex }}
+          path: frontend/ci-diagnostics/
           retention-days: 7
 
       - name: Upload backend logs

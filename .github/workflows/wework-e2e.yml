@@ -385,6 +385,38 @@ jobs:
           pnpm --dir wework/electron install --frozen-lockfile
           pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
 
+      - name: Restore real object storage for Issue MCP E2E
+        if: contains(matrix.segments, 'collaboration-issue-mcp-comments')
+        id: issue-mcp-minio
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/wework-minio/bin
+          key: ${{ runner.os }}-minio-9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a-go-1.25.9-v1
+
+      - name: Set up Go for real object storage
+        if: contains(matrix.segments, 'collaboration-issue-mcp-comments') && steps.issue-mcp-minio.outputs.cache-hit != 'true'
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.9"
+          cache: false
+
+      - name: Build real object storage
+        if: contains(matrix.segments, 'collaboration-issue-mcp-comments') && steps.issue-mcp-minio.outputs.cache-hit != 'true'
+        run: GOBIN="$RUNNER_TEMP/wework-minio/bin" go install github.com/minio/minio@9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a
+
+      - name: Save real object storage for Issue MCP E2E
+        if: github.ref == 'refs/heads/main' && contains(matrix.segments, 'collaboration-issue-mcp-comments') && steps.issue-mcp-minio.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/wework-minio/bin
+          key: ${{ steps.issue-mcp-minio.outputs.cache-primary-key }}
+
+      - name: Enable real object storage
+        if: contains(matrix.segments, 'collaboration-issue-mcp-comments')
+        run: |
+          test -x "$RUNNER_TEMP/wework-minio/bin/minio"
+          echo "$RUNNER_TEMP/wework-minio/bin" >> "$GITHUB_PATH"
+
       - name: Run Wework desktop Core shard E2E
         env:
           CI: true
@@ -393,7 +425,7 @@ jobs:
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/resources/bin/wegent-executor
           WEWORK_E2E_CODEX_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
           WEWORK_E2E_ISOLATED_XVFB: "true"
-          WEWORK_E2E_PARALLEL_CHECKPOINTS: "2"
+          WEWORK_E2E_PARALLEL_CHECKPOINTS: "4"
           WEWORK_E2E_PARALLEL_SCOPE: core
           WEWORK_E2E_BACKEND_RS_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/backend-rs/wegent-backend-rs
           WEWORK_E2E_SCREENSHOTS: ${{ contains(matrix.segments, 'harness-apps') && 'harness-milestones' || 'all' }}
@@ -413,7 +445,8 @@ jobs:
             cp .github/scripts/run-wework-executor-with-gdb.sh "$WEWORK_E2E_EXECUTOR_BIN.gdb"
             export WEWORK_E2E_EXECUTOR_BIN="$WEWORK_E2E_EXECUTOR_BIN.gdb"
           fi
-          node wework/e2e/desktop/run-checkpoints.mjs \
+          node .github/scripts/run-with-resource-logging.mjs \
+            node wework/e2e/desktop/run-checkpoints.mjs \
             --parallel-segments "$WEWORK_E2E_SEGMENTS"
 
       - name: Prune transient Wework desktop E2E caches
@@ -837,7 +870,7 @@ jobs:
           gh --version
 
       - name: Prepare the pinned native DWS compiler for account authentication E2E
-        if: contains(matrix.segments, 'plugin-account-auth')
+        if: contains(matrix.segments, 'plugin-account-auth-dws')
         uses: actions/setup-go@v6
         with:
           go-version: "1.25.9"
@@ -852,7 +885,7 @@ jobs:
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/resources/bin/wegent-executor
           WEWORK_E2E_BACKEND_RS_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/backend-rs/wegent-backend-rs
           WEWORK_E2E_ISOLATED_XVFB: "true"
-          WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"
+          WEWORK_E2E_PARALLEL_CHECKPOINTS: "4"
           WEWORK_E2E_PARALLEL_SCOPE: cloud
           WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
           WEWORK_E2E_DWS_FIXTURE_DIR: ${{ github.workspace }}/.ci-artifacts/dws-account-auth
@@ -863,7 +896,7 @@ jobs:
           test -x "$WEWORK_E2E_CODEX_BIN"
 
           dws_pid=""
-          if [[ "$WEWORK_E2E_SEGMENTS" == *plugin-account-auth* ]]; then
+          if [[ "$WEWORK_E2E_SEGMENTS" == *plugin-account-auth-dws* ]]; then
             rm -rf "$WEWORK_E2E_DWS_FIXTURE_DIR"
             mkdir -p "$WEWORK_E2E_DWS_FIXTURE_DIR"
             (
@@ -885,7 +918,8 @@ jobs:
           fi
 
           status=0
-          node wework/e2e/desktop/run-checkpoints.mjs \
+          node .github/scripts/run-with-resource-logging.mjs \
+            node wework/e2e/desktop/run-checkpoints.mjs \
             --parallel-segments "$WEWORK_E2E_SEGMENTS" ||
             status=$?
           if [[ -n "$dws_pid" ]]; then
