@@ -179,7 +179,7 @@ jobs:
         working-directory: backend
         env:
           COLLABORATION_PERMISSION_MYSQL_TEST_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/plugin_auth_test
-        run: uv run pytest integration_checks/test_collaboration_permission_mysql.py integration_checks/test_rust_collaboration_permissions_mysql.py -n 0
+        run: uv run pytest integration_checks/test_collaboration_permission_mysql.py integration_checks/test_rust_collaboration_permissions_mysql.py integration_checks/test_rust_runtime_binding_identity_mysql.py -n 0
 
   test-executor:
     name: Test Executor
@@ -485,6 +485,12 @@ jobs:
 
       - name: Prepare Wework Electron dependencies
         run: pnpm --filter wework prepare:electron
+
+      - name: Run process explorer package tests
+        if: matrix.shard == 1
+        run: |
+          pnpm --filter @wegent/process-explorer typecheck
+          pnpm --filter @wegent/process-explorer test
 
       - name: Run Wework tests
         env:

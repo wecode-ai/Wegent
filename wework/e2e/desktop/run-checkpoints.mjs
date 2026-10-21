@@ -35,6 +35,9 @@ const CHECKPOINT_RESOURCES = new Map([
   ['collaboration-issue-task-discovery', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['collaboration-app-queue-identity', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['collaboration-local-agent-dispatch', ['collaboration-runtime', 'desktop-runtime-intensive']],
+  ['stand-in', ['collaboration-runtime', 'desktop-runtime-intensive']],
+  ['stand-in-cloud', ['collaboration-runtime', 'desktop-runtime-intensive']],
+  ['stand-in-workspace', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['collaboration-remote-agent-dispatch', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['collaboration-local-group-coordinate', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['collaboration-remote-group-coordinate', ['collaboration-runtime', 'desktop-runtime-intensive']],
@@ -48,6 +51,7 @@ const CHECKPOINT_RESOURCES = new Map([
     ['collaboration-runtime', 'desktop-runtime-intensive'],
   ],
   ['collaboration-issue-comment-notification', ['collaboration-runtime']],
+  ['collaboration-issue-comment-attachments', ['collaboration-runtime']],
   ['collaboration-issue-mcp-comments', ['collaboration-runtime']],
   ['collaboration-issue-attachment-preview', ['collaboration-runtime']],
   ['collaboration-issue-archive', ['collaboration-runtime', 'desktop-runtime-intensive']],
@@ -84,6 +88,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'model-overload-recovery': './scenarios/model-overload-recovery.scenario.mjs',
   'transcript-sync': './scenarios/transcript-sync.scenario.mjs',
   'running-conversation-history': './scenarios/running-conversation-history.scenario.mjs',
+  'latest-conversation-history': './scenarios/latest-conversation-history.scenario.mjs',
   'running-plan-history': './scenarios/running-plan-history.scenario.mjs',
   'running-sidebar-state': './scenarios/running-sidebar-state.scenario.mjs',
   'codex-notification-isolation': './scenarios/codex-notification-isolation.scenario.mjs',
@@ -112,6 +117,9 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-group-onboarding': './scenarios/collaboration-group-onboarding.scenario.mjs',
   'collaboration-local-agent-dispatch':
     './scenarios/collaboration-local-agent-dispatch.scenario.mjs',
+  'stand-in': './scenarios/stand-in.scenario.mjs',
+  'stand-in-cloud': './scenarios/stand-in-cloud.scenario.mjs',
+  'stand-in-workspace': './scenarios/stand-in-workspace.scenario.mjs',
   'collaboration-remote-agent-dispatch':
     './scenarios/collaboration-remote-agent-dispatch.scenario.mjs',
   'collaboration-local-group-coordinate':
@@ -125,6 +133,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
     './scenarios/collaboration-local-group-cancellation.scenario.mjs',
   'collaboration-issue-comment-mention':
     './scenarios/collaboration-issue-comment-mention.scenario.mjs',
+  'collaboration-issue-comment-attachments':
+    './scenarios/collaboration-issue-comment-attachments.scenario.mjs',
   'collaboration-issue-comment-notification':
     './scenarios/collaboration-issue-comment-notification.scenario.mjs',
   'collaboration-issue-mcp-comments': './scenarios/collaboration-issue-mcp-comments.scenario.mjs',
@@ -176,6 +186,9 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-first-use',
   'collaboration-group-onboarding',
   'collaboration-local-agent-dispatch',
+  'stand-in',
+  'stand-in-cloud',
+  'stand-in-workspace',
   'collaboration-remote-agent-dispatch',
   'collaboration-local-group-coordinate',
   'collaboration-remote-group-coordinate',
@@ -183,6 +196,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-human-round-resume',
   'collaboration-local-group-cancellation',
   'collaboration-issue-comment-mention',
+  'collaboration-issue-comment-attachments',
   'collaboration-issue-comment-notification',
   'collaboration-issue-mcp-comments',
   'collaboration-issue-attachment-preview',
@@ -197,6 +211,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'model-overload-recovery',
   'transcript-sync',
   'running-conversation-history',
+  'latest-conversation-history',
   'running-plan-history',
   'running-sidebar-state',
   'codex-notification-isolation',
@@ -354,13 +369,14 @@ function checkpointScenarioEnv(env, checkpoint) {
     nextEnv.TZ = 'Asia/Shanghai'
   }
   if (
+    checkpoint === 'application-menu' ||
     checkpoint === 'native-window-chrome' ||
     checkpoint === 'browser-multi-tabs' ||
     checkpoint === 'core-task-flow' ||
     checkpoint === 'project-assignment-notification'
   ) {
-    // Core task flow verifies the native drag-to-popout window. macOS background
-    // mode prohibits activation and hides the app when that window is presented.
+    // These checks present native auxiliary windows and must observe them as
+    // visible. macOS background mode prohibits activation and hides the app.
     // Assignment notification also verifies tag commits through native focus loss.
     nextEnv.WEWORK_E2E_BACKGROUND_WINDOW = '0'
   }

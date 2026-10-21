@@ -1,6 +1,6 @@
 use super::{json, TaskRuntimeError, Value};
 
-pub(super) fn apply_project_workspace(
+pub(crate) fn apply_project_workspace(
     payload: &mut Value,
     metadata: &Value,
     device_id: &str,

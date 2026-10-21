@@ -99,6 +99,7 @@ def test_rust_owned_route_is_not_registered_in_python(method: str, path: str) ->
         ("DELETE", "/v1/runtime-tasks/cloud-context"),
         ("GET", "/models/names"),
         ("POST", "/v1/cloud-projects"),
+        ("GET", "/v1/projects/{project_id}"),
         ("GET", "/wework-transcripts/{transcript_id}"),
         ("POST", "/v1/responses"),
         ("GET", "/connector-runtime/tools"),

@@ -84,7 +84,7 @@ import type {
   CollaborationStatus,
 } from "./types";
 import { markdownAttachmentRows } from "./issue-detail/attachmentMarkdown";
-import { TagEditor } from "./issue-detail/TagEditor";
+import { TagEditor, type TagEditorHandle } from "./issue-detail/TagEditor";
 import { IssuePropertiesPopover } from "./issue-detail/IssuePropertiesPopover";
 import { IssuePropertyRow as RailProp } from "./issue-detail/IssuePropertyRow";
 import { IssueAssignmentHistoryDisclosure } from "./issue-detail/IssueAssignmentHistoryDisclosure";
@@ -172,11 +172,6 @@ export interface SharedIssueDetailExtensions {
     onInlineAttachmentIdsChange(attachmentIds: string[]): void;
   }): ReactNode;
   renderActivity?(context: SharedIssueDetailExtensionContext): ReactNode;
-  renderHumanWork?(context: {
-    item: SharedEditorIssue;
-    onItemChange(item: SharedEditorIssue): void;
-    onCreateTask?: () => void;
-  }): ReactNode;
   renderAITableFields?(context: {
     item: SharedEditorIssue;
     project: SharedEditorProject;
@@ -471,35 +466,6 @@ function ScheduleRangeControl({
       </Popover.Portal>
     </Popover.Root>
   );
-}
-
-function sourceCellText(
-  cells: Record<string, unknown> | undefined,
-  keys: string[],
-): string | null {
-  if (!cells) return null;
-  for (const [key, value] of Object.entries(cells)) {
-    const normalized = key.toLowerCase();
-    if (!keys.some((candidate) => normalized.includes(candidate))) continue;
-    if (typeof value === "string" && value.trim()) return value.trim();
-    if (typeof value === "number") return String(value);
-    if (Array.isArray(value)) {
-      const text = value
-        .map((entry) =>
-          typeof entry === "string" || typeof entry === "number"
-            ? String(entry)
-            : "",
-        )
-        .filter(Boolean)
-        .join("、");
-      if (text) return text;
-    }
-  }
-  return null;
-}
-
-function tagByPattern(tags: string[], pattern: RegExp): string | null {
-  return tags.find((tag) => pattern.test(tag)) ?? null;
 }
 
 function AvatarMark({
@@ -944,29 +910,34 @@ export function TodoEditor(props: TodoEditorProps) {
   const detailScrollRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLTextAreaElement>(null);
   const descriptionCollapseRef = useRef<HTMLDivElement>(null);
+  const propertyTagsRef = useRef<TagEditorHandle>(null);
+  const pendingContentFocusRef = useRef<"title" | "description" | null>(null);
 
   const beginContentEditing = useCallback(
     (target: "title" | "description") => {
       if (!readFirst || !editable || editingContent) return;
+      pendingContentFocusRef.current = target;
       setDescriptionExpanded(true);
       setEditingContent(true);
-      window.requestAnimationFrame(() => {
-        if (target === "title") {
-          const titleElement = titleRef.current;
-          if (!titleElement) return;
-          titleElement.focus();
-          titleElement.setSelectionRange(title.length, title.length);
-          return;
-        }
-        const editorElement =
-          descriptionCollapseRef.current?.querySelector<HTMLElement>(
-            '[contenteditable="true"], textarea',
-          );
-        editorElement?.focus();
-      });
     },
-    [editable, editingContent, readFirst, title],
+    [editable, editingContent, readFirst],
   );
+
+  useLayoutEffect(() => {
+    const target = pendingContentFocusRef.current;
+    if (!editingContent || !target) return;
+    pendingContentFocusRef.current = null;
+    if (target === "title") {
+      const titleElement = titleRef.current;
+      if (!titleElement) return;
+      titleElement.focus();
+      titleElement.setSelectionRange(title.length, title.length);
+      return;
+    }
+    descriptionCollapseRef.current
+      ?.querySelector<HTMLElement>('[contenteditable="true"], textarea')
+      ?.focus();
+  }, [editingContent, title]);
 
   const editItemId = item?.id ?? null;
   const editProjectId = item?.cloud_project_id ?? null;
@@ -2110,11 +2081,7 @@ export function TodoEditor(props: TodoEditorProps) {
   // Property controls, shared by the single-column chip row and the
   // two-column Xiaohongshu-style rail cells. The overlay select/input keeps
   // every cell editable in place regardless of where it is rendered.
-  const statusSelect = item?.human_work ? (
-    <span data-testid="cloud-todo-detail-status" className="sr-only">
-      {statusLabel}
-    </span>
-  ) : (
+  const statusSelect = (
     <IssueDetailStatusSelect
       testId={
         isCreate ? "cloud-todo-create-status" : "cloud-todo-detail-status"
@@ -2377,28 +2344,13 @@ export function TodoEditor(props: TodoEditorProps) {
         : t(`todo.priority_${priority}`, priority)}
     </span>
   );
-  const iterationText =
-    item && editProps?.project
-      ? (sourceCellText(item.source_cells, ["iteration", "sprint", "迭代"]) ??
-        tagByPattern(tags, /^(sprint|迭代)[\s:_-]*/i) ??
-        null)
-      : null;
-  const requirementText =
-    item && editProps?.project
-      ? (sourceCellText(item.source_cells, ["requirement", "需求", "req"]) ??
-        tagByPattern(tags, /^(req|需求)[\s:_-]*/i) ??
-        item.source_record_id ??
-        null)
-      : null;
   const collaboratorPreview = collaborators.slice(0, 2);
   const statusChip = (
     <span className={propChipClass}>
       <Circle className="h-3.5 w-3.5 text-text-muted" />
       <span className="text-text-muted">{t("todo.issue_status", "状态")}</span>
       {statusValue}
-      {!item?.human_work ? (
-        <ChevronDown className="h-3 w-3 text-text-muted" />
-      ) : null}
+      <ChevronDown className="h-3 w-3 text-text-muted" />
       {statusSelect}
     </span>
   );
@@ -2541,12 +2493,6 @@ export function TodoEditor(props: TodoEditorProps) {
   // Assignee, priority, and due date stay editable in the primary header.
   const railProps = (
     <>
-      <RailProp label={t("todo.iteration", "迭代")}>
-        <span className={cn(!iterationText && "text-text-muted")}>
-          {iterationText?.replace(/^(sprint|迭代)[\s:_-]*/i, "") ||
-            t("todo.not_set", "未设置")}
-        </span>
-      </RailProp>
       <RailProp
         label={t("todo.collaborators", "参与者")}
         clickable={false}
@@ -2638,14 +2584,6 @@ export function TodoEditor(props: TodoEditorProps) {
           {collaboratorError}
         </p>
       ) : null}
-      <RailProp label={t("todo.requirement", "关联需求")}>
-        <span
-          className={cn(requirementText ? "text-blue-600" : "text-text-muted")}
-        >
-          {requirementText || t("todo.not_set", "未设置")}
-          {requirementText ? " ↗" : ""}
-        </span>
-      </RailProp>
     </>
   );
   const completedChildCount = childItems.filter(
@@ -2676,6 +2614,7 @@ export function TodoEditor(props: TodoEditorProps) {
           >
             <span className="task-detail-workspace-tags w-full">
               <TagEditor
+                ref={propertyTagsRef}
                 testIdPrefix="cloud-todo-detail-tag"
                 tags={tags}
                 onChange={setTags}
@@ -2795,6 +2734,7 @@ export function TodoEditor(props: TodoEditorProps) {
           {workspacePanel && item ? (
             <IssuePropertiesPopover
               label={t("todo.more_properties", "更多信息")}
+              onClose={() => propertyTagsRef.current?.commitDraft()}
             >
               {workspaceProperties}
               {editable && props.onDelete ? (
@@ -3185,13 +3125,6 @@ export function TodoEditor(props: TodoEditorProps) {
                   </div>
                 </div>
               ) : null}
-              {item && editProps
-                ? extensions?.renderHumanWork?.({
-                    item,
-                    onItemChange: editProps.onUpdated,
-                    onCreateTask: props.onCreateTask,
-                  })
-                : null}
               {saveError && (
                 <p className="mt-2 text-xs text-destructive">{saveError}</p>
               )}
@@ -3276,7 +3209,7 @@ export function TodoEditor(props: TodoEditorProps) {
                       >
                         <span className="task-detail-state-primary relative">
                           {statusValue}
-                          {editable && !item?.human_work ? (
+                          {editable ? (
                             <ChevronDown aria-hidden="true" size={13} />
                           ) : null}
                           {statusSelect}
@@ -4328,7 +4261,9 @@ export function TodoEditor(props: TodoEditorProps) {
           </>
         ) : null}
       </section>
-      {!workspacePanel && assignmentChainOpen && item?.assignment_history?.length
+      {!workspacePanel &&
+      assignmentChainOpen &&
+      item?.assignment_history?.length
         ? (extensions?.renderAssignmentHistory?.({
             anchor: assignmentChainTriggerRef.current,
             entries: item.assignment_history,

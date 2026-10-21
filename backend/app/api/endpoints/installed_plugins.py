@@ -41,7 +41,6 @@ from app.schemas.installed_plugin import (
     InstalledPluginUpdateRequest,
     PluginAccessResponse,
     PluginAccessUpdateRequest,
-    PluginAutoUpdateBatchResponse,
     PluginCopyResponse,
     PluginDeleteImpactResponse,
     PluginDeleteRequest,
@@ -172,22 +171,6 @@ def _ensure_submission_matches_task_token(
         submission_id=submission_id,
         task_id=auth.task_token.task_id,
         subtask_id=auth.task_token.subtask_id,
-    )
-
-
-# MIGRATION-CANDIDATE(api="POST /api/plugins/installed/auto-update-batch"): remove after final confirmation.
-# @router.post(
-#     "/installed/auto-update-batch",
-#     response_model=PluginAutoUpdateBatchResponse,
-# )
-def auto_update_installed_plugins(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-) -> PluginAutoUpdateBatchResponse:
-    """Advance one bounded batch of cloud marketplace plugin installations."""
-    return plugin_marketplace_service.auto_update_batch(
-        db,
-        user_id=current_user.id,
     )
 
 
@@ -345,8 +328,7 @@ async def upload_plugin(
         raise HTTPException(
             status_code=410,
             detail=(
-                "Direct cloud upload is retired; create locally or publish a "
-                "submission"
+                "Direct cloud upload is retired; create locally or publish a submission"
             ),
         )
     logger.info(

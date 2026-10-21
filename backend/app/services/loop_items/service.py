@@ -92,6 +92,7 @@ from app.services.loop_items.access import (
     related_item_filter,
     visible_item_filter,
 )
+from app.services.loop_items.task_bindings import active_task_binding_query
 from app.services.project_automation_domain import runnable_wegent_team
 from app.services.project_chat.service import ProjectChatService, bot_config
 from app.stores.tasks import task_store
@@ -303,9 +304,9 @@ class LoopItemService:
             db, item=item, execution=execution, user_id=user_id
         )
         values["approval"] = self._approval_view(execution)
-        from app.services.human_issue_work import human_issue_work_service
+        from app.services.collaboration_human_assignments import human_task_binding
 
-        values["human_work"] = human_issue_work_service.view(db, item, user_id)
+        values["human_task_binding"] = human_task_binding(db, item, user_id)
         if execution is not None:
             values["ai_state"] = execution_ai_state(
                 db,
@@ -1438,18 +1439,6 @@ class LoopItemService:
         commit: bool = True,
     ) -> LoopItem:
         item = self.get(db, item_id, user_id)
-        if "status" in values.model_fields_set and values.status != item.status:
-            from app.services.human_issue_work import human_issue_work_service
-
-            if human_issue_work_service.is_direct_human_assignment(db, item) or (
-                "assignee_user_id" in values.model_fields_set
-                and values.assignee_user_id is not None
-                and values.assignee_user_id != item.assignee_user_id
-            ):
-                raise HTTPException(
-                    status.HTTP_409_CONFLICT,
-                    "Use the human Issue work actions to change status",
-                )
         if "security_level" in values.model_fields_set:
             require_cloud_project_role(
                 db, int(item.cloud_project_id), user_id, BaseRole.Maintainer
@@ -1470,6 +1459,11 @@ class LoopItemService:
                 action=action,
                 issue_creator_user_id=item.created_by_user_id,
                 user_id=user_id,
+            )
+        if item.version != values.version:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                {"code": "version_conflict", "message": "TODO changed"},
             )
         updates = values.model_dump(
             exclude={
@@ -1758,9 +1752,6 @@ class LoopItemService:
                     trigger="manual",
                 )
             if assignment_created:
-                if target_type == "user" and item.assignee_user_id != int(target_id):
-                    metadata.pop("human_work", None)
-                    updates["metadata_json"] = metadata
                 if target_type in {"agent", "team"} and (
                     "status" not in values.model_fields_set
                 ):
@@ -1850,7 +1841,10 @@ class LoopItemService:
         )
         if updated != 1:
             db.rollback()
-            raise HTTPException(status.HTTP_409_CONFLICT, "TODO changed")
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                {"code": "version_conflict", "message": "TODO changed"},
+            )
         if status_changed:
             from app.services.workspace_cleanup_intents import sync_issue_status
 
@@ -2123,8 +2117,6 @@ class LoopItemService:
                 trigger=values.trigger,
                 comment_id=assignment_comment_id,
             )
-            if assignment_created and previous_assignee_user_id != target_user_id:
-                metadata.pop("human_work", None)
             assignee_updates = {
                 "assignee_user_id": target_user_id,
                 "assignee_agent_id": "",
@@ -2639,17 +2631,16 @@ class LoopItemService:
             values.wegent_team_id,
             values.model_selection is not None,
         )
-        active = (
-            db.query(LoopItemTaskBinding)
-            .filter(
-                LoopItemTaskBinding.task_user_id == user_id,
-                LoopItemTaskBinding.device_id == values.device_id,
-                LoopItemTaskBinding.task_id == values.task_id,
-                loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
-            )
-            .with_for_update()
-            .first()
-        )
+        bindings = active_task_binding_query(
+            db,
+            user_id=user_id,
+            device_id=values.device_id,
+            task_id=values.task_id,
+            lock=True,
+        ).all()
+        active = bindings[0] if bindings else None
+        for duplicate in bindings[1:]:
+            duplicate.unlinked_at = self._now()
         if active is not None:
             if active.loop_item_id == item_id:
                 if values.task_title and active.task_title != values.task_title:
@@ -2706,7 +2697,16 @@ class LoopItemService:
 
         require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Viewer)
         self._validate_backend_task(db, values.backend_task_id, user_id)
-        active = self._active_task_binding(db, values, user_id, lock=True)
+        bindings = active_task_binding_query(
+            db,
+            user_id=user_id,
+            device_id=values.device_id,
+            task_id=values.task_id,
+            lock=True,
+        ).all()
+        active = bindings[0] if bindings else None
+        for duplicate in bindings[1:]:
+            duplicate.unlinked_at = self._now()
         if active is not None:
             if (
                 str(active.cloud_project_id) == str(cloud_project_id)
@@ -2777,11 +2777,7 @@ class LoopItemService:
     def unbind_cloud_context(
         self, db: Session, values: LoopItemTaskBind, user_id: int
     ) -> None:
-        binding = self._active_task_binding(db, values, user_id, lock=True)
-        if binding is None:
-            return
-        binding.unlinked_at = self._now()
-        db.commit()
+        self._unbind_task_bindings(db, values, user_id)
 
     @staticmethod
     def _validate_backend_task(
@@ -2798,23 +2794,30 @@ class LoopItemService:
         if backend_task is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Task not found")
 
-    @staticmethod
-    def _active_task_binding(
+    def _unbind_task_bindings(
+        self,
         db: Session,
         values: LoopItemTaskBind,
         user_id: int,
         *,
-        lock: bool,
-    ) -> LoopItemTaskBinding | None:
-        query = db.query(LoopItemTaskBinding).filter(
-            LoopItemTaskBinding.task_user_id == user_id,
-            LoopItemTaskBinding.device_id == values.device_id,
-            LoopItemTaskBinding.task_id == values.task_id,
-            loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
+        item_id: str | None = None,
+    ) -> None:
+        query = active_task_binding_query(
+            db,
+            user_id=user_id,
+            device_id=values.device_id,
+            task_id=values.task_id,
+            lock=True,
         )
-        if lock:
-            query = query.with_for_update()
-        return query.first()
+        if item_id is not None:
+            query = query.filter(LoopItemTaskBinding.loop_item_id == item_id)
+        bindings = query.all()
+        if not bindings:
+            return
+        now = self._now()
+        for binding in bindings:
+            binding.unlinked_at = now
+        db.commit()
 
     def list_task_bindings(
         self, db: Session, item_id: str, user_id: int
@@ -2825,6 +2828,7 @@ class LoopItemService:
             .filter(
                 LoopItemTaskBinding.loop_item_id == item_id,
                 loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
+                loop_datetime_is_unset(LoopItemTaskBinding.deleted_at),
             )
             .order_by(
                 LoopItemTaskBinding.linked_at.desc(),
@@ -2850,6 +2854,7 @@ class LoopItemService:
                 LoopItemTaskBinding.cloud_project_id == project_id,
                 LoopItemTaskBinding.loop_item_id.in_(item_ids),
                 loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
+                loop_datetime_is_unset(LoopItemTaskBinding.deleted_at),
             )
             .order_by(
                 LoopItemTaskBinding.loop_item_id.asc(),
@@ -2867,22 +2872,7 @@ class LoopItemService:
         user_id: int,
     ) -> None:
         self.get(db, item_id, user_id)
-        binding = (
-            db.query(LoopItemTaskBinding)
-            .filter(
-                LoopItemTaskBinding.loop_item_id == item_id,
-                LoopItemTaskBinding.task_user_id == user_id,
-                LoopItemTaskBinding.device_id == values.device_id,
-                LoopItemTaskBinding.task_id == values.task_id,
-                loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
-            )
-            .with_for_update()
-            .first()
-        )
-        if binding is None:
-            return
-        binding.unlinked_at = self._now()
-        db.commit()
+        self._unbind_task_bindings(db, values, user_id, item_id=item_id)
 
     def find_for_runtime_task(
         self,
@@ -2891,16 +2881,9 @@ class LoopItemService:
         device_id: str,
         task_id: str,
     ) -> LoopItem:
-        binding = (
-            db.query(LoopItemTaskBinding)
-            .filter(
-                LoopItemTaskBinding.task_user_id == user_id,
-                LoopItemTaskBinding.device_id == device_id,
-                LoopItemTaskBinding.task_id == task_id,
-                loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
-            )
-            .first()
-        )
+        binding = active_task_binding_query(
+            db, user_id=user_id, device_id=device_id, task_id=task_id
+        ).first()
         if binding is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Linked TODO not found")
         return self.get(db, binding.loop_item_id, user_id)
@@ -2932,37 +2915,6 @@ class LoopItemService:
             .limit(limit)
             .all()
         )
-        from app.services.human_issue_work import human_issue_work_service
-
-        known_item_ids = {item.id for item in items}
-        review_candidates = (
-            db.query(LoopItem)
-            .filter(
-                LoopItem.cloud_project_id.in_(project_by_id),
-                LoopItem.status == "in_review",
-                LoopItem.metadata_json["human_work"]["state"].as_string()
-                == "submitted",
-                loop_datetime_is_unset(LoopItem.deleted_at),
-            )
-            .order_by(LoopItem.updated_at.desc(), LoopItem.id.desc())
-            .all()
-        )
-        for candidate in review_candidates:
-            if candidate.id in known_item_ids:
-                continue
-            metadata = (
-                candidate.metadata_json
-                if isinstance(candidate.metadata_json, dict)
-                else {}
-            )
-            work = metadata.get("human_work")
-            if not isinstance(work, dict) or work.get("state") != "submitted":
-                continue
-            view = human_issue_work_service.view(db, candidate, user_id)
-            if view is not None and view["can_review"]:
-                items.append(candidate)
-        items.sort(key=lambda item: (item.updated_at, item.id), reverse=True)
-        items = items[:limit]
         result: list[dict[str, object]] = []
         item_ids = [item.id for item in items]
         active_task_items = (
@@ -3098,7 +3050,6 @@ class LoopItemService:
                     ),
                     "content_revision": content_revision(metadata),
                     "is_unread": is_unread(metadata, user_id),
-                    "human_work": human_issue_work_service.view(db, item, user_id),
                     "execution_id": getattr(execution, "id", None),
                     "execution_state": (
                         execution_display_state(execution)

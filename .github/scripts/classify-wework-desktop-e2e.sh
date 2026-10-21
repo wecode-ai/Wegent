@@ -13,6 +13,9 @@ core_segments=(
   collaboration-worktree-policy
   collaboration-group-onboarding
   collaboration-local-agent-dispatch
+  stand-in
+  stand-in-workspace
+  stand-in-cloud
   collaboration-remote-agent-dispatch
   collaboration-local-group-coordinate
   collaboration-remote-group-coordinate
@@ -20,6 +23,7 @@ core_segments=(
   collaboration-human-round-resume
   collaboration-local-group-cancellation
   collaboration-issue-comment-mention
+  collaboration-issue-comment-attachments
   collaboration-issue-comment-notification
   collaboration-issue-mcp-comments
   collaboration-issue-attachment-preview
@@ -55,6 +59,7 @@ core_segments=(
   runtime-task-queue
   codex-invalid-launch-cwd
   running-conversation-history
+  latest-conversation-history
   running-plan-history
   running-sidebar-state
   codex-notification-isolation
@@ -177,16 +182,16 @@ core_shards=(
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,task-board-bulk-actions,change-request-status,git-commit-generation,context-compaction
   window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
-  project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,collaboration-local-group-coordinate,collaboration-human-round-resume
+  project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,stand-in,stand-in-workspace,collaboration-local-group-coordinate,collaboration-human-round-resume
   resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-task-discovery,collaboration-app-queue-identity,collaboration-issue-archive,collaboration-local-group-cancellation
   workspace-attachments,automation-lifecycle,drawing-attachment
-  project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention,collaboration-issue-attachment-preview
+  project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention,collaboration-issue-comment-attachments,collaboration-issue-attachment-preview
   rendering-extensions,transcript-sync,background-terminals
   runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
-  local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification,collaboration-issue-mcp-comments
+  local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification,collaboration-issue-mcp-comments,latest-conversation-history
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,model-overload-recovery
   model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy
-  collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details
+  collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details,stand-in-cloud
 )
 
 validate_core_shards() {
@@ -325,6 +330,9 @@ select_collaboration_dispatch_checkpoints() {
   select_target "core:collaboration-worktree-policy"
   select_target "core:project-assignment-notification"
   select_target "core:collaboration-local-agent-dispatch"
+  select_target "core:stand-in"
+  select_target "core:stand-in-workspace"
+  select_target "core:stand-in-cloud"
   select_target "core:collaboration-remote-agent-dispatch"
   select_target "core:collaboration-local-group-coordinate"
   select_target "core:collaboration-remote-group-coordinate"
@@ -695,6 +703,12 @@ classify_wework_path() {
       select_target "core:collaboration-group-onboarding"
       return
       ;;
+    wework/e2e/desktop/scenarios/stand-in.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-cloud.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-workspace.scenario.mjs|wework/src/features/todo/StandInComposer*|wework/src/features/todo/StandInSettingsPage*|wework/src/features/todo/useStandInModels*|wework/src/features/todo/IssueStandInControl*|wework/src/features/todo/StandInIcon.tsx|wework/src/features/todo/useStandInProjects.ts|wework/src/features/todo/useStandInProjects.test.tsx|wework/src/features/todo/StandInPopover.tsx|wework/src/features/todo/StandInPopover.test.tsx|wework/src/api/standIn.ts|wework/src/api/standIn.test.ts|executor/src/runtime_work/handler/stand_in.rs|executor/src/task_runtime/stand_in.rs)
+      select_target "core:stand-in"
+      select_target "core:stand-in-workspace"
+      select_target "core:stand-in-cloud"
+      return
+      ;;
     wework/e2e/desktop/scenarios/collaboration-local-agent-dispatch.scenario.mjs)
       select_target "core:collaboration-local-agent-dispatch"
       return
@@ -732,6 +746,10 @@ classify_wework_path() {
     # the Wework collaboration render path.
     wework/e2e/desktop/scenarios/collaboration-issue-comment-mention.scenario.mjs)
       select_target "core:collaboration-issue-comment-mention"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-issue-comment-attachments.scenario.mjs)
+      select_target "core:collaboration-issue-comment-attachments"
       return
       ;;
     wework/e2e/desktop/scenarios/collaboration-issue-comment-notification.scenario.mjs)
@@ -1071,6 +1089,11 @@ classify_wework_path() {
       return
       ;;
 
+    wework/e2e/desktop/scenarios/latest-conversation-history.scenario.mjs)
+      select_target "core:latest-conversation-history"
+      return
+      ;;
+
     # Assistant/tool rendering and desktop extension surfaces.
     wework/src/components/chat/blocks/* | \
       wework/src/components/chat/AttachmentImagePreview* | \
@@ -1295,6 +1318,7 @@ classify_path() {
       select_target "core:collaboration-group-onboarding"
       select_collaboration_dispatch_checkpoints
       select_target "core:collaboration-issue-comment-mention"
+      select_target "core:collaboration-issue-comment-attachments"
       select_target "core:collaboration-issue-comment-notification"
       select_target "core:collaboration-issue-attachment-preview"
       ;;

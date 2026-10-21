@@ -1,4 +1,11 @@
-import { useRef, useState, type KeyboardEvent } from "react";
+import {
+  forwardRef,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type ForwardedRef,
+  type KeyboardEvent,
+} from "react";
 import { X } from "lucide-react";
 function cn(...values: Array<string | false | null | undefined>): string {
   return values.filter(Boolean).join(" ");
@@ -16,17 +23,24 @@ interface TagEditorProps {
   testIdPrefix: string;
 }
 
+export interface TagEditorHandle {
+  commitDraft(): void;
+}
+
 // Inline chip-style tag editor: Enter or comma commits, Backspace on an empty
 // input removes the last tag, and existing tags are offered as suggestions.
-export function TagEditor({
-  tags,
-  onChange,
-  disabled = false,
-  placeholder = "添加标签",
-  removeLabel = (tag) => `移除标签 ${tag}`,
-  suggestions = [],
-  testIdPrefix,
-}: TagEditorProps) {
+function TagEditorField(
+  {
+    tags,
+    onChange,
+    disabled = false,
+    placeholder = "添加标签",
+    removeLabel = (tag) => `移除标签 ${tag}`,
+    suggestions = [],
+    testIdPrefix,
+  }: TagEditorProps,
+  ref: ForwardedRef<TagEditorHandle>,
+) {
   const [draft, setDraft] = useState("");
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
@@ -50,6 +64,8 @@ export function TagEditor({
     const tag = raw.trim().replace(/,/g, "");
     if (tag) add(tag);
   }
+
+  useImperativeHandle(ref, () => ({ commitDraft: () => commit(draft) }));
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.nativeEvent.isComposing || event.keyCode === 229) return;
@@ -162,3 +178,5 @@ export function TagEditor({
     </span>
   );
 }
+
+export const TagEditor = forwardRef(TagEditorField);

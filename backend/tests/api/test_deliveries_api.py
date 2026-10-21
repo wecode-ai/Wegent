@@ -942,7 +942,7 @@ def test_collaboration_human_delivery_closes_assignment_without_completing_issue
     assert item.current_delivery_id == delivery_id
 
 
-def test_direct_human_ai_delivery_stays_a_draft_until_person_submits(
+def test_direct_human_ai_delivery_does_not_change_issue_status(
     test_client: TestClient,
     test_token: str,
     test_db: Session,
@@ -999,7 +999,7 @@ def test_direct_human_ai_delivery_stays_a_draft_until_person_submits(
     assert item.completed_at is None
     assert item.current_delivery_id == delivery_id
     assert (item.metadata_json or {}).get("status_history", []) == initial_history
-    assert item.metadata_json["human_work"]["ai_draft_delivery_id"] == delivery_id
+    assert "human_work" not in item.metadata_json
 
 
 def test_delivery_response_reads_expired_orm_fields(

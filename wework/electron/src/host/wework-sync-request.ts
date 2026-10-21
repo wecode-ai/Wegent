@@ -1,5 +1,6 @@
 import { CloudCredentialError } from './cloud-credential-service.js'
 import { cloudFetch } from './cloud-http.js'
+import { createDownloadInactivityTimeout } from '../runtime/download-timeout.js'
 import { createWriteStream, openAsBlob } from 'node:fs'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
@@ -105,26 +106,6 @@ export function describeWeworkSyncRequestFailure(error: unknown): string {
   return `Wework cloud request failed${messages.length ? `: ${messages.join(': ')}` : ''}`
 }
 
-export function createWeworkSyncDownloadTimeout(timeoutMs = WEWORK_SYNC_REQUEST_TIMEOUT_MS): {
-  signal: AbortSignal
-  refresh: () => void
-  clear: () => void
-} {
-  const controller = new AbortController()
-  let timer: NodeJS.Timeout | null = null
-  const clear = () => {
-    if (timer) clearTimeout(timer)
-    timer = null
-  }
-  const refresh = () => {
-    clear()
-    timer = setTimeout(() => controller.abort(), timeoutMs)
-    timer.unref()
-  }
-  refresh()
-  return { signal: controller.signal, refresh, clear }
-}
-
 export function normalizeWeworkSyncApiBaseUrl(value: string): string {
   const url = new URL(value.trim())
   const secureTransport =
@@ -195,7 +176,9 @@ export async function requestWeworkSync(
 ): Promise<{ status: number; body: unknown }> {
   const apiBaseUrl = normalizeWeworkSyncApiBaseUrl(request.apiBaseUrl)
   const path = normalizeWeworkSyncPath(request.path)
-  const downloadTimeout = request.downloadPath ? createWeworkSyncDownloadTimeout() : null
+  const downloadTimeout = request.downloadPath
+    ? createDownloadInactivityTimeout(WEWORK_SYNC_REQUEST_TIMEOUT_MS)
+    : null
   try {
     let response: Response
     try {
