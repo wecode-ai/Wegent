@@ -178,15 +178,37 @@ describe('REST adapters', () => {
 
     expect(client.get).toHaveBeenCalledWith(
       '/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework',
-      undefined
+      { signal: expect.any(AbortSignal) }
     )
   })
 
-  test('forwards model request cancellation to the HTTP transport', async () => {
+  test('cancels a model subscriber without aborting a shared transport request', async () => {
     const client = mockClient()
+    const response = { data: [] }
+    let resolveModels!: (value: typeof response) => void
+    vi.mocked(client.get).mockImplementation(
+      () =>
+        new Promise(resolve => {
+          resolveModels = resolve
+        })
+    )
+    const api = createModelApi(client)
     const controller = new AbortController()
-    await createModelApi(client).listModels({ signal: controller.signal })
-    expect(client.get).toHaveBeenCalledWith(expect.any(String), { signal: controller.signal })
+    const cancelled = api.listModels({ signal: controller.signal })
+    const active = api.listModels()
+    const rejected = expect(cancelled).rejects.toMatchObject({ name: 'AbortError' })
+    await Promise.resolve()
+    controller.abort()
+    await rejected
+    expect(client.get).toHaveBeenCalledExactlyOnceWith(
+      '/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework',
+      { signal: expect.any(AbortSignal) }
+    )
+    expect(vi.mocked(client.get).mock.calls[0][1]?.signal?.aborted).toBe(false)
+    resolveModels(response)
+    await expect(active).resolves.toEqual(response)
+    await expect(api.listModels()).resolves.toEqual(response)
+    expect(client.get).toHaveBeenCalledOnce()
   })
 
   test('loads unified skills and team skills from existing backend endpoints', async () => {

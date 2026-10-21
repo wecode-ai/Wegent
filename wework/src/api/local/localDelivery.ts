@@ -1,4 +1,5 @@
 import type { RunnerSelection } from '@wegent/collaboration'
+import { createRequestCache } from '@wegent/chat-core/request-cache'
 import type {
   AgentExecutionPolicy,
   AgentModelPolicy,
@@ -562,7 +563,16 @@ export function createLocalProjectChatAgentApi(
   listRunnerEnvironments: (projectId?: string) => Promise<RunnerEnvironment[]> = async () => {
     throw new Error('Runner catalog is unavailable')
   },
-  listModels: () => Promise<UnifiedModel[]> = async () => []
+  listModels: () => Promise<UnifiedModel[]> = async () => [],
+  listEnvironments: (projectId?: string) => Promise<RunnerEnvironment[]> = async () => {
+    throw new Error('Runner inventory is unavailable')
+  },
+  listNativeModels: (
+    environment: RunnerEnvironment,
+    projectId?: string
+  ) => Promise<Pick<RunnerEnvironment, 'models' | 'catalog_error'>> = async () => {
+    throw new Error('Native model catalog is unavailable')
+  }
 ) {
   const createPayload = (input: LocalProjectChatAgentCreateInput) => ({
     name: input.name,
@@ -590,14 +600,30 @@ export function createLocalProjectChatAgentApi(
     plugins: input.plugins ?? [],
     created_by_user_id: currentUserId ?? null,
   })
+  const cache = createRequestCache()
   return {
     listRunnerEnvironments,
+    listEnvironments: (projectId?: string) =>
+      cache.get(`environments:${projectId ?? ''}`, () => listEnvironments(projectId)),
+    listNativeModels: (environment: RunnerEnvironment, projectId?: string) =>
+      cache.get(`native:${projectId ?? ''}:${environment.id}`, () =>
+        listNativeModels(environment, projectId)
+      ),
     listModels,
-    async list(projectId: string): Promise<LocalProjectChatAgent[]> {
-      const records = await request<LocalAgentRecord[]>('chat_agents.list', {
-        project_id: projectId,
-      })
-      return records.map(localAgent)
+    async list(
+      projectId: string,
+      options?: { forceRefresh?: boolean }
+    ): Promise<LocalProjectChatAgent[]> {
+      return cache.get(
+        `agents:${projectId}`,
+        async () => {
+          const records = await request<LocalAgentRecord[]>('chat_agents.list', {
+            project_id: projectId,
+          })
+          return records.map(localAgent)
+        },
+        options?.forceRefresh ? 0 : 60_000
+      )
     },
     async create(
       projectId: string,
@@ -607,6 +633,7 @@ export function createLocalProjectChatAgentApi(
         project_id: projectId,
         agent: createPayload(input),
       })
+      cache.invalidate('agents:')
       return localAgent(record)
     },
     async ensureDefault(
@@ -617,6 +644,7 @@ export function createLocalProjectChatAgentApi(
         project_id: projectId,
         agent: createPayload(input),
       })
+      cache.invalidate('agents:')
       return record ? localAgent(record) : null
     },
     async update(
@@ -681,6 +709,7 @@ export function createLocalProjectChatAgentApi(
           plugins: input.plugins,
         },
       })
+      cache.invalidate('agents:')
       return localAgent(record)
     },
     async archive(projectId: string, agentId: string, version: number) {
@@ -689,6 +718,7 @@ export function createLocalProjectChatAgentApi(
         agent_id: agentId,
         version,
       })
+      cache.invalidate('agents:')
       return { deleted: true }
     },
   }

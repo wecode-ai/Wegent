@@ -3,43 +3,9 @@ import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnect
 import { useCallback, useContext, useEffect, useLayoutEffect, useRef } from 'react'
 import { invokeDesktopHost, subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
-import { parseRuntimeTaskRoute } from '@/lib/navigation'
-import {
-  useWorkspaceTabs,
-  type WorkspaceTabsContextValue,
-} from '@/features/workspace-tabs/workspaceTabsContextValue'
-import type { WorkspaceTabKind } from '@/features/workspace-tabs/workspaceTabs'
+import { navigateWorkspaceTab } from '@/features/workspace-tabs/workspaceNavigation'
+import { useWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { parseWeworkScheme, weworkDestinationRoute } from './scheme'
-
-function commentTargetRoute(route: string): string {
-  const [path, search] = route.split('?')
-  const params = new URLSearchParams(search)
-  params.delete('focusRequest')
-  return `${path}${params.size ? `?${params}` : ''}`
-}
-
-function navigateWorkspaceTab(
-  workspaceTabs: WorkspaceTabsContextValue,
-  kind: WorkspaceTabKind,
-  contentRoute: string
-) {
-  const [pathname, search] = contentRoute.split('?')
-  const target = parseRuntimeTaskRoute(pathname, search)
-  const candidates = workspaceTabs.tabs.filter(tab => tab.kind === kind)
-  const matching = candidates.find(tab => {
-    if (!target) return commentTargetRoute(tab.contentRoute) === commentTargetRoute(contentRoute)
-    const [tabPath, tabSearch] = tab.contentRoute.split('?')
-    const task = parseRuntimeTaskRoute(tabPath, tabSearch)
-    return task?.deviceId === target.deviceId && task.taskId === target.taskId
-  })
-  const existing =
-    matching ??
-    candidates.find(tab => tab.id === workspaceTabs.activeTabId) ??
-    candidates.find(tab => tab.fixed) ??
-    candidates[0]
-  if (existing) workspaceTabs.selectTab(existing.id, { contentRoute })
-  else workspaceTabs.openTab(kind, { contentRoute })
-}
 
 export function WeworkSchemeBridge() {
   const tabs = useWorkspaceTabs()

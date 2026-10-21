@@ -8,7 +8,13 @@ import {
   type ReactNode,
 } from 'react'
 import { flushSync } from 'react-dom'
-import { isSettingsRoute, navigateTo, replaceTo } from '@/lib/navigation'
+import {
+  isSettingsRoute,
+  navigateTo,
+  replaceTo,
+  WORKSPACE_NAVIGATION_EVENT,
+  type WorkspaceNavigationDetail,
+} from '@/lib/navigation'
 import {
   closeWorkspaceTab,
   createWorkspaceTab,
@@ -36,6 +42,7 @@ import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environm
 import { WORKSPACE_TAB_RETURN_PREFIX } from './workspaceWindow'
 import { getAppPreferences } from '@/desktop/appPreferences'
 import { fixedWorkspaceTabPreference, saveFixedWorkspaceTabs } from './fixedWorkspaceTabs'
+import { navigateWorkspaceTab } from './workspaceNavigation'
 
 interface PersistedWorkspaceTabs {
   activeTabId: string
@@ -514,6 +521,16 @@ export function WorkspaceTabsProvider({
     },
     [labels]
   )
+
+  useEffect(() => {
+    const onNavigate = (event: Event) => {
+      const { kind, contentRoute } = (event as CustomEvent<WorkspaceNavigationDetail>).detail
+      event.preventDefault()
+      navigateWorkspaceTab({ ...stateRef.current, selectTab, openTab }, kind, contentRoute)
+    }
+    window.addEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
+    return () => window.removeEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
+  }, [selectTab, openTab])
 
   const closeTab = useCallback(
     (tabId: string) => {

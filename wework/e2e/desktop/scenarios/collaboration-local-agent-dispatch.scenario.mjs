@@ -69,6 +69,12 @@ async function addLocalAgent(control, timeoutMs) {
     existingAgents.includes('当前设备智能体'),
     'The current-device Agent must remain selectable'
   )
+  await control.command('fill', '[data-testid="project-agent-search"]', {
+    value: 'no-such-agent-e2e',
+  })
+  await control.command('waitFor', '[data-testid="project-agent-search-clear"]')
+  await control.command('click', '[data-testid="project-agent-search-clear"]')
+  await control.command('waitFor', '[data-testid="project-agent-wegent-team"]')
   await control.command('click', '[data-testid="project-agent-mode-create"]')
   await control.command('waitFor', '[data-testid="cloud-project-chat-agent-editor"]', { timeoutMs })
   await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
@@ -98,7 +104,7 @@ async function addLocalAgent(control, timeoutMs) {
 
 async function createIssueAndAssignAgent(control, agentId, timeoutMs) {
   await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
-  await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
+  await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
     value: ASSIGNED_TASK,
   })

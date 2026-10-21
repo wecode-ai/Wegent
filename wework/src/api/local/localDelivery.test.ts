@@ -459,6 +459,24 @@ describe('local delivery API', () => {
     expect(items[0].assignee_agent_id).toBe('LA-1')
   })
 
+  test('shares local agent reads and refreshes them after successful writes', async () => {
+    const request = vi.fn(async (method: string) =>
+      method === 'chat_agents.list' ? [] : { id: 'LA-1' }
+    )
+    const api = createLocalProjectChatAgentApi(request, 7)
+    await Promise.all([api.list('project-1'), api.list('project-1')])
+    await api.list('project-1')
+    expect(request).toHaveBeenCalledOnce()
+    await api.list('project-1', { forceRefresh: true })
+    expect(request).toHaveBeenCalledTimes(2)
+    await api.create('project-1', { name: 'Bot', runtime: 'codex' })
+    await api.list('project-1')
+    expect(request.mock.calls.filter(([method]) => method === 'chat_agents.list')).toHaveLength(3)
+    await api.archive('project-1', 'LA-1', 1)
+    await api.list('project-1')
+    expect(request.mock.calls.filter(([method]) => method === 'chat_agents.list')).toHaveLength(4)
+  })
+
   test('local robot create sends the creator id', async () => {
     const request = vi.fn(async () => ({ id: 'LA-1', created_by_user_id: 7 }))
     const api = createLocalProjectChatAgentApi(request, 7)

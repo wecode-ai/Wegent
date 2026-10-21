@@ -50,6 +50,11 @@ export class PluginFaultProxy {
     }
     const upstream = httpRequest(this.options(request), incoming => {
       entry.status = incoming.statusCode
+      if (fault === 'drop-response') {
+        incoming.resume()
+        response.destroy()
+        return
+      }
       if (fault === 'hold-response') {
         incoming.resume()
         incoming.once('end', () => {
