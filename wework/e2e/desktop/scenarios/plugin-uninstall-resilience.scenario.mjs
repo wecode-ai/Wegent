@@ -22,6 +22,7 @@ import {
 // Real MySQL, Python API, gateway, Executor and Electron. Only the network
 // transport is faulted; no plugin responses or cache state are synthesized.
 export async function createDesktopScenario({
+  checkpoint,
   captureScreenshot,
   resultDir,
   workbenchReadyTimeoutMs,
@@ -125,6 +126,8 @@ export async function createDesktopScenario({
   }
 
   async function heldCleanup(control, suffix) {
+    // Catalog refresh must preserve removals while another install remains active.
+    const retained = await fixture(`${suffix}-retained`)
     const item = await fixture(suffix)
     const remoteHome = dirname(cloud.remoteCodexHome)
     const installed = await until(
@@ -155,6 +158,7 @@ export async function createDesktopScenario({
     await assertInstallButton(control, item)
     await assertInventory(control, item.slug, false)
     assert.ok(await pathExists(runtimePath), 'Cleanup unexpectedly finished before fault release')
+    assert.ok(await accountPlugin(cloud, retained.slug), 'Unrelated active install disappeared')
     evidence.push({ case: suffix, accountResponseMs: elapsedMs })
     return { item, runtimePath, remoteHome }
   }
@@ -284,19 +288,28 @@ export async function createDesktopScenario({
         'Remote device bypassed fault proxy'
       )
       try {
-        await verifyPluginWriteCoordination({
-          cloud,
-          control,
-          apiProxy,
-          deviceProxy,
-          localDeviceId: local.device_id,
-          evidence,
-          timeoutMs: workbenchReadyTimeoutMs,
-        })
-        await lostResponse(control)
-        await unknownResult(control)
-        await restartRecovery(control)
-        await reinstallRace(control)
+        const checks = new Map([
+          [
+            'plugin-write-coordination',
+            control =>
+              verifyPluginWriteCoordination({
+                cloud,
+                control,
+                apiProxy,
+                deviceProxy,
+                localDeviceId: local.device_id,
+                evidence,
+                timeoutMs: workbenchReadyTimeoutMs,
+              }),
+          ],
+          ['plugin-uninstall-lost-response', lostResponse],
+          ['plugin-uninstall-unknown-result', unknownResult],
+          ['plugin-uninstall-restart-recovery', restartRecovery],
+          ['plugin-uninstall-reinstall-race', reinstallRace],
+        ])
+        const check = checks.get(checkpoint)
+        assert.ok(check, `Unknown uninstall checkpoint: ${checkpoint}`)
+        await check(control)
         await captureScreenshot(control, 'plugin-uninstall-resilience.png', 'body')
       } finally {
         apiProxy.rule = () => null

@@ -1,0 +1,43 @@
+.issue-save-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: stretch;
+}
+
+.issue-save-actions > button {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.issue-save-actions > div,
+.issue-save-actions > div > span {
+  display: flex;
+  align-items: stretch;
+}
+
+.issue-save-actions .issue-save-options {
+  display: flex;
+  min-width: 28px;
+  height: auto;
+  align-items: center;
+  justify-content: center;
+  border-left: 1px solid rgb(var(--color-bg-base) / 20%);
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  padding: 0 6px;
+}
+
+.issue-save-actions button:focus-visible {
+  outline: 2px solid rgb(var(--color-focus) / 70%);
+  outline-offset: 2px;
+}
+
+@media (max-width: 767px) {
+  .issue-save-actions button {
+    min-height: 44px;
+  }
+
+  .issue-save-actions .issue-save-options {
+    min-width: 44px;
+  }
+}
