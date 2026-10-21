@@ -783,7 +783,8 @@ classify_wework_path() {
       select_target "core:collaboration-local-agent-dispatch"
       return
       ;;
-    wework/e2e/desktop/scenarios/collaboration-remote-agent-dispatch.scenario.mjs)
+    wework/e2e/desktop/scenarios/collaboration-remote-agent-dispatch.scenario.mjs | \
+      wework/e2e/desktop/modules/dispatch-issue-boundary.mjs)
       select_target "core:collaboration-remote-agent-dispatch"
       return
       ;;
@@ -843,6 +844,21 @@ classify_wework_path() {
       wework/src/features/automations/* | \
       wework/src/types/automation.ts)
       select_target "core:automation-lifecycle"
+      return
+      ;;
+    wework/e2e/desktop/modules/mcp-tool-results.mjs)
+      select_target "core:collaboration-issue-mcp-comments"
+      select_target "core:collaboration-remote-agent-dispatch"
+      return
+      ;;
+    wework/e2e/desktop/modules/personal-issue-access.mjs | \
+      wework/e2e/desktop/modules/real-object-storage.mjs | \
+      wework/e2e/desktop/scenarios/collaboration-issue-mcp-comments.scenario.mjs)
+      select_target "core:collaboration-issue-mcp-comments"
+      return
+      ;;
+    wework/e2e/desktop/modules/new-task-board-association.mjs)
+      select_target "core:task-board-association"
       return
       ;;
     wework/src/api/deliveries* | \

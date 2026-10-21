@@ -1209,6 +1209,48 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/features/todo/TaskBoardAssociationDialog.tsx"
 
+assert_desktop_case "draft first-message regression is invoked by CI" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-7","name":"Core / shard 7","segments":"task-board-association"}]}
+wework_desktop_cloud_e2e=false
+wework_desktop_cloud_e2e_matrix={"include":[]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/modules/new-task-board-association.mjs"
+
+assert_desktop_case "personal Issue permission regression is invoked by CI" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-15","name":"Core / shard 15","segments":"collaboration-issue-mcp-comments"}]}
+wework_desktop_cloud_e2e=false
+wework_desktop_cloud_e2e_matrix={"include":[]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/modules/personal-issue-access.mjs" \
+  "wework/e2e/desktop/modules/real-object-storage.mjs" \
+  "wework/e2e/desktop/scenarios/collaboration-issue-mcp-comments.scenario.mjs"
+
+assert_desktop_case "dispatch Issue boundary regression is invoked by CI" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-18","name":"Core / shard 18","segments":"collaboration-remote-agent-dispatch"}]}
+wework_desktop_cloud_e2e=false
+wework_desktop_cloud_e2e_matrix={"include":[]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/modules/dispatch-issue-boundary.mjs"
+
+assert_desktop_case "MCP result parsing selects both real permission scenarios" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-15","name":"Core / shard 15","segments":"collaboration-issue-mcp-comments"},{"id":"core-18","name":"Core / shard 18","segments":"collaboration-remote-agent-dispatch"}]}
+wework_desktop_cloud_e2e=false
+wework_desktop_cloud_e2e_matrix={"include":[]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/modules/mcp-tool-results.mjs"
+
 assert_desktop_case "task board bulk action changes select dedicated coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
