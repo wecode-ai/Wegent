@@ -401,6 +401,41 @@ describe('WorkItemComposerGuide', () => {
     expect(onSelectProject).toHaveBeenCalledWith(local)
   })
 
+  test('moves the keyboard target when the current project changes storage with the same ID', async () => {
+    const user = userEvent.setup()
+    const local = { ...teamProject, id: 'shared', name: '周报', project_key: 'LOCAL' }
+    const cloud = { ...local, project_store: 'backend' as const, project_key: 'CLOUD' }
+    const onSelectProject = vi.fn()
+    const props = { projects: [local, cloud], onSelectProject }
+    const { rerender } = render(<WorkItemComposerGuide {...props} project={local} />)
+    await user.click(screen.getByTestId('project-space-context-pill'))
+
+    rerender(<WorkItemComposerGuide {...props} project={cloud} />)
+
+    const search = screen.getByTestId('project-space-picker-search')
+    await waitFor(() => expect(search).toHaveFocus())
+    const option = projectOptions().getByRole('option', { name: '周报 · 云端项目 · CLOUD' })
+    expect(search).toHaveAttribute('aria-activedescendant', option.id)
+    await user.keyboard('{Enter}')
+    expect(onSelectProject).toHaveBeenCalledExactlyOnceWith(cloud)
+  })
+
+  test('preserves search and keyboard navigation when the same project is refreshed', async () => {
+    const user = userEvent.setup()
+    const onSelectProject = vi.fn()
+    const props = { projects: pickerProjects, onSelectProject }
+    const { rerender } = render(<WorkItemComposerGuide {...props} project={pickerProjects[2]} />)
+    await user.click(screen.getByTestId('project-space-context-pill'))
+    await user.type(screen.getByTestId('project-space-picker-search'), '周报')
+    await user.keyboard('{ArrowDown}')
+
+    rerender(<WorkItemComposerGuide {...props} project={{ ...pickerProjects[2] }} />)
+
+    expect(screen.getByTestId('project-space-picker-search')).toHaveValue('周报')
+    await user.keyboard('{Enter}')
+    expect(onSelectProject).toHaveBeenCalledExactlyOnceWith(pickerProjects[1])
+  })
+
   test('supports keyboard selection, ignores IME confirmation and restores focus on Escape', async () => {
     const user = userEvent.setup()
     const onSelectProject = vi.fn()

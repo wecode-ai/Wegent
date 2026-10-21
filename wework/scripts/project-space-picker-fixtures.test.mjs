@@ -16,22 +16,26 @@ function fixtureBackend({ failCreateAt } = {}) {
     if (method === 'POST') {
       creates += 1
       if (creates === failCreateAt) throw preparationFailure
-      const resource = { ...JSON.parse(body), id: String(creates), version: 1, status: 'active' }
+      const resource = { status: 'active', ...JSON.parse(body), id: String(creates), version: 1 }
       const collection = path.endsWith('/workspaces')
         ? 'workspaces'
         : path.endsWith('/projects')
           ? 'cloud-projects'
-          : null
-      if (collection) resources.set(`/api/v1/${collection}/${resource.id}`, resource)
+          : 'loop-items'
+      assert.ok(collection !== 'loop-items' || path.endsWith('/loop-items'))
+      resources.set(`/api/v1/${collection}/${resource.id}`, resource)
       return resource
     }
     const resource = resources.get(path)
     assert.ok(resource, `Unknown fixture: ${path}`)
     if (method === 'DELETE') {
-      assert.equal(
-        new URLSearchParams(pathname.split('?')[1]).get('version'),
-        String(resource.version)
-      )
+      if (path.includes('/loop-items/')) assert.equal(resource.status, 'completed')
+      else {
+        assert.equal(
+          new URLSearchParams(pathname.split('?')[1]).get('version'),
+          String(resource.version)
+        )
+      }
       resource.status = 'archived'
       resource.version += 1
     }
@@ -75,6 +79,39 @@ test('attempts all fixtures, reports all failures, and allows failed cleanup to 
   for (const [path, resource] of backend.resources) {
     assert.equal(resource.status, [project, workspace].includes(path) ? 'active' : 'archived')
   }
+  backend.failures.clear()
+  await regression.cleanup()
+  assert.ok([...backend.resources.values()].every(resource => resource.status === 'archived'))
+  const calls = backend.calls.length
+  await regression.cleanup()
+  assert.equal(backend.calls.length, calls)
+})
+
+test('archives the Issue before its project and continues cleanup after an Issue failure', async () => {
+  const backend = fixtureBackend()
+  const regression = createProjectSpacePickerRegression({ request: backend.request })
+  await regression.prepare()
+  const issue = [...backend.resources.keys()].find(path => path.includes('/loop-items/'))
+  const failure = new Error('Issue archival failed')
+  backend.failures.set(`DELETE ${issue}`, failure)
+
+  await assert.rejects(regression.cleanup(), error => {
+    assert.ok(error instanceof AggregateError)
+    assert.deepEqual(error.errors, [failure])
+    return true
+  })
+
+  for (const [path, resource] of backend.resources) {
+    assert.equal(resource.status, path === issue ? 'completed' : 'archived')
+  }
+  const issueDelete = backend.calls.indexOf(`DELETE ${issue}`)
+  const projectDelete = backend.calls.findIndex(call =>
+    call.startsWith('DELETE /api/v1/cloud-projects/')
+  )
+  assert.ok(
+    issueDelete >= 0 && issueDelete < projectDelete,
+    'Issue cleanup must precede project cleanup'
+  )
   backend.failures.clear()
   await regression.cleanup()
   assert.ok([...backend.resources.values()].every(resource => resource.status === 'archived'))

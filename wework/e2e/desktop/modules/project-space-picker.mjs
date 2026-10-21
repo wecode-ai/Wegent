@@ -78,6 +78,7 @@ export function createProjectSpacePickerRegression({
       project2 = await createProject(spaceA, 'Project 2')
       targetIssue = await create(`/api/v1/cloud-projects/${sharedB.id}/loop-items`, {
         title: `${marker} selected Issue`,
+        status: 'completed',
       })
     },
 
@@ -201,6 +202,14 @@ export function createProjectSpacePickerRegression({
     async cleanup() {
       if (cleaned) return
       const failures = []
+      if (targetIssue) {
+        try {
+          await request(`/api/v1/loop-items/${targetIssue.id}`, { method: 'DELETE' })
+          targetIssue = null
+        } catch (error) {
+          failures.push(error)
+        }
+      }
       for (const [collection, values] of [
         ['cloud-projects', projects],
         ['workspaces', workspaces],

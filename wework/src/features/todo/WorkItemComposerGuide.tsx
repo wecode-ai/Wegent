@@ -1,7 +1,7 @@
 import { ArrowUpRight, ChevronDown, LayoutDashboard, ListChecks } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
-import type { ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
+import { projectKey, type ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RuntimeTaskAddress } from '@/types/api'
 import { ProjectSpacePickerMenu } from './ProjectSpacePickerMenu'
@@ -103,6 +103,7 @@ function WorkItemComposerGuideContent({
 
   const projectMenu = menuOpen ? (
     <ProjectSpacePickerMenu
+      key={project ? projectKey(project) : 'none'}
       projects={projects}
       project={project}
       triggerRef={triggerRef}
