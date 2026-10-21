@@ -7,7 +7,6 @@ import { Readable } from 'node:stream'
 import { PluginFaultProxy } from './plugin-fault-proxy.mjs'
 import { ensureExperimentalFeaturesEnabled } from './preferences-automation-flows.mjs'
 import {
-  ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
   CLOUD_DEVICE_ID,
   CLOUD_PUBLIC_MODEL_NAME,
@@ -346,9 +345,14 @@ export function createCloudHistorySearchVerification() {
           assert.equal(Number(await control.command('getElementCount', FIND_RETRY)), 0)
           sequence = await assertSelectedMatch(control, index, sequence)
         }
-        await control.command('nativePress', ACTIVE_COMPOSER_SELECTOR, {
-          key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
-        })
+        // Issue-owned executions have a read-only footer instead of a composer.
+        await control.command(
+          'nativePress',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="conversation-rename-button"]`,
+          {
+            key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
+          }
+        )
         const searchFault = arm('search', entry => entry.path === SEARCH_PATH)
         await control.command('fill', FIND, { value: QUERY })
         await control.command('waitFor', FIND_RETRY)

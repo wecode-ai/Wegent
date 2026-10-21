@@ -56,7 +56,8 @@ async function createCompletedTask(control, prompt, completion, timeoutMs) {
     timeoutMs,
   })
   await waitForBlankConversation(control, COMPOSER)
-  await selectE2EModel(control, DEFAULT_MODEL_ID, 'GPT-5.6 Luna')
+  // Task board behavior depends on model identity, not the catalog's display name.
+  await selectE2EModel(control, DEFAULT_MODEL_ID, [])
   await control.command('fill', COMPOSER, { value: prompt })
   await control.command('press', COMPOSER, { key: 'Enter' })
   await control.command('waitFor', `${ACTIVE_WORKBENCH} [data-testid="message-assistant"]`, {
@@ -84,7 +85,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       const prompt = TASK_PROMPTS.find(candidate => input.includes(candidate))
       const responseId = `task-board-bulk-actions-${Date.now()}`
       const events = [responseCreated(responseId)]
-      if (prompt) events.push(assistantMessage(TASK_COMPLETIONS.get(prompt)))
+      if (prompt) {
+        assert.equal(body.model, DEFAULT_MODEL_ID)
+        events.push(assistantMessage(TASK_COMPLETIONS.get(prompt)))
+      }
       events.push(responseCompleted(responseId))
       response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
       response.end(createSse(events))
