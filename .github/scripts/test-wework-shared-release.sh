@@ -37,6 +37,8 @@ jq -n --arg tag "$test_tag" '{
 }' > "$temp_dir/create.json"
 release_id="$(gh api "repos/$repo/releases" --method POST \
   --input "$temp_dir/create.json" --jq '.id')"
+printf 'Shared release preservation fixture\n' > "$temp_dir/existing-asset.txt"
+gh release upload "$test_tag" "$temp_dir/existing-asset.txt"
 
 snapshot() {
   gh api "repos/$repo/releases/$release_id" --jq \
