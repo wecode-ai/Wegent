@@ -322,14 +322,10 @@ export function createCloudHistorySearchVerification() {
           )
           evidence.push({ stage: selected.name, ...selected.request })
         }
-        let sequence =
-          JSON.parse(
-            await control.command('getConversationDiagnosticsSnapshot', 'body')
-          )?.events.at(-1)?.sequence ?? 0
         const assertRecovered = async (count, index) => {
           await control.command('waitFor', COUNT, { text: count })
           assert.equal(Number(await control.command('getElementCount', FIND_RETRY)), 0)
-          sequence = await waitForHighlightedHistoryMatch(control, prompt(index), sequence)
+          await waitForHighlightedHistoryMatch(control, prompt(index))
         }
         // Focus an existing pane button; Issue-owned executions have no composer.
         await control.command('nativePress', OLDER, {

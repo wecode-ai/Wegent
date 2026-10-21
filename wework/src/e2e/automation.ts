@@ -2396,6 +2396,31 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'getElementMetrics':
       return desktopControlElementMetrics(command.selector)
+    case 'getConversationSearchHighlightMetrics': {
+      const containers = findDesktopControlElements(command.selector).filter(
+        element => element.textContent?.trim() === command.text
+      )
+      const highlights = CSS.highlights as unknown as Iterable<[string, Iterable<Range>]>
+      const ranges = Array.from(highlights)
+        .filter(([name]) => /^conversation-search-.+-active$/.test(name))
+        .flatMap(([, highlight]) => Array.from(highlight))
+        .filter(
+          range =>
+            !range.collapsed &&
+            containers.some(
+              element =>
+                element.contains(range.startContainer) && element.contains(range.endContainer)
+            )
+        )
+        .map(range => {
+          const { top, bottom, left, right, width, height } = range.getBoundingClientRect()
+          return { text: range.toString(), top, bottom, left, right, width, height }
+        })
+      const query =
+        document.querySelector<HTMLInputElement>('[data-testid="conversation-find-input"]')
+          ?.value ?? ''
+      return JSON.stringify({ query, ranges })
+    }
     case 'startElementMetricsSampling': {
       const durationMs = Number(command.value)
       if (!Number.isFinite(durationMs) || durationMs <= 0) {

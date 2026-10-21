@@ -30,7 +30,6 @@ const FIND = '[data-testid="conversation-find-input"]'
 const COUNT =
   '[data-testid="conversation-find-bar"]:has([data-testid="conversation-find-input"]:not([aria-busy="true"])) [data-testid="conversation-find-count"]'
 const ANSWERS = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`
-let searchTargetSequence = 0
 
 export const terminalHistoryTurn = index => TURNS.find(turn => turn.index === index)
 
@@ -119,54 +118,49 @@ export function seedNativeTerminalHistory(sqliteHome, threadId) {
 export async function waitForHighlightedHistoryMatch(
   control,
   text,
-  afterSequence = 0,
   timeoutMs = DEFAULT_STEP_TIMEOUT_MS,
   content = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="user-message-content"]`
 ) {
   await control.command('waitFor', content, { text })
-  const marker = `history-search-current-target-${++searchTargetSequence}`
-  await control.command('markElementWithText', content, { text, value: marker })
-  const target = `${ACTIVE_WORKBENCH_SELECTOR} [data-e2e-anchor-id="${marker}"]`
   const scroller = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll"]`
   const deadline = Date.now() + timeoutMs
+  let actual
   do {
-    const [element] = JSON.parse(await control.command('getElementMetrics', target))
     const [viewport] = JSON.parse(await control.command('getElementMetrics', scroller))
-    const diagnostics = JSON.parse(
-      await control.command('getConversationDiagnosticsSnapshot', 'body')
+    actual = JSON.parse(
+      await control.command('getConversationSearchHighlightMetrics', content, { text })
     )
-    const highlights = diagnostics?.events.findLast(
-      event =>
-        event.sequence > afterSequence &&
-        event.name === 'search-highlights' &&
-        event.details.matchCount > 0
+    const query = actual.query.trim().toLowerCase()
+    if (
+      query &&
+      actual.ranges.some(
+        range =>
+          range.text.toLowerCase() === query &&
+          range.height > 0 &&
+          range.top >= viewport.top &&
+          range.bottom <= viewport.bottom
+      )
     )
-    if (element.top >= viewport.top && element.bottom <= viewport.bottom && highlights) {
-      return diagnostics.events.at(-1).sequence
-    }
+      return
     await new Promise(resolve => setTimeout(resolve, 100))
   } while (Date.now() < deadline)
-  throw new Error('The selected historical match was not highlighted and scrolled into view')
+  throw new Error(
+    `The selected historical match was not highlighted and scrolled into view: ${JSON.stringify(actual)}`
+  )
 }
 
 export async function verifyTerminalHistorySearch(control, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) {
-  let sequence =
-    JSON.parse(await control.command('getConversationDiagnosticsSnapshot', 'body'))?.events.at(-1)
-      ?.sequence ?? 0
   for (const { query, matches } of TERMINAL_HISTORY_SEARCH_CASES) {
+    // Typing preserves a legal result index; start each independent query at the first match.
+    await control.command('fill', FIND, { value: '' })
+    await control.command('waitFor', '[data-testid="conversation-find-next-button"][disabled]')
     await control.command('fill', FIND, { value: query })
     for (const [index, match] of matches.entries()) {
       if (index > 0) {
         await control.command('clickWhenEnabled', '[data-testid="conversation-find-next-button"]')
       }
       await control.command('waitFor', COUNT, { text: `${index + 1} / ${matches.length}` })
-      sequence = await waitForHighlightedHistoryMatch(
-        control,
-        match.text,
-        sequence,
-        timeoutMs,
-        ANSWERS
-      )
+      await waitForHighlightedHistoryMatch(control, match.text, timeoutMs, ANSWERS)
       assert.equal(
         Number(
           await control.command(

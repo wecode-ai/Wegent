@@ -310,10 +310,9 @@ async function verifyLegacySearch(control, timeoutMs) {
     0,
     'Legacy conversation search failed through the unsupported native search API'
   )
-  const sequence = await waitForHighlightedSearchTarget(
+  await waitForHighlightedSearchTarget(
     control,
     `${LEGACY_PROMPT} ${LEGACY_MATCH_TURNS[0]}`,
-    0,
     timeoutMs
   )
   await assertLegacyContext(control, LEGACY_MATCH_TURNS[0] - 1, LEGACY_MATCH_TURNS[0] + 1)
@@ -322,7 +321,6 @@ async function verifyLegacySearch(control, timeoutMs) {
   await waitForHighlightedSearchTarget(
     control,
     `${LEGACY_PROMPT} ${LEGACY_MATCH_TURNS[1]}`,
-    sequence,
     timeoutMs
   )
   await assertLegacyContext(control, LEGACY_MATCH_TURNS[1] - 1, LEGACY_MATCH_TURNS[1] + 1)

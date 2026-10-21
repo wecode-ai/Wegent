@@ -12,6 +12,81 @@ afterEach(() => {
 })
 
 describe('Electron desktop E2E automation', () => {
+  test('reads only active highlights in the exact requested message without diagnostic events', async () => {
+    const fixture = document.createElement('div')
+    fixture.innerHTML = `
+      <input data-testid="conversation-find-input" value="interrupted">
+      <p data-testid="highlight-message">interrupted</p>
+      <p data-testid="highlight-message">The operation was interrupted after useful output</p>
+    `
+    document.body.append(fixture)
+    const [message, partial] = fixture.querySelectorAll('p')
+    const range = document.createRange()
+    range.selectNodeContents(message)
+    const partialRange = document.createRange()
+    partialRange.selectNodeContents(partial)
+    const collapsed = document.createRange()
+    collapsed.setStart(message.firstChild!, 0)
+    Object.assign(range, {
+      getBoundingClientRect: () => ({
+        top: 100,
+        bottom: 120,
+        left: 20,
+        right: 90,
+        width: 70,
+        height: 20,
+      }),
+    })
+    const highlights = new Map([
+      ['conversation-search-fixture', new Set([partialRange])],
+      ['conversation-search-fixture-active', new Set([range, partialRange, collapsed])],
+      ['unrelated-active', new Set([range])],
+    ])
+    vi.stubGlobal('CSS', { highlights })
+    const results: Array<{ ok: boolean; value: string }> = []
+    let polls = 0
+    vi.stubGlobal('fetch', (url: string, options?: RequestInit) => {
+      if (url.includes('/commands?')) {
+        polls += 1
+        if (polls > 1) return new Promise<Response>(() => {})
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              id: 'read-highlight',
+              action: 'getConversationSearchHighlightMetrics',
+              selector: '[data-testid="highlight-message"]',
+              text: 'interrupted',
+            })
+          )
+        )
+      }
+      if (url.endsWith('/results')) results.push(JSON.parse(String(options?.body)))
+      return Promise.resolve(new Response('{}'))
+    })
+    void runDesktopControlClient('http://127.0.0.1:43111', 'main')
+    try {
+      await vi.waitFor(() => expect(results).toHaveLength(1))
+      expect(results[0].ok).toBe(true)
+      expect(JSON.parse(results[0].value)).toEqual({
+        query: 'interrupted',
+        ranges: [
+          {
+            text: 'interrupted',
+            top: 100,
+            bottom: 120,
+            left: 20,
+            right: 90,
+            width: 70,
+            height: 20,
+          },
+        ],
+      })
+      expect(highlights.get('conversation-search-fixture-active')?.size).toBe(3)
+    } finally {
+      fixture.remove()
+    }
+  })
+
   test('does not turn an acknowledgement failure into a failed UI action', async () => {
     const button = document.createElement('button')
     button.dataset.testid = 'control-acknowledgement-button'
