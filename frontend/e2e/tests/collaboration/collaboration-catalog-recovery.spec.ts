@@ -348,21 +348,15 @@ for (const outcome of ['success', 'failure'] as const) {
     const held = new Promise<void>(resolve => {
       release = resolve
     })
-    let notifyHeld!: () => void
-    const aFetched = new Promise<void>(resolve => {
-      notifyHeld = resolve
-    })
-    let notifyReleased!: () => void
-    const aReleased = new Promise<void>(resolve => {
-      notifyReleased = resolve
-    })
+    let aFetched = false
+    let aReleased = false
     const holdA = async (route: Route) => {
       const response = await route.fetch()
       expect(response.ok()).toBe(true)
-      notifyHeld()
+      aFetched = true
       await held
       await route.fulfill({ response })
-      notifyReleased()
+      aReleased = true
     }
     const aUrl = (url: URL) => url.pathname === groupPath(a.project.id)
     const bUrl = (url: URL) => url.pathname === groupPath(b.project.id)
@@ -401,12 +395,18 @@ for (const outcome of ['success', 'failure'] as const) {
         path => window.history.pushState(null, '', `${path}?view=manage&section=groups`),
         a.path
       )
-      await page.getByTestId('collaboration-project-settings-groups').click()
-      await aFetched
+      await expect
+        .poll(() => aFetched, {
+          timeout: 10_000,
+          message: 'A groups must reach the real API before switching',
+        })
+        .toBe(true)
       await expect(page.getByTestId('collaboration-project-settings-groups')).toHaveAttribute(
         'aria-current',
         'page'
       )
+      const settingsPanel = await page.getByTestId('project-settings-shell-content').elementHandle()
+      expect(settingsPanel).not.toBeNull()
       const bLoaded =
         outcome === 'success'
           ? page.waitForResponse(response => bUrl(new URL(response.url())) && response.ok())
@@ -432,7 +432,12 @@ for (const outcome of ['success', 'failure'] as const) {
         aUrl(new URL(request.url()))
       )
       release()
-      await aReleased
+      await expect
+        .poll(() => aReleased, {
+          timeout: 10_000,
+          message: 'The held A response must be delivered',
+        })
+        .toBe(true)
       await aFinished
       // Drain the delivered response through React before asserting it cannot win.
       await page.evaluate(
@@ -443,6 +448,7 @@ for (const outcome of ['success', 'failure'] as const) {
       )
       expect(await page.evaluate(() => performance.timeOrigin)).toBe(timeOrigin)
       expect(bMetadataReads).toEqual([])
+      expect(await settingsPanel!.evaluate(panel => panel.isConnected)).toBe(true)
       await expect(
         page.getByTestId(`collaboration-group-${createdGroups[a.project.id].id}`)
       ).toHaveCount(0)
