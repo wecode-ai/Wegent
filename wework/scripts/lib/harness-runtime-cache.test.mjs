@@ -45,6 +45,30 @@ describe('resolveHarnessRuntimeCachePaths', () => {
 })
 
 describe('resolveHarnessRuntimeAssetCacheEnvironment', () => {
+  test('parallel verification builds and development keep separate catalogs while sharing archives', () => {
+    const original = {
+      HOME: '/Users/test',
+      WEWORK_HARNESS_RUNTIME_CACHE_ROOT: '/development-cache',
+    }
+    const paths = ['/verify-build-a', '/verify-build-b'].map(root =>
+      resolveHarnessRuntimeCachePaths(
+        '/workspace/wework',
+        resolveHarnessRuntimeAssetCacheEnvironment(
+          original,
+          { platform: 'darwin' },
+          '/workspace/wework',
+          root
+        )
+      )
+    )
+    expect(paths[0].materializedRoot).not.toBe(paths[1].materializedRoot)
+    expect(paths[0].materializedRoot).not.toBe(
+      resolveHarnessRuntimeCachePaths('/workspace/wework', original).materializedRoot
+    )
+    expect(paths[0].assetDirectory).toBe(paths[1].assetDirectory)
+    expect(paths[0].prepareLockPath).toBe(paths[1].prepareLockPath)
+    expect(original.WEWORK_HARNESS_RUNTIME_CACHE_ROOT).toBe('/development-cache')
+  })
   test('translates the general cache override into an archive-only override', () => {
     const environment = resolveHarnessRuntimeAssetCacheEnvironment(
       {

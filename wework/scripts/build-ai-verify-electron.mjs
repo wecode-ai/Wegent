@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process'
-import { dirname, resolve } from 'node:path'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { isolateAiVerifyRuntimeEnvironment } from './ai-verify-environment.mjs'
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
@@ -11,13 +13,15 @@ const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const isolatedEnvironment = isolateAiVerifyRuntimeEnvironment(process.env)
+const buildCacheRoot = await mkdtemp(join(tmpdir(), 'wework-ai-verify-build-'))
 const prebuiltExecutorPath = process.env.WEWORK_E2E_PREBUILT_EXECUTOR_PATH?.trim()
 const prebuiltExecutorWaitSeconds = process.env.WEWORK_E2E_PREBUILT_EXECUTOR_WAIT_SECONDS?.trim()
 const buildEnvironment = {
   ...resolveHarnessRuntimeAssetCacheEnvironment(
     isolatedEnvironment,
     { platform: process.platform },
-    weworkDir
+    weworkDir,
+    buildCacheRoot
   ),
   VITE_WEWORK_E2E: 'true',
   VITE_WEWORK_RELEASE_CHANNEL: 'stable',
@@ -48,5 +52,9 @@ function run(command, args, environment = process.env) {
   })
 }
 
-await run(pnpmCommand, ['run', 'prepare:electron'])
-await run(pnpmCommand, ['--dir', 'electron', 'run', 'build:package'], buildEnvironment)
+try {
+  await run(pnpmCommand, ['run', 'prepare:electron'])
+  await run(pnpmCommand, ['--dir', 'electron', 'run', 'build:package'], buildEnvironment)
+} finally {
+  await rm(buildCacheRoot, { recursive: true, force: true })
+}
