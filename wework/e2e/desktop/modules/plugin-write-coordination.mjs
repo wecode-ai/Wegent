@@ -100,11 +100,12 @@ export async function verifyPluginWriteCoordination({
   )
   await control.command('waitFor', testId('install-plugin-dialog-confirm'))
   await control.command('clickWhenEnabled', testId('install-plugin-dialog-confirm'))
-  await until(
+  const retried = await until(
     () => accountPlugin(cloud, responsive.slug),
     Boolean,
     'A user retry did not install after the lease was released'
   )
+  responsive.installedId = Number(retried.metadata.labels.id)
   await until(
     () =>
       apiProxy.requests.filter(
@@ -134,6 +135,7 @@ export async function verifyPluginWriteCoordination({
       'Install never committed account membership before the device acknowledgement'
     )
     installedId = Number(committed.metadata.labels.id)
+    acknowledged.installedId = installedId
     await until(
       () => materializedPlugin(remoteHome, installedId),
       plugin => Boolean(plugin?.runtime?.codex_link),

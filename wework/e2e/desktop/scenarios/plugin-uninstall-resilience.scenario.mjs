@@ -258,7 +258,7 @@ export async function createDesktopScenario({
       await openPlugin(control, item)
       await control.command('click', testId('plugins-refresh-button'))
       await control.command('waitFor', testId(`plugin-marketplace-actions-${item.pluginId}`))
-      await assertSurfaces(control, item, true)
+      await assertSurfaces(control, { ...item, installedId: currentId }, true)
       assert.equal(deletes(item).length, 1)
     } finally {
       deviceProxy.pauseDeviceDelivery(false)
