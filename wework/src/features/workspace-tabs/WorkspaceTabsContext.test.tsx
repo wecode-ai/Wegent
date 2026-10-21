@@ -12,6 +12,8 @@ import {
 import { WORKSPACE_TABS_CLOSED_EVENT, type WorkspaceTabsClosedEventDetail } from './workspaceTabs'
 import { WORKSPACE_TAB_RETURN_PREFIX } from './workspaceWindow'
 import { defaultAppPreferences } from '@/desktop/appPreferences'
+import { installDshUiTestContributions } from '@/test/setup'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 
 const preferencesApi = vi.hoisted(() => ({ get: vi.fn(), update: vi.fn() }))
 vi.mock('@/desktop/appPreferences', async importOriginal => ({
@@ -200,6 +202,60 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(screen.getByTestId('active-tab-title')).toHaveTextContent('插件')
     expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/plugins')
   })
+
+  test.each([true, false])(
+    'opens plugin routes in a task tab and preserves collaboration (task exists: %s)',
+    async hasTask => {
+      await installDshUiTestContributions(
+        {
+          [WEWORK_DSH_SLOTS.route]: [
+            {
+              id: 'plugin-center.catalog',
+              path: '/plugins',
+              workspaceTabKind: 'task',
+              telemetryFeature: 'plugins',
+            },
+          ],
+        },
+        {}
+      )
+      window.history.replaceState({}, '', '/todo?projectId=one')
+      let current!: WorkspaceTabsContextValue
+      render(
+        <RoutingHarness
+          fixedTabs={
+            hasTask
+              ? undefined
+              : [
+                  {
+                    id: 'only-board',
+                    kind: 'board',
+                    title: '协作',
+                    contentRoute: '/todo?projectId=one',
+                    fixed: true,
+                  },
+                ]
+          }
+          onContextValue={value => {
+            current = value
+          }}
+        />
+      )
+      const board = { ...current.activeTab }
+      const expectedCount = current.tabs.length + (hasTask ? 0 : 1)
+      act(() => navigateTo('/plugins?plugin=tool'))
+      expect(current.activeTab.kind).toBe('task')
+      expect(current.activeTab.contentRoute).toBe('/plugins?plugin=tool')
+      expect(current.tabs.find(tab => tab.id === board.id)).toEqual(board)
+      expect(current.tabs).toHaveLength(expectedCount)
+      const taskId = current.activeTabId
+      act(() => current.selectTab(board.id))
+      act(() => navigateTo('/plugins?plugin=other'))
+      expect(current.activeTabId).toBe(taskId)
+      expect(current.tabs).toHaveLength(expectedCount)
+      expect(current.tabs.find(tab => tab.id === board.id)).toEqual(board)
+    }
+  )
 
   test('accepts a returned tab, preserves its identity and acknowledges after navigation', () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron', desktopWindowLabel: 'main' }
