@@ -23,6 +23,16 @@ fn decode_task_row(row: &MysqlRow) -> brz_mysql::MysqlResult<TaskRow> {
     Ok(TaskRow {
         id: row.get_required("id")?,
         user_id: row.get_required("user_id")?,
+        json: crate::json_compat::mysql_compressed_json(row, "json")?,
+        project_id: row.get("project_id")?,
+        client_origin: row.get("client_origin")?,
+    })
+}
+
+fn decode_plain_task_row(row: &MysqlRow) -> brz_mysql::MysqlResult<TaskRow> {
+    Ok(TaskRow {
+        id: row.get_required("id")?,
+        user_id: row.get_required("user_id")?,
         json: row.get_required::<brz_mysql::Json<Value>>("json")?.0,
         project_id: row.get("project_id")?,
         client_origin: row.get("client_origin")?,
@@ -78,7 +88,7 @@ pub(crate) async fn get_workspace_by_ref(
     let row = task_store
         .get_workspace_by_ref(owner_user_id, name, namespace)
         .await?;
-    row.as_ref().map(decode_task_row).transpose()
+    row.as_ref().map(decode_plain_task_row).transpose()
 }
 
 /// `ShardedTaskStore._is_json_deleted`.
@@ -194,9 +204,7 @@ fn decode_subtask_row(row: &MysqlRow) -> brz_mysql::MysqlResult<SubtaskRow> {
         parent_id: row.get("parent_id")?,
         status: row.get_required("status")?,
         progress: row.get_required("progress")?,
-        result: row
-            .get::<brz_mysql::Json<OpaqueJson>>("result")?
-            .map(|json| json.0),
+        result: crate::json_compat::optional_mysql_compressed_json(row, "result")?,
         error_message: row.get("error_message")?,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,

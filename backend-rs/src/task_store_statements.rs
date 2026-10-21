@@ -9,10 +9,10 @@
 pub const TASKS_TABLE: &str = "tasks";
 
 /// Full task projection used by detail reads that decode the document in
-/// Rust. Keeping the JSON column textual avoids the driver's native-JSON
-/// packet boundary while preserving the `json` label expected by decoders.
+/// Rust. Compressing the JSON column shrinks large, compressible values before
+/// transport while preserving the `json` label expected by the decoders.
 const TASK_DETAIL_PROJECTION: &str = "id, user_id, kind, name, namespace, \
-CAST(json AS CHAR CHARACTER SET utf8mb4) AS json, is_active, \
+COMPRESS(CAST(json AS CHAR CHARACTER SET utf8mb4)) AS json, is_active, \
 created_at, updated_at, project_id, client_origin, is_group_chat";
 
 /// `task_store.list_by_ids` (`db.query(TaskResource).filter(TaskResource.id.in_(task_ids))`):
@@ -414,9 +414,8 @@ pub fn task_by_id_owned_statement(table: &str) -> String {
 /// predicate, which the sharded store applies in Rust instead; `client_origin`
 /// adds the endpoint's optional origin filter.
 ///
-/// Project `json` as UTF-8 text so task documents larger than MySQL's 16 MiB
-/// protocol-packet boundary are decoded from the complete textual value rather
-/// than the native JSON result representation.
+/// Compress `json` so large task documents are transferred as a compact value
+/// and decoded after receipt.
 pub fn active_task_by_id_statement(
     table: &str,
     json_delete_filter: bool,
@@ -523,7 +522,8 @@ const SUBTASK_LABELED_COLUMNS: &str = "{t}.id AS {t}_id, {t}.user_id AS {t}_user
 pub fn subtasks_by_message_ordered_statement(table: &str) -> String {
     format!(
         "SELECT id, user_id, task_id, team_id, title, bot_ids, `role`, executor_namespace, executor_name, \
-        executor_deleted_at, prompt, message_id, parent_id, status, progress, result, error_message, \
+        executor_deleted_at, prompt, message_id, parent_id, status, progress, \
+        COMPRESS(CAST(result AS CHAR CHARACTER SET utf8mb4)) AS result, error_message, \
         created_at, updated_at, completed_at, sender_type, sender_user_id, reply_to_subtask_id \n    \
         FROM {table} \n    \
         WHERE task_id = ? \n    \

@@ -74,9 +74,7 @@ fn decode_task_row(row: &MysqlRow) -> brz_mysql::MysqlResult<TaskRow> {
     Ok(TaskRow {
         id: row.get_required("id")?,
         user_id: row.get_required("user_id")?,
-        json: row
-            .get_required::<brz_mysql::Json<JsonProjection<CrdDocument>>>("json")?
-            .0,
+        json: crate::json_compat::mysql_compressed_json(row, "json")?,
     })
 }
 

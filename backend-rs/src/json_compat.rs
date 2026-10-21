@@ -3,8 +3,57 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Typed projections and opaque values at legacy JSON boundaries.
+use std::io::Read;
+
 use brz_json::{OpaqueJson, raw_json, raw_null};
+use brz_mysql::{MysqlError, MysqlResult, MysqlRow};
+use serde::de::DeserializeOwned;
 use serde_json::Value;
+
+/// Decode the binary format returned by MySQL `COMPRESS()`.
+///
+/// MySQL prefixes the zlib stream with the uncompressed length as a
+/// little-endian `u32`. The detail queries use this representation to shrink
+/// compressible JSON values before the driver receives the result set.
+fn decode_mysql_compressed_json_bytes<T: DeserializeOwned>(payload: &[u8]) -> Option<T> {
+    let length = payload.get(..4)?;
+    let expected = u32::from_le_bytes(length.try_into().ok()?) as usize;
+    let mut decoded = Vec::with_capacity(expected);
+    flate2::read::ZlibDecoder::new(payload.get(4..)?)
+        .read_to_end(&mut decoded)
+        .ok()?;
+    if decoded.len() != expected {
+        return None;
+    }
+    brz_json::from_slice(&decoded).ok()
+}
+
+/// Decode one non-null JSON column projected through MySQL `COMPRESS()`.
+pub(crate) fn mysql_compressed_json<T: DeserializeOwned>(
+    row: &MysqlRow,
+    column: &str,
+) -> MysqlResult<T> {
+    let payload = row.get_required::<Vec<u8>>(column)?;
+    decode_mysql_compressed_json_bytes(&payload).ok_or_else(|| MysqlError::Decode {
+        column: column.to_owned(),
+        expected: "compressed JSON",
+    })
+}
+
+/// Decode one nullable JSON column projected through MySQL `COMPRESS()`.
+pub(crate) fn optional_mysql_compressed_json<T: DeserializeOwned>(
+    row: &MysqlRow,
+    column: &str,
+) -> MysqlResult<Option<T>> {
+    row.get::<Vec<u8>>(column)?
+        .map(|payload| {
+            decode_mysql_compressed_json_bytes(&payload).ok_or_else(|| MysqlError::Decode {
+                column: column.to_owned(),
+                expected: "compressed JSON",
+            })
+        })
+        .transpose()
+}
 
 /// Serialize an optional opaque value at a response boundary. Input null and
 /// a missing input key are both represented as `None`; the response model
@@ -235,6 +284,36 @@ fn python_string_repr(text: &str) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::io::Write;
+
+    fn mysql_compress(payload: &[u8]) -> Vec<u8> {
+        let mut compressed = (payload.len() as u32).to_le_bytes().to_vec();
+        let mut encoder =
+            flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(payload).unwrap();
+        compressed.extend(encoder.finish().unwrap());
+        compressed
+    }
+
+    #[test]
+    fn mysql_compressed_json_decodes_a_document_larger_than_one_packet() {
+        let value = json!({"result": "x".repeat(17 * 1024 * 1024)});
+        let payload = brz_json::to_vec(&value).unwrap();
+        let compressed = mysql_compress(&payload);
+
+        let decoded: Value = decode_mysql_compressed_json_bytes(&compressed).unwrap();
+
+        assert_eq!(decoded, value);
+        assert!(compressed.len() < 1024 * 1024);
+    }
+
+    #[test]
+    fn mysql_compressed_json_rejects_a_mismatched_length_header() {
+        let mut compressed = mysql_compress(br#"{"ok":true}"#);
+        compressed[..4].copy_from_slice(&99u32.to_le_bytes());
+
+        assert!(decode_mysql_compressed_json_bytes::<Value>(&compressed).is_none());
+    }
 
     #[test]
     fn python_truthiness_matches_the_source_coercions() {

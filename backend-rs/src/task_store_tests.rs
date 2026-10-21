@@ -89,22 +89,22 @@ fn ownerless_active_task_statement_covers_both_active_states() {
     assert!(!sql.contains("client_origin = ?"), "{sql}");
 }
 
-/// Large native JSON values can cross MySQL's 16 MiB protocol-packet boundary.
-/// The detail endpoints read the payload through a shared text projection on
+/// Large native JSON values can cross the driver's 16 MiB packet boundary.
+/// The detail endpoints read the payload through a shared compressed projection on
 /// both the initial active-task load and the later owner-scoped re-read. This
-/// keeps the full request path away from the native JSON representation while
-/// predicates still operate on the native JSON column.
+/// shrinks the transferred value while predicates still operate on the native
+/// JSON column.
 #[test]
-fn task_detail_statements_project_json_as_utf8mb4_text() {
+fn task_detail_statements_project_compressed_json() {
     let active_sql = active_task_by_id_statement(TASKS_TABLE, true, false);
     let owned_sql = task_by_id_owned_statement(TASKS_TABLE);
 
     assert!(
-        active_sql.contains("CAST(json AS CHAR CHARACTER SET utf8mb4) AS json"),
+        active_sql.contains("COMPRESS(CAST(json AS CHAR CHARACTER SET utf8mb4)) AS json"),
         "{active_sql}"
     );
     assert!(
-        owned_sql.contains("CAST(json AS CHAR CHARACTER SET utf8mb4) AS json"),
+        owned_sql.contains("COMPRESS(CAST(json AS CHAR CHARACTER SET utf8mb4)) AS json"),
         "{owned_sql}"
     );
     assert!(
@@ -114,7 +114,7 @@ fn task_detail_statements_project_json_as_utf8mb4_text() {
 }
 
 #[tokio::test]
-async fn task_detail_store_sequence_uses_the_text_projection_for_both_reads() {
+async fn task_detail_store_sequence_uses_the_compressed_projection_for_both_reads() {
     let mysql = crate::sql_test_support::KindQueryCapture::default();
     let store = DefaultTaskStore::new(mysql.clone());
 
@@ -133,11 +133,25 @@ async fn task_detail_store_sequence_uses_the_text_projection_for_both_reads() {
         assert!(
             query
                 .sql
-                .contains("CAST(json AS CHAR CHARACTER SET utf8mb4) AS json"),
+                .contains("COMPRESS(CAST(json AS CHAR CHARACTER SET utf8mb4)) AS json"),
             "{}",
             query.sql
         );
     }
+}
+
+#[test]
+fn ordered_subtask_detail_compresses_the_result_document() {
+    let sql = subtasks_by_message_ordered_statement("subtasks");
+
+    assert!(
+        sql.contains("COMPRESS(CAST(result AS CHAR CHARACTER SET utf8mb4)) AS result"),
+        "{sql}"
+    );
+    assert!(
+        sql.contains("ORDER BY message_id ASC, created_at ASC"),
+        "{sql}"
+    );
 }
 
 /// The update clears the project link and rewrites the JSON, ordered the way

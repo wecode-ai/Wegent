@@ -172,6 +172,14 @@ fn decode_task_row(row: &MysqlRow) -> MysqlResult<TaskRow> {
     })
 }
 
+fn decode_compressed_task_row(row: &MysqlRow) -> MysqlResult<TaskRow> {
+    Ok(TaskRow {
+        id: row.get_required("id")?,
+        user_id: row.get_required("user_id")?,
+        json: crate::json_compat::optional_mysql_compressed_json(row, "json")?.map(Json),
+    })
+}
+
 fn decode_subtask_row(row: &MysqlRow) -> MysqlResult<SubtaskRow> {
     Ok(SubtaskRow {
         id: row.get_required("id")?,
@@ -181,7 +189,7 @@ fn decode_subtask_row(row: &MysqlRow) -> MysqlResult<SubtaskRow> {
         prompt: row.get("prompt")?,
         message_id: row.get_required("message_id")?,
         status: row.get_required("status")?,
-        result: row.get("result")?,
+        result: crate::json_compat::optional_mysql_compressed_json(row, "result")?.map(Json),
         created_at: row.get("created_at")?,
         sender_user_id: row.get_required("sender_user_id")?,
     })
@@ -249,7 +257,7 @@ impl<'a> ChatHistoryRepository<'a> {
             .task_store
             .get_task_owned(task_id, owner_user_id)
             .await?;
-        row.as_ref().map(decode_task_row).transpose()
+        row.as_ref().map(decode_compressed_task_row).transpose()
     }
 
     /// `subtask_store.list_ids_by_task`: the task's subtask ids.

@@ -95,6 +95,23 @@ fn decode_task_row(row: &brz_mysql::MysqlRow) -> brz_mysql::MysqlResult<TaskRow>
         kind: row.get_required("kind")?,
         name: row.get_required("name")?,
         namespace: row.get_required("namespace")?,
+        json: Json(crate::json_compat::mysql_compressed_json(row, "json")?),
+        is_active: row.get_required("is_active")?,
+        created_at: row.get_required("created_at")?,
+        updated_at: row.get_required("updated_at")?,
+        project_id: row.get("project_id")?,
+        client_origin: row.get("client_origin")?,
+        is_group_chat: row.get_required("is_group_chat")?,
+    })
+}
+
+fn decode_plain_task_row(row: &brz_mysql::MysqlRow) -> brz_mysql::MysqlResult<TaskRow> {
+    Ok(TaskRow {
+        id: row.get_required("id")?,
+        user_id: row.get_required("user_id")?,
+        kind: row.get_required("kind")?,
+        name: row.get_required("name")?,
+        namespace: row.get_required("namespace")?,
         json: row.get_required("json")?,
         is_active: row.get_required("is_active")?,
         created_at: row.get_required("created_at")?,
@@ -347,7 +364,7 @@ where
             .map_err(internal_mysql)?;
         let _workspace = workspace_row
             .as_ref()
-            .map(decode_task_row)
+            .map(decode_plain_task_row)
             .transpose()
             .map_err(internal_mysql)?;
     }
@@ -627,7 +644,7 @@ fn decode_subtask_row(row: &brz_mysql::MysqlRow) -> brz_mysql::MysqlResult<Subta
         parent_id: row.get_required("parent_id")?,
         status: row.get_required("status")?,
         progress: row.get_required("progress")?,
-        result: row.get_required("result")?,
+        result: Json(crate::json_compat::mysql_compressed_json(row, "result")?),
         error_message: row.get("error_message")?,
         created_at: row.get_required("created_at")?,
         updated_at: row.get_required("updated_at")?,

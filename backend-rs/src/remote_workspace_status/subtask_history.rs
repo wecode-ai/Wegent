@@ -45,9 +45,7 @@ fn decode_subtask_row(row: &MysqlRow) -> brz_mysql::MysqlResult<SubtaskRow> {
         bot_ids: row
             .get_required::<brz_mysql::Json<JsonProjection<Vec<Option<i64>>>>>("bot_ids")?
             .0,
-        result: row
-            .get::<brz_mysql::Json<OpaqueJson>>("result")?
-            .map(|json| json.0),
+        result: crate::json_compat::optional_mysql_compressed_json(row, "result")?,
         executor_namespace: row.get("executor_namespace")?,
         executor_name: row.get("executor_name")?,
         executor_deleted_at: row.get_required("executor_deleted_at")?,
