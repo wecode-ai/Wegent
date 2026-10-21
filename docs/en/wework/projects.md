@@ -78,7 +78,7 @@ When two or more agents are selected, the creation flow recommends organizing th
 
 ### Use workspace agents in a project
 
-After creating or adding an agent under the workspace's **Settings → Collaboration participants → Agents**, a project administrator can select it under **Project settings → Agents → Add agent → Existing agents** and add it to the project. Catalogs show the display name entered during creation, or the resource name when no display name is set. Once added, the agent can be selected as an Issue owner or called through an @ mention.
+After creating or adding an agent under the workspace's **Settings → Collaboration participants → Agents**, a project administrator can select it directly under **Assignee → Workspace agents** when creating or editing an Issue. Saving the assignment enables the agent in the project before assigning and executing the task. Administrators can also enable it beforehand through **Project settings → Agents → Add agent → Existing agents**, so members can assign it or call it through an @ mention. Catalogs show the display name entered during creation, or the resource name when no display name is set.
 
 Local spaces save the agent configuration in the project, preserving its resource name, display name, model policy, and tools. In cloud spaces, workspace sharing grants use permission, while a project binding determines where the agent is available. Sharing does not grant permission to edit its source definition. Execution still requires an authorized project device and model.
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createResourceAgentBindingInput } from '@wegent/collaboration'
+import { createSharedIssueDetailPort } from '@wegent/collaboration'
 import { DEFAULT_WORK_ITEM_PROJECT_ID } from '@/api/deliveries'
 import { createLocalProjectChatAgentApi } from '@/api/local/localDelivery'
 import type {
@@ -54,7 +54,18 @@ describe('local workspace Agent reuse', () => {
         location: 'local',
         status: 'available',
       })
-      await api.agents.create('local-project', createResourceAgentBindingInput(selected))
+      const port = createSharedIssueDetailPort(api, async () => undefined)
+      const project = {
+        id: 'local-project',
+        workspace_id: LOCAL_WORKSPACE_ID,
+        project_store: 'local' as const,
+      }
+      expect(await port.agentResources!.list(project)).toContainEqual(selected)
+      expect(await port.agentResources!.bind(project, selected.id)).toBe('LA-project')
+      expect(await port.agentResources!.bind(project, selected.id)).toBe('LA-project')
+      expect(request.mock.calls.filter(([method]) => method === 'chat_agents.create')).toHaveLength(
+        1
+      )
 
       expect(request).toHaveBeenCalledWith('chat_agents.create', {
         project_id: 'local-project',

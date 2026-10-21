@@ -9,8 +9,13 @@ import type {
   CollaborationGroup,
   CollaborationIssue,
   CollaborationMember,
+  CollaborationOwnedAgent,
 } from "../types";
 import type { ExecutionDisplayStatus } from "./executionStatus";
+import {
+  createIssueAssigneeResources,
+  type IssueAssigneeResourceProject,
+} from "./issueAssigneeResources";
 
 export interface SharedIssueDetailTaskBinding {
   id: string;
@@ -167,6 +172,15 @@ export interface SharedIssueDetailPort {
   agents: {
     list(projectId: string): Promise<SharedIssueDetailAgent[]>;
   };
+  agentResources?: {
+    list(
+      project: IssueAssigneeResourceProject,
+    ): Promise<CollaborationOwnedAgent[]>;
+    bind(
+      project: IssueAssigneeResourceProject,
+      resourceId: string,
+    ): Promise<string>;
+  };
   collaborationGroups: {
     list(projectId: string): Promise<CollaborationGroup[]>;
   };
@@ -188,7 +202,9 @@ export type SharedIssueDetailWorkspaceApi = Omit<
   >,
   never
 > & {
-  agents: Pick<SharedWorkspaceApi["agents"], "list">;
+  agents: Pick<SharedWorkspaceApi["agents"], "list"> &
+    Partial<Pick<SharedWorkspaceApi["agents"], "create">>;
+  workspaces?: SharedWorkspaceApi["workspaces"];
 };
 
 export function toSharedIssueDetailTaskBinding(
@@ -375,12 +391,13 @@ export function createSharedIssueDetailPort(
           .then((items) => items.map(toSharedIssueDetailTaskBinding)),
     },
     members: api.members,
+    agentResources: createIssueAssigneeResources(api),
     agents: {
       list: (projectId) =>
         api.agents.list(projectId).then((agents) =>
           agents.map((agent) => ({
             id: agent.id,
-            name: agent.name,
+            name: String(agent.displayName || agent.display_name || agent.name),
             status: typeof agent.status === "string" ? agent.status : undefined,
             ...((agent.team_id ?? agent.wegentTeamId ?? agent.wegent_team_id) ==
             null

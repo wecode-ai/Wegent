@@ -14,13 +14,14 @@ import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
   selectProjectRunnerModel,
-  selectCollaborationIssueAgent,
   waitForTestIdByText,
   inCollaborationSidebar,
   openProjectAgentCreator,
-  selectWhenOptionAvailable,
 } from '../modules/workspace-flows.mjs'
-import { openWorkspaceAgentConfiguration } from '../modules/workspace-agent-setup.mjs'
+import {
+  openWorkspaceAgentConfiguration,
+  selectWorkspaceIssueAgent,
+} from '../modules/workspace-agent-setup.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const PROJECT = `本地单智能体调度-${process.pid}`
@@ -96,34 +97,7 @@ async function addLocalAgent(control, timeoutMs) {
     'clickWhenEnabled',
     inCollaborationSidebar(`[data-testid="${projectNavId}"]`, CONTENT)
   )
-  await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-tab-manage"]'))
-  await control.command(
-    'clickWhenEnabled',
-    scoped('[data-testid="collaboration-project-settings-agents"]')
-  )
-  await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'))
-  const select = '[data-testid="project-agent-wegent-team"]'
-  const sourceId = sourceRow.slice('project-agent-row-'.length)
-  await control.command('waitFor', `${select} option[value="${sourceId}"]`, {
-    text: AGENT,
-    timeoutMs,
-  })
-  const existingAgents = await control.command('getText', select)
-  assert.ok(
-    existingAgents.includes('当前设备智能体'),
-    'The current-device Agent must remain selectable'
-  )
-  await selectWhenOptionAvailable(control, select, sourceId, timeoutMs)
-  await control.command('clickWhenEnabled', '[data-testid="project-agent-wegent-create"]')
-  const agentRow = await waitForTestIdByText(
-    control,
-    scoped('[data-testid="project-agent-list"]'),
-    'project-agent-row-',
-    AGENT,
-    timeoutMs
-  )
-  assert.notEqual(agentRow, sourceRow, 'The project must persist its own Agent binding')
-  return agentRow.slice('project-agent-row-'.length)
+  return sourceRow.slice('project-agent-row-'.length)
 }
 
 async function createIssueAndAssignAgent(control, agentId, timeoutMs) {
@@ -142,7 +116,7 @@ async function createIssueAndAssignAgent(control, agentId, timeoutMs) {
     text: ASSIGNED_TASK,
     timeoutMs,
   })
-  await selectCollaborationIssueAgent(
+  await selectWorkspaceIssueAgent(
     control,
     scoped('[data-testid="cloud-todo-detail-assignee"]'),
     agentId,
@@ -171,6 +145,24 @@ async function createIssueAndAssignAgent(control, agentId, timeoutMs) {
     text: AGENT,
     timeoutMs,
   })
+  await control.command(
+    'waitFor',
+    scoped('[data-testid="cloud-todo-detail-assignee"][data-value^="agent:"]'),
+    {
+      visible: true,
+      timeoutMs,
+    }
+  )
+  const target = await control.command(
+    'getAttribute',
+    scoped('[data-testid="cloud-todo-detail-assignee"]'),
+    { value: 'data-value' }
+  )
+  assert.notEqual(
+    target,
+    `agent:${agentId}`,
+    'Assignment must persist a project binding distinct from the workspace source'
+  )
 }
 
 async function waitForIssueStatus(control, expected, timeoutMs) {

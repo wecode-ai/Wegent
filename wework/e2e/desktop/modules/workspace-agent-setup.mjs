@@ -5,7 +5,6 @@ import {
   openDirectProjectCreation,
   openProjectAgentCreator,
   selectCloudAgentModel,
-  selectWhenOptionAvailable,
 } from './workspace-flows.mjs'
 
 export async function waitForValue(load, predicate, message, timeoutMs) {
@@ -133,27 +132,48 @@ export async function createSharedWorkspaceAgent(
     'clickWhenEnabled',
     sidebar(`[data-testid="collaboration-workspace-project-${project.id}"]`)
   )
-  await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-tab-manage"]'))
-  await control.command(
-    'clickWhenEnabled',
-    scoped('[data-testid="collaboration-project-settings-agents"]')
-  )
-  await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
+  return source
+}
+
+export async function selectWorkspaceIssueAgent(control, triggerSelector, sourceId, timeoutMs) {
+  await control.command('click', triggerSelector)
+  const option = `[data-testid="cloud-todo-detail-assignee-option-resource:${sourceId}"]`
+  await control.command('waitFor', option, { visible: true, timeoutMs })
+  await control.command('click', option)
+  await control.command('waitFor', `${triggerSelector}[data-value="resource:${sourceId}"]`, {
+    visible: true,
     timeoutMs,
   })
-  const select = '[data-testid="project-agent-wegent-team"]'
-  await control.command('waitFor', `${select} option[value="${source.team_id}"]`, {
-    text: name,
+}
+
+export async function createAndAssignCloudIssue(
+  control,
+  request,
+  { contentSelector, projectId, title, description, assigneeTarget, timeoutMs }
+) {
+  const scoped = selector => `${contentSelector} ${selector}`
+  await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+  await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
+  await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), { value: title })
+  await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
+    value: description,
+  })
+  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-create-confirm"]'), {
     timeoutMs,
   })
-  await selectWhenOptionAvailable(control, select, String(source.team_id), timeoutMs)
-  await control.command('clickWhenEnabled', '[data-testid="project-agent-wegent-create"]', {
-    timeoutMs,
-  })
-  return waitForValue(
-    () => request(`/api/v1/cloud-projects/${project.id}/chat-agents`),
-    agents => agents.find(agent => agent.name === name && agent.wegentTeamId === source.team_id),
-    'The workspace Agent was not bound to the project by its display name and Team identity',
+  const issue = await waitForValue(
+    async () => (await request(`/api/v1/cloud-projects/${projectId}/loop-items`)).items,
+    items => items.find(item => item.title === title),
+    'Wework UI did not persist the Issue',
     timeoutMs
   )
+  const trigger = scoped('[data-testid="cloud-todo-detail-assignee"]')
+  await control.command('click', trigger)
+  const option = `[data-testid="cloud-todo-detail-assignee-option-${assigneeTarget}"]`
+  await control.command('waitFor', option, { visible: true, timeoutMs })
+  await control.command('click', option)
+  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
+    timeoutMs,
+  })
+  return issue
 }
