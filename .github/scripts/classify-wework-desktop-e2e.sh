@@ -774,6 +774,11 @@ classify_wework_path() {
       select_target "core:stand-in-cloud"
       return
       ;;
+    wework/e2e/desktop/modules/workspace-agent-setup.mjs)
+      select_target "core:collaboration-local-agent-dispatch"
+      select_target "core:collaboration-remote-agent-dispatch"
+      return
+      ;;
     wework/e2e/desktop/scenarios/collaboration-local-agent-dispatch.scenario.mjs)
       select_target "core:collaboration-local-agent-dispatch"
       return

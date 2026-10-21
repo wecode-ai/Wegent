@@ -8,7 +8,7 @@ import {
   createSharedWorkspaceAgent,
   createWorkspaceAndProject,
   waitForValue,
-} from '../modules/remote-agent-setup.mjs'
+} from '../modules/workspace-agent-setup.mjs'
 import {
   assistantMessage,
   codexRequestKind,

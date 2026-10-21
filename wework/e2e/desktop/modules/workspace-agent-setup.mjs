@@ -74,16 +74,10 @@ export async function createWorkspaceAndProject(
   return project
 }
 
-export async function createSharedWorkspaceAgent(
-  control,
-  request,
-  { contentSelector, project, name, model, environmentId, systemPrompt, timeoutMs }
-) {
+export async function openWorkspaceAgentConfiguration(control, contentSelector, workspaceId) {
   const scoped = selector => `${contentSelector} ${selector}`
   const sidebar = selector => inCollaborationSidebar(selector, contentSelector)
-  const workspaceTree = sidebar(
-    `[data-testid="collaboration-workspace-tree-${project.workspace_id}"]`
-  )
+  const workspaceTree = sidebar(`[data-testid="collaboration-workspace-tree-${workspaceId}"]`)
   await control.command('hover', `${workspaceTree} .collaboration-workspace-row`)
   await control.command(
     'clickWhenEnabled',
@@ -94,6 +88,16 @@ export async function createSharedWorkspaceAgent(
     'clickWhenEnabled',
     scoped('[data-testid="collaboration-workspace-nav-participants"]')
   )
+}
+
+export async function createSharedWorkspaceAgent(
+  control,
+  request,
+  { contentSelector, project, name, model, environmentId, systemPrompt, timeoutMs }
+) {
+  const scoped = selector => `${contentSelector} ${selector}`
+  const sidebar = selector => inCollaborationSidebar(selector, contentSelector)
+  await openWorkspaceAgentConfiguration(control, contentSelector, project.workspace_id)
   await openProjectAgentCreator(
     control,
     scoped('[data-testid="project-agent-add"]'),

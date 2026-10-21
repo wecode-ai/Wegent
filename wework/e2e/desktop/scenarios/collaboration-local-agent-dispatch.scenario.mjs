@@ -16,7 +16,11 @@ import {
   selectProjectRunnerModel,
   selectCollaborationIssueAgent,
   waitForTestIdByText,
+  inCollaborationSidebar,
+  openProjectAgentCreator,
+  selectWhenOptionAvailable,
 } from '../modules/workspace-flows.mjs'
+import { openWorkspaceAgentConfiguration } from '../modules/workspace-agent-setup.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const PROJECT = `本地单智能体调度-${process.pid}`
@@ -54,23 +58,18 @@ function advertisedToolNames(body) {
 }
 
 async function addLocalAgent(control, timeoutMs) {
-  await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
-
-  await control.command('click', scoped('[data-testid="collaboration-project-settings-agents"]'))
-  await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
-    timeoutMs,
-  })
-  await control.command('waitFor', '[data-testid="project-agent-wegent-team"]', { timeoutMs })
-  const existingAgents = await control.command(
-    'getText',
-    '[data-testid="project-agent-wegent-team"]'
+  const projectNavId = await waitForTestIdByText(
+    control,
+    inCollaborationSidebar(
+      '[data-testid="collaboration-workspace-tree-wework-local-workspace"]',
+      CONTENT
+    ),
+    'collaboration-workspace-project-',
+    PROJECT,
+    timeoutMs
   )
-  assert.ok(
-    existingAgents.includes('当前设备智能体'),
-    'The current-device Agent must remain selectable'
-  )
-  await control.command('click', '[data-testid="project-agent-mode-create"]')
-  await control.command('waitFor', '[data-testid="cloud-project-chat-agent-editor"]', { timeoutMs })
+  await openWorkspaceAgentConfiguration(control, CONTENT, 'wework-local-workspace')
+  await openProjectAgentCreator(control, scoped('[data-testid="project-agent-add"]'), timeoutMs)
   await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
     value: AGENT,
   })
@@ -86,6 +85,36 @@ async function addLocalAgent(control, timeoutMs) {
     visible: false,
     timeoutMs,
   })
+  const sourceRow = await waitForTestIdByText(
+    control,
+    scoped('[data-testid="project-agent-list"]'),
+    'project-agent-row-',
+    AGENT,
+    timeoutMs
+  )
+  await control.command(
+    'clickWhenEnabled',
+    inCollaborationSidebar(`[data-testid="${projectNavId}"]`, CONTENT)
+  )
+  await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-tab-manage"]'))
+  await control.command(
+    'clickWhenEnabled',
+    scoped('[data-testid="collaboration-project-settings-agents"]')
+  )
+  await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'))
+  const select = '[data-testid="project-agent-wegent-team"]'
+  const sourceId = sourceRow.slice('project-agent-row-'.length)
+  await control.command('waitFor', `${select} option[value="${sourceId}"]`, {
+    text: AGENT,
+    timeoutMs,
+  })
+  const existingAgents = await control.command('getText', select)
+  assert.ok(
+    existingAgents.includes('当前设备智能体'),
+    'The current-device Agent must remain selectable'
+  )
+  await selectWhenOptionAvailable(control, select, sourceId, timeoutMs)
+  await control.command('clickWhenEnabled', '[data-testid="project-agent-wegent-create"]')
   const agentRow = await waitForTestIdByText(
     control,
     scoped('[data-testid="project-agent-list"]'),
@@ -93,6 +122,7 @@ async function addLocalAgent(control, timeoutMs) {
     AGENT,
     timeoutMs
   )
+  assert.notEqual(agentRow, sourceRow, 'The project must persist its own Agent binding')
   return agentRow.slice('project-agent-row-'.length)
 }
 
