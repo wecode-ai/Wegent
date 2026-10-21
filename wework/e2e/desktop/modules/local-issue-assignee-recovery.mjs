@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 
 import { requestExecutor } from './executor-rpc.mjs'
-import { DEFAULT_MODEL_ID, MODEL_PROVIDER_ID } from './shared.mjs'
 import { selectWorkspaceIssueAgent, waitForValue } from './workspace-agent-setup.mjs'
 
 /** Cancel real runtime selection after binding, then retry the same Issue and resource. */
@@ -11,6 +10,8 @@ export async function verifyLocalIssueAssigneeRecovery(
 ) {
   const scoped = selector => `${contentSelector} ${selector}`
   const rpc = (method, params) => requestExecutor(control, method, params, timeoutMs)
+  assert.equal(source.execution_policy?.mode, 'fixed', 'Recovery needs a configured runner')
+  assert.equal(source.model_policy?.mode, 'fixed', 'Recovery needs a configured model')
   const name = `${source.name}-retry-${mode}`
   const title = `本地负责人失败恢复-${mode}-${process.pid}`
   const resource = await rpc('chat_agents.create', {
@@ -20,7 +21,7 @@ export async function verifyLocalIssueAssigneeRecovery(
       display_name: title,
       namespace: source.namespace,
       runtime: source.runtime,
-      execution_policy: source.execution_policy,
+      execution_policy: { mode: 'user_select' },
       model_policy: { mode: 'user_select' },
       system_prompt: marker,
       execution_environment: source.execution_environment,
@@ -71,6 +72,8 @@ export async function verifyLocalIssueAssigneeRecovery(
   )
   const binding = createdBindings[0]
   assert.notEqual(binding.id, resource.id, 'Assignment must use a project binding')
+  assert.deepEqual(binding.execution_policy, { mode: 'user_select' })
+  assert.deepEqual(binding.model_policy, { mode: 'user_select' })
   await control.command('click', '[data-testid="runner-selection-cancel"]')
   await control.command('waitFor', scoped('[data-testid="cloud-todo-save-error"]'), {
     text: '已取消执行配置选择',
@@ -95,13 +98,23 @@ export async function verifyLocalIssueAssigneeRecovery(
     'Failed assignment lost the resource selection needed for retry'
   )
 
+  // Fixed devices can supply their default model without opening a dialog.
+  // Repair the actual source and binding configuration after cancellation,
+  // then retry the same form against the same persisted project Agent.
+  for (const agent of [resource, binding]) {
+    const configured = await rpc('chat_agents.update', {
+      project_id: agent.project_id,
+      agent_id: agent.id,
+      agent: {
+        version: agent.version,
+        execution_policy: source.execution_policy,
+        model_policy: source.model_policy,
+      },
+    })
+    assert.deepEqual(configured.execution_policy, source.execution_policy)
+    assert.deepEqual(configured.model_policy, source.model_policy)
+  }
   await control.command('clickWhenEnabled', save)
-  await control.command('waitFor', '[data-testid="runner-selection-dialog"]', { timeoutMs })
-  const identity = JSON.stringify(['codex', MODEL_PROVIDER_ID, DEFAULT_MODEL_ID])
-  const model = '[data-testid="runner-selection-model"]'
-  await control.command('waitFor', `${model} option[value='${identity}']`, { timeoutMs })
-  await control.command('select', model, { value: identity })
-  await control.command('clickWhenEnabled', '[data-testid="runner-selection-confirm"]')
   await control.command('waitFor', save, { visible: false, timeoutMs })
   await control.command('waitFor', scoped('[data-testid="cloud-task-activity-list"]'), {
     text: completion,
