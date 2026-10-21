@@ -36,11 +36,13 @@ export function createDesktopScenario({ uiTimeoutMs }) {
           },
           uiTimeoutMs
         )
-      const open = () => control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
+      const open = async () => {
+        await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
+        await control.command('waitFor', PROMPT, { timeoutMs: uiTimeoutMs })
+      }
       const cancel = () => control.command('click', '[data-testid="stand-in-cancel"]')
 
       await open()
-      await control.command('waitFor', PROMPT)
       await control.command('waitFor', `${AUTO}[aria-checked="false"]`)
       await control.command('clickWhenEnabled', AUTO)
       await control.command('waitFor', '[data-testid="stand-in-enable-notice"]')
@@ -70,7 +72,6 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       await cancel()
 
       await open()
-      await control.command('waitFor', PROMPT)
       assert.equal(await control.command('getValue', PROMPT), 'Saved manual settings')
       await control.command('fill', PROMPT, { value: 'Confirmed new settings' })
       await control.command('clickWhenEnabled', AUTO)

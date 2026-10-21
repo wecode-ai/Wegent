@@ -43,6 +43,7 @@ export interface AgentFormAdvancedSummary {
 }
 
 interface AgentFormRuntimeTab {
+  onOpen?(): void
   basicLabel: string
   label: string
   summary: string
@@ -78,6 +79,7 @@ export function AgentFormDialog({
   executionControl,
   name,
   onClose,
+  onAdvancedOpen,
   onSave,
   owner,
   ownerLabel,
@@ -110,6 +112,7 @@ export function AgentFormDialog({
   name?: AgentFormField
   namespace?: string
   onClose(): void
+  onAdvancedOpen?(): void
   onSave(): void
   owner?: AgentFormSelectField
   ownerLabel: string
@@ -175,7 +178,10 @@ export function AgentFormDialog({
             activeTab={activeTab}
             busy={busy}
             labels={runtimeTab}
-            onChange={setActiveTab}
+            onChange={tab => {
+              setActiveTab(tab)
+              if (tab === 'runtime') runtimeTab.onOpen?.()
+            }}
             prefix={testIds.dialog}
           />
         ) : null}
@@ -229,7 +235,10 @@ export function AgentFormDialog({
                   className="flex min-h-11 w-full items-center gap-2 rounded-md py-1 text-left hover:bg-muted/60 disabled:pointer-events-none disabled:opacity-50 md:min-h-9"
                   data-testid={`${testIds.dialog}-advanced-toggle`}
                   disabled={busy}
-                  onClick={() => setAdvancedOpen(open => !open)}
+                  onClick={() => {
+                    if (!advancedOpen) onAdvancedOpen?.()
+                    setAdvancedOpen(open => !open)
+                  }}
                   type="button"
                 >
                   <ChevronRight
@@ -308,6 +317,7 @@ export function AgentFormDialog({
               disabled={busy}
               onClick={() => {
                 setActiveTab('runtime')
+                runtimeTab.onOpen?.()
                 document.getElementById(`${testIds.dialog}-tab-runtime`)?.focus()
               }}
               type="button"

@@ -208,6 +208,7 @@ function renderController(
   location: CollaborationLocation,
   myWorkEnabled?: boolean,
   initialProject?: CollaborationProject,
+  loadProjectOnLocation = true,
 ): CollaborationWorkspaceController {
   hookRuntime.beginRender();
   const controller = useCollaborationWorkspaceController({
@@ -215,6 +216,7 @@ function renderController(
     location,
     messages,
     initialProject,
+    loadProjectOnLocation,
     ...(myWorkEnabled === undefined ? {} : { myWorkEnabled }),
     pollIntervalMs: 0,
   });
@@ -225,6 +227,45 @@ function renderController(
 describe("useCollaborationWorkspaceController location effects", () => {
   beforeEach(() => {
     hookRuntime.reset();
+  });
+
+  it("keeps a host-managed project catalog loaded when switching between board and settings", async () => {
+    const api = createApi();
+    const location = {
+      projectId: projectA.id,
+      issueId: null,
+      view: "board" as const,
+    };
+    const render = (view: "board" | "manage") =>
+      renderController(api, { ...location, view }, false, undefined, false);
+    render("board");
+    await vi.waitFor(() => expect(render("board").state.loading).toBe(false));
+    expect(api.projects.list).toHaveBeenCalledOnce();
+
+    expect(render("manage").state.loading).toBe(false);
+    expect(render("board").state.loading).toBe(false);
+    expect(api.projects.list).toHaveBeenCalledOnce();
+    expect(api.issues.getBoardSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("opens settings from project metadata and loads the board only on returning to it", async () => {
+    const api = createApi();
+    const location = {
+      projectId: projectA.id,
+      issueId: null,
+      view: "manage" as const,
+    };
+    renderController(api, location);
+    await vi.waitFor(() =>
+      expect(renderController(api, location).state.project?.id).toBe(
+        projectA.id,
+      ),
+    );
+    expect(api.issues.getBoardSnapshot).not.toHaveBeenCalled();
+    renderController(api, { ...location, view: "board" });
+    await vi.waitFor(() =>
+      expect(api.issues.getBoardSnapshot).toHaveBeenCalledWith(projectA.id),
+    );
   });
 
   it("defaults My Work closed and falls an old root location back to home", async () => {
