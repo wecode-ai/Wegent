@@ -152,7 +152,7 @@ export async function waitForHighlightedHistoryMatch(
   content = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="user-message-content"]`,
   expectedOccurrence
 ) {
-  await control.command('waitFor', content, { text })
+  await control.command('waitFor', content, { text, timeoutMs })
   const scroller = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll"]`
   const deadline = Date.now() + timeoutMs
   let actual
@@ -181,6 +181,15 @@ export async function waitForHighlightedHistoryMatch(
   )
 }
 
+export async function waitForHistorySearchCount(
+  control,
+  text,
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
+) {
+  // Settling history search includes two serial reads: the index and the selected match page.
+  await control.command('waitFor', COUNT, { text, timeoutMs: 2 * timeoutMs })
+}
+
 export async function verifyTerminalHistorySearch(control, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) {
   for (const { query, matches } of TERMINAL_HISTORY_SEARCH_CASES) {
     // Typing preserves a legal result index; start each independent query at the first match.
@@ -191,7 +200,7 @@ export async function verifyTerminalHistorySearch(control, timeoutMs = DEFAULT_S
       if (index > 0) {
         await control.command('clickWhenEnabled', '[data-testid="conversation-find-next-button"]')
       }
-      await control.command('waitFor', COUNT, { text: `${index + 1} / ${matches.length}` })
+      await waitForHistorySearchCount(control, `${index + 1} / ${matches.length}`, timeoutMs)
       await waitForHighlightedHistoryMatch(
         control,
         match.visibleText ?? match.text,

@@ -5,6 +5,7 @@ import {
   TERMINAL_HISTORY_TURN_COUNT as LEGACY_TURN_COUNT,
   verifyTerminalHistorySearch,
   waitForHighlightedHistoryMatch as waitForHighlightedSearchTarget,
+  waitForHistorySearchCount,
 } from './terminal-history-search.mjs'
 
 const COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
@@ -39,8 +40,6 @@ async function assertLegacyContext(control, first, last) {
 
 export async function verifyLegacySearch(control, timeoutMs) {
   const findInput = '[data-testid="conversation-find-input"]'
-  const settledCount =
-    '[data-testid="conversation-find-bar"]:has([data-testid="conversation-find-input"]:not([aria-busy="true"])) [data-testid="conversation-find-count"]'
   const loadOlder = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-older-runtime-transcript-button"]`
   const loadNewer = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-newer-runtime-transcript-button"]`
   await control.command('waitFor', loadOlder, { timeoutMs })
@@ -57,14 +56,14 @@ export async function verifyLegacySearch(control, timeoutMs) {
   })
   await assertFindInputFocus(control, findInput)
   await control.command('fill', findInput, { value: LEGACY_ATTACHMENT_PREVIEW })
-  await control.command('waitFor', settledCount, { text: '0 个结果' })
+  await waitForHistorySearchCount(control, '0 个结果', timeoutMs)
   assert.equal(
     Number(await control.command('getElementCount', '[data-testid="conversation-find-retry"]')),
     0,
     'Searching injected attachment metadata created an unresolvable history match'
   )
   await control.command('fill', findInput, { value: LEGACY_PROMPT })
-  await control.command('waitFor', settledCount, { text: '1 / 2' })
+  await waitForHistorySearchCount(control, '1 / 2', timeoutMs)
   assert.equal(
     Number(await control.command('getElementCount', '[data-testid="conversation-find-retry"]')),
     0,
@@ -77,7 +76,7 @@ export async function verifyLegacySearch(control, timeoutMs) {
   )
   await assertLegacyContext(control, LEGACY_MATCH_TURNS[0] - 1, LEGACY_MATCH_TURNS[0] + 1)
   await control.command('clickWhenEnabled', '[data-testid="conversation-find-next-button"]')
-  await control.command('waitFor', settledCount, { text: '2 / 2' })
+  await waitForHistorySearchCount(control, '2 / 2', timeoutMs)
   await waitForHighlightedSearchTarget(
     control,
     `${LEGACY_PROMPT} ${LEGACY_MATCH_TURNS[1]}`,
@@ -90,7 +89,7 @@ export async function verifyLegacySearch(control, timeoutMs) {
   await control.command('scrollIntoView', loadOlder)
   await control.command('clickWhenEnabled', loadOlder)
   await assertLegacyContext(control, LEGACY_MATCH_TURNS[1] - 2, LEGACY_MATCH_TURNS[1] + 2)
-  await control.command('waitFor', settledCount, { text: '2 / 2' })
+  await waitForHistorySearchCount(control, '2 / 2', timeoutMs)
   assert.equal(
     Number(
       await control.command(

@@ -25,6 +25,7 @@ import {
   terminalHistoryTurn,
   verifyNativeTerminalHistorySearch,
   waitForHighlightedHistoryMatch as waitForHighlightedSearchTarget,
+  waitForHistorySearchCount,
 } from '../modules/terminal-history-search.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
@@ -808,16 +809,12 @@ export function createDesktopScenario({
       await control.command('click', `[data-testid="${pagedRowId}"]`)
       await control.command('waitFor', loadOlder)
       const findInput = '[data-testid="conversation-find-input"]'
-      const settledCount =
-        '[data-testid="conversation-find-bar"]:has([data-testid="conversation-find-input"]:not([aria-busy="true"])) [data-testid="conversation-find-count"]'
       await control.command('nativePress', COMPOSER_SELECTOR, {
         key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
       })
       await assertFindInputFocus(control, findInput)
       await control.command('fill', findInput, { value: `${PAGED_PROMPT}_NO_MATCH` })
-      await control.command('waitFor', settledCount, {
-        text: '0 个结果',
-      })
+      await waitForHistorySearchCount(control, '0 个结果', uiTimeoutMs)
       assert.equal(
         Number(
           await control.command('getElementCount', '[data-testid="conversation-find-loading-icon"]')
@@ -826,9 +823,7 @@ export function createDesktopScenario({
         'An unsuccessful history search did not settle'
       )
       await control.command('fill', findInput, { value: PAGED_SEARCH_TERM })
-      await control.command('waitFor', settledCount, {
-        text: '1 / 1',
-      })
+      await waitForHistorySearchCount(control, '1 / 1', uiTimeoutMs)
       assert.equal(
         (await control.command('getText', '[data-testid="conversation-find-count"]')).trim(),
         '1 / 1 个结果',

@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 
 import { ACTIVE_WORKBENCH_SELECTOR, DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
-import { waitForHighlightedHistoryMatch } from './terminal-history-search.mjs'
+import {
+  waitForHighlightedHistoryMatch,
+  waitForHistorySearchCount,
+} from './terminal-history-search.mjs'
 
 const ERROR_QUERY = 'WEWORK_E2E_CACHED_ERROR_BODY'
 const ERROR_BODY = `API error: ${ERROR_QUERY}`
@@ -9,8 +12,6 @@ const GUIDANCE_QUERY = 'WEWORK_E2E_CACHED_GUIDANCE_BODY'
 const GUIDANCE_BODY = `API error: ${GUIDANCE_QUERY}`
 const LAST_ANSWER = 'Cached search answer 119'
 const FIND = '[data-testid="conversation-find-input"]'
-const COUNT =
-  '[data-testid="conversation-find-bar"]:has([data-testid="conversation-find-input"]:not([aria-busy="true"])) [data-testid="conversation-find-count"]'
 const ANSWERS = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`
 const OLDER = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-older-runtime-transcript-button"]`
 const NEWER = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-newer-runtime-transcript-button"]`
@@ -134,7 +135,7 @@ export async function verifyCachedHistorySearch(
       if (index) {
         await control.command('clickWhenEnabled', '[data-testid="conversation-find-next-button"]')
       }
-      await control.command('waitFor', COUNT, { text: `${index + 1} / ${matches.length}` })
+      await waitForHistorySearchCount(control, `${index + 1} / ${matches.length}`, timeoutMs)
       const messageId = `runtime-view:${turnId(match.name)}:${itemId(match.name, match.first)}`
       const content = `${ACTIVE_WORKBENCH_SELECTOR} [data-message-id="${messageId}"] [data-testid="assistant-message-content"]`
       await waitForHighlightedHistoryMatch(control, match.text, timeoutMs, content)
