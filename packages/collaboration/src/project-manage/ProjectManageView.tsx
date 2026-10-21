@@ -84,7 +84,10 @@ export function ProjectManageView<
 }) {
   const { GitBranch, LockKeyhole } = host.icons
   const [error, setError] = useState<string | null>(null)
-  const [itemResult, setItemResult] = useState<{ projectId: string; items: Item[] }>({
+  const [itemResult, setItemResult] = useState<{
+    projectId: string
+    items: Item[]
+  }>({
     projectId: project.id,
     items: [],
   })
@@ -261,7 +264,7 @@ export function ProjectManageView<
     onOpenMembersRequestConsumed,
   })
 
-  const tagLoadFailed = host.translate('todo.load_project_failed', '加载项目失败')
+  const tagLoadFailed = host.translate('todo.load_tag_catalog_failed', '加载标签目录失败')
   useEffect(() => {
     if (tagCatalogProjectId !== project.id || (section !== 'all' && section !== 'overview')) return
     let active = true

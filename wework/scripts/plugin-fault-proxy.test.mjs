@@ -131,3 +131,37 @@ test(
     assert.equal(Buffer.concat(chunks).toString(), 'real-capability-sync')
   }
 )
+
+for (const fault of ['drop-response', 'hold-response']) {
+  test(`native ${fault} assertions reject early and unscoped scans`, { timeout: 5000 }, async t => {
+    const { assertNativeCatalogRequests, nativeCatalogFault, hasScopedNativeFault } =
+      await import('../e2e/desktop/modules/agent-catalog-regressions.mjs')
+    const { proxy } = await fixture(t)
+    const path = '/api/v1/resources/execution-environments'
+    proxy.rule = entry => nativeCatalogFault(entry, fault)
+    // Inject the early full-catalog request that previously made this E2E pass.
+    await (await fetch(`${proxy.url}${path}`)).text()
+    assert.equal(proxy.requests[0].fault, null)
+    assert.equal(hasScopedNativeFault(proxy.requests, fault), false)
+    assert.throws(() => assertNativeCatalogRequests(proxy.requests, true), /unscoped/)
+    assert.throws(() => assertNativeCatalogRequests(proxy.requests), /unscoped/)
+
+    const start = proxy.requests.length
+    const controller = new AbortController()
+    const pending = assert.rejects(
+      fetch(`${proxy.url}${path}?project_id=project`, { signal: controller.signal })
+    )
+    await until(
+      () => proxy.requests.slice(start),
+      entries => hasScopedNativeFault(entries, fault),
+      'The scoped native response did not hit the injected fault',
+      2000
+    )
+    const scoped = proxy.requests.slice(start)
+    assert.throws(() => assertNativeCatalogRequests(scoped, true), /before selecting a device/)
+    assert.doesNotThrow(() => assertNativeCatalogRequests(scoped))
+    controller.abort()
+    await pending
+    assert.equal(hasScopedNativeFault([{ ...scoped[0], unscoped: true }], fault), false)
+  })
+}

@@ -626,7 +626,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           waitForApiValue,
           timeoutMs: uiTimeoutMs,
         })
-        await verifyLocalBasicDefaultSave(control, uiTimeoutMs)
+        await verifyLocalBasicDefaultSave(control, uiTimeoutMs, proxy)
       } finally {
         try {
           await archiveFixture()

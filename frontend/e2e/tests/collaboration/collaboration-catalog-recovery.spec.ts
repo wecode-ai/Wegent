@@ -13,6 +13,7 @@ interface Resource {
 interface ProjectFixture {
   project: Resource
   path: string
+  workspaceId: string
 }
 
 interface CandidateFixture {
@@ -23,6 +24,7 @@ interface CandidateFixture {
 const test = base.extend<{
   projectFixture: ProjectFixture
   candidateFixture: CandidateFixture
+  secondProjectFixture: ProjectFixture
 }>({
   projectFixture: async ({ page }, use) => {
     await page.goto('/collaboration')
@@ -44,6 +46,7 @@ const test = base.extend<{
       })
       await use({
         project,
+        workspaceId: workspace.id,
         path: `/collaboration/workspaces/${workspace.id}/projects/${project.id}`,
       })
     } finally {
@@ -54,6 +57,28 @@ const test = base.extend<{
         const current = await webApi<Resource>(page, resourcePath)
         await webApi(page, `${resourcePath}?version=${current.version}`, { method: 'DELETE' })
       }
+    }
+  },
+  secondProjectFixture: async ({ page, projectFixture }, use) => {
+    const project = await webApi<Resource>(page, '/api/v1/cloud-projects', {
+      method: 'POST',
+      body: {
+        name: `Catalog scope B ${crypto.randomUUID()}`,
+        workspace_id: projectFixture.workspaceId,
+        task_provider: 'local',
+        visibility: 'private',
+      },
+    })
+    try {
+      await use({
+        project,
+        workspaceId: projectFixture.workspaceId,
+        path: `/collaboration/workspaces/${projectFixture.workspaceId}/projects/${project.id}`,
+      })
+    } finally {
+      const path = `/api/v1/cloud-projects/${project.id}`
+      const current = await webApi<Resource>(page, path)
+      await webApi(page, `${path}?version=${current.version}`, { method: 'DELETE' })
     }
   },
   candidateFixture: async ({ page, projectFixture }, use) => {
@@ -266,3 +291,170 @@ test('member transport failure preserves groups, allows persisted edits, and rec
     await page.unroute(memberUrl, loseRealResponse)
   }
 })
+
+for (const outcome of ['success', 'failure'] as const) {
+  test(`cached SPA project switch keeps B groups and mutation scope after B ${outcome} and late A success`, async ({
+    page,
+    projectFixture: a,
+    secondProjectFixture: b,
+    candidateFixture: candidate,
+  }) => {
+    const groupPath = (id: string) => `/api/v1/cloud-projects/${id}/collaboration-groups`
+    const agentPath = (id: string) => `/api/v1/cloud-projects/${id}/chat-agents`
+    const createdGroups: Record<string, Resource> = {}
+    const createdAgents: Record<string, Resource> = {}
+    for (const fixture of [a, b]) {
+      const members = await webApi<Array<{ user_id: number; user_name: string }>>(
+        page,
+        `/api/v1/cloud-projects/${fixture.project.id}/members`
+      )
+      const leader = {
+        kind: 'human',
+        id: String(members[0].user_id),
+        name: members[0].user_name,
+        responsibility: '',
+      }
+      createdGroups[fixture.project.id] = await webApi<Resource>(
+        page,
+        groupPath(fixture.project.id),
+        {
+          method: 'POST',
+          body: {
+            name: `Group ${fixture === a ? 'A' : 'B'}`,
+            leader,
+            members: [leader],
+            coordination_mode: 'manager',
+          },
+        }
+      )
+      createdAgents[fixture.project.id] = await webApi<Resource>(
+        page,
+        agentPath(fixture.project.id),
+        {
+          method: 'POST',
+          body: {
+            runtime: 'wegent',
+            wegent_team_id: candidate.id,
+            name: `Agent ${fixture === a ? 'A' : 'B'}`,
+          },
+        }
+      )
+    }
+    let release!: () => void
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    let notifyHeld!: () => void
+    const aFetched = new Promise<void>(resolve => {
+      notifyHeld = resolve
+    })
+    let notifyReleased!: () => void
+    const aReleased = new Promise<void>(resolve => {
+      notifyReleased = resolve
+    })
+    const holdA = async (route: Route) => {
+      const response = await route.fetch()
+      expect(response.ok()).toBe(true)
+      notifyHeld()
+      await held
+      await route.fulfill({ response })
+      notifyReleased()
+    }
+    const aUrl = (url: URL) => url.pathname === groupPath(a.project.id)
+    const bUrl = (url: URL) => url.pathname === groupPath(b.project.id)
+    const mutations: string[] = []
+    page.on('request', request => {
+      if (
+        request.method() === 'PATCH' &&
+        new URL(request.url()).pathname.includes('/collaboration-groups/')
+      )
+        mutations.push(new URL(request.url()).pathname)
+    })
+    // Warm the real catalog in this document. The following History API navigation
+    // is handled by Next's production SPA router, preserving the groups section.
+    await page.goto(`/collaboration/workspaces/${a.workspaceId}/projects`)
+    await expect(page.getByTestId(`collaboration-workspace-project-${b.project.id}`)).toBeVisible()
+    const timeOrigin = await page.evaluate(() => performance.timeOrigin)
+    await page.route(aUrl, holdA)
+    if (outcome === 'failure') await page.route(bUrl, loseRealResponse)
+    try {
+      await page.evaluate(path => window.history.pushState(null, '', `${path}?view=manage`), a.path)
+      await page.getByTestId('collaboration-project-settings-groups').click()
+      await aFetched
+      const bLoaded =
+        outcome === 'success'
+          ? page.waitForResponse(response => bUrl(new URL(response.url())) && response.ok())
+          : null
+      await page.evaluate(path => window.history.pushState(null, '', `${path}?view=manage`), b.path)
+      if (outcome === 'success') await bLoaded
+      else {
+        // The lost response generates a failed request rather than a browser response.
+        await expect(page.getByTestId('project-groups-load-error')).toBeVisible()
+      }
+      if (outcome === 'success')
+        await expect(
+          page.getByTestId(`collaboration-group-${createdGroups[b.project.id].id}`)
+        ).toContainText('Group B')
+      const aFinished = page.waitForEvent('requestfinished', request =>
+        aUrl(new URL(request.url()))
+      )
+      release()
+      await aReleased
+      await aFinished
+      // Drain the delivered response through React before asserting it cannot win.
+      await page.evaluate(
+        () =>
+          new Promise<void>(resolve =>
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+          )
+      )
+      expect(await page.evaluate(() => performance.timeOrigin)).toBe(timeOrigin)
+      await expect(
+        page.getByTestId(`collaboration-group-${createdGroups[a.project.id].id}`)
+      ).toHaveCount(0)
+      if (outcome === 'failure') {
+        await expect(page.getByTestId('project-groups-load-error')).toBeVisible()
+        await page.unroute(bUrl, loseRealResponse)
+        await page.getByTestId('collaboration-project-settings-agents').click()
+        await page.getByTestId('collaboration-project-settings-groups').click()
+      }
+      const bGroup = createdGroups[b.project.id]
+      await expect(page.getByTestId(`collaboration-group-${bGroup.id}`)).toContainText('Group B')
+      await page.getByTestId(`collaboration-group-manage-${bGroup.id}`).click()
+      await page.getByTestId('collaboration-group-create-add-members').click()
+      await expect(
+        page.getByTestId(
+          `collaboration-group-create-member-agent-${createdAgents[b.project.id].id}`
+        )
+      ).toContainText('Agent B')
+      await expect(
+        page.getByTestId(
+          `collaboration-group-create-member-agent-${createdAgents[a.project.id].id}`
+        )
+      ).toHaveCount(0)
+      await page
+        .getByTestId(`collaboration-group-create-member-agent-${createdAgents[b.project.id].id}`)
+        .click()
+      await page.keyboard.press('Escape')
+      await page.getByTestId('collaboration-group-detail-name').fill('B scoped save')
+      const saved = page.waitForResponse(
+        response =>
+          response.request().method() === 'PATCH' &&
+          new URL(response.url()).pathname === `${groupPath(b.project.id)}/${bGroup.id}`
+      )
+      await page.getByTestId('collaboration-group-detail-save').click()
+      expect((await saved).ok()).toBe(true)
+      await expect(page.getByTestId('collaboration-group-detail-save')).toBeEnabled()
+      expect(mutations).toEqual([`${groupPath(b.project.id)}/${bGroup.id}`])
+      const result = await webApi<{ items: Array<Resource & { name: string }> }>(
+        page,
+        groupPath(b.project.id)
+      )
+      expect(result.items.find(item => item.id === bGroup.id)?.name).toBe('B scoped save')
+    } finally {
+      release()
+      await page.unroute(aUrl, holdA)
+      await page.unroute(bUrl, loseRealResponse)
+    }
+  })
+}

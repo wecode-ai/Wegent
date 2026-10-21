@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import type {
@@ -13,7 +13,7 @@ import type {
 import { WorkspaceCollaborationGroupsConfiguration } from "../platform/WorkspaceResourceConfiguration";
 import type { ProjectAgentConfigurationHost } from "../project-agent-config/types";
 
-export function ProjectCollaborationGroups({
+function ScopedProjectCollaborationGroups({
   api,
   projectId,
   workspaceId,
@@ -53,32 +53,51 @@ export function ProjectCollaborationGroups({
   const [membersRevision, setMembersRevision] = useState(0);
   const [groupsError, setGroupsError] = useState<string | null>(null);
 
+  const active = useRef(false);
+  const reloadRevision = useRef(0);
+
+  const requireActive = () => {
+    if (!active.current) {
+      throw new Error("Collaboration group scope is no longer active");
+    }
+  };
+
   const reload = useCallback(async () => {
-    if (!api.projects.listCollaborationGroups) {
+    if (!active.current || !api.projects.listCollaborationGroups) return [];
+    const revision = ++reloadRevision.current;
+    const isCurrent = () =>
+      active.current && revision === reloadRevision.current;
+    try {
+      const [available, projectGroups, projectAgents] = await Promise.all([
+        workspaceId && api.workspaces?.listCollaborationGroups
+          ? api.workspaces.listCollaborationGroups(workspaceId)
+          : Promise.resolve([]),
+        api.projects.listCollaborationGroups(projectId),
+        api.agents.list(projectId),
+      ]);
+      if (!isCurrent()) return [];
+      setWorkspaceGroups(available);
+      setGroups(projectGroups);
+      setAvailableAgents(projectAgents);
+      setGroupsError(null);
+      return projectAgents;
+    } catch (error) {
+      if (isCurrent()) {
+        setGroupsError(error instanceof Error ? error.message : String(error));
+        throw error;
+      }
       return [];
     }
-    const [available, projectGroups, projectAgents] = await Promise.all([
-      workspaceId && api.workspaces?.listCollaborationGroups
-        ? api.workspaces.listCollaborationGroups(workspaceId)
-        : Promise.resolve([]),
-      api.projects.listCollaborationGroups(projectId),
-      api.agents.list(projectId),
-    ]);
-    setWorkspaceGroups(available);
-    setGroups(projectGroups);
-    setAvailableAgents(projectAgents);
-    setGroupsError(null);
-    return projectAgents;
   }, [api, projectId, workspaceId]);
 
   useEffect(() => {
-    let active = true;
-    void reload().catch((error: unknown) => {
-      if (active)
-        setGroupsError(error instanceof Error ? error.message : String(error));
+    active.current = true;
+    void reload().catch(() => {
+      // Reload owns the scoped error state; the initial load has no caller.
     });
     return () => {
-      active = false;
+      active.current = false;
+      reloadRevision.current++;
     };
   }, [reload]);
 
@@ -130,7 +149,9 @@ export function ProjectCollaborationGroups({
                       projectId,
                       onClose,
                       onCreated: async () => {
+                        requireActive();
                         const projectAgents = await reload();
+                        requireActive();
                         const created =
                           projectAgents.find(
                             (agent) => !previousIds.has(agent.id),
@@ -152,10 +173,12 @@ export function ProjectCollaborationGroups({
                       (locale === "zh-CN" ? "当前空间" : "Current space"),
                     onClose,
                     onCreated: async (resource) => {
+                      requireActive();
                       const created = await api.agents.create(projectId, {
                         team_id: resource.teamId,
                       });
                       await reload();
+                      requireActive();
                       await onCreated(created);
                     },
                   });
@@ -165,6 +188,7 @@ export function ProjectCollaborationGroups({
           ...(location === "local"
             ? {
                 copy: async (source: CollaborationAgent) => {
+                  requireActive();
                   const record = source as CollaborationAgent &
                     Record<string, unknown>;
                   const suffix = crypto.randomUUID().slice(0, 8);
@@ -247,6 +271,7 @@ export function ProjectCollaborationGroups({
           },
           removeMember: async () => undefined,
           async createCollaborationGroup(input) {
+            requireActive();
             if (!api.projects.createCollaborationGroup) {
               throw new Error("Project collaboration group API is unavailable");
             }
@@ -258,6 +283,7 @@ export function ProjectCollaborationGroups({
             return created;
           },
           async updateCollaborationGroup(groupId, input) {
+            requireActive();
             const group = groups.find((candidate) => candidate.id === groupId);
             if (!group) {
               throw new Error("Project collaboration group was not found");
@@ -288,6 +314,7 @@ export function ProjectCollaborationGroups({
             return updated;
           },
           async addCollaborationGroup(groupId) {
+            requireActive();
             if (!api.projects.addCollaborationGroup) {
               throw new Error("Project collaboration group API is unavailable");
             }
@@ -299,6 +326,7 @@ export function ProjectCollaborationGroups({
             return added;
           },
           async removeCollaborationGroup(groupId) {
+            requireActive();
             if (!api.projects.removeCollaborationGroup) {
               throw new Error("Project collaboration group API is unavailable");
             }
@@ -309,4 +337,26 @@ export function ProjectCollaborationGroups({
       />
     </>
   );
+}
+
+// Reset both directory state and editor drafts before a new identity is committed.
+// The scoped component also invalidates pending reads and post-mutation reloads.
+export function ProjectCollaborationGroups(
+  props: Parameters<typeof ScopedProjectCollaborationGroups>[0],
+) {
+  const { api, projectId, workspaceId } = props;
+  const [scope, setScope] = useState({
+    api,
+    projectId,
+    workspaceId,
+    revision: 0,
+  });
+  if (
+    scope.api !== api ||
+    scope.projectId !== projectId ||
+    scope.workspaceId !== workspaceId
+  ) {
+    setScope({ api, projectId, workspaceId, revision: scope.revision + 1 });
+  }
+  return <ScopedProjectCollaborationGroups key={scope.revision} {...props} />;
 }

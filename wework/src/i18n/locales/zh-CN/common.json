@@ -4146,6 +4146,7 @@
     "start_follow_up": "开启新任务"
   },
   "todo": {
+    "load_tag_catalog_failed": "加载标签目录失败",
     "my_work_human_filter": "人工任务",
     "project_manager": "项目管理者",
     "collaboration_participants_manager_description": "统一管理项目中的智能体、项目管理者、项目成员和协作小组。项目管理者负责协调 Issue，负责人负责执行与交付。",

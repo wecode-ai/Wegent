@@ -9,6 +9,32 @@ import {
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const scoped = selector => `${CONTENT} ${selector}`
+const NATIVE_CATALOG_PATH = '/api/v1/resources/execution-environments'
+
+export function assertNativeCatalogRequests(entries, beforeDeviceSelection = false) {
+  const catalogs = entries.filter(entry => entry.path === NATIVE_CATALOG_PATH)
+  assert.equal(
+    catalogs.filter(entry => entry.unscoped).length,
+    0,
+    'Creation scanned an unscoped native catalog'
+  )
+  if (beforeDeviceSelection) {
+    assert.equal(catalogs.length, 0, 'Native discovery started before selecting a device')
+  }
+}
+
+export const nativeCatalogFault = (entry, fault) =>
+  entry.path === NATIVE_CATALOG_PATH && !entry.unscoped ? fault : null
+
+export const hasScopedNativeFault = (entries, fault) =>
+  entries.some(
+    entry =>
+      entry.path === NATIVE_CATALOG_PATH &&
+      !entry.unscoped &&
+      entry.fault === fault &&
+      entry.status === 200 &&
+      (fault !== 'hold-response' || entry.committedResponseHeld)
+  )
 
 /** Inspect the default without ever activating runtime settings. */
 export async function readBasicCloudDefault(control, prefix, dialogId, timeoutMs) {
@@ -56,7 +82,7 @@ export async function verifyCloudSaveDuringNativeFaults(
   await control.command('click', scoped('[data-testid="collaboration-project-settings-agents"]'))
   for (const fault of ['drop-response', 'hold-response']) {
     const name = `Cloud model with ${fault}-${process.pid}`
-    proxy.rule = entry => (entry.path === '/api/v1/resources/execution-environments' ? fault : null)
+    proxy.rule = entry => nativeCatalogFault(entry, fault)
     const start = proxy.requests.length
     try {
       await openProjectAgentCreator(
@@ -72,22 +98,20 @@ export async function verifyCloudSaveDuringNativeFaults(
         'wework-agent-resource-creator',
         timeoutMs
       )
+      assertNativeCatalogRequests(proxy.requests.slice(start), true)
       await selectAgentFormTab(control, 'wework-agent-resource-creator', 'runtime', timeoutMs)
+      assertNativeCatalogRequests(proxy.requests.slice(start), true)
       await selectAgentEnvironment(
         control,
         'wework-agent-environment',
         String(device.id),
-        timeoutMs
+        timeoutMs,
+        false,
+        () => assertNativeCatalogRequests(proxy.requests.slice(start), true)
       )
       await waitForApiValue(
         async () => proxy.requests.slice(start),
-        entries =>
-          entries.some(
-            entry =>
-              entry.fault === fault &&
-              entry.status === 200 &&
-              (fault !== 'hold-response' || entry.committedResponseHeld)
-          ),
+        entries => hasScopedNativeFault(entries, fault),
         'The real native model catalog did not reach the fault proxy',
         timeoutMs
       )
@@ -119,6 +143,7 @@ export async function verifyCloudSaveDuringNativeFaults(
         mode: 'fixed',
         environment_id: String(device.id),
       })
+      assertNativeCatalogRequests(proxy.requests.slice(start))
     } finally {
       proxy.rule = () => null
     }
@@ -126,7 +151,8 @@ export async function verifyCloudSaveDuringNativeFaults(
 }
 
 /** Reopening reads the saved local Agent through the real executor API. */
-export async function verifyLocalBasicDefaultSave(control, timeoutMs) {
+export async function verifyLocalBasicDefaultSave(control, timeoutMs, proxy) {
+  const start = proxy.requests.length
   await createLocalCollaborationProject(control, CONTENT, `Default cloud model-${process.pid}`)
   await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
   await control.command('click', scoped('[data-testid="collaboration-project-settings-agents"]'))
@@ -141,6 +167,7 @@ export async function verifyLocalBasicDefaultSave(control, timeoutMs) {
     'cloud-project-chat-agent-editor',
     timeoutMs
   )
+  assertNativeCatalogRequests(proxy.requests.slice(start), true)
   await control.command('clickWhenEnabled', '[data-testid="cloud-project-chat-agent-save"]', {
     timeoutMs,
   })
@@ -177,4 +204,5 @@ export async function verifyLocalBasicDefaultSave(control, timeoutMs) {
     { timeoutMs }
   )
   await control.command('click', '[data-testid="cloud-project-chat-agent-cancel"]')
+  assertNativeCatalogRequests(proxy.requests.slice(start), true)
 }

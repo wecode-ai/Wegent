@@ -175,7 +175,8 @@ export async function selectAgentEnvironment(
   testId,
   value,
   timeoutMs,
-  verifyDefaultFilter = false
+  verifyDefaultFilter = false,
+  beforeSelect = () => {}
 ) {
   const trigger = `[data-testid="${testId}"]`
   await control.command('clickWhenEnabled', trigger, { timeoutMs })
@@ -216,6 +217,7 @@ export async function selectAgentEnvironment(
   await control.command('waitFor', option, { visible: true, timeoutMs })
   const label = await control.command('getText', option)
   await control.command('fill', search, { value: label })
+  await beforeSelect()
   await control.command('clickWhenEnabled', option, { timeoutMs })
   await control.command('waitFor', `${trigger}[data-value=${JSON.stringify(value)}]`, { timeoutMs })
 }
