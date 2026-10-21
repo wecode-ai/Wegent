@@ -4,6 +4,7 @@ import {
   openProjectAgentCreator,
   selectAgentEnvironment,
   selectAgentFormTab,
+  selectCollaborationProjectView,
   waitForTestIdByText,
 } from './workspace-flows.mjs'
 
@@ -154,7 +155,7 @@ export async function verifyCloudSaveDuringNativeFaults(
 export async function verifyLocalBasicDefaultSave(control, timeoutMs, proxy) {
   const start = proxy.requests.length
   await createLocalCollaborationProject(control, CONTENT, `Default cloud model-${process.pid}`)
-  await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+  await selectCollaborationProjectView(control, CONTENT, 'manage')
   await control.command('click', scoped('[data-testid="collaboration-project-settings-agents"]'))
   await openProjectAgentCreator(control, scoped('[data-testid="project-agent-add"]'), timeoutMs)
   const name = `Local default model-${process.pid}`
@@ -184,8 +185,8 @@ export async function verifyLocalBasicDefaultSave(control, timeoutMs, proxy) {
   )
   const agentId = row.slice('project-agent-row-'.length)
   // Unmount the project settings before reading the persisted Agent again.
-  await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
-  await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+  await selectCollaborationProjectView(control, CONTENT, 'board')
+  await selectCollaborationProjectView(control, CONTENT, 'manage')
   await control.command('click', scoped('[data-testid="collaboration-project-settings-agents"]'))
   await control.command(
     'clickWhenEnabled',

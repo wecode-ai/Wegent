@@ -228,7 +228,11 @@ export async function selectCollaborationProjectView(control, contentSelector, v
   if (Number(await control.command('getElementCount', compact)) > 0) {
     await control.command('select', compact, { value: view })
   } else {
-    await control.command('click', `${contentSelector} [data-testid="collaboration-tab-${view}"]`)
+    await control.command(
+      'clickWhenEnabled',
+      `${contentSelector} [data-testid="collaboration-tab-${view}"]`,
+      { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+    )
   }
 }
 
@@ -539,6 +543,11 @@ export async function createLocalCollaborationProject(control, contentSelector, 
       visible: true,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
+  )
+  await control.command(
+    'waitFor',
+    `${contentSelector} [data-testid="cloud-project-header-title"]`,
+    { text: projectName, visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
   )
   await control.command('waitFor', `${contentSelector} [data-testid="collaboration-tab-board"]`, {
     visible: true,

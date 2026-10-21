@@ -292,8 +292,12 @@ export function createLocalWorkspaceApi(
     },
   ]
   const projectAgentApi = detailServices?.localProjectChatAgentApi
-  const listProjectAgents = async (projectId: string) =>
-    (await projectAgentApi?.list(projectId))?.map(agent => ({
+  const listProjectAgents = async (projectId: string, options?: { forceRefresh?: boolean }) =>
+    (
+      await (options?.forceRefresh
+        ? projectAgentApi?.list(projectId, { forceRefresh: true })
+        : projectAgentApi?.list(projectId))
+    )?.map(agent => ({
       ...agent,
       agent_id: agent.name,
       deletable: !isDefaultLocalAgent(agent),

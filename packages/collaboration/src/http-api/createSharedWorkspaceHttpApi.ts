@@ -221,8 +221,8 @@ export function createSharedWorkspaceHttpApi(
   transport: SharedWorkspaceHttpTransport,
 ): SharedWorkspaceHttpApi {
   const cache = getClientRequestCache(transport);
-  const get = <T>(endpoint: string) =>
-    cache.get(endpoint, () => transport.get<T>(endpoint));
+  const get = <T>(endpoint: string, maxAgeMs?: number) =>
+    cache.get(endpoint, () => transport.get<T>(endpoint), maxAgeMs);
   const invalidateAgents = (projectId?: string) => {
     if (projectId)
       cache.invalidate(`/v1/cloud-projects/${encoded(projectId)}/chat-agents`);
@@ -547,6 +547,7 @@ export function createSharedWorkspaceHttpApi(
       async list(projectId, options) {
         const response = await get<unknown[]>(
           `/v1/cloud-projects/${encoded(projectId)}/chat-agents${options?.includeArchived ? "?include_archived=true" : ""}`,
+          options?.forceRefresh ? 0 : undefined,
         );
         return response.map(mapProjectAgentDto);
       },

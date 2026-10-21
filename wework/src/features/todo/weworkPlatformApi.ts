@@ -308,10 +308,9 @@ export function createWeworkPlatformApi(
     },
     agents: {
       ...cloudApi.agents,
-      async list(projectId) {
-        return (await projectLocation(projectId)) === 'local'
-          ? localApi.agents.list(projectId)
-          : cloudApi.agents.list(projectId)
+      async list(projectId, options) {
+        const api = (await projectLocation(projectId)) === 'local' ? localApi : cloudApi
+        return options ? api.agents.list(projectId, options) : api.agents.list(projectId)
       },
       async create(projectId, input) {
         return (await projectLocation(projectId)) === 'local'

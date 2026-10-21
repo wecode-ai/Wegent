@@ -128,10 +128,10 @@ export function StandInPopover({
   }, [load, open])
 
   useEffect(() => {
-    if (!open || !api.agents) return
+    if (!open || !draft.enabled || !api.agents) return
     let cancelled = false
     void api.agents
-      .list(project.id)
+      .list(project.id, { forceRefresh: true })
       .then(rows => {
         if (!cancelled) {
           setAgents(
@@ -149,7 +149,7 @@ export function StandInPopover({
     return () => {
       cancelled = true
     }
-  }, [api.agents, project.id, open])
+  }, [api.agents, project.id, open, draft.enabled])
 
   const selectDevice = async (deviceId: string) => {
     selectedDevice.current = deviceId
