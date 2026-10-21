@@ -7,6 +7,7 @@ import {
   reloadMainWindow,
   selectCollaborationDomain,
   configureFirstProjectExecutionEnvironment,
+  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
 import {
   assistantMessage,
@@ -194,8 +195,10 @@ export function createDesktopScenario({
           },
         })
         const historical = await createIssue('启用云端替身前已分配')
-        await control.command('click', `${CONTENT} [data-testid="collaboration-tab-board"]`)
-        await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
+        await selectCollaborationProjectView(control, CONTENT, 'board')
+        await control.command('clickWhenEnabled', `${CONTENT} [data-testid="stand-in-open"]`, {
+          timeoutMs: uiTimeoutMs,
+        })
         await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
         await control.command('waitFor', '[data-testid="stand-in-device"]')
         const currentDevice = await control.command('getValue', '[data-testid="stand-in-device"]')
@@ -230,7 +233,9 @@ export function createDesktopScenario({
           false,
           'Cloud configuration leaked into the desktop Executor'
         )
-        await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
+        await control.command('clickWhenEnabled', `${CONTENT} [data-testid="stand-in-open"]`, {
+          timeoutMs: uiTimeoutMs,
+        })
         await control.command('waitFor', '[data-testid="stand-in-device"]')
         assert.equal(
           await control.command('getValue', '[data-testid="stand-in-device"]'),

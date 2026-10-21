@@ -3,6 +3,18 @@
 
 import { expect, type Locator, type Page } from '@playwright/test'
 
+export async function selectCollaborationProjectView(
+  page: Page,
+  view: 'board' | 'manage'
+): Promise<void> {
+  const compact = page.getByTestId('collaboration-project-view-select')
+  if (await compact.isVisible()) {
+    await compact.selectOption(view)
+  } else {
+    await page.getByTestId(`collaboration-tab-${view}`).click()
+  }
+}
+
 export async function openBlankProjectCreation(page: Page): Promise<void> {
   const testId = 'collaboration-workspace-project-create'
   const trigger = page.getByTestId(testId)

@@ -41,6 +41,7 @@ function fixture() {
     },
     projects: { listCollaborationGroups: jest.fn().mockResolvedValue([]) },
     agents: { list: jest.fn().mockResolvedValue(agents) },
+    members: { list: jest.fn().mockResolvedValue([]) },
     incomingHooks: { list: jest.fn().mockResolvedValue([]) },
   }
   return {
@@ -59,6 +60,40 @@ function fixture() {
 }
 
 describe('ProjectAutomaticProcessing loading', () => {
+  it('loads members when opened directly and waits before choosing the default target', async () => {
+    const { api, view } = fixture()
+    const members = deferred<Array<{ user_id: number; user_name: string }>>()
+    api.agents.list.mockResolvedValue([])
+    api.members.list.mockReturnValue(members.promise)
+    render(view())
+    expect(await screen.findByText('自动分配')).toBeInTheDocument()
+    expect(screen.getByTestId('automatic-processing-create')).toBeDisabled()
+    await act(async () => members.resolve([{ user_id: 7, user_name: '项目成员' }]))
+    expect(api.members.list).toHaveBeenCalledWith(project.id)
+    fireEvent.click(screen.getByTestId('automatic-processing-create'))
+    expect(screen.getByTestId('automatic-processing-target-kind-human')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    fireEvent.click(screen.getByTestId('automatic-processing-save'))
+    await waitFor(() =>
+      expect(api.automations.create).toHaveBeenCalledWith(
+        project.id,
+        expect.objectContaining({ targetKind: 'human', targetId: '7' })
+      )
+    )
+  })
+
+  it('reports a member catalog failure without replacing the rules or creating an empty target', async () => {
+    const { api, view } = fixture()
+    api.members.list.mockRejectedValue(new Error('成员加载失败'))
+    render(view())
+    expect(await screen.findByText('自动分配')).toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent('成员加载失败')
+    expect(screen.getByTestId('automatic-processing-create')).toBeDisabled()
+    expect(api.automations.create).not.toHaveBeenCalled()
+  })
+
   it('shows rules without waiting for target catalogs or loading incoming hooks', async () => {
     const { api, view } = fixture()
     api.projects.listCollaborationGroups.mockReturnValue(new Promise(() => {}))
