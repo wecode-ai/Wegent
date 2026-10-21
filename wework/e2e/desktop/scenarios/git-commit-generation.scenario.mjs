@@ -82,7 +82,7 @@ export async function createDesktopScenario({
     },
 
     async verify(control) {
-      await control.command('click', '[data-testid="project-work-button"]')
+      await control.command('clickWhenEnabled', '[data-testid="project-work-button"]')
       await control.command('click', '[data-testid="add-local-project-option"]')
       await control.command('waitFor', '[data-testid="device-folder-path-input"]')
       await control.command('fill', '[data-testid="device-folder-path-input"]', {

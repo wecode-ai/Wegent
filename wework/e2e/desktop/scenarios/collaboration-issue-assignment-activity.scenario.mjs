@@ -78,15 +78,23 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     await control.command('click', scoped('[data-testid="cloud-todo-detail-assignee"]'))
     const target = userId ? `user:${userId}` : 'empty'
     await control.command('click', `[data-testid="cloud-todo-detail-assignee-option-${target}"]`)
-    if (userId && String(userId) !== String(owner.id)) {
-      await control.command(
-        'click',
-        `[data-testid="wework-assignment-notify-confirm${notify ? '' : '-cancel-button'}"]`
-      )
+    assert.equal(
+      Number(
+        await control.command('getElementCount', '[data-testid="wework-assignment-notify-confirm"]')
+      ),
+      0,
+      'Assignee selection must use the save menu instead of a notification dialog'
+    )
+    if (notify) {
+      await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
+        timeoutMs: uiTimeoutMs,
+      })
+    } else {
+      await control.command('click', scoped('[data-testid="cloud-todo-save-options"]'))
+      await control.command('click', '[data-testid="cloud-todo-save-without-notification"]', {
+        visible: true,
+      })
     }
-    await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-      timeoutMs: uiTimeoutMs,
-    })
     await control.command('waitFor', scoped('[data-testid="cloud-todo-save"]'), {
       visible: false,
       timeoutMs: uiTimeoutMs,

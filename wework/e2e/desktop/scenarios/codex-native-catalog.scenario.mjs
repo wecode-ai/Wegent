@@ -5,20 +5,24 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { fetchJson } from '../modules/shared.mjs'
 import { waitForSnapshot } from '../modules/conversation-layout.mjs'
+import { createCatalogContextVerification } from './codex-catalog-context.mjs'
 
 const MODEL_ID = 'gpt-5.5'
 const EDIT = `[data-testid="codex-catalog-edit-openai-${MODEL_ID}"]`
 const ROW = `[data-testid="codex-official-model-row-openai-${MODEL_ID}"]`
 const RESTORE = `[data-testid="codex-catalog-restore-openai-${MODEL_ID}"]`
 
-export function createDesktopScenario() {
+export function createDesktopScenario(options) {
+  const context = createCatalogContextVerification({ ...options, modelId: MODEL_ID })
   let bundledModels
   let overridePath
 
   return {
     modelProviderId: 'openai',
     modelId: MODEL_ID,
-    async prepareApp({ appEnvironment, codexHome }) {
+    handleHttp: context.handleHttp,
+    attachServer: context.attachServer,
+    async prepareApp({ appEnvironment, codexHome, control }) {
       const { stdout } = await promisify(execFile)(
         appEnvironment.CODEX_BINARY_PATH,
         ['debug', 'models', '--bundled'],
@@ -29,7 +33,11 @@ export function createDesktopScenario() {
       // Reproduce the default OpenAI provider selected without a config override.
       const configPath = join(codexHome, 'config.toml')
       const config = await readFile(configPath, 'utf8')
-      await writeFile(configPath, config.replace(/^model_provider = .*\n/m, ''))
+      // Route only the model service to the fixture; keep the default provider selection.
+      await writeFile(
+        configPath,
+        `openai_base_url = "${control.url}/v1"\n${config.replace(/^model_provider = .*\n/m, '')}`
+      )
       overridePath = join(
         appEnvironment.WEGENT_EXECUTOR_HOME,
         'capabilities',
@@ -112,6 +120,7 @@ export function createDesktopScenario() {
       assert.deepEqual(restored.effective, baseline)
       assert.equal(restored.overridden, false)
       assert.deepEqual(JSON.parse(await readFile(overridePath, 'utf8')), [])
+      await context.verify(control, baseline.display_name)
     },
   }
 }

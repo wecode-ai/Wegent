@@ -103,7 +103,12 @@ async function waitUntil(predicate, timeoutMs, message) {
   throw new Error(message)
 }
 
-export function createDesktopScenario({ resultDir, uiTimeoutMs, workspacePath }) {
+export function createDesktopScenario({
+  resultDir,
+  uiTimeoutMs,
+  modelResponseTimeoutMs,
+  workspacePath,
+}) {
   let active = false
   let cancelling = false
   const requests = []
@@ -271,9 +276,14 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, workspacePath })
       await selectE2EModel(control, undefined, 'GPT-5.6 Luna', WORKBENCH)
       await control.command('fill', COMPOSER, { value: CANCEL_PROMPT })
       await control.command('press', COMPOSER, { key: 'Enter' })
+      // Model admission includes runtime startup; only then does backoff observation begin.
+      await waitUntil(
+        () => cancelRequests.length > 0,
+        modelResponseTimeoutMs,
+        'The cancellation task did not request its model response'
+      )
       await waitUntil(
         async () => {
-          if (cancelRequests.length === 0) return false
           const currentLog = await readFile(join(resultDir, 'executor.log'), 'utf8')
           return (currentLog.match(/codex overloaded turn recovery/g) ?? []).length === 2
         },

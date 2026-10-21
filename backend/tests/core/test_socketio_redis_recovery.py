@@ -133,6 +133,7 @@ class RedisSubscriptionServer:
                 writer.close()
                 await writer.wait_closed()
             except ConnectionError:
+                # The client can reset or break a stalled connection while reconnecting.
                 pass
             finally:
                 self.handlers.discard(task)
