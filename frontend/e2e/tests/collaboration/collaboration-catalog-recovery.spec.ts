@@ -19,12 +19,14 @@ interface ProjectFixture {
 interface CandidateFixture {
   id: number
   name: string
+  botId: number
 }
 
 const test = base.extend<{
   projectFixture: ProjectFixture
   candidateFixture: CandidateFixture
   secondProjectFixture: ProjectFixture
+  secondCandidateFixture: CandidateFixture
 }>({
   projectFixture: async ({ page }, use) => {
     await page.goto('/collaboration')
@@ -81,6 +83,27 @@ const test = base.extend<{
       await webApi(page, `${path}?version=${current.version}`, { method: 'DELETE' })
     }
   },
+  secondCandidateFixture: async ({ page, candidateFixture: first }, use) => {
+    const team = await webApi<Omit<CandidateFixture, 'botId'>>(page, '/api/teams', {
+      method: 'POST',
+      body: {
+        name: `${first.name}-b`,
+        bots: [{ bot_id: first.botId, bot_prompt: '', role: 'worker' }],
+        bind_mode: ['chat'],
+        namespace: 'default',
+        is_active: true,
+      },
+    })
+    try {
+      await use({ ...team, botId: first.botId })
+    } finally {
+      await webApi(
+        page,
+        `/api/teams/${team.id}?force=true&confirm_name=${encodeURIComponent(team.name)}`,
+        { method: 'DELETE' }
+      )
+    }
+  },
   candidateFixture: async ({ page, projectFixture }, use) => {
     const name = `e2e-catalog-${projectFixture.project.id}-${crypto.randomUUID()}`
     const modelName = `${name}-model`
@@ -117,7 +140,7 @@ const test = base.extend<{
         },
       })
       cleanupPaths.unshift(`/api/bots/${bot.id}`)
-      const team = await webApi<CandidateFixture>(page, '/api/teams', {
+      const team = await webApi<Omit<CandidateFixture, 'botId'>>(page, '/api/teams', {
         method: 'POST',
         body: {
           name,
@@ -130,7 +153,7 @@ const test = base.extend<{
       cleanupPaths.unshift(
         `/api/teams/${team.id}?force=true&confirm_name=${encodeURIComponent(team.name)}`
       )
-      await use(team)
+      await use({ ...team, botId: bot.id })
     } finally {
       for (const path of cleanupPaths) {
         await webApi(page, path, { method: 'DELETE' })
@@ -298,15 +321,23 @@ for (const outcome of ['success', 'failure'] as const) {
     projectFixture: a,
     secondProjectFixture: b,
     candidateFixture: candidate,
+    secondCandidateFixture: secondCandidate,
   }) => {
+    expect(candidate.id).not.toBe(secondCandidate.id)
     const groupPath = (id: string) => `/api/v1/cloud-projects/${id}/collaboration-groups`
     const agentPath = (id: string) => `/api/v1/cloud-projects/${id}/chat-agents`
-    await webApi(page, `/api/v1/workspaces/${a.workspaceId}/agents`, {
-      method: 'POST',
-      body: { team_id: candidate.id },
-    })
+    for (const team of [candidate, secondCandidate]) {
+      await webApi(page, `/api/v1/workspaces/${a.workspaceId}/agents`, {
+        method: 'POST',
+        body: { team_id: team.id },
+      })
+    }
     const createdGroups: Record<string, Resource> = {}
-    const createdAgents: Record<string, Resource> = {}
+    // Group rosters use Team identity, not the project chat-agent binding id.
+    const rosterAgentIds = {
+      [a.project.id]: String(candidate.id),
+      [b.project.id]: String(secondCandidate.id),
+    }
     for (const fixture of [a, b]) {
       const members = await webApi<Array<{ user_id: number; user_name: string }>>(
         page,
@@ -331,18 +362,14 @@ for (const outcome of ['success', 'failure'] as const) {
           },
         }
       )
-      createdAgents[fixture.project.id] = await webApi<Resource>(
-        page,
-        agentPath(fixture.project.id),
-        {
-          method: 'POST',
-          body: {
-            runtime: 'wegent',
-            wegent_team_id: candidate.id,
-            name: `Agent ${fixture === a ? 'A' : 'B'}`,
-          },
-        }
-      )
+      await webApi<Resource>(page, agentPath(fixture.project.id), {
+        method: 'POST',
+        body: {
+          runtime: 'wegent',
+          wegent_team_id: fixture === a ? candidate.id : secondCandidate.id,
+          name: `Agent ${fixture === a ? 'A' : 'B'}`,
+        },
+      })
     }
     let release!: () => void
     const held = new Promise<void>(resolve => {
@@ -463,17 +490,13 @@ for (const outcome of ['success', 'failure'] as const) {
       await page.getByTestId(`collaboration-group-manage-${bGroup.id}`).click()
       await page.getByTestId('collaboration-group-create-add-members').click()
       await expect(
-        page.getByTestId(
-          `collaboration-group-create-member-agent-${createdAgents[b.project.id].id}`
-        )
+        page.getByTestId(`collaboration-group-create-member-agent-${rosterAgentIds[b.project.id]}`)
       ).toContainText('Agent B')
       await expect(
-        page.getByTestId(
-          `collaboration-group-create-member-agent-${createdAgents[a.project.id].id}`
-        )
+        page.getByTestId(`collaboration-group-create-member-agent-${rosterAgentIds[a.project.id]}`)
       ).toHaveCount(0)
       await page
-        .getByTestId(`collaboration-group-create-member-agent-${createdAgents[b.project.id].id}`)
+        .getByTestId(`collaboration-group-create-member-agent-${rosterAgentIds[b.project.id]}`)
         .click()
       await page.keyboard.press('Escape')
       await page.getByTestId('collaboration-group-detail-name').fill('B scoped save')
