@@ -398,6 +398,7 @@ async function startHarness({
   model,
   prompt,
   timeoutMs,
+  startupTimeoutMs,
   capturePage,
   runtimeMenuScreenshot,
   modelMenuScreenshot,
@@ -462,7 +463,7 @@ async function startHarness({
     { timeoutMs }
   )
   if (presentation === 'terminal') {
-    await control.command('waitFor', CENTRAL_HARNESS_SELECTOR, { timeoutMs })
+    await control.command('waitFor', CENTRAL_HARNESS_SELECTOR, { timeoutMs: startupTimeoutMs })
   } else {
     await control.command(
       'waitFor',
@@ -619,7 +620,12 @@ async function verifyHarnessWorkbenchChrome({
   await control.command('click', rightPanelToggleSelector)
 }
 
-export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
+export async function createDesktopScenario({
+  captureScreenshot,
+  uiTimeoutMs,
+  workbenchReadyTimeoutMs,
+  workspacePath,
+}) {
   const executables = await resolveHarnessExecutables()
   const harnessModelRequests = []
   const capturePage = (control, name) => captureScreenshot(control, name, 'body')
@@ -707,6 +713,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         model: 'Desktop E2E Vision',
         prompt: 'Inspect the current project',
         timeoutMs: uiTimeoutMs,
+        startupTimeoutMs: workbenchReadyTimeoutMs,
         capturePage,
         runtimeMenuScreenshot: 'local-harness-04-opencode-runtime-menu.png',
         modelMenuScreenshot: 'local-harness-05-opencode-model-menu.png',
@@ -767,6 +774,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         model: 'Desktop E2E Vision',
         prompt: 'Inspect the project with Kimi',
         timeoutMs: uiTimeoutMs,
+        startupTimeoutMs: workbenchReadyTimeoutMs,
         capturePage,
         runtimeMenuScreenshot: 'local-harness-10-kimi-code-runtime-menu.png',
         modelMenuScreenshot: 'local-harness-11-kimi-code-model-menu.png',
@@ -812,6 +820,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         model: 'Desktop E2E DeepSeek Pro Vision Main',
         prompt: CLAUDE_PARALLEL_TOOL_PROMPT,
         timeoutMs: uiTimeoutMs,
+        startupTimeoutMs: workbenchReadyTimeoutMs,
         capturePage,
         runtimeMenuScreenshot: 'local-harness-15-claude-code-runtime-menu.png',
         modelMenuScreenshot: 'local-harness-16-claude-code-model-menu.png',
