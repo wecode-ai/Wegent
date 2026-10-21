@@ -79,6 +79,7 @@ describe('reply prediction diagnostics', () => {
     expect(events[0].details.predictionModelSemanticHash).toBe(
       events[1].details.predictionModelSemanticHash
     )
+    expect(events[0].details.predictionKeyHash).toBe(events[1].details.predictionKeyHash)
     expect(events[0].details.modelFieldOrder).toBe('modelName,modelType,options')
     expect(events[1].details.modelFieldOrder).toBe('options,modelType,modelName')
     expect(events[0].details.optionFieldOrder).toBe('apiKey,baseUrl')

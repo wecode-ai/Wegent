@@ -1,5 +1,6 @@
 import type { ModelSelectionConfig, RuntimeTaskAddress } from '@/types/api'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { stableJsonStringify } from '@/lib/stable-json'
 import {
   readReplyPrediction,
   removeReplyPredictionCache,
@@ -23,7 +24,7 @@ export interface ReplyPredictionResult {
 }
 
 export function replyPredictionKey(source: ReplyPredictionSource) {
-  return `${source.scope}\u0000${JSON.stringify([
+  return `${source.scope}\u0000${stableJsonStringify([
     source.latestTurnId || source.revision,
     source.modelSelection,
   ])}`

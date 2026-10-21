@@ -2,6 +2,7 @@ import {
   isConversationDiagnosticsEnabled,
   recordConversationDiagnostic,
 } from '@wegent/collaboration/conversation/conversationDiagnostics'
+import { stableJsonStringify } from '@/lib/stable-json'
 import type { ReplyPredictionSource } from './replyPredictionService'
 
 export interface PredictionEffectDiagnosticContext {
@@ -36,17 +37,6 @@ function fingerprint(value: string): number {
   return hash >>> 0
 }
 
-function canonical(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonical)
-  if (!value || typeof value !== 'object') return value
-  return Object.fromEntries(
-    Object.entries(value)
-      .filter(([, item]) => item !== undefined)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, item]) => [key, canonical(item)])
-  )
-}
-
 export function recordPredictionEffect(
   phase: 'start' | 'cleanup',
   provider: object,
@@ -62,7 +52,7 @@ export function recordPredictionEffect(
     predictionScopeHash: fingerprint(context.source?.scope ?? ''),
     predictionKeyHash: fingerprint(context.key),
     predictionModelHash: fingerprint(JSON.stringify(model) ?? 'undefined'),
-    predictionModelSemanticHash: fingerprint(JSON.stringify(canonical(model)) ?? 'undefined'),
+    predictionModelSemanticHash: fingerprint(stableJsonStringify(model) ?? 'undefined'),
     predictionTurnHash: fingerprint(context.source?.latestTurnId ?? ''),
     modelFieldOrder: Object.keys(model ?? {}).join(','),
     optionFieldOrder: Object.keys(model?.options ?? {}).join(','),

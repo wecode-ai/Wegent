@@ -62,7 +62,7 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       const body = JSON.parse(Buffer.concat(chunks).toString())
       const input = JSON.stringify(body.input ?? body.messages ?? [])
       if (input.includes('Predict one natural next USER message')) {
-        predictionRequests += 1
+        const predictionOrdinal = ++predictionRequests
         assert.equal(body.model, CONVERSATION_MODEL, 'Prediction changed the conversation model')
         assert.equal(
           body.instructions,
@@ -84,10 +84,10 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
           !input.includes('originalGoal'),
           'Prediction rebuilt the conversation as a text summary'
         )
-        if (predictionRequests === 1) await heldPrediction
+        if (predictionOrdinal === 1) await heldPrediction
         complete(
           response,
-          JSON.stringify({ suggestion: predictionRequests === 1 ? SUGGESTION : null })
+          JSON.stringify({ suggestion: predictionOrdinal === 1 ? SUGGESTION : null })
         )
         return true
       }

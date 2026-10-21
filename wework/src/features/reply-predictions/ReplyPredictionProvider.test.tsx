@@ -115,9 +115,15 @@ function fixture(
 describe('reply prediction provider', () => {
   afterEach(() => resetConversationDiagnosticsForTest())
 
-  it('diagnoses existing key-order restarts without changing prediction identity or request behavior', async () => {
+  it('keeps a pending prediction when refreshed model fields are reordered', async () => {
     startConversationDiagnosticCapture()
-    const predict = vi.fn<Predict>(() => new Promise(() => {}))
+    let resolve!: (value: { suggestion: string }) => void
+    const predict = vi.fn<Predict>(
+      () =>
+        new Promise(done => {
+          resolve = done
+        })
+    )
     const original = {
       ...source,
       modelSelection: {
@@ -132,31 +138,21 @@ describe('reply prediction provider', () => {
       fixture(predict, {
         ...original,
         modelSelection: {
-          ...original.modelSelection,
           options: { reasoning: 'low', speed: 'standard' },
+          modelType: 'runtime',
+          modelName: 'session-model',
         },
       })
     )
-    await waitFor(() => expect(predict).toHaveBeenCalledTimes(2))
-    expect(predict.mock.calls[0][0].signal?.aborted).toBe(true)
+    expect(predict).toHaveBeenCalledTimes(1)
+    expect(predict.mock.calls[0][0].signal?.aborted).toBe(false)
     const events = getConversationDiagnosticsSnapshot()!.events
-    const starts = events.filter(event => event.name === 'reply-prediction-effect-start')
-    expect(starts).toHaveLength(2)
-    expect(starts[0].details.predictionModelHash).not.toBe(starts[1].details.predictionModelHash)
-    expect(starts[0].details.predictionModelSemanticHash).toBe(
-      starts[1].details.predictionModelSemanticHash
-    )
-    expect(events).toContainEqual(
-      expect.objectContaining({
-        name: 'reply-prediction-effect-cleanup',
-        details: expect.objectContaining({
-          keyChanged: true,
-          busyChanged: false,
-          serviceChanged: false,
-          unmounted: false,
-        }),
-      })
-    )
+    expect(events.filter(event => event.name === 'reply-prediction-effect-start')).toHaveLength(1)
+    expect(events.some(event => event.name === 'reply-prediction-effect-cleanup')).toBe(false)
+    expect(events.some(event => event.name === 'reply-prediction-abort')).toBe(false)
+    resolve({ suggestion: '当前建议' })
+    await waitFor(() => expect(screen.getByRole('button')).toHaveTextContent('当前建议'))
+    expect(predict).toHaveBeenCalledTimes(1)
     unmount()
     expect(getConversationDiagnosticsSnapshot()!.events).toContainEqual(
       expect.objectContaining({
