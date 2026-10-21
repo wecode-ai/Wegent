@@ -5152,15 +5152,17 @@
     "login_description": "登录 Wegent 后可以创建和加入 Workspace，与成员和智能体共同推进项目。"
   },
   "notifications": {
-    "assigned_by": "{{name}}分配给你",
     "stand_in_retry": "重试",
     "stand_in_identity": "我的替身",
+    "stand_in_delegate": "交给替身",
+    "stand_in_assignment": "分配给你",
     "stand_in_running": "处理中",
     "stand_in_waiting": "等你回复",
     "stand_in_completed": "处理完毕，等你检查",
     "stand_in_failed": "处理失败",
     "stand_in_cancelled": "已停止",
     "stand_in_reply": "补充要求，让替身继续处理…",
+    "stand_in_reply_action": "回复",
     "stand_in_send": "发送给替身",
     "stand_in_unavailable": "执行设备不可用，请检查设备连接。",
     "title": "通知",

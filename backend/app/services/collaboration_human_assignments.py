@@ -144,12 +144,14 @@ def notify_direct_human_assignment(
         issue_id=issue.id,
         assignment_id=assignment_id,
     )
+    actor = db.get(User, actor_user_id)
     notify_collaboration_human_assignment(
         db,
         project=project,
         issue=issue,
         human=human,
         actor_user_id=actor_user_id,
+        actor_name=actor.user_name if actor else "",
         human_assignment_id=human_assignment_id,
         dispatch_id=f"direct-human:{assignment_id}",
         round_id=DIRECT_HUMAN_ROUND_ID,
@@ -169,6 +171,7 @@ def notify_collaboration_human_assignment(
     issue: LoopItem,
     human: User,
     actor_user_id: int,
+    actor_name: str,
     human_assignment_id: str,
     dispatch_id: str,
     round_id: str,
@@ -205,6 +208,7 @@ def notify_collaboration_human_assignment(
         project_id=str(project.id),
         item_id=issue.id,
         payload={
+            **({"actorName": actor_name} if actor_name else {}),
             "action": action,
             "projectId": str(project.id),
             "itemId": issue.id,

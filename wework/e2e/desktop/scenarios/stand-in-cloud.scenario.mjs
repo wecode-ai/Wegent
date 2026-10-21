@@ -36,6 +36,7 @@ export function createDesktopScenario({
   uiTimeoutMs,
   modelResponseTimeoutMs,
   workbenchReadyTimeoutMs,
+  captureScreenshot,
 }) {
   let backendUrl
   let authToken
@@ -194,6 +195,30 @@ export function createDesktopScenario({
           },
         })
         const historical = await createIssue('启用云端替身前已分配')
+        // The real inbox must resolve the stored assigner, without additional inbox lookups.
+        const beforeStandIn = await request('/v1/wework-notifications?category=collaboration')
+        const historicalNotice = beforeStandIn.items.find(
+          row => row.payload.itemId === historical.id
+        )
+        assert.ok(historicalNotice, 'The human assignment notification must exist')
+        assert.equal(historicalNotice.payload.actorName, user.user_name)
+        await control.command('click', '[data-testid="wework-notifications-button"]')
+        await control.command(
+          'click',
+          '[data-testid="wework-notifications-category-collaboration"]'
+        )
+        await control.command('click', '[data-testid="wework-notifications-refresh"]')
+        await control.command(
+          'waitFor',
+          `[data-testid="wework-notification-${historicalNotice.id}"]`,
+          { text: user.user_name }
+        )
+        await captureScreenshot(
+          control,
+          'assignment-notification-layout.png',
+          '[data-testid="wework-notifications-popover"]'
+        )
+        await control.command('click', '[data-testid="wework-notifications-button"]')
         await control.command('click', `${CONTENT} [data-testid="collaboration-tab-board"]`)
         await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
         await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
@@ -297,6 +322,11 @@ export function createDesktopScenario({
           { text: '处理完毕' }
         )
         assert.equal(await control.command('getElementCount', processing), '1')
+        await captureScreenshot(
+          control,
+          'stand-in-notifications-layout.png',
+          '[data-testid="wework-notifications-popover"]'
+        )
         await control.command('click', '[data-testid="wework-notifications-button"]')
 
         // Another device must respect an existing ordinary task binding.

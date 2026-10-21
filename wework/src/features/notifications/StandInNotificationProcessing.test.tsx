@@ -11,7 +11,11 @@ const { send, transcript, run } = vi.hoisted(() => ({
   run: vi.fn(),
 }))
 vi.mock('@/hooks/useTranslation', () => ({
-  useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en' } }),
+  useTranslation: () => ({
+    t: (key: string, values?: { actor?: string }) =>
+      values?.actor ? key + ':' + values.actor : key,
+    i18n: { language: 'en' },
+  }),
 }))
 const services = {
   runtimeWorkApi: { sendRuntimeMessage: send, getRuntimeTranscript: transcript },
@@ -19,6 +23,16 @@ const services = {
   getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'device' }),
 } as unknown as WorkbenchServices
 const onChanged = vi.fn().mockResolvedValue(undefined)
+const rowProps = {
+  testId: 'notification-row',
+  title: 'Review',
+  body: '',
+  timestamp: Date.parse('2026-10-21T12:05:00Z'),
+  unread: false,
+  unreadLabel: 'Unread',
+  busy: false,
+  onClick: vi.fn(),
+}
 function notification(status: 'done' | 'failed' = 'done') {
   return mergeStandInNotifications(
     [assignment],
@@ -34,6 +48,7 @@ function view(status: 'done' | 'failed' = 'done') {
   return (
     <StandInNotificationProcessing
       notification={notification(status)}
+      rowProps={rowProps}
       services={services}
       userId={1}
       onChanged={onChanged}
@@ -53,6 +68,37 @@ beforeEach(() => {
   run.mockResolvedValue(runtimeItem.address)
 })
 describe('notification inline handling', () => {
+  it('omits missing assigner information and shows the task directly', () => {
+    render(
+      <StandInNotificationProcessing
+        notification={assignment}
+        rowProps={rowProps}
+        services={services}
+        userId={1}
+        onChanged={onChanged}
+      />
+    )
+    expect(screen.getByTestId('notification-row')).toHaveTextContent('Review')
+    expect(screen.queryByTestId('notification-row-body')).not.toBeInTheDocument()
+    expect(screen.queryByText('notifications.stand_in_assignment')).not.toBeInTheDocument()
+    expect(screen.queryByText('notifications.new_assignment')).not.toBeInTheDocument()
+    expect(screen.getByTestId('notification-stand-in-start-assignment')).toBeEnabled()
+  })
+  it('identifies the actual assigner directly above the task without a new-task heading', () => {
+    render(
+      <StandInNotificationProcessing
+        notification={{ ...assignment, payload: { ...assignment.payload, actorName: 'Alice' } }}
+        rowProps={rowProps}
+        services={services}
+        userId={1}
+        onChanged={onChanged}
+      />
+    )
+    expect(screen.getByTestId('notification-row')).toHaveTextContent('Alice')
+    expect(screen.getByTestId('notification-row-body')).toHaveTextContent('Review')
+    expect(screen.queryByText('notifications.new_assignment')).not.toBeInTheDocument()
+    expect(screen.getByTestId('notification-stand-in-start-assignment')).toBeEnabled()
+  })
   it('does not reload an unchanged execution when the notification source republishes', async () => {
     const rendered = render(view())
     await waitFor(() => expect(transcript).toHaveBeenCalledOnce())
@@ -61,6 +107,9 @@ describe('notification inline handling', () => {
   })
   it('sends follow-up to the existing execution without navigation or task creation', async () => {
     render(view())
+    expect(screen.queryByTestId('notification-stand-in-reply-assignment')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('notification-stand-in-reply-open-assignment'))
+    expect(screen.getByTestId('notification-stand-in-reply-assignment')).toHaveFocus()
     fireEvent.change(screen.getByTestId('notification-stand-in-reply-assignment'), {
       target: { value: 'Also check ordering' },
     })
@@ -77,6 +126,7 @@ describe('notification inline handling', () => {
   it('retains the draft and shows the real error on rejected send', async () => {
     send.mockResolvedValue({ accepted: false, error: 'Device offline' })
     render(view())
+    fireEvent.click(screen.getByTestId('notification-stand-in-reply-open-assignment'))
     const input = screen.getByTestId('notification-stand-in-reply-assignment')
     fireEvent.change(input, { target: { value: 'Keep my draft' } })
     fireEvent.click(screen.getByTestId('notification-stand-in-send-assignment'))
@@ -93,6 +143,7 @@ describe('notification inline handling', () => {
         })
     )
     render(view())
+    fireEvent.click(screen.getByTestId('notification-stand-in-reply-open-assignment'))
     fireEvent.change(screen.getByTestId('notification-stand-in-reply-assignment'), {
       target: { value: 'Once' },
     })
@@ -154,6 +205,7 @@ describe('notification inline handling', () => {
     render(
       <StandInNotificationProcessing
         notification={waiting}
+        rowProps={rowProps}
         services={services}
         userId={1}
         onChanged={onChanged}

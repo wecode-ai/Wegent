@@ -1,10 +1,18 @@
 import { useStandInNotifications } from './useStandInNotifications'
 import { standInOrigin, type StandInNotification } from './standInNotifications'
-import { NotificationFeedRow } from './NotificationFeedRow'
+import { NotificationFeedRow, type NotificationFeedRowProps } from './NotificationFeedRow'
 import { formatNotificationTime } from './notificationTime'
 import { StandInNotificationProcessing } from './StandInNotificationProcessing'
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, Bell, CheckCircle2, ChevronRight, Settings2, UsersRound } from 'lucide-react'
+import {
+  ArrowLeft,
+  Bell,
+  CheckCircle2,
+  ChevronRight,
+  RefreshCw,
+  Settings2,
+  UsersRound,
+} from 'lucide-react'
 import { createHttpClient } from '@/api/http'
 import { createRuntimeWorkApi } from '@/api/runtimeWork'
 import {
@@ -492,8 +500,6 @@ function ConnectedNotificationCenter({
   function summaryParts(payload: WeworkNotificationPayload): string[] {
     const parts: string[] = []
     if (payload.projectName) parts.push(payload.projectName)
-    if (payload.actorName && payload.humanAssignmentId)
-      parts.push(t('notifications.assigned_by', { name: payload.actorName }))
     if (payload.itemKey) parts.push(payload.itemKey)
     if (payload.itemStatus) parts.push(payload.itemStatus)
     const priority = priorityLabel(payload.itemPriority)
@@ -732,23 +738,24 @@ function ConnectedNotificationCenter({
               {!settingsOpen && (
                 <button
                   type="button"
-                  data-testid="wework-notifications-refresh"
-                  className="min-h-11 text-xs text-text-secondary hover:text-text-primary focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-50 md:min-h-0"
-                  disabled={busy || !api}
-                  onClick={() => void refresh()}
-                >
-                  {t('notifications.refresh')}
-                </button>
-              )}
-              {!settingsOpen && (
-                <button
-                  type="button"
                   data-testid="wework-notifications-read-all"
                   className="min-h-11 text-xs text-text-secondary hover:text-text-primary focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-50 md:min-h-0"
                   disabled={busy || unreadCount === 0}
                   onClick={readAll}
                 >
-                  {t('notifications.read_all')}
+                  <span className="text-xs">{t('notifications.read_all')}</span>
+                </button>
+              )}
+              {!settingsOpen && (
+                <button
+                  type="button"
+                  data-testid="wework-notifications-refresh"
+                  aria-label={t('notifications.refresh')}
+                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md border-l border-border text-text-secondary hover:bg-muted hover:text-text-primary focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-50 md:h-7 md:w-7"
+                  disabled={busy || !api}
+                  onClick={() => void refresh()}
+                >
+                  <RefreshCw className="h-4 w-4" aria-hidden="true" />
                 </button>
               )}
               {!category && !settingsOpen && (
@@ -808,7 +815,7 @@ function ConnectedNotificationCenter({
                     </span>
                     <span className="flex shrink-0 flex-col items-end gap-1">
                       {row.timestamp > 0 && (
-                        <span className="text-xs text-text-tertiary">
+                        <span className="text-xs text-text-secondary">
                           {formatNotificationTime(row.timestamp)}
                         </span>
                       )}
@@ -817,7 +824,7 @@ function ConnectedNotificationCenter({
                           {row.unread > 99 ? '99+' : row.unread}
                         </span>
                       ) : (
-                        <ChevronRight className="h-4 w-4 text-text-tertiary" aria-hidden="true" />
+                        <ChevronRight className="h-4 w-4 text-text-secondary" aria-hidden="true" />
                       )}
                     </span>
                   </button>
@@ -857,64 +864,52 @@ function ConnectedNotificationCenter({
                   {t('notifications.empty_category')}
                 </p>
               )}
-              {selectedCloudInbox?.items.map(notification => (
-                <NotificationFeedRow
-                  key={notification.id}
-                  testId={
+              {selectedCloudInbox?.items.map(notification => {
+                const rowProps: NotificationFeedRowProps = {
+                  testId:
                     notification.payload.action === 'create_personal_task'
                       ? 'issue-dispatch-notification-create-task'
-                      : 'wework-notification-' + notification.id
-                  }
-                  kind={
-                    notification.kind === 'issue_dispatch_assignment'
-                      ? undefined
-                      : notification.kind
-                  }
-                  title={
+                      : 'wework-notification-' + notification.id,
+                  kind: notification.kind,
+                  title:
                     notification.kind === 'issue_dispatch_assignment'
                       ? notification.payload.taskTitle || notification.title
-                      : notification.title
-                  }
-                  body={notification.kind === 'issue_dispatch_assignment' ? '' : notification.body}
-                  processing={
-                    notification.kind === 'issue_dispatch_assignment' && (
-                      <StandInNotificationProcessing
-                        notification={notification}
-                        services={taskSource?.services}
-                        userId={userId ?? taskSource?.userId ?? null}
-                        onChanged={async () => {
-                          if (selectedCloudCategory)
-                            await markNotificationRead(notification, selectedCloudCategory)
-                          await refresh()
-                        }}
-                      />
-                    )
-                  }
-                  summary={summaryParts(notification.payload).join(' · ')}
-                  replyPreview={
-                    notification.payload.replyPreview
-                      ? t('notifications.in_reply_to', {
-                          preview: notification.payload.replyPreview,
-                        })
-                      : undefined
-                  }
-                  timestamp={
+                      : notification.title,
+                  body: notification.body,
+                  summary: summaryParts(notification.payload).join(' · '),
+                  replyPreview: notification.payload.replyPreview
+                    ? t('notifications.in_reply_to', { preview: notification.payload.replyPreview })
+                    : undefined,
+                  timestamp:
                     selectedCloudCategory === 'collaboration'
                       ? collaboration.timestamp(notification)
-                      : cloudTimestamp(notification.created_at)
-                  }
-                  unread={
+                      : cloudTimestamp(notification.created_at),
+                  unread:
                     selectedCloudCategory === 'collaboration'
                       ? collaboration.isUnread(notification)
-                      : !notification.read_at
-                  }
-                  unreadLabel={t('notifications.unread')}
-                  busy={busy}
-                  onClick={() =>
-                    selectedCloudCategory && openNotification(notification, selectedCloudCategory)
-                  }
-                />
-              ))}
+                      : !notification.read_at,
+                  unreadLabel: t('notifications.unread'),
+                  busy,
+                  onClick: () =>
+                    selectedCloudCategory && openNotification(notification, selectedCloudCategory),
+                }
+                return notification.kind === 'issue_dispatch_assignment' ? (
+                  <StandInNotificationProcessing
+                    key={notification.id}
+                    notification={notification}
+                    rowProps={rowProps}
+                    services={taskSource?.services}
+                    userId={userId ?? taskSource?.userId ?? null}
+                    onChanged={async () => {
+                      if (selectedCloudCategory)
+                        await markNotificationRead(notification, selectedCloudCategory)
+                      await refresh()
+                    }}
+                  />
+                ) : (
+                  <NotificationFeedRow key={notification.id} {...rowProps} />
+                )
+              })}
               {selectedCloudInbox?.next_offset != null && selectedCloudCategory && (
                 <button
                   type="button"

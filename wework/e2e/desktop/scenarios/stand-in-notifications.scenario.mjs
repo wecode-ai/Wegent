@@ -92,6 +92,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       await control.command('waitFor', selector(`notification-stand-in-status-${id}`), {
         text: '处理完毕',
       })
+      await control.command('click', selector(`notification-stand-in-reply-open-${id}`))
       await control.command('fill', selector(`notification-stand-in-reply-${id}`), {
         value: FOLLOW_UP,
       })
