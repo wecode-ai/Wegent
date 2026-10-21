@@ -956,7 +956,6 @@ export class EmbeddedBrowserManager {
       label: normalizedLabel,
       nativeLabel: entry.nativeLabel,
     })
-    await this.waitForAttachedContents(normalizedLabel)
   }
 
   close(label: string, expectedNativeLabel?: string | null): void {

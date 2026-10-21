@@ -38,6 +38,15 @@ function localPathToFileUrl(value: string): string | null {
   return null
 }
 
+export function browserDiagnosticOrigin(value: string): string | null {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.origin : url.protocol
+  } catch {
+    return null
+  }
+}
+
 export function normalizeBrowserUrl(value: string): string | null {
   const trimmed = value.trim()
   if (!trimmed) return null

@@ -44,7 +44,9 @@ export function ComposerLinkChip({ payload }: ComposerLinkChipProps) {
         event.preventDefault();
         event.stopPropagation();
         void Promise.resolve(openExternalUrl(payload.url)).catch((error) => {
-          console.error("[Wework] Failed to open composer link", error);
+          console.error("[Wework] Failed to open composer link", {
+            error: error instanceof Error ? error.name : typeof error,
+          });
         });
       }}
       title={payload.url}

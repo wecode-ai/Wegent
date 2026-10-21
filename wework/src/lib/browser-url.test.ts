@@ -1,7 +1,24 @@
 import { describe, expect, test } from 'vitest'
-import { normalizeBrowserUrl } from './browser-url'
+import { browserDiagnosticOrigin, normalizeBrowserUrl } from './browser-url'
 
 describe('browser URL helpers', () => {
+  test.each<[string, string | null]>([
+    [
+      'https://alice:password@example.test/private-document?token=secret#private-section',
+      'https://example.test',
+    ],
+    ['http://localhost:3000/private-document?token=secret', 'http://localhost:3000'],
+    ['file:///Users/alice/private-document.html', 'file:'],
+    ['file:///C:/Users/alice/private-document.html', 'file:'],
+    ['file://private-server/private-document.html', 'file:'],
+    ['asset://localhost/Users/alice/private-document.html', 'asset:'],
+    ['data:text/html,private-document', 'data:'],
+    ['mailto:alice@example.test', 'mailto:'],
+    ['invalid URL', null],
+  ])('keeps only a safe diagnostic origin for %s', (url, expected) => {
+    expect(browserDiagnosticOrigin(url)).toBe(expected)
+  })
+
   test('normalizes supported browser URLs', () => {
     expect(normalizeBrowserUrl('example.test')).toBe('http://example.test/')
     expect(normalizeBrowserUrl('localhost:3000')).toBe('http://localhost:3000/')

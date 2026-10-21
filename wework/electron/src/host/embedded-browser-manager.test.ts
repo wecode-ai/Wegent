@@ -344,7 +344,7 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     await rm(directory, { recursive: true, force: true })
   })
 
-  test('waits for a replacement webview before completing a close request', async () => {
+  test('completes a close without a replacement and waits for attachment only on reopen', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
     const events: BrowserHostEvent[] = []
     const manager = new EmbeddedBrowserManager(directory, event => events.push(event))
@@ -353,7 +353,7 @@ describe('EmbeddedBrowserManager lifecycle', () => {
       contents.commitUrl(url)
     })
     manager.attach('workspace-browser', contents as unknown as WebContents)
-    await manager.open({
+    const initialState = await manager.open({
       label: 'workspace-browser',
       url: 'https://example.test/',
       bounds: { x: 0, y: 0, width: 800, height: 600 },
@@ -365,23 +365,55 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     const closeRequest = manager.requestClose('workspace-browser').then(() => {
       closeCompleted = true
     })
-    await Promise.resolve()
+    let reopen: ReturnType<EmbeddedBrowserManager['open']> | undefined
+    try {
+      await Promise.resolve()
 
-    expect(closeCompleted).toBe(false)
-    expect(contents.close).toHaveBeenCalledOnce()
-    expect(events).toContainEqual(
-      expect.objectContaining({
-        type: 'close-request',
-        payload: expect.objectContaining({ label: 'workspace-browser' }),
-      })
-    )
+      expect(closeCompleted).toBe(true)
+      expect(contents.close).toHaveBeenCalledOnce()
+      expect(manager.has('workspace-browser')).toBe(false)
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: 'close-request',
+          payload: {
+            label: 'workspace-browser',
+            nativeLabel: initialState.nativeLabel,
+          },
+        })
+      )
 
-    const replacement = new FakeWebContents()
-    manager.attach('workspace-browser', replacement as unknown as WebContents)
-    await closeRequest
+      const replacement = new FakeWebContents()
+      replacement.loadURL.mockImplementation(async url => replacement.commitUrl(url))
+      let reopenCompleted = false
+      reopen = manager
+        .open({
+          label: 'workspace-browser',
+          url: 'https://reopened.example.test/',
+          bounds: { x: 0, y: 0, width: 800, height: 600 },
+          visible: true,
+          navigateExisting: true,
+        })
+        .then(state => {
+          reopenCompleted = true
+          return state
+        })
+      await Promise.resolve()
+      expect(reopenCompleted).toBe(false)
+      expect(replacement.loadURL).not.toHaveBeenCalled()
 
-    expect(closeCompleted).toBe(true)
-    await rm(directory, { recursive: true, force: true })
+      manager.attach('workspace-browser', replacement as unknown as WebContents)
+      const reopenedState = await reopen
+
+      expect(reopenCompleted).toBe(true)
+      expect(replacement.loadURL).toHaveBeenCalledWith('https://reopened.example.test/')
+      expect(reopenedState.url).toBe('https://reopened.example.test/')
+      expect(reopenedState.nativeLabel).not.toBe(initialState.nativeLabel)
+    } finally {
+      manager.stop()
+      await closeRequest.catch(() => {})
+      await reopen?.catch(() => {})
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 
   test('ignores aborted load rejections instead of recording a navigation error', async () => {

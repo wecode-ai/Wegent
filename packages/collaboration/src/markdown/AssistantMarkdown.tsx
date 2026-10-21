@@ -696,7 +696,9 @@ function AssistantMarkdownLink({
         event.stopPropagation()
         if (!href) return
         void Promise.resolve(openExternalUrl(href)).catch(error => {
-          console.error('[Wework] Failed to open assistant link', error)
+          console.error('[Wework] Failed to open assistant link', {
+            error: error instanceof Error ? error.name : typeof error,
+          })
         })
       }}
     >

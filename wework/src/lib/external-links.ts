@@ -3,20 +3,12 @@ export { isHttpUrl } from '@wegent/chat-core/http-url'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { isElectronRuntime } from './runtime-environment'
 import { requestEmbeddedBrowserOpen } from './embedded-browser'
+import { browserDiagnosticOrigin } from './browser-url'
 import { getAppPreferences, type BrowserLinkTarget } from '@/desktop/appPreferences'
 
 interface OpenExternalUrlOptions {
   target?: BrowserLinkTarget
   source?: string
-}
-
-function diagnosticUrl(value: string): string | null {
-  try {
-    const url = new URL(value)
-    return `${url.protocol}//${url.host}`
-  } catch {
-    return null
-  }
 }
 
 function logExternalLink(
@@ -28,7 +20,7 @@ function logExternalLink(
   console.info('[Wework][external-link]', {
     event,
     source,
-    url: diagnosticUrl(value),
+    url: browserDiagnosticOrigin(value),
     ...details,
   })
 }
@@ -83,10 +75,9 @@ export async function openExternalUrl(
       return true
     }
 
-    const openedWindow = window.open(value, '_blank', 'noopener,noreferrer')
+    window.open(value, '_blank', 'noopener,noreferrer')
     logExternalLink('opened', value, source, {
       target: 'browser',
-      openedWindow: Boolean(openedWindow),
     })
     return true
   } catch (error) {

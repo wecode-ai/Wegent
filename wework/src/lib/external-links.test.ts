@@ -66,10 +66,65 @@ describe('external link helpers', () => {
     expect(desktopHostMock).not.toHaveBeenCalled()
   })
 
+  test('does not infer browser open success from a noopener window handle', async () => {
+    vi.stubGlobal('open', openWindowMock)
+    openWindowMock.mockReturnValue(null)
+    const log = vi.spyOn(console, 'info').mockImplementation(() => {})
+
+    await expect(openExternalUrl('https://example.com/docs')).resolves.toBe(true)
+
+    expect(openWindowMock).toHaveBeenCalledWith(
+      'https://example.com/docs',
+      '_blank',
+      'noopener,noreferrer'
+    )
+    expect(log).toHaveBeenCalledWith('[Wework][external-link]', {
+      event: 'opened',
+      source: 'unknown',
+      url: 'https://example.com',
+      target: 'browser',
+    })
+  })
+
   test('opens external links through the Electron host', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     await expect(openExternalUrl('https://example.com/docs')).resolves.toBe(true)
     expect(desktopHostMock).toHaveBeenCalledWith('shell.openExternal', {
+      url: 'https://example.com/docs',
+    })
+  })
+
+  test.each([
+    'javascript:alert(1)',
+    'file:///C:/Users/viewer/private.txt',
+    'mailto:user@example.com',
+    '/settings',
+  ])('rejects unsupported desktop links without opening a browser: %s', async url => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    vi.stubGlobal('open', openWindowMock)
+
+    await expect(openExternalUrl(url)).resolves.toBe(false)
+
+    expect(getAppPreferencesMock).not.toHaveBeenCalled()
+    expect(requestEmbeddedBrowserOpenMock).not.toHaveBeenCalled()
+    expect(desktopHostMock).not.toHaveBeenCalled()
+    expect(openWindowMock).not.toHaveBeenCalled()
+  })
+
+  test('uses the current link preference on each click', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    getAppPreferencesMock
+      .mockResolvedValueOnce({ browserExternalLinkTarget: 'wework' })
+      .mockResolvedValueOnce({ browserExternalLinkTarget: 'system' })
+
+    await openExternalUrl('https://example.com/docs')
+    await openExternalUrl('https://example.com/docs')
+
+    expect(getAppPreferencesMock).toHaveBeenCalledTimes(2)
+    expect(requestEmbeddedBrowserOpenMock).toHaveBeenCalledExactlyOnceWith(
+      'https://example.com/docs'
+    )
+    expect(desktopHostMock).toHaveBeenCalledExactlyOnceWith('shell.openExternal', {
       url: 'https://example.com/docs',
     })
   })
