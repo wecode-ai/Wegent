@@ -1,0 +1,333 @@
+"""Mention recipients must match the effective project roster."""
+
+import uuid
+from contextlib import contextmanager
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+from fastapi import HTTPException
+from sqlalchemy.orm import Session
+
+from app.api.ws import wework_runtime_namespace
+from app.models.delivery import CloudProject, LoopItem
+from app.models.kind import Kind
+from app.models.project_chat_message import ProjectChatMessage
+from app.models.resource_member import ResourceMember
+from app.models.user import User
+from app.models.wework_notification import WeworkNotification
+from app.schemas.project_chat import ProjectChatSend
+from app.services.cloud_projects.service import cloud_project_service
+from app.services.project_chat.service import project_chat_service
+from tests.utils.collaboration import authorize_project
+
+
+@pytest.fixture
+def mention_scope(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> tuple[CloudProject, Kind, User, LoopItem, MagicMock]:
+    schedule = MagicMock()
+    monkeypatch.setattr("app.core.async_utils.schedule_async_task", schedule)
+    public_id = str(uuid.uuid4())
+    project = CloudProject(
+        public_id=public_id,
+        project_key=f"MENTION{uuid.uuid4().hex[:6].upper()}",
+        name="Mention project",
+        created_by_user_id=test_user.id,
+        storage_prefix=f"projects/{public_id}",
+        metadata_json={},
+    )
+    workspace = authorize_project(test_db, project)
+    recipient = User(
+        user_name=f"mention-{uuid.uuid4().hex[:8]}",
+        password_hash="unused",
+        email="mention@example.com",
+        is_active=True,
+    )
+    item = LoopItem(
+        id=f"MENTION-{uuid.uuid4().hex[:8]}",
+        cloud_project_id=project.id,
+        title="Mention issue",
+        created_by_user_id=test_user.id,
+        metadata_json={},
+    )
+    test_db.add_all([recipient, item])
+    test_db.commit()
+    return project, workspace, recipient, item, schedule
+
+
+def grant_member(
+    db: Session,
+    resource_type: str,
+    resource_id: int | str,
+    user_id: int,
+    role: str,
+    status: str = "approved",
+) -> ResourceMember:
+    grant = ResourceMember.create(
+        resource_type=resource_type,
+        resource_id=int(resource_id),
+        entity_id=str(user_id),
+        role=role,
+        status=status,
+    )
+    db.add(grant)
+    return grant
+
+
+def mention_request(
+    project: CloudProject, recipient: User, task_id: str | None = None
+) -> ProjectChatSend:
+    return ProjectChatSend(
+        client_message_id=str(uuid.uuid4()),
+        project_id=project.id,
+        task_id=task_id,
+        content=f"@{recipient.user_name} please review",
+        mentions=[
+            {"type": "user", "id": str(recipient.id), "label": recipient.user_name}
+        ],
+    )
+
+
+@pytest.mark.parametrize("issue_thread", [False, True])
+@pytest.mark.parametrize("mode", ["inherit", "restricted"])
+@pytest.mark.parametrize("source", ["workspace", "direct"])
+@pytest.mark.parametrize(
+    "role", ["Owner", "Maintainer", "Developer", "Viewer", "Reporter"]
+)
+def test_cp03_cp08_cp13_mentions_follow_effective_roster(
+    test_db, test_user, mention_scope, issue_thread, mode, source, role
+):
+    project, workspace, recipient, item, schedule = mention_scope
+    project.membership_mode = mode
+    grant_member(
+        test_db,
+        "Workspace" if source == "workspace" else "CloudProject",
+        workspace.id if source == "workspace" else project.id,
+        recipient.id,
+        role,
+    )
+    test_db.commit()
+    expected = (
+        source == "direct" or mode == "inherit" or role in {"Owner", "Maintainer"}
+    )
+    roster = cloud_project_service.list_members(test_db, project.id, test_user.id)
+    assert (recipient.id in {row["user_id"] for row in roster}) == expected
+    request = mention_request(project, recipient, item.id if issue_thread else None)
+
+    if expected:
+        result = project_chat_service.send(
+            test_db,
+            user_id=test_user.id,
+            user_name=test_user.user_name,
+            request=request,
+        )
+        assert result.created
+        test_db.expire_all()
+        notification = test_db.query(WeworkNotification).one()
+        assert notification.user_id == recipient.id
+        assert notification.payload["commentId"] == result.message.message_id
+        assert notification.payload["projectId"] == str(project.id)
+        assert notification.payload.get("itemId") == request.task_id
+        assert (
+            test_db.query(ProjectChatMessage).one().message_id
+            == notification.payload["commentId"]
+        )
+        schedule.assert_called_once()
+    else:
+        with pytest.raises(HTTPException) as error:
+            project_chat_service.send(
+                test_db,
+                user_id=test_user.id,
+                user_name=test_user.user_name,
+                request=request,
+            )
+        assert error.value.status_code == 422
+        test_db.rollback()
+        assert test_db.query(ProjectChatMessage).count() == 0
+        assert test_db.query(WeworkNotification).count() == 0
+        schedule.assert_not_called()
+
+
+@pytest.mark.parametrize("mode", ["inherit", "restricted"])
+def test_cp02_mentions_include_workspace_owner_without_direct_grant(
+    test_db, test_user, mention_scope, mode
+):
+    project, workspace, recipient, _, schedule = mention_scope
+    project.membership_mode = mode
+    workspace.user_id = recipient.id
+    test_db.commit()
+
+    result = project_chat_service.send(
+        test_db,
+        user_id=test_user.id,
+        user_name=test_user.user_name,
+        request=mention_request(project, recipient),
+    )
+
+    assert result.created
+    assert test_db.query(WeworkNotification).one().user_id == recipient.id
+    schedule.assert_called_once()
+
+
+@pytest.mark.parametrize("source", ["Workspace", "CloudProject"])
+@pytest.mark.parametrize("invalid", ["pending", "rejected", "role", "inactive"])
+def test_cp05_mentions_reject_invalid_memberships(
+    test_db, test_user, mention_scope, source, invalid
+):
+    project, workspace, recipient, _, schedule = mention_scope
+    grant_member(
+        test_db,
+        source,
+        workspace.id if source == "Workspace" else project.id,
+        recipient.id,
+        "Unknown" if invalid == "role" else "Developer",
+        invalid if invalid in {"pending", "rejected"} else "approved",
+    )
+    recipient.is_active = invalid != "inactive"
+    test_db.commit()
+
+    with pytest.raises(HTTPException) as error:
+        project_chat_service.send(
+            test_db,
+            user_id=test_user.id,
+            user_name=test_user.user_name,
+            request=mention_request(project, recipient),
+        )
+
+    assert error.value.status_code == 422
+    test_db.rollback()
+    assert test_db.query(ProjectChatMessage).count() == 0
+    assert test_db.query(WeworkNotification).count() == 0
+    schedule.assert_not_called()
+
+
+@pytest.mark.parametrize("source", ["creator", "public", "outsider", "sibling"])
+def test_cp04_cp06_mentions_reject_non_participants(
+    test_db, test_user, mention_scope, source
+):
+    project, workspace, recipient, _, schedule = mention_scope
+    if source == "creator":
+        project.created_by_user_id = recipient.id
+    elif source == "public":
+        grant = grant_member(test_db, "CloudProject", project.id, 0, "Viewer")
+        grant.entity_type, grant.entity_id = "authenticated_users", "*"
+    elif source == "sibling":
+        public_id = str(uuid.uuid4())
+        sibling = CloudProject(
+            public_id=public_id,
+            project_key=f"SIB{uuid.uuid4().hex[:6].upper()}",
+            name="Sibling",
+            created_by_user_id=test_user.id,
+            storage_prefix=f"projects/{public_id}",
+        )
+        test_db.add(sibling)
+        test_db.flush()
+        parent = grant_member(
+            test_db, "CloudProject", sibling.id, workspace.id, "Owner"
+        )
+        parent.entity_type = "workspace"
+        grant_member(test_db, "CloudProject", sibling.id, recipient.id, "Developer")
+    test_db.commit()
+
+    with pytest.raises(HTTPException) as error:
+        project_chat_service.send(
+            test_db,
+            user_id=test_user.id,
+            user_name=test_user.user_name,
+            request=mention_request(project, recipient),
+        )
+
+    assert error.value.status_code == 422
+    test_db.rollback()
+    assert test_db.query(ProjectChatMessage).count() == 0
+    assert test_db.query(WeworkNotification).count() == 0
+    schedule.assert_not_called()
+
+
+@pytest.mark.parametrize("mode", ["inherit", "restricted"])
+def test_cp05_mentions_union_valid_sources(test_db, test_user, mention_scope, mode):
+    project, workspace, recipient, _, _ = mention_scope
+    project.membership_mode = mode
+    grant_member(test_db, "Workspace", workspace.id, recipient.id, "Maintainer")
+    grant_member(test_db, "CloudProject", project.id, recipient.id, "Viewer", "pending")
+    test_db.commit()
+
+    result = project_chat_service.send(
+        test_db,
+        user_id=test_user.id,
+        user_name=test_user.user_name,
+        request=mention_request(project, recipient),
+    )
+
+    assert result.created
+    assert test_db.query(WeworkNotification).one().user_id == recipient.id
+
+
+def test_cp05_mentions_revalidate_membership_after_roster_load(
+    test_db, test_user, mention_scope
+):
+    project, workspace, recipient, _, schedule = mention_scope
+    grant = grant_member(test_db, "Workspace", workspace.id, recipient.id, "Developer")
+    test_db.commit()
+    roster = cloud_project_service.list_members(test_db, project.id, test_user.id)
+    assert recipient.id in {row["user_id"] for row in roster}
+    test_db.delete(grant)
+    test_db.commit()
+
+    with pytest.raises(HTTPException) as error:
+        project_chat_service.send(
+            test_db,
+            user_id=test_user.id,
+            user_name=test_user.user_name,
+            request=mention_request(project, recipient),
+        )
+
+    assert error.value.status_code == 422
+    test_db.rollback()
+    assert test_db.query(ProjectChatMessage).count() == 0
+    assert test_db.query(WeworkNotification).count() == 0
+    schedule.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_websocket_mentions_commit_once_and_skip_self(
+    test_db, test_user, mention_scope, monkeypatch
+):
+    project, workspace, recipient, _, schedule = mention_scope
+    grant_member(test_db, "Workspace", workspace.id, recipient.id, "Developer")
+    test_db.commit()
+    request = mention_request(project, recipient)
+    request.mentions = [*request.mentions, *request.mentions]
+    request.mentions.extend(mention_request(project, test_user).mentions)
+    namespace = wework_runtime_namespace.WeworkRuntimeNamespace()
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(
+            return_value={"user_id": test_user.id, "user_name": test_user.user_name}
+        ),
+    )
+    emit = AsyncMock()
+    monkeypatch.setattr(namespace, "emit", emit)
+
+    @contextmanager
+    def session():
+        yield test_db
+
+    async def run_inline(fn, *args):
+        return fn(*args)
+
+    monkeypatch.setattr(wework_runtime_namespace, "get_db_session", session)
+    monkeypatch.setattr(wework_runtime_namespace, "run_sync_in_executor", run_inline)
+    payload = request.model_dump(by_alias=True)
+
+    first = await namespace.on_project_chat_message_send("sender", payload)
+    repeated = await namespace.on_project_chat_message_send("sender", payload)
+
+    assert first["ok"] and first["created"]
+    assert repeated["ok"] and not repeated["created"]
+    assert first["result"]["messageId"] == repeated["result"]["messageId"]
+    assert test_db.query(ProjectChatMessage).count() == 1
+    assert test_db.query(WeworkNotification).one().user_id == recipient.id
+    schedule.assert_called_once()
+    emit.assert_awaited_once()

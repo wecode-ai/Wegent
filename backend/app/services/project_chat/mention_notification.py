@@ -4,9 +4,8 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.delivery import CloudProject, LoopItem
-from app.models.resource_member import MemberStatus, ResourceMember
-from app.models.share_link import ResourceType
 from app.schemas.project_chat import ProjectChatMention
+from app.services.cloud_project_visibility import project_participant_ids
 from app.services.notification_copy import comment_preview, mention_message
 from app.services.notification_target import board_notification_target
 from app.services.wework_notifications import create_notification
@@ -33,9 +32,7 @@ def notify_project_chat_mentions(
 
     if not mentions:
         return
-    member_ids = _project_member_ids(db, project)
-    if not member_ids:
-        return
+    member_ids = project_participant_ids(db, project)
 
     preview = comment_preview(content)
     target = board_notification_target(db, project, item)
@@ -93,22 +90,3 @@ def _mentioned_user_id(
     if user_id not in member_ids:
         raise HTTPException(422, "Mentioned user is not a project member")
     return user_id
-
-
-def _project_member_ids(db: Session, project: CloudProject) -> set[int]:
-    """Return approved project members without re-authorizing an acting user."""
-
-    rows = (
-        db.query(ResourceMember.user_id)
-        .filter(
-            ResourceMember.resource_type == ResourceType.CLOUD_PROJECT.value,
-            ResourceMember.resource_id == int(project.id),
-            ResourceMember.entity_type == "user",
-            ResourceMember.status == MemberStatus.APPROVED.value,
-        )
-        .all()
-    )
-    member_ids = {int(user_id) for (user_id,) in rows}
-    if project.created_by_user_id:
-        member_ids.add(int(project.created_by_user_id))
-    return member_ids
