@@ -1589,6 +1589,98 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(snapshot?.derived.isTurnActive).toBe(true)
   })
 
+  test('retains the newer turn when idle history only contains its predecessor', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(
+      runtimeWork(task({ running: true, runtimeHandle: { lastTurnId: 'initial-turn' } }))
+    )
+    store.turnStarted(address, 'initial-turn')
+    store.turnSettled(address, 'initial-turn', 'succeeded')
+    store.turnStarted(address, 'correction-turn')
+
+    store.syncTranscript(
+      address,
+      transcript({
+        running: false,
+        turns: [{ id: 'initial-turn', status: 'completed', completedAt: 1000, items: [] }],
+      })
+    )
+
+    expect(store.getTask(address)?.turn.id).toBe('correction-turn')
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
+
+    store.syncTranscript(
+      address,
+      transcript({
+        running: false,
+        turns: [{ id: 'correction-turn', status: 'completed', completedAt: 2000, items: [] }],
+      })
+    )
+    expect(store.getTask(address)?.derived.isBusy).toBe(false)
+    expect(store.getTask(address)?.task?.completedAt).toBe(2000)
+    expect(store.getTask(address)?.task?.runtimeHandle?.lastTurnId).toBe('correction-turn')
+  })
+
+  test('retains the newer turn when a prior completion snapshot advances its timestamp', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    const completed = task({
+      running: false,
+      status: 'done',
+      completedAt: 1000,
+      runtimeHandle: { lastTurnId: 'initial-turn' },
+    })
+    store.syncRuntimeWork(runtimeWork(completed))
+    store.turnStarted(address, 'correction-turn')
+
+    store.syncRuntimeWork(runtimeWork({ ...completed, completedAt: 1100 }))
+
+    expect(store.getTask(address)?.turn.id).toBe('correction-turn')
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
+
+    store.syncRuntimeWork(
+      runtimeWork({
+        ...completed,
+        completedAt: 2000,
+        runtimeHandle: { lastTurnId: 'correction-turn' },
+      })
+    )
+    expect(store.getTask(address)?.derived.isBusy).toBe(false)
+  })
+
+  test.each(['submitting', 'awaiting'] as const)(
+    'retains a %s continuation when its predecessor history arrives',
+    phase => {
+      const store = new RuntimeTaskLifecycleStore('test')
+      store.turnStarted(address, 'initial-turn')
+      store.turnSettled(address, 'initial-turn', 'succeeded')
+      store.executorSettled(address)
+      store.sendRequested(address)
+      if (phase === 'awaiting') store.sendAccepted(address)
+      store.turnSettled(address, 'initial-turn', 'succeeded')
+      expect(store.getTask(address)?.turn.phase).toBe(phase)
+
+      store.syncTranscript(
+        address,
+        transcript({
+          running: false,
+          turns: [{ id: 'initial-turn', status: 'completed', completedAt: 1000, items: [] }],
+        })
+      )
+
+      expect(store.getTask(address)?.turn.phase).toBe(phase)
+      expect(store.getTask(address)?.derived.isBusy).toBe(true)
+      store.turnStarted(address, 'correction-turn')
+      store.syncTranscript(
+        address,
+        transcript({
+          running: false,
+          turns: [{ id: 'correction-turn', status: 'completed', completedAt: 2000, items: [] }],
+        })
+      )
+      expect(store.getTask(address)?.derived.isBusy).toBe(false)
+    }
+  )
+
   test('recovers a streaming turn after restart when coarse transcript running state is stale', () => {
     const store = new RuntimeTaskLifecycleStore('test')
 
