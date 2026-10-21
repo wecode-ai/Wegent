@@ -37,6 +37,7 @@ import { getCollaborationIssueActionPermissions } from "./permissions";
 import type { SharedWorkspaceApi } from "./ports/SharedWorkspaceApi";
 import { IssueExecutionDetails } from "./issue-detail/IssueExecutionDetails";
 import { IssueConversationDrawers } from "./issue-detail/IssueConversationDrawers";
+import { BrowserAttachmentPreview } from "./web-adapter/BrowserAttachmentPreview";
 import type {
   CollaborationAgent,
   CollaborationAssignment,
@@ -245,6 +246,14 @@ function BrowserIssueDetail({
   onConflict,
   onError,
 }: IssueDetailProps) {
+  const [attachmentPreview, setAttachmentPreview] = useState<{
+    issueId: string;
+    attachmentId: string;
+    filename: string;
+  } | null>(null);
+  useLayoutEffect(() => {
+    setAttachmentPreview(null);
+  }, [issue.id]);
   const [conversationSelection, setConversationSelection] = useState<{
     issueId: string;
     binding: SharedIssueDetailTaskBinding;
@@ -327,9 +336,8 @@ function BrowserIssueDetail({
             translate={editorTranslate}
             extensions={{
               ...browserDueDateExtensions,
-              openAttachment: async (attachmentId) => {
-                const access = await api.attachments.access(attachmentId);
-                window.open(access.url, "_blank", "noopener,noreferrer");
+              openAttachment: async (attachmentId, filename) => {
+                setAttachmentPreview({ issueId: issue.id, attachmentId, filename });
               },
               renderActivity: ({ tasks }) => (
                 <IssueActivityPanel
@@ -374,6 +382,16 @@ function BrowserIssueDetail({
           />
         )}
       </IssueConversationDrawers>
+      {attachmentPreview?.issueId === issue.id ? (
+        <BrowserAttachmentPreview
+          key={`${issue.id}:${attachmentPreview.attachmentId}`}
+          attachmentId={attachmentPreview.attachmentId}
+          filename={attachmentPreview.filename}
+          read={api.attachments.read}
+          translate={editorTranslate}
+          onClose={() => setAttachmentPreview(null)}
+        />
+      ) : null}
       {selectedExecution && api.runtime ? (
         <IssueExecutionDetails
           target={

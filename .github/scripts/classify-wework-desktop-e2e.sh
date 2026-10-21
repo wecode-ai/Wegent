@@ -1328,7 +1328,12 @@ classify_path() {
     executor/* | packages/chat-core/* | package.json | pnpm-lock.yaml | pnpm-workspace.yaml)
       select_all_desktop_suites
       ;;
-    backend/app/api/endpoints/deliveries.py | \
+    backend/app/api/endpoints/adapter/attachments.py | \
+      backend/tests/api/endpoints/adapter/test_attachment_download_policy_routes.py | \
+      backend/tests/api/endpoints/adapter/test_content_disposition.py | \
+      backend/app/api/endpoints/cloud_projects.py | \
+      backend/app/api/endpoints/deliveries.py | \
+      backend/tests/api/test_cloud_projects_api.py | \
       backend/tests/api/test_deliveries_api.py)
       select_target "core:collaboration-issue-attachment-preview"
       ;;

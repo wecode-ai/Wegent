@@ -648,8 +648,31 @@ wework_desktop_core_e2e=true
 wework_desktop_core_e2e_matrix={"include":[{"id":"core-12","name":"Core / shard 12","segments":"collaboration-issue-attachment-preview"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
-  "wework/e2e/desktop/scenarios/collaboration-issue-attachment-preview.scenario.mjs" \
-  "backend/app/api/endpoints/deliveries.py"
+  "wework/e2e/desktop/scenarios/collaboration-issue-attachment-preview.scenario.mjs"
+
+for preview_path in \
+  "backend/app/api/endpoints/adapter/attachments.py" \
+  "backend/tests/api/endpoints/adapter/test_attachment_download_policy_routes.py" \
+  "backend/tests/api/endpoints/adapter/test_content_disposition.py" \
+  "backend/app/api/endpoints/cloud_projects.py" \
+  "backend/app/api/endpoints/deliveries.py" \
+  "backend/tests/api/test_deliveries_api.py"
+do
+  assert_desktop_case "Attachment content changes select the real image preview checkpoint: $preview_path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-12","name":"Core / shard 12","segments":"collaboration-issue-attachment-preview"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+    "$preview_path"
+done
+
+cloud_file_tests_output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" \
+  "backend/tests/api/test_cloud_projects_api.py")"
+if [[ "$cloud_file_tests_output" != *collaboration-issue-attachment-preview* ]]; then
+  printf 'Cloud file API tests did not select the real image preview checkpoint\n' >&2
+  exit 1
+fi
 
 assert_desktop_case "Issue task discovery scenario is invoked by its core CI shard" \
   'wework_desktop_e2e=true

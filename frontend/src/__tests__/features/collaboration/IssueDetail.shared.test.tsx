@@ -93,6 +93,29 @@ const project = {
 }
 
 describe('shared IssueDetail', () => {
+  beforeEach(() => {
+    Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
+      configurable: true,
+      value: function (this: HTMLDialogElement) {
+        this.open = true
+      },
+    })
+    Object.defineProperty(HTMLDialogElement.prototype, 'close', {
+      configurable: true,
+      value: function (this: HTMLDialogElement) {
+        this.open = false
+      },
+    })
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: jest.fn().mockReturnValue('blob:attachment-preview'),
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: jest.fn(),
+    })
+  })
+
   type IssueDetailApi = Pick<
     SharedWorkspaceApi,
     | 'activity'
@@ -162,8 +185,8 @@ describe('shared IssueDetail', () => {
         list: jest.fn().mockResolvedValue([]),
         upload: jest.fn(),
         access: jest.fn().mockResolvedValue({
-          url: 'https://example.test/attachment',
-          expiresInSeconds: 60,
+          url: 'wegent://attachments/attachment-1',
+          expiresInSeconds: 0,
         }),
         read: jest.fn().mockResolvedValue(new Blob(['attachment'])),
         remove: jest.fn(),
@@ -1112,6 +1135,42 @@ describe('shared IssueDetail', () => {
     )
   })
 
+  it('reads native Issue attachment bytes when opening the preview', async () => {
+    const open = jest.spyOn(window, 'open').mockImplementation(() => null)
+    const api = createApi()
+    jest.mocked(api.attachments.list).mockResolvedValue([
+      {
+        id: 'attachment-1',
+        loop_item_id: issue.id,
+        display_name: '截屏.png',
+        content_type: 'image/png',
+        size_bytes: 512,
+        created_by_user_id: 1,
+        created_at: '2026-09-10T00:00:00Z',
+        markdown_url: 'wegent://attachments/attachment-1',
+      },
+    ])
+    const view = renderDetail(api)
+    const trigger = await screen.findByTestId('cloud-todo-attachment-open-attachment-1')
+    await waitFor(() => expect(api.attachments.read).toHaveBeenCalledWith('attachment-1'))
+    jest.mocked(api.attachments.read).mockClear()
+
+    fireEvent.click(trigger)
+
+    try {
+      await waitFor(() => expect(api.attachments.read).toHaveBeenCalledWith('attachment-1'))
+      expect(await screen.findByTestId('browser-attachment-preview-dialog')).toBeInTheDocument()
+      expect(api.attachments.access).not.toHaveBeenCalled()
+      expect(open).not.toHaveBeenCalled()
+      view.rerender(detailView(api, { issue: { ...issue, id: 'issue-2' } }))
+      expect(screen.queryByTestId('browser-attachment-preview-dialog')).not.toBeInTheDocument()
+      view.rerender(detailView(api))
+      expect(screen.queryByTestId('browser-attachment-preview-dialog')).not.toBeInTheDocument()
+    } finally {
+      open.mockRestore()
+    }
+  })
+
   it('opens attachments and manages collaborators, bindings, and delivery detail', async () => {
     const open = jest.spyOn(window, 'open').mockImplementation(() => null)
     const api = createApi({
@@ -1130,8 +1189,8 @@ describe('shared IssueDetail', () => {
         ]),
         upload: jest.fn(),
         access: jest.fn().mockResolvedValue({
-          url: 'https://example.test/attachment',
-          expiresInSeconds: 60,
+          url: 'wegent://attachments/attachment-1',
+          expiresInSeconds: 0,
         }),
         read: jest.fn().mockResolvedValue(new Blob(['attachment'])),
         remove: jest.fn(),
@@ -1201,12 +1260,10 @@ describe('shared IssueDetail', () => {
     expect(await screen.findByText('实现任务')).toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('cloud-todo-attachment-open-attachment-1'))
-    await waitFor(() => expect(api.attachments.access).toHaveBeenCalledWith('attachment-1'))
-    expect(open).toHaveBeenCalledWith(
-      'https://example.test/attachment',
-      '_blank',
-      'noopener,noreferrer'
-    )
+    expect(await screen.findByTestId('browser-attachment-preview-dialog')).toBeInTheDocument()
+    expect(api.attachments.access).not.toHaveBeenCalled()
+    expect(open).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('browser-attachment-preview-close'))
 
     await openIssueProperties()
     expect(await screen.findByTitle('张三')).toBeInTheDocument()
