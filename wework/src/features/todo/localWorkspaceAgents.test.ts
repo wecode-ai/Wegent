@@ -10,7 +10,7 @@ import { createLocalWorkspaceApi, LOCAL_WORKSPACE_ID } from './localWorkspaceApi
 
 describe('local workspace Agent reuse', () => {
   it.each(['本地代码助手', 'Local coding Agent'])(
-    'preserves resource identity and execution configuration when binding %s',
+    'preserves identity and configuration and refreshes the Issue catalog for %s',
     async displayName => {
       const source = {
         id: 'LA-source',
@@ -83,6 +83,12 @@ describe('local workspace Agent reuse', () => {
         { id: 'LA-project', agent_id: source.name, name: displayName, displayName },
       ])
       expect(records.find(record => record.id === source.id)).toEqual(sourceBefore)
+
+      // Another Runtime client can create a resource while this project stays open.
+      records.push({ ...source, id: 'LA-added', name: 'agent-added-after-first-open' })
+      expect(await port.agentResources!.list(project)).toContainEqual(
+        expect.objectContaining({ id: 'LA-added' })
+      )
     }
   )
 })

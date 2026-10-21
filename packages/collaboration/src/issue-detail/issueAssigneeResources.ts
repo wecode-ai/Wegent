@@ -107,9 +107,12 @@ export function createIssueAssigneeResources(
 
   return {
     async list(project: IssueAssigneeResourceProject) {
-      const resources = await sources(project);
+      // A newly opened Issue form must see resources added by another client.
+      const resources = await sources(project, true);
       if (resources.length === 0) return [];
-      const bindings = await api.agents.list(project.id);
+      const bindings = await api.agents.list(project.id, {
+        forceRefresh: true,
+      });
       return resources.filter(
         (resource) =>
           !bindings.some((binding) => matchesResource(binding, resource)),
