@@ -170,6 +170,9 @@ jobs:
       - name: Test CI cache policy
         run: .github/scripts/test-ci-cache-policy.sh
 
+      - name: Test CI resource logging
+        run: node --test .github/scripts/run-with-resource-logging.test.mjs
+
       - name: Test AI push gate
         run: scripts/hooks/test-ai-push-gate.sh
 

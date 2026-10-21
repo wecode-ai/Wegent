@@ -45,6 +45,15 @@ function requireAvailableContents(contents: WebContents) {
   }
 }
 
+async function focusInputContents(contents: WebContents, focusWindow: () => void | Promise<void>) {
+  // The renderer may already have focused an exact editor. Re-activating
+  // its window here can replace that focus before native input is delivered.
+  if (contents.isFocused()) return
+  await focusWindow()
+  requireAvailableContents(contents)
+  contents.focus()
+}
+
 export async function sendE2EKey(
   contents: WebContents,
   key: string,
@@ -63,8 +72,7 @@ export async function sendE2EKey(
   requireAvailableContents(contents)
   const modifiers: KeyboardInputEvent['modifiers'] = parts.map(part => MODIFIERS[part])
   if (focus) {
-    await focusWindow()
-    contents.focus()
+    await focusInputContents(contents, focusWindow)
   }
   if (phase !== 'up') {
     contents.sendInputEvent({ type: 'keyDown', keyCode, modifiers })
@@ -89,8 +97,7 @@ export async function sendE2EText(
 ) {
   requireE2EControl(environment)
   requireAvailableContents(contents)
-  await focusWindow()
-  contents.focus()
+  await focusInputContents(contents, focusWindow)
   contents.insertText(text)
   return { backend: 'electron-insert-text', textLength: text.length }
 }

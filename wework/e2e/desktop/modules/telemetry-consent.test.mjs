@@ -6,7 +6,7 @@ import { shouldAcceptInitialTelemetryConsent } from './telemetry-consent.mjs'
 test('accepts telemetry consent for checkpoints that assert public telemetry', () => {
   assert.equal(shouldAcceptInitialTelemetryConsent(undefined), true)
   assert.equal(shouldAcceptInitialTelemetryConsent('telemetry-consent'), true)
-  assert.equal(shouldAcceptInitialTelemetryConsent('harness-apps'), true)
+  assert.equal(shouldAcceptInitialTelemetryConsent('harness-app-lifecycle'), true)
   assert.equal(shouldAcceptInitialTelemetryConsent('native-window-startup'), true)
   assert.equal(shouldAcceptInitialTelemetryConsent('plugin-marketplace-lifecycle'), true)
   assert.equal(shouldAcceptInitialTelemetryConsent('plugin-lifecycle'), true)

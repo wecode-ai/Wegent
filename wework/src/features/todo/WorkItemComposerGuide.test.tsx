@@ -102,6 +102,25 @@ describe('WorkItemComposerGuide', () => {
     expect(onSelectProject).toHaveBeenCalledWith(teamProject)
   })
 
+  test('reopens Issue selection for the current draft project', async () => {
+    const user = userEvent.setup()
+    const onSelectProject = vi.fn()
+    render(
+      <WorkItemComposerGuide
+        project={teamProject}
+        projects={[teamProject]}
+        toolbar
+        onSelectProject={onSelectProject}
+      />
+    )
+
+    await user.click(screen.getByTestId('project-space-context-pill'))
+    const selected = screen.getByTestId('work-item-workspace-option-team-work')
+    expect(selected).toHaveAttribute('aria-checked', 'true')
+    await user.click(selected)
+    expect(onSelectProject).toHaveBeenCalledExactlyOnceWith(teamProject)
+  })
+
   test('uses the goal as primary context and only shows sibling tasks', async () => {
     const api = {
       listTaskBindings: vi.fn().mockResolvedValue(taskBindings),

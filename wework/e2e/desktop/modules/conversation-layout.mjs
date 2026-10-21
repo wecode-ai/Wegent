@@ -7,7 +7,7 @@ import {
 } from './conversation-shortcuts.mjs'
 
 import { ensureTaskRowVisible, waitForScenarioRequestCount } from './memory-tool-flows.mjs'
-import { waitForCompletedRuntimeTaskThread } from './runtime-task-evidence.mjs'
+import { waitForCompletedRuntimeTaskThread, waitForForkTaskRow } from './runtime-task-evidence.mjs'
 
 import {
   ACTIVE_COMPOSER_SELECTOR,
@@ -1283,11 +1283,6 @@ async function verifyWorktreeCreationStatus({
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
 
-  const taskRowsBeforeFork = new Set(
-    JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
-      testId.startsWith('runtime-local-task-row-')
-    )
-  )
   const assistantMessageSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`
   const assistantHoverRegionSelector = `${assistantMessageSelector} [data-testid="message-hover-region"]`
   const firstTurnForkButtonSelector = `${assistantHoverRegionSelector} [data-testid="fork-message-button"]`
@@ -1302,10 +1297,9 @@ async function verifyWorktreeCreationStatus({
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  const forkTaskRowTestId = await waitForNewTaskRow(
+  const forkTaskRowTestId = await waitForForkTaskRow(
     control,
-    taskRowsBeforeFork,
-    '',
+    worktreeTaskId,
     WORKBENCH_READY_TIMEOUT_MS
   )
   const forkTaskId = forkTaskRowTestId.replace('runtime-local-task-row-', '')

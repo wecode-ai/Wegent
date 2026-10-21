@@ -1185,11 +1185,13 @@ async function endDesktopControlDrag(command: DesktopControlCommand): Promise<st
     dispatchDesktopControlPointerEvent(activeDrag.sourceElement, 'pointermove', endOptions)
     dispatchDesktopControlPointerEvent(target, 'pointermove', endOptions)
     await waitForDesktopControlTick()
+    const pointerUpStartedAt = performance.now()
     dispatchDesktopControlPointerEvent(document, 'pointerup', { ...endOptions, buttons: 0 })
     dispatchDesktopControlPointerEvent(activeDrag.sourceElement, 'pointerup', {
       ...endOptions,
       buttons: 0,
     })
+    const pointerUpDispatchedAt = performance.now()
     if (command.waitForSelector) {
       await waitForDesktopControlElement({
         ...command,
@@ -1199,6 +1201,9 @@ async function endDesktopControlDrag(command: DesktopControlCommand): Promise<st
       })
       return JSON.stringify({
         durationMs: Math.round(performance.now() - startedAt),
+        pointerMoveMs: Math.round(pointerUpStartedAt - startedAt),
+        pointerUpDispatchMs: Math.round(pointerUpDispatchedAt - pointerUpStartedAt),
+        splitReadyMs: Math.round(performance.now() - pointerUpDispatchedAt),
         sourceText: activeDrag.sourceText,
       })
     }
@@ -2461,9 +2466,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       })
       return ''
     }
+    case 'stopElementMetricsSampling':
     case 'getElementMetricsSample': {
       const sample = activeElementMetricsSample
       if (!sample) throw new Error('Element metrics sampling has not started')
+      if (command.action === 'stopElementMetricsSampling') sample.stop()
       return JSON.stringify({
         done: sample.done,
         frames: sample.frames,
