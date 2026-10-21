@@ -208,69 +208,140 @@ projectTest(
   }
 )
 
-projectTest(
-  'keeps three committed sibling positions through a failed snapshot refresh and recovery',
-  async ({ page, scheduledProject: { path, issueId } }) => {
-    const projectId = path.split('/').at(-1)!
-    const create = (title: string) =>
-      webApi<Resource>(page, `/api/v1/cloud-projects/${projectId}/loop-items`, {
+for (const hiddenSiblings of [false, true])
+  projectTest(
+    `keeps three committed sibling positions through a failed snapshot refresh and recovery (hidden=${hiddenSiblings})`,
+    async ({ page, scheduledProject: { path, issueId } }) => {
+      const projectId = path.split('/').at(-1)!
+      const create = async (title: string, securityLevel: 'open' | 'related' = 'open') => {
+        const created = await webApi<Resource>(
+          page,
+          `/api/v1/cloud-projects/${projectId}/loop-items`,
+          {
+            method: 'POST',
+            body: { title, priority: 'high', status: 'pending' },
+          }
+        )
+        return securityLevel === 'related'
+          ? webApi<Resource>(page, `/api/v1/loop-items/${created.id}`, {
+              method: 'PATCH',
+              body: { version: created.version, security_level: securityLevel },
+            })
+          : created
+      }
+      const second = await create('Recovery B')
+      const third = await create('Recovery C')
+      const hidden = hiddenSiblings
+        ? [await create('Hidden first', 'related'), await create('Hidden second', 'related')]
+        : []
+      const initialIds = hiddenSiblings
+        ? [issueId, hidden[0].id, second.id, hidden[1].id, third.id]
+        : [issueId, second.id, third.id]
+      await webApi(page, `/api/v1/cloud-projects/${projectId}/loop-items/reorder`, {
         method: 'POST',
-        body: { title, priority: 'high', status: 'pending' },
+        body: { parent_id: null, status: null, item_ids: initialIds },
       })
-    const second = await create('Recovery B')
-    const third = await create('Recovery C')
-    await webApi(page, `/api/v1/cloud-projects/${projectId}/loop-items/reorder`, {
-      method: 'POST',
-      body: { parent_id: null, status: null, item_ids: [issueId, second.id, third.id] },
-    })
-    await page.goto(path)
-    const sort = page.getByTestId('cloud-board-sort-by-pending')
-    await sort.click()
-    await page.getByTestId('cloud-board-sort-by-pending-manual').click()
-    await sort.click()
-    const cards = page
-      .getByTestId('cloud-todo-column-pending')
-      .locator('article[data-testid^="collaboration-issue-"]')
-    const expectOrder = async () => {
-      await expect(cards).toHaveCount(3)
-      for (const [index, id] of [second.id, issueId, third.id].entries())
-        await expect(cards.nth(index)).toHaveAttribute('data-testid', `collaboration-issue-${id}`)
+      try {
+        if (hiddenSiblings) {
+          await switchProjectAccount(page, path, REGULAR_USER.username, REGULAR_USER.password)
+          expect((await webApi<{ role: string }>(page, '/api/users/me')).role).toBe('user')
+          expect(
+            (await webApi<{ access_role: string }>(page, `/api/v1/cloud-projects/${projectId}`))
+              .access_role
+          ).toBe('Developer')
+        }
+        await page.goto(path)
+        const sort = page.getByTestId('cloud-board-sort-by-pending')
+        await sort.click()
+        await page.getByTestId('cloud-board-sort-by-pending-manual').click()
+        await sort.click()
+        const cards = page
+          .getByTestId('cloud-todo-column-pending')
+          .locator('article[data-testid^="collaboration-issue-"]')
+        const expectOrder = async (ids = [second.id, issueId, third.id]) => {
+          await expect(cards).toHaveCount(3)
+          for (const [index, id] of ids.entries())
+            await expect(cards.nth(index)).toHaveAttribute(
+              'data-testid',
+              `collaboration-issue-${id}`
+            )
+          for (const item of hidden)
+            await expect(page.getByTestId(`collaboration-issue-${item.id}`)).toHaveCount(0)
+        }
+        await expectOrder([issueId, second.id, third.id])
+        const readSnapshot = () =>
+          webApi<{ items: Array<Resource & { sort_order: number }> }>(
+            page,
+            `/api/v1/cloud-projects/${projectId}/board-snapshot`
+          )
+        const initial = (await readSnapshot()).items.sort((a, b) => a.sort_order - b.sort_order)
+        expect(initial.map(item => item.id)).toEqual([issueId, second.id, third.id])
+        expect(initial.map(item => item.sort_order)).toEqual(hiddenSiblings ? [0, 2, 4] : [0, 1, 2])
+        const snapshotUrl = `**/api/v1/cloud-projects/${projectId}/board-snapshot`
+        let droppedSnapshots = 0
+        await page.route(snapshotUrl, async route => {
+          // Fetch from the real backend before interrupting response delivery.
+          const response = await route.fetch()
+          expect(response.ok()).toBe(true)
+          droppedSnapshots += 1
+          await route.abort('failed')
+        })
+        try {
+          const saved = page.waitForResponse(
+            response =>
+              response.request().method() === 'PATCH' &&
+              response.url().endsWith(`/loop-items/${issueId}`)
+          )
+          await dragBefore(page, 'pending', issueId, 'pending', third.id)
+          const response = await saved
+          expect(response.ok()).toBe(true)
+          expect((await response.json()).sort_order).toBe(hiddenSiblings ? 3 : 1)
+          await expect(page.getByTestId('collaboration-error')).toHaveText(/load|加载/i)
+          expect(droppedSnapshots).toBeGreaterThan(0)
+          await expectOrder()
+        } finally {
+          await page.unroute(snapshotUrl)
+        }
+        const snapshot = await readSnapshot()
+        expect(
+          snapshot.items.sort((a, b) => a.sort_order - b.sort_order).map(item => item.id)
+        ).toEqual([second.id, issueId, third.id])
+        await page.reload()
+        await expectOrder()
+        await expect(page.getByTestId('collaboration-error')).toHaveCount(0)
+      } finally {
+        if (hiddenSiblings)
+          await switchProjectAccount(page, path, ADMIN_USER.username, ADMIN_USER.password)
+      }
+      if (hiddenSiblings) {
+        const all = await webApi<{ items: Array<Resource & { sort_order: number }> }>(
+          page,
+          `/api/v1/cloud-projects/${projectId}/board-snapshot`
+        )
+        expect(all.items.sort((a, b) => a.sort_order - b.sort_order).map(item => item.id)).toEqual([
+          hidden[0].id,
+          second.id,
+          hidden[1].id,
+          issueId,
+          third.id,
+        ])
+      }
     }
-    const snapshotUrl = `**/api/v1/cloud-projects/${projectId}/board-snapshot`
-    let droppedSnapshots = 0
-    await page.route(snapshotUrl, async route => {
-      // Fetch from the real backend before interrupting response delivery.
-      const response = await route.fetch()
-      expect(response.ok()).toBe(true)
-      droppedSnapshots += 1
-      await route.abort('failed')
-    })
-    try {
-      const saved = page.waitForResponse(
-        response =>
-          response.request().method() === 'PATCH' &&
-          response.url().endsWith(`/loop-items/${issueId}`)
-      )
-      await dragBefore(page, 'pending', issueId, 'pending', third.id)
-      expect((await saved).ok()).toBe(true)
-      await expect(page.getByTestId('collaboration-error')).toHaveText(/load|加载/i)
-      expect(droppedSnapshots).toBeGreaterThan(0)
-      await expectOrder()
-    } finally {
-      await page.unroute(snapshotUrl)
-    }
-    const snapshot = await webApi<{ items: Array<Resource & { sort_order: number }> }>(
-      page,
-      `/api/v1/cloud-projects/${projectId}/board-snapshot`
-    )
-    expect(snapshot.items.sort((a, b) => a.sort_order - b.sort_order).map(item => item.id)).toEqual(
-      [second.id, issueId, third.id]
-    )
-    await page.reload()
-    await expectOrder()
-    await expect(page.getByTestId('collaboration-error')).toHaveCount(0)
-  }
-)
+  )
+
+async function switchProjectAccount(page: Page, path: string, username: string, password: string) {
+  await page.goto('/settings')
+  const toggle = page.getByTestId('task-sidebar').getByTestId('user-floating-menu-toggle')
+  await toggle.click()
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  await page.getByTestId('task-sidebar').getByTestId('user-floating-menu-logout').click()
+  await page.waitForURL(/\/login/)
+  await page.locator('input[name="user_name"]').fill(username)
+  await page.locator('input[name="password"]').fill(password)
+  await page.locator('button[type="submit"]').click()
+  await page.waitForURL(url => !url.pathname.includes('/login'))
+  await page.goto(path)
+}
 
 async function dragBefore(
   page: Page,
@@ -519,26 +590,13 @@ projectTest(
 projectTest(
   'restores each account lane rules after switching users in the same browser',
   async ({ page, scheduledProject: { path } }) => {
-    const switchAccount = async (username: string, password: string) => {
-      await page.goto('/settings')
-      const toggle = page.getByTestId('task-sidebar').getByTestId('user-floating-menu-toggle')
-      await toggle.click()
-      await expect(toggle).toHaveAttribute('aria-expanded', 'true')
-      await page.getByTestId('task-sidebar').getByTestId('user-floating-menu-logout').click()
-      await page.waitForURL(/\/login/)
-      await page.locator('input[name="user_name"]').fill(username)
-      await page.locator('input[name="password"]').fill(password)
-      await page.locator('button[type="submit"]').click()
-      await page.waitForURL(url => !url.pathname.includes('/login'))
-      await page.goto(path)
-    }
     await page.goto(path)
     const sort = page.getByTestId('cloud-board-sort-by-pending')
     await sort.click()
     await page.getByTestId('cloud-board-sort-by-pending-manual').click()
     await sort.click()
     try {
-      await switchAccount(REGULAR_USER.username, REGULAR_USER.password)
+      await switchProjectAccount(page, path, REGULAR_USER.username, REGULAR_USER.password)
       await expect(sort).toHaveAttribute('data-sort-rules', 'priority-desc')
       await sort.click()
       await page.getByTestId('cloud-board-sort-by-pending-rule-0-mode').click()
@@ -547,7 +605,7 @@ projectTest(
       await page.reload()
       await expect(sort).toHaveAttribute('data-sort-rules', 'created-asc')
     } finally {
-      await switchAccount(ADMIN_USER.username, ADMIN_USER.password)
+      await switchProjectAccount(page, path, ADMIN_USER.username, ADMIN_USER.password)
     }
     await expect(sort).toHaveAttribute('data-sort-rules', 'manual')
   }

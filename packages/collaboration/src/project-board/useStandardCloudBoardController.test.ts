@@ -529,6 +529,97 @@ describe("standard cloud board controller", () => {
 });
 
 describe("committed board positions", () => {
+  it("keeps hidden sibling rank gaps when moving backward before a visible anchor", () => {
+    const first = {
+      ...items[0],
+      id: "a",
+      parent_id: null,
+      sort_order: 0,
+      version: 1,
+    };
+    const second = { ...first, id: "b", sort_order: 2 };
+    const third = { ...first, id: "c", sort_order: 4 };
+    const saved = { ...first, version: 2, sort_order: 3 };
+
+    const result = mergePersistedBoardMove([first, second, third], saved, {
+      beforeItemId: third.id,
+    });
+
+    expect(result.slice().sort((a, b) => a.sort_order - b.sort_order)).toEqual([
+      { ...second, sort_order: 1 },
+      saved,
+      third,
+    ]);
+  });
+
+  it.each([
+    {
+      moved: "c",
+      before: "a",
+      rank: 0,
+      expected: [
+        ["c", 0],
+        ["a", 1],
+        ["b", 3],
+      ],
+    },
+    {
+      moved: "a",
+      before: null,
+      rank: 4,
+      expected: [
+        ["b", 1],
+        ["c", 3],
+        ["a", 4],
+      ],
+    },
+  ])(
+    "preserves sparse global ranks for $moved before $before",
+    ({ moved, before, rank, expected }) => {
+      const siblings = ["a", "b", "c"].map((id, index) => ({
+        ...items[0],
+        id,
+        parent_id: null,
+        sort_order: index * 2,
+        version: 1,
+      }));
+      const saved = {
+        ...siblings.find((item) => item.id === moved)!,
+        version: 2,
+        sort_order: rank,
+      };
+      const result = mergePersistedBoardMove(siblings, saved, {
+        beforeItemId: before,
+      });
+      expect(
+        result
+          .slice()
+          .sort((a, b) => a.sort_order - b.sort_order)
+          .map((item) => [item.id, item.sort_order]),
+      ).toEqual(expected);
+    },
+  );
+
+  it("uses the visible anchor when cached sibling ranks changed concurrently", () => {
+    const siblings = ["a", "b", "c"].map((id, index) => ({
+      ...items[0],
+      id,
+      parent_id: null,
+      sort_order: index,
+      version: 1,
+    }));
+    const saved = { ...siblings[0], version: 2, sort_order: 4 };
+    const result = mergePersistedBoardMove(siblings, saved, {
+      beforeItemId: "c",
+    });
+    expect(
+      result
+        .slice()
+        .sort((a, b) => a.sort_order - b.sort_order)
+        .map((item) => item.id),
+    ).toEqual(["b", "a", "c"]);
+  });
+
   it("rebases sibling ranks without overwriting concurrent fields or other parents", () => {
     const first = {
       ...items[0],
@@ -551,12 +642,19 @@ describe("committed board positions", () => {
     const result = mergePersistedBoardMove(
       [first, second, third, child],
       saved,
+      { beforeItemId: third.id },
     );
     expect(result).toEqual([saved, { ...second, sort_order: 0 }, third, child]);
-    expect(mergePersistedBoardMove(result, { ...first, sort_order: 0 })).toBe(
-      result,
-    );
-    expect(mergePersistedBoardMove(result, saved)).toBe(result);
+    expect(
+      mergePersistedBoardMove(
+        result,
+        { ...first, sort_order: 0 },
+        { beforeItemId: second.id },
+      ),
+    ).toBe(result);
+    expect(
+      mergePersistedBoardMove(result, saved, { beforeItemId: third.id }),
+    ).toBe(result);
   });
 });
 

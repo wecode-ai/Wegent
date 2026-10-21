@@ -1139,17 +1139,21 @@ describe("collaboration workspace controller", () => {
     expect(api.issues.reorder).not.toHaveBeenCalled();
   });
 
-  it.each(["update", "assign"])(
-    "keeps all committed ranks when %s refresh fails and recovers",
-    async (kind) => {
+  it.each(
+    ["update", "assign"].flatMap((kind) =>
+      [false, true].map((hidden) => ({ kind, hidden })),
+    ),
+  )(
+    "keeps committed ranks when $kind refresh fails and recovers (hidden=$hidden)",
+    async ({ kind, hidden }) => {
       const siblings = [
         issue,
-        { ...issue, id: "issue-2", sort_order: 1 },
-        { ...issue, id: "issue-3", sort_order: 2 },
+        { ...issue, id: "issue-2", sort_order: hidden ? 2 : 1 },
+        { ...issue, id: "issue-3", sort_order: hidden ? 4 : 2 },
       ];
       const saved = {
         ...issue,
-        sort_order: 1,
+        sort_order: hidden ? 3 : 1,
         version: 2,
         updated_at: "2026-10-21T00:00:00Z",
       };
@@ -1193,9 +1197,9 @@ describe("collaboration workspace controller", () => {
           .sort((a, b) => a.sort_order - b.sort_order)
           .map((item) => [item.id, item.sort_order]);
       expect(ranks()).toEqual([
-        ["issue-2", 0],
-        [issue.id, 1],
-        ["issue-3", 2],
+        ["issue-2", hidden ? 1 : 0],
+        [issue.id, hidden ? 3 : 1],
+        ["issue-3", hidden ? 4 : 2],
       ]);
       expect(state.projectItems[project.id]).toEqual(state.issues);
       expect(state.errorSource).toBe("load");
@@ -1207,9 +1211,9 @@ describe("collaboration workspace controller", () => {
       });
       await commands.loadProjectSnapshot(project.id, { invalidate: true });
       expect(ranks()).toEqual([
-        ["issue-2", 0],
-        [issue.id, 1],
-        ["issue-3", 2],
+        ["issue-2", hidden ? 1 : 0],
+        [issue.id, hidden ? 3 : 1],
+        ["issue-3", hidden ? 4 : 2],
       ]);
       expect(state.error).toBeNull();
     },

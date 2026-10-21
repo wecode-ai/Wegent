@@ -17,21 +17,41 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
   let proxy
   let workspace
   let project
+  let developerToken
+  let developerName
   const issues = []
+  const hiddenIssues = []
   const snapshotPath = () => `/api/v1/cloud-projects/${project.id}/board-snapshot`
-  const request = async (path, method = 'GET', values) => {
+  const request = async (path, method = 'GET', values, token = cloud.authToken) => {
     const response = await fetch(`${cloud.backendUrl}${path}`, {
       method,
-      headers: { Authorization: `Bearer ${cloud.authToken}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       ...(values === undefined ? {} : { body: JSON.stringify(values) }),
     })
     const body = await response.text()
     assert.equal(response.ok, true, `${method} ${path}: ${response.status} ${body}`)
     return body ? JSON.parse(body) : null
   }
-  const snapshot = () => request(snapshotPath())
+  const snapshot = (token = cloud.authToken) => request(snapshotPath(), 'GET', undefined, token)
   const serverOrder = async () =>
-    (await snapshot()).items.sort((a, b) => a.sort_order - b.sort_order).map(item => item.id)
+    (await snapshot()).items
+      .filter(item => issues.some(issue => issue.id === item.id))
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map(item => item.id)
+  const assertVisibleSnapshot = async () => {
+    const visible = await snapshot(developerToken)
+    assert.deepEqual(visible.items.map(item => item.id).sort(), issues.map(item => item.id).sort())
+    return visible
+  }
+  const assertHiddenCards = async control => {
+    for (const hidden of hiddenIssues) {
+      await control.command('waitFor', scoped(card(hidden.id)), {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
+    }
+    await assertVisibleSnapshot()
+  }
   const wait = (load, expected, message) => waitForBoardValue(load, expected, message, uiTimeoutMs)
   const expectOrder = (control, status, ids) =>
     wait(
@@ -79,6 +99,31 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         task_provider: 'local',
         visibility: 'private',
       })
+      const username = `board-move-developer-${process.pid}`
+      developerName = username
+      const password = 'board-move-developer-e2e'
+      const developer = await request('/api/admin/users', 'POST', {
+        user_name: username,
+        password,
+        role: 'user',
+        auth_source: 'password',
+      })
+      for (const path of [
+        `/api/v1/workspaces/${workspace.id}/members`,
+        `/api/v1/cloud-projects/${project.id}/members`,
+      ]) {
+        await request(path, 'POST', { user_id: developer.id, role: 'Developer' })
+      }
+      developerToken = (await request('/api/auth/login', 'POST', { user_name: username, password }))
+        .access_token
+      assert.ok(developerToken)
+      assert.equal((await request('/api/users/me', 'GET', undefined, developerToken)).role, 'user')
+      assert.equal(
+        (await request(`/api/v1/cloud-projects/${project.id}`, 'GET', undefined, developerToken))
+          .access_role,
+        'Developer'
+      )
+      appEnvironment.WEWORK_E2E_CLOUD_TOKEN = developerToken
       for (const title of ['Card A', 'Card B', 'Card C']) {
         issues.push(
           await request(`/api/v1/cloud-projects/${project.id}/loop-items`, 'POST', {
@@ -88,11 +133,29 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
           })
         )
       }
+      for (const title of ['Hidden first', 'Hidden second']) {
+        const created = await request(`/api/v1/cloud-projects/${project.id}/loop-items`, 'POST', {
+          title,
+          priority: 'high',
+          status: 'pending',
+        })
+        hiddenIssues.push(await patch(created.id, { security_level: 'related' }))
+      }
       await request(`/api/v1/cloud-projects/${project.id}/loop-items/reorder`, 'POST', {
         parent_id: null,
         status: null,
-        item_ids: issues.map(item => item.id),
+        item_ids: [
+          issues[0].id,
+          hiddenIssues[0].id,
+          issues[1].id,
+          hiddenIssues[1].id,
+          issues[2].id,
+        ],
       })
+      assert.deepEqual(
+        (await assertVisibleSnapshot()).items.map(item => item.sort_order).sort((a, b) => a - b),
+        [0, 2, 4]
+      )
     },
     async verify(control) {
       const [a, b, c] = issues
@@ -100,13 +163,16 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await selectCollaborationDomain(control, CONTENT, 'cloud')
       await openBoard(control)
+      await control.command('waitFor', 'body', { text: developerName, timeoutMs: uiTimeoutMs })
       const sort = scoped('[data-testid="cloud-board-sort-by-pending"]')
       await control.command('click', sort)
       await control.command('click', '[data-testid="cloud-board-sort-by-pending-manual"]')
       await control.command('click', sort)
       await expectOrder(control, 'pending', [a.id, b.id, c.id])
+      await assertHiddenCards(control)
 
-      // A0/B1/C2 -> B0/A1/C2. The successful PATCH is never faulted.
+      // A0/H1/B2/H3/C4 -> H0/B1/H2/A3/C4. H is invisible to this Developer.
+      // The successful PATCH is never faulted.
       proxy.rule = entry => (entry.path === snapshotPath() ? 'drop-response' : null)
       await drag(control, a.id, 'pending', c.id)
       await wait(
@@ -117,11 +183,17 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       await control.command('waitFor', scoped('[role="alert"]'), { timeoutMs: uiTimeoutMs })
       await expectOrder(control, 'pending', [b.id, a.id, c.id])
       assert.deepEqual(await serverOrder(), [b.id, a.id, c.id])
+      await assertHiddenCards(control)
+      assert.deepEqual(
+        (await snapshot()).items.sort((a, b) => a.sort_order - b.sort_order).map(item => item.id),
+        [hiddenIssues[0].id, b.id, hiddenIssues[1].id, a.id, c.id]
+      )
       assert.equal(proxy.requests.filter(entry => entry.method === 'PATCH').length, 1)
       proxy.rule = () => null
       await reloadMainWindow(control, 'Board move recovery did not reopen')
       await openBoard(control)
       await expectOrder(control, 'pending', [b.id, a.id, c.id])
+      await assertHiddenCards(control)
       await control.command('waitFor', scoped('[role="alert"]'), {
         visible: false,
         timeoutMs: uiTimeoutMs,
@@ -189,6 +261,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       })
       await expectOrder(control, 'pending', [a.id, b.id, c.id])
       assert.deepEqual(await visibleCards(), confirmedCards)
+      await assertHiddenCards(control)
       await control.command('click', scoped(card(a.id)))
       await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
         text: 'Card A confirmed',
@@ -209,6 +282,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       await reloadMainWindow(control, 'Overlapping moves did not survive reopening')
       await openBoard(control)
       await expectOrder(control, 'pending', [a.id, b.id, c.id])
+      await assertHiddenCards(control)
       await control.command('waitFor', scoped(card(a.id)), {
         text: 'Card A confirmed',
         timeoutMs: uiTimeoutMs,

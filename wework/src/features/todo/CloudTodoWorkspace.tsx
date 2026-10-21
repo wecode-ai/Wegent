@@ -3114,7 +3114,7 @@ export function CloudTodoWorkspace({
       if (itemProject?.location === 'local') {
         setItems(current =>
           mutation.position
-            ? mergePersistedBoardMove(current, locatedUpdated)
+            ? mergePersistedBoardMove(current, locatedUpdated, mutation.position)
             : current.map(candidate => (candidate.id === updated.id ? locatedUpdated : candidate))
         )
       }

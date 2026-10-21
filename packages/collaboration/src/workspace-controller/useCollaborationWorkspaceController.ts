@@ -6,7 +6,10 @@ import { useEffect, useMemo, useReducer, useRef } from "react";
 
 import { collectIssueSubtreeIds, removeIssueSubtree } from "../board";
 import { isIssueVersionConflict } from "../issue-detail/issueVersionConflict";
-import { mergePersistedBoardMove } from "../project-board/useStandardCloudBoardController";
+import {
+  mergePersistedBoardMove,
+  type ProjectBoardPosition,
+} from "../project-board/useStandardCloudBoardController";
 import type {
   SharedWorkspaceApi,
   WorkspaceBoardSnapshot,
@@ -256,7 +259,11 @@ export type CollaborationWorkspaceControllerAction =
   | { type: "remove-project"; projectId: string }
   | { type: "replace-issues"; issues: CollaborationIssue[] }
   | { type: "append-issue"; issue: CollaborationIssue }
-  | { type: "replace-issue"; issue: CollaborationIssue; positioned?: boolean }
+  | {
+      type: "replace-issue";
+      issue: CollaborationIssue;
+      position?: ProjectBoardPosition;
+    }
   | { type: "remove-issue"; issueId: string }
   | { type: "replace-attachments"; attachments: CollaborationAttachment[] }
   | { type: "replace-comments"; comments: CollaborationComment[] }
@@ -581,8 +588,8 @@ export function collaborationWorkspaceControllerReducer(
       };
     case "replace-issue": {
       const replace = (items: CollaborationIssue[]) =>
-        action.positioned
-          ? mergePersistedBoardMove(items, action.issue)
+        action.position
+          ? mergePersistedBoardMove(items, action.issue, action.position)
           : items.map((item) =>
               item.id === action.issue.id
                 ? newestIssue(item, action.issue)
@@ -1330,7 +1337,7 @@ export function createCollaborationWorkspaceControllerCommands({
         dispatch({
           type: "replace-issue",
           issue,
-          positioned: !!input.position,
+          position: input.position,
         });
         return issue;
       } catch (error) {
@@ -1347,7 +1354,7 @@ export function createCollaborationWorkspaceControllerCommands({
         dispatch({
           type: "replace-issue",
           issue,
-          positioned: !!input.position,
+          position: input.position,
         });
         return issue;
       } catch (error) {

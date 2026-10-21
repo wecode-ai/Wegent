@@ -51,9 +51,10 @@ export interface StandardCloudBoardStatus {
 export function mergePersistedBoardMove<T extends StandardCloudBoardItem>(
   items: T[],
   saved: T,
+  position: ProjectBoardPosition,
 ): T[] {
   const current = items.find((item) => item.id === saved.id);
-  if ((current?.version ?? -1) >= (saved.version ?? 0)) return items;
+  if (!current || (current.version ?? -1) >= (saved.version ?? 0)) return items;
   const siblings = items
     .filter(
       (item) =>
@@ -61,12 +62,39 @@ export function mergePersistedBoardMove<T extends StandardCloudBoardItem>(
         item.parent_id === saved.parent_id &&
         item.cloud_project_id === saved.cloud_project_id,
     )
-    .sort((a, b) => compareProjectBoardItems(a, b, []));
-  siblings.splice(saved.sort_order, 0, saved);
-  const positions = new Map(siblings.map((item, index) => [item.id, index]));
+    .map((item) => {
+      // Shift global rank slots without collapsing gaps owned by invisible siblings.
+      const removedRank =
+        item.sort_order - (item.sort_order > current.sort_order ? 1 : 0);
+      return {
+        ...item,
+        sort_order: removedRank + (removedRank >= saved.sort_order ? 1 : 0),
+      };
+    });
+  siblings.push(saved);
+  siblings.sort((a, b) => compareProjectBoardItems(a, b, []));
+  const ranks = siblings.map((item) => item.sort_order);
+  // The visible anchor also preserves intent when another move changed cached ranks.
+  if (
+    position.beforeItemId === null ||
+    siblings.some((item) => item.id === position.beforeItemId)
+  ) {
+    siblings.splice(
+      siblings.findIndex((item) => item.id === saved.id),
+      1,
+    );
+    const index =
+      position.beforeItemId === null
+        ? siblings.length
+        : siblings.findIndex((item) => item.id === position.beforeItemId);
+    siblings.splice(index, 0, saved);
+  }
+  const positions = new Map(
+    siblings.map((item, index) => [item.id, ranks[index]]),
+  );
   return items.map((item) => {
-    if (item.id === saved.id) return saved;
     const position = positions.get(item.id);
+    if (item.id === saved.id) return { ...saved, sort_order: position! };
     return position === undefined || position === item.sort_order
       ? item
       : { ...item, sort_order: position };
