@@ -341,7 +341,7 @@ async function createCoordinateGroup(control, request, projectId, timeoutMs) {
 
 async function createIssue(control, request, projectId, timeoutMs) {
   await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
-  await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
+  await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
     value: ISSUE,
   })

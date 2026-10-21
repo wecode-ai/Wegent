@@ -146,7 +146,7 @@ export function StandInPopover({
     if (!open || !api.agents) return
     let cancelled = false
     void api.agents
-      .list(project.id)
+      .list(project.id, { forceRefresh: true })
       .then(rows => {
         if (!cancelled) {
           setAgents(

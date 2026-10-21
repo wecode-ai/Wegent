@@ -317,7 +317,7 @@ async function createGroup(control, request, projectId, ownerId, uiTimeoutMs) {
 
 async function createAndAssignIssue(control, request, projectId, uiTimeoutMs) {
   await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
-  await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
+  await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), { value: ISSUE })
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
     value: `${MARKER}。负责人必须并发分配一个 AI 任务和一个人工任务，等待个人 Task 正式交付后继续。`,

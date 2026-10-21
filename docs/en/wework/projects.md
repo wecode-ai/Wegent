@@ -82,6 +82,30 @@ After creating or adding an agent under the workspace's **Settings → Collabora
 
 Local spaces save the agent configuration in the project, preserving its resource name, display name, model policy, and tools. In cloud spaces, workspace sharing grants use permission, while a project binding determines where the agent is available. Sharing does not grant permission to edit its source definition. Execution still requires an authorized project device and model.
 
+### Add and create Agents
+
+When adding an Agent, search existing Agents by name or owning space, or open
+the creation form. New Agents default to **Automatic selection** for execution
+and the first available cloud model. The basic tab shows the current environment
+and model in its footer, so you can create the Agent without opening runtime settings.
+
+Open **Runtime settings** to change these defaults. The environment menu lists
+automatic selection, selection at run time, and specific devices, with project
+shared devices before personal devices. Search by name or device ID. Only online
+devices appear initially; use **Show offline devices** in the bottom-right corner
+to include other devices. Native models are added only after selecting a specific
+device. Editing an existing Agent preserves its saved choices.
+
+Cloud model requests end after 10 seconds and release the pending cache entry,
+so refreshing starts a new request. You can still select and save a cloud model
+while device-native model discovery fails or remains pending. Collaboration groups
+load their member list independently. A member loading failure offers a retry;
+loaded groups, Agents, and group saves remain available.
+
+Basic project settings initially show project properties. Expand **Tags** to load
+task tags, with retry on failure. Once loaded, tags used by tasks remain manageable;
+renaming or deleting a tag also updates the affected tasks.
+
 ### Set cloud board access
 
 Cloud projects have two access modes: **Private** and **Public**. A public project grants every signed-in user the Viewer (read-only) or Developer (create and edit issues) role. A private project is available only through existing grants. Project roles are Owner, Maintainer, Developer, and Viewer. Owners manage the project and members; Maintainers can also manage issue security. Developers and above can assign the issue owner, and the issue creator can always assign their own issue.

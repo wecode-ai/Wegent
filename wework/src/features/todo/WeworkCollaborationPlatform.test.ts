@@ -17,6 +17,7 @@ import type {
 } from '@wegent/collaboration'
 import { DEFAULT_WORK_ITEM_PROJECT_ID, type DeliveryApi } from '@/api/deliveries'
 import { ApiError } from '@/api/http'
+import { createLocalProjectChatAgentApi } from '@/api/local/localDelivery'
 import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
 import {
   clearRuntimeConversationCacheForTests,
@@ -3409,6 +3410,33 @@ describe('Wework collaboration workspace API', () => {
       api?.workspaces?.listCollaborationGroups('wework-local-workspace')
     ).resolves.toEqual([])
     expect(listCloudCollaborationGroups).not.toHaveBeenCalled()
+  })
+
+  it('refreshes external Agent writes through both local workspace adapters', async () => {
+    let records: Array<{ id: string; name: string; runtime: string; status: string }> = []
+    const request = vi.fn(async () => records)
+    const details = {
+      ...createLocalDetailServices(),
+      localProjectChatAgentApi: createLocalProjectChatAgentApi(request, 1),
+    }
+    const cloudList = vi.fn()
+    const cloudApi = {
+      workspaces: {},
+      agents: { list: cloudList },
+    } as unknown as SharedWorkspaceApi
+    const api = createWeworkPlatformApi(
+      cloudApi,
+      createLocalWorkspaceApi(createLocalDeliveryApi(), 1, 'admin', null, details)
+    )!
+    await expect(api.agents.list('local-project')).resolves.toEqual([])
+    records = [{ id: 'external', name: 'External Agent', runtime: 'codex', status: 'active' }]
+    await expect(api.agents.list('local-project')).resolves.toEqual([])
+    await expect(api.agents.list('local-project', { forceRefresh: true })).resolves.toMatchObject([
+      { id: 'external', name: 'External Agent' },
+    ])
+    await expect(api.agents.list('local-project')).resolves.toMatchObject([{ id: 'external' }])
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(cloudList).not.toHaveBeenCalled()
   })
 
   it('keeps local Issue list requests off the cloud API', async () => {
