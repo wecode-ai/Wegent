@@ -13,7 +13,10 @@ from app.services.plugin_device_installation_service import (
     plugin_device_installation_service,
 )
 from app.services.plugin_marketplace_service import plugin_marketplace_service
-from app.services.plugin_write_coordination import configure_plugin_session
+from app.services.plugin_write_coordination import (
+    acquire_plugin_write_lock,
+    configure_plugin_session,
+)
 from shared.telemetry.decorators import trace_async
 
 
@@ -34,14 +37,24 @@ def desired_plugins(user_id: int, device_id: str) -> dict[str, Any]:
 
 
 def record_reconciliation_result(
-    user_id: int, result: DeviceCapabilitySyncResult
-) -> None:
-    """Create, use and close the acknowledgement session in its worker."""
+    user_id: int,
+    device_id: str,
+    payload: dict[str, Any],
+    result: DeviceCapabilitySyncResult,
+) -> dict[str, Any] | None:
+    """Validate and persist the acknowledged snapshot under one write lease."""
     with get_db_session() as db:
         configure_plugin_session(db)
+        acquire_plugin_write_lock(db, user_id)
+        latest = device_capability_sync_service.build_desired_plugins(
+            db, user_id=user_id, device_id=device_id
+        )
+        if plugin_snapshot(latest) != plugin_snapshot(payload):
+            return latest
         plugin_device_installation_service.record_device_sync_result(
             db, user_id=user_id, result=result
         )
+    return None
 
 
 def plugin_snapshot(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -91,11 +104,12 @@ async def reconcile_device_plugins(
             raise HTTPException(502, reconciliation_failure_detail(result))
         if result.scope != "plugins":
             raise HTTPException(409, "Update the desktop runtime to reconcile plugins")
-        latest = await asyncio.to_thread(desired_plugins, user_id, device_id)
-        if plugin_snapshot(latest) != plugin_snapshot(payload):
+        latest = await asyncio.to_thread(
+            record_reconciliation_result, user_id, device_id, payload, result
+        )
+        if latest is not None:
             payload = latest
             continue
-        await asyncio.to_thread(record_reconciliation_result, user_id, result)
         return PluginDeviceSyncResponse(
             deviceId=device_id,
             pendingCount=0,

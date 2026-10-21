@@ -1,6 +1,7 @@
 """Synchronize devices after an authoritative account plugin transaction."""
 
 import logging
+from functools import partial
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -81,7 +82,11 @@ async def sync_plugin_after_change(
         finally:
             db.close()
         return await record_sync_response(
-            result, user_id=user_id, device_id=device_id, stage="plugin_ack"
+            result,
+            user_id=user_id,
+            device_id=device_id,
+            stage="plugin_ack",
+            installed_kind_id=installed_id,
         )
     if installed.spec.releaseId is not None:
         try:
@@ -183,7 +188,11 @@ async def ensure_installed_plugin_on_device(
     finally:
         db.close()
     return await record_sync_response(
-        merge_sync, user_id=user_id, device_id=device_id, stage="plugin_ack"
+        merge_sync,
+        user_id=user_id,
+        device_id=device_id,
+        stage="plugin_ack",
+        installed_kind_id=installed_id,
     )
 
 
@@ -193,10 +202,19 @@ async def record_sync_response(
     user_id: int,
     device_id: str | None,
     stage: str,
+    installed_kind_id: int | None = None,
 ) -> DeviceCapabilitySyncResponse:
+    operation = (
+        partial(
+            plugin_device_installation_service.record_plugin_sync_response,
+            installed_kind_id=installed_kind_id,
+        )
+        if installed_kind_id is not None
+        else plugin_device_installation_service.record_sync_response
+    )
     try:
         await run_plugin_operation(
-            plugin_device_installation_service.record_sync_response,
+            operation,
             user_id=user_id,
             response=result,
         )

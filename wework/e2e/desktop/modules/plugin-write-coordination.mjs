@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { dirname } from 'node:path'
+import { readFile } from 'node:fs/promises'
+import { dirname, resolve } from 'node:path'
 import { CLOUD_DEVICE_ID } from './shared.mjs'
 import { openComposerPluginPicker } from './conversation-layout.mjs'
 import { holdPluginWriteLease } from './plugin-write-lease.mjs'
@@ -43,19 +44,23 @@ export async function verifyPluginWriteCoordination({
     if (outcome.error) throw outcome.error
     return outcome.response
   }
-  const refreshSurfaces = async item => {
+  const refreshSurfaces = async (item, present = true) => {
     await openPlugin(control, item)
     await control.command('click', testId('plugins-refresh-button'))
-    await control.command('waitFor', testId(`plugin-marketplace-actions-${item.pluginId}`), {
-      timeoutMs,
-    })
+    if (present) {
+      await control.command('waitFor', testId(`plugin-marketplace-actions-${item.pluginId}`), {
+        timeoutMs,
+      })
+    } else {
+      await assertInstallButton(control, item)
+    }
     // The composer catalog loads only when its real picker is opened.
     await control.command('click', testId('new-chat-button'))
     await openComposerPluginPicker(control)
-    await assertInventory(control, item.slug, true)
+    await assertInventory(control, item.slug, present)
     await control.command('click', testId('composer-plugin-picker-button'))
     await openPlugin(control, item)
-    await assertSurfaces(control, item, true)
+    await assertSurfaces(control, item, present)
   }
 
   const responsive = {
@@ -185,4 +190,129 @@ export async function verifyPluginWriteCoordination({
   assert.equal(rows[0].desired_release_id, acknowledged.releaseId)
   await refreshSurfaces(acknowledged)
   evidence.push({ case: 'deferred-plugin-ack-recovers-on-next-sync', installedId })
+  await verifyLateInstallAcknowledgementRemoval({
+    cloud,
+    apiProxy,
+    deviceProxy,
+    item: { ...acknowledged, installedId },
+    remoteHome,
+    refreshSurfaces,
+    evidence,
+    timeoutMs,
+  })
+}
+
+async function verifyLateInstallAcknowledgementRemoval({
+  cloud,
+  apiProxy,
+  deviceProxy,
+  item,
+  remoteHome,
+  refreshSurfaces,
+  evidence,
+  timeoutMs,
+}) {
+  const pendingRows = () =>
+    cloud.queryDatabase(
+      'SELECT state, actual_release_id, desired_release_id FROM plugin_device_installations WHERE user_id = %s AND installed_kind_id = %s AND device_id = %s',
+      [1, item.installedId, CLOUD_DEVICE_ID]
+    )
+  const manifestRevision = async () =>
+    JSON.parse(await readFile(resolve(remoteHome, 'capabilities/manifest-v2.json'), 'utf8'))
+      .revision
+  const beforeRevision = await manifestRevision()
+  assert.ok(Number.isSafeInteger(beforeRevision), 'The real capability manifest has no revision')
+  let pending
+  let reconnecting
+  deviceProxy.pauseDeviceAcknowledgements(true)
+  try {
+    pending = pluginApi(
+      cloud,
+      `/plugins/installed/${item.installedId}/sync-device?device_id=${encodeURIComponent(CLOUD_DEVICE_ID)}`,
+      'POST'
+    ).then(
+      value => ({ value }),
+      error => ({ error })
+    )
+    await until(
+      manifestRevision,
+      revision => revision > beforeRevision,
+      'The real Executor did not finish the targeted install before its ACK was held',
+      timeoutMs
+    )
+    assert.ok(await materializedPlugin(remoteHome, item.installedId))
+    // The held install ACK may return, but the subsequent removal cannot reach
+    // the device. It must remain durable until a real removal is acknowledged.
+    deviceProxy.pauseDeviceDelivery(true)
+    const deletePath = `/api/plugins/installed/${item.installedId}`
+    const deleted = await fetch(`${apiProxy.url}${deletePath}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${cloud.authToken}` },
+      signal: AbortSignal.timeout(10_000),
+    })
+    assert.equal(deleted.status, 204)
+    await until(
+      pendingRows,
+      rows => rows.length === 1 && rows[0].state === 'uninstalling',
+      'The committed uninstall did not persist the held device removal'
+    )
+    assert.equal(await accountPlugin(cloud, item.slug), undefined)
+    deviceProxy.pauseDeviceAcknowledgements(false)
+    const acknowledged = await pending
+    if (acknowledged.error) throw acknowledged.error
+    assert.equal(acknowledged.value.sync.success, true)
+    assert.ok(
+      acknowledged.value.sync.plugins.some(
+        plugin => Number(plugin.id) === item.installedId && plugin.status === 'synced'
+      ),
+      'The delayed response was not the real targeted install acknowledgement'
+    )
+    const afterInstallAck = await pendingRows()
+    assert.equal(afterInstallAck.length, 1, 'An install ACK deleted the pending removal')
+    assert.equal(afterInstallAck[0].state, 'uninstalling')
+    assert.ok(await materializedPlugin(remoteHome, item.installedId))
+    // This checks the real transport and persistence invariant. The precise
+    // final-snapshot-to-ACK-worker race is covered by the backend concurrency test.
+    evidence.push({
+      case: 'late-targeted-install-ack-preserves-unconfirmed-removal',
+      installedId: item.installedId,
+      afterInstallAck,
+    })
+    reconnecting = cloud.restartCloudExecutor().then(
+      value => ({ value }),
+      error => ({ error })
+    )
+    await cloud.waitForDeviceStatus(CLOUD_DEVICE_ID, 'offline', cloud.remoteExecutorLogPath)
+    assert.equal((await pendingRows())[0]?.state, 'uninstalling')
+    assert.ok(await materializedPlugin(remoteHome, item.installedId))
+    deviceProxy.pauseDeviceDelivery(false)
+    const reconnected = await reconnecting
+    if (reconnected.error) throw reconnected.error
+    await until(
+      async () => ({
+        plugin: await materializedPlugin(remoteHome, item.installedId),
+        rows: await pendingRows(),
+      }),
+      value => !value.plugin && value.rows.length === 0,
+      'Reconnect did not acknowledge and finish the durable removal',
+      timeoutMs
+    )
+    assert.equal(
+      apiProxy.requests.filter(
+        request => request.method === 'DELETE' && request.path === deletePath
+      ).length,
+      1,
+      'Device recovery repeated the account uninstall'
+    )
+    await refreshSurfaces(item, false)
+    evidence.push({
+      case: 'late-install-ack-removal-recovers-after-disconnect',
+      installedId: item.installedId,
+    })
+  } finally {
+    deviceProxy.pauseDeviceAcknowledgements(false)
+    deviceProxy.pauseDeviceDelivery(false)
+    if (pending) await pending
+    if (reconnecting) await reconnecting
+  }
 }

@@ -369,6 +369,7 @@ def test_device_coordination_failure_preserves_account_commit_and_recovers(
     observed: list[str] = []
     prepare = installations._ensure_pending_for_devices
     record = installations.record_sync_response
+    record_plugin = installations.record_plugin_sync_response
 
     def fail_committed_stage():
         assert_account_write(context, entry)
@@ -381,15 +382,19 @@ def test_device_coordination_failure_preserves_account_commit_and_recovers(
         return prepare(*args, **kwargs)
 
     def record_write(*args: Any, **kwargs: Any):
-        mode = kwargs["response"].mode
-        current_stage = "global_ack" if mode == "replace" else "plugin_ack"
-        if stage == current_stage:
+        if stage == "global_ack":
             fail_committed_stage()
         return record(*args, **kwargs)
+
+    def record_plugin_write(*args: Any, **kwargs: Any):
+        if stage == "plugin_ack":
+            fail_committed_stage()
+        return record_plugin(*args, **kwargs)
 
     with monkeypatch.context() as fault:
         fault.setattr(installations, "_ensure_pending_for_devices", prepare_write)
         fault.setattr(installations, "record_sync_response", record_write)
+        fault.setattr(installations, "record_plugin_sync_response", record_plugin_write)
 
         response = context.write(entry, device_id=device_id)
 

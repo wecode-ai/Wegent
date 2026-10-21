@@ -315,12 +315,14 @@ class PluginDeviceInstallationService:
         )
         installs = self._desired_installs(db, user_id)
         desired_ids = {installed.id for installed in installs}
-        self._record_removed_installs(db, user_id, result, desired_ids)
         plugin_results = {
             int(item.id): item
             for item in result.plugins
             if item.id is not None and str(item.id).isdigit()
         }
+        self._record_removed_installs(
+            db, user_id, result, desired_ids, set(plugin_results)
+        )
         for installed in installs:
             self._record_desired_install(
                 db,
@@ -378,6 +380,7 @@ class PluginDeviceInstallationService:
         user_id: int,
         result: DeviceCapabilitySyncResult,
         desired_ids: set[int],
+        reported_ids: set[int],
     ) -> None:
         rows = (
             db.query(PluginDeviceInstallation)
@@ -388,7 +391,12 @@ class PluginDeviceInstallationService:
             .all()
         )
         for row in rows:
-            if row.installed_kind_id in desired_ids:
+            if (
+                row.installed_kind_id in desired_ids
+                or row.installed_kind_id in reported_ids
+            ):
+                # A reported item acknowledges an install attempt, including
+                # one sent before a newer uninstall created this cleanup row.
                 continue
             if result.success:
                 db.delete(row)
