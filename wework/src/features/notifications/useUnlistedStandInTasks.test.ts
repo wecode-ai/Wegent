@@ -46,7 +46,8 @@ describe('unlisted stand-in task discovery', () => {
     const current = snapshot(true)
     const hook = renderHook(() => useUnlistedStandInTasks([], current, reader, runtimeApi))
     await waitFor(() => expect(hook.result.current).toHaveLength(1))
-    expect(hook.result.current[0].task.running).toBe(true)
+    expect(standInState(runtimeItem).status).toBe('running')
+    expect(hook.result.current[0].lifecycle).toBe(current.tasks.get(runtimeItem.key))
     expect(standInState(hook.result.current[0]).status).toBe('completed')
   })
 
