@@ -87,6 +87,11 @@ export function createProjectOnlyNavigationRegression({ uiTimeoutMs, executorHom
         body: JSON.stringify({ user_id: reader.id, role: 'Developer' }),
       })
       const creatorRequest = (pathname, options) => request(creatorToken, pathname, options)
+      // Create real assignments while eligible, then restore the public-only Viewer grant.
+      await creatorRequest(`/api/v1/cloud-projects/${projects[0].id}/members`, {
+        method: 'POST',
+        body: JSON.stringify({ user_id: reader.id, role: 'Developer' }),
+      })
       readOnlyBoardIssues = await createReadOnlyBoardIssues(
         creatorRequest,
         projects[0],
@@ -99,6 +104,16 @@ export function createProjectOnlyNavigationRegression({ uiTimeoutMs, executorHom
         reader,
         creator
       )
+      await request(
+        creatorToken,
+        `/api/v1/cloud-projects/${projects[0].id}/members/${reader.id}`,
+        { method: 'DELETE' },
+        204
+      )
+      for (const assigned of [readOnlyBoardIssues[0], readOnlyFilterIssues[0]]) {
+        const persisted = await creatorRequest(`/api/v1/loop-items/${assigned.id}`)
+        assert.equal(persisted.assignee_user_id, reader.id)
+      }
       boardFilterIssues = await createBoardFilterIssues(
         creatorRequest,
         projects[1],
