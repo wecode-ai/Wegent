@@ -1362,7 +1362,10 @@ async function doubleClickDesktopControlElement(selector: string): Promise<strin
   return secondElement.textContent?.trim() ?? ''
 }
 
-async function waitForDesktopControlElement(command: DesktopControlCommand): Promise<string> {
+async function waitForDesktopControlElement(
+  command: DesktopControlCommand,
+  onMatch?: (element: HTMLElement) => string
+): Promise<string> {
   const timeoutMs = command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
   const startedAt = Date.now()
   let matchedAt: number | null = null
@@ -1386,11 +1389,13 @@ async function waitForDesktopControlElement(command: DesktopControlCommand): Pro
       : elements
     const text = matchingElements.map(element => element.textContent?.trim() ?? '').join('\n')
     const hasExpectedText = !command.text || text.includes(command.text)
-    const isEnabled = !command.enabled || matchingElements.some(desktopControlElementEnabled)
-    if (matchingElements.length > 0 && hasExpectedText && isEnabled) {
+    const matchedElement = matchingElements.find(
+      element => !command.enabled || desktopControlElementEnabled(element)
+    )
+    if (matchedElement && hasExpectedText) {
       matchedAt ??= Date.now()
       if (Date.now() - matchedAt >= (command.stableMs ?? 0)) {
-        return text
+        return onMatch ? onMatch(matchedElement) : text
       }
     } else {
       matchedAt = null
@@ -2847,15 +2852,24 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'clickWhenEnabled': {
       startConversationDiagnosticCapture()
-      await waitForDesktopControlElement({ ...command, enabled: true })
-      const element = findDesktopControlElements(command.selector).find(
-        desktopControlElementEnabled
-      )
-      if (!element) {
-        throw new Error(`Selector "${command.selector}" became disabled before click`)
+      return waitForDesktopControlElement({ ...command, enabled: true }, element => {
+        element.click()
+        return element.textContent?.trim() ?? ''
+      })
+    }
+    case 'setExpanded': {
+      const expected = command.value
+      if (expected !== 'true' && expected !== 'false') {
+        throw new Error('setExpanded requires a true or false value')
       }
-      element.click()
-      return element.textContent?.trim() ?? ''
+      return waitForDesktopControlElement({ ...command, enabled: true }, element => {
+        const expanded = element.getAttribute('aria-expanded')
+        if (expanded !== 'true' && expanded !== 'false') {
+          throw new Error(`Selector "${command.selector}" has no valid aria-expanded state`)
+        }
+        if (expanded !== expected) element.click()
+        return element.textContent?.trim() ?? ''
+      })
     }
     case 'clickDescendantInElementWithText': {
       const text = command.text ?? ''

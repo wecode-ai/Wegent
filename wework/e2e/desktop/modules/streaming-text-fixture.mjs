@@ -717,17 +717,11 @@ export function processingDurationSeconds(text) {
 
 export async function expandCompletedProcessing(control, timeoutMs) {
   const finalToggle = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="final-processing-toggle"]`
-  await control.command('waitFor', finalToggle, { timeoutMs })
-  if ((await control.command('getAttribute', finalToggle, { value: 'aria-expanded' })) !== 'true') {
-    await control.command('click', finalToggle)
-  }
+  await control.command('setExpanded', finalToggle, { value: 'true', timeoutMs })
+  await control.command('waitFor', `${finalToggle}[aria-expanded="true"]`, { timeoutMs })
   const summaryToggle = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="processing-summary-toggle"]`
-  await control.command('waitFor', summaryToggle, { timeoutMs })
-  if (
-    (await control.command('getAttribute', summaryToggle, { value: 'aria-expanded' })) !== 'true'
-  ) {
-    await control.command('click', summaryToggle)
-  }
+  await control.command('setExpanded', summaryToggle, { value: 'true', timeoutMs })
+  await control.command('waitFor', `${summaryToggle}[aria-expanded="true"]`, { timeoutMs })
 }
 
 export async function completedToolDuration(control, timeoutMs) {
