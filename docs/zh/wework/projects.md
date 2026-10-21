@@ -100,6 +100,8 @@ Issue 的可见范围在创建项目、项目设置和单个 Issue 中配置。�
 
 桌面排序回归：`pnpm --filter wework e2e:desktop --segment collaboration-board-sorting`。该独立 checkpoint 已接入 Core CI，使用真实云端后端和本地 SQLite 验证默认优先级、泳道独立组合规则、窗口重新加载后的恢复、自动排序拒绝列内改序，以及手动拖动和跨泳道移动的持久化。
 
+排序保存后的刷新恢复回归：`pnpm --filter wework e2e:desktop --segment collaboration-board-move-recovery`。该独立 checkpoint 已接入 Core CI，使用真实 Developer 成员验证三个可见 Issue 与隐藏同级 Issue 交错时的向后拖动、快照响应中断后的可见顺序、刷新恢复，以及并发移动和快照乱序返回时的字段与顺序。测试只干预真实后端响应的传输，不构造 API 响应，并验证隐藏 Issue 始终不可见。
+
 ## 日历、甘特图与表格视图
 
 项目空间顶部可以在 **看板**、**日历**、**甘特** 和 **表格** 之间切换。Issue 详情使用同一个时间范围控件设置开始时间和结束时间；只有一个日期时，日历和甘特图会把它视为单日任务。

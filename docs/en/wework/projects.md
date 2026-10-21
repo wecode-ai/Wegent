@@ -135,6 +135,8 @@ Each lane on a native project-space board has its own **Sort by** control and de
 
 Desktop sorting regression: `pnpm --filter wework e2e:desktop --segment collaboration-board-sorting`. This independent checkpoint runs in Core CI against the real cloud backend and local SQLite, covering default priority, independent compound lane rules, restoration after window reloads, rejected within-lane reordering under automatic sorting, and persistence of manual drags and cross-lane moves.
 
+Post-save refresh recovery regression: `pnpm --filter wework e2e:desktop --segment collaboration-board-move-recovery`. This independent Core CI checkpoint uses a real Developer member with three visible Issues interleaved with hidden siblings. It verifies backward moves, visible order after interrupted snapshot delivery, recovery on reload, and fields and ordering across concurrent moves and out-of-order snapshots. The test faults only transport of real backend responses and verifies that hidden Issues remain invisible.
+
 ## Calendar, Gantt, and table views
 
 Use the project-space header to switch among **Board**, **Calendar**, **Gantt**, and **Table**. Issue details use one date-range control for the start and end dates. If only one date is set, Calendar and Gantt treat the issue as a one-day task.
