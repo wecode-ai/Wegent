@@ -807,7 +807,7 @@ export function TemporaryChatPanel({
         ...runtimeContext,
       })
       if (!sent) return false
-      setMessages(commitResponse())
+      commitResponse()
       return true
     },
     [

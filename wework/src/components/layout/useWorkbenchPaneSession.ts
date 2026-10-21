@@ -1168,12 +1168,18 @@ export function useWorkbenchPaneSession({
 
   const prepareLocalRequestUserInputResponse = useCallback(
     (response: RequestUserInputResponse) => {
-      if (!currentRuntimeTask) return () => undefined
+      if (!currentRuntimeTask) return () => false
       const previousCount = messagesRef.current.length
       const commit = prepareRuntimeConversationUserInputResponse(currentRuntimeTask, response)
       return () => {
         const nextMessages = commit()
-        setMessages(nextMessages)
+        if (
+          !currentRuntimeTaskRef.current ||
+          runtimeConversationKey(currentRuntimeTaskRef.current) !==
+            runtimeConversationKey(currentRuntimeTask)
+        ) {
+          return false
+        }
         debugRuntimePaneMessageFlow('request-user-input-response-applied', {
           address: runtimeAddressDebug(currentRuntimeTask),
           requestUserInputKey: requestUserInputResponseKey(response),
@@ -1181,6 +1187,7 @@ export function useWorkbenchPaneSession({
           nextCount: nextMessages.length,
           nextMessages: summarizeWorkbenchMessages(nextMessages),
         })
+        return true
       }
     },
     [currentRuntimeTask]
@@ -1786,7 +1793,8 @@ export function useWorkbenchPaneSession({
         if (!sent) return false
         markRuntimeTerminalAdditionalContextDelivered(additionalContext)
       }
-      if (requestUserInputKey) {
+      const responseIsSelected = applyResponse()
+      if (requestUserInputKey && responseIsSelected) {
         setAnsweredRequestUserInputIds(current => {
           if (current.has(requestUserInputKey)) return current
           const next = new Set(current)
@@ -1794,7 +1802,6 @@ export function useWorkbenchPaneSession({
           return next
         })
       }
-      applyResponse()
       return true
     },
     [
