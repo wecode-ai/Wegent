@@ -139,14 +139,24 @@ def ensure_resource_grant(
     added_by_user_id: int,
     role: BaseRole,
 ) -> ResourceMember:
-    existing = resource_grant(
-        db,
-        workspace_id=workspace_id,
-        resource_type=resource_type,
-        resource_id=resource_id,
+    # Authorization writes must find inactive grants too: the resource/entity
+    # identity is unique independently of its current approval status.
+    existing = (
+        db.query(ResourceMember)
+        .filter_by(
+            resource_type=resource_type,
+            resource_id=resource_id,
+            entity_type=WORKSPACE_ENTITY_TYPE,
+            entity_id=str(workspace_id),
+        )
+        .with_for_update()
+        .first()
     )
     if existing is not None:
         existing.role = role.value
+        existing.status = MemberStatus.APPROVED.value
+        existing.invited_by_user_id = added_by_user_id
+        db.flush()
         return existing
     grant = ResourceMember.create(
         resource_type=resource_type,
