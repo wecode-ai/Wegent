@@ -39,13 +39,51 @@ pub(super) fn markdown_search_text(content: &str) -> String {
 
 pub(super) fn assistant_search_text(content: &str) -> String {
     let content = strip_codex_ui_directives(content);
-    let content = content
+    assistant_block_search_text(&strip_plugin_workspace_results(&content))
+}
+
+fn strip_plugin_workspace_results(content: &str) -> String {
+    content
         .split('\n')
         .map(|line| line.strip_suffix('\r').unwrap_or(line))
         .filter(|line| !is_plugin_workspace_result_line(line))
         .collect::<Vec<_>>()
-        .join("\n");
-    assistant_block_search_text(content.trim_end())
+        .join("\n")
+        .trim_end()
+        .to_owned()
+}
+
+// Match assistantMessagePresentation.ts after runtime transcript normalization.
+pub(super) fn visible_assistant_content(
+    content: &str,
+    status: &str,
+    error: Option<&str>,
+) -> String {
+    if status.eq_ignore_ascii_case("cancelled")
+        && matches!(
+            content.trim().to_ascii_lowercase().as_str(),
+            "interrupted" | "cancelled" | "canceled" | "aborted"
+        )
+    {
+        return String::new();
+    }
+    if status.eq_ignore_ascii_case("failed") {
+        if let Some(error) = error.filter(|error| !error.is_empty()) {
+            static RAW_FAILED_CONTENT: OnceLock<Regex> = OnceLock::new();
+            let pattern = RAW_FAILED_CONTENT.get_or_init(|| {
+                Regex::new(concat!(
+                    r#"(?i)^api error:|^task failed|^error:|"error"\s*:|"error_(type|code)"\s*:|"#,
+                    r"(?-u:\b)(status|type)\s*:\s*failed(?-u:\b)",
+                ))
+                .expect("valid failed assistant content pattern")
+            });
+            let trimmed = content.trim();
+            if !trimmed.is_empty() && (trimmed == error.trim() || pattern.is_match(trimmed)) {
+                return String::new();
+            }
+        }
+    }
+    strip_plugin_workspace_results(content)
 }
 
 pub(super) fn assistant_block_search_text(content: &str) -> String {
@@ -58,7 +96,7 @@ pub(super) fn assistant_block_search_text(content: &str) -> String {
 }
 
 // Keep this projection aligned with chat-core/codex-directives.ts.
-fn strip_codex_ui_directives(content: &str) -> String {
+pub(super) fn strip_codex_ui_directives(content: &str) -> String {
     static DIRECTIVES: OnceLock<Regex> = OnceLock::new();
     static EMPTY_LINES: OnceLock<Regex> = OnceLock::new();
     let directives = DIRECTIVES.get_or_init(|| {

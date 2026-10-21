@@ -373,6 +373,10 @@ classify_wework_path() {
       select_target "core:system-pac"
       return
       ;;
+    wework/e2e/desktop/modules/cloud-history-search.mjs)
+      select_target "cloud:conversation-state"
+      return
+      ;;
     # Cloud device restart and upgrade actions require the managed Nevis fixture.
     wework/src/components/settings/ConnectionsSettingsPage* | \
       wework/src/components/settings/DeviceVersionBadge* | \
@@ -1152,6 +1156,7 @@ classify_path() {
       wework/scripts/plugin-fault-proxy.test.mjs | \
       wework/e2e/desktop/modules/plugin-fault-proxy*)
       select_target "cloud:plugin-uninstall-resilience"
+      select_target "cloud:conversation-state"
       return
       ;;
     wework/e2e/desktop/scenarios/plugin-composer-long-list.scenario.mjs | \

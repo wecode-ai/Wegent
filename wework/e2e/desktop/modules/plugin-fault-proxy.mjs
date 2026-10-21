@@ -39,7 +39,7 @@ export class PluginFaultProxy {
     // Retain no headers, tokens, request bodies or device query strings.
     const entry = { method: request.method, path: url.pathname, unscoped: !url.search }
     this.requests.push(entry)
-    const fault = this.rule(entry)
+    const fault = this.rule(entry, request)
     entry.fault = fault
     if (fault === 'hold-request') {
       request.resume()
@@ -52,6 +52,14 @@ export class PluginFaultProxy {
         incoming.resume()
         incoming.once('end', () => {
           entry.committedResponseHeld = true
+        })
+        return
+      }
+      if (fault === 'drop-response') {
+        incoming.resume()
+        incoming.once('end', () => {
+          entry.committedResponseDropped = true
+          response.destroy()
         })
         return
       }

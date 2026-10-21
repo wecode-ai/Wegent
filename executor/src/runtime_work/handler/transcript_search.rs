@@ -7,6 +7,7 @@ use crate::runtime_work::{
     transcript::visible_user_request_content,
     transcript_search_text::{
         assistant_block_search_text, assistant_search_text, markdown_search_text,
+        strip_codex_ui_directives, visible_assistant_content,
     },
 };
 
@@ -195,6 +196,7 @@ fn search_cached_transcript(messages: &[Value], query: &str, limit: usize) -> Va
     if needle.is_empty() {
         return transcript_search_response(Vec::new(), 0, false);
     }
+    let segment_contents = cached_assistant_segment_contents(messages);
     let mut matches = Vec::new();
     let mut total = 0;
     for message in messages {
@@ -207,7 +209,7 @@ fn search_cached_transcript(messages: &[Value], query: &str, limit: usize) -> Va
         let Some(message_id) = string_field(message, "id") else {
             continue;
         };
-        for (item_id, text) in cached_message_search_sources(message, &role) {
+        for (item_id, text) in cached_message_search_sources(message, &role, &segment_contents) {
             let count = text.to_lowercase().match_indices(needle.as_str()).count();
             total += count;
             for occurrence in 0..count.min(limit.saturating_sub(matches.len())) {
@@ -230,7 +232,57 @@ fn search_cached_transcript(messages: &[Value], query: &str, limit: usize) -> Va
     transcript_search_response(matches, total, capped)
 }
 
-fn cached_message_search_sources(message: &Value, role: &str) -> Vec<(String, String)> {
+// Cached hydration joins assistant text within each user/guidance-delimited segment.
+fn cached_assistant_segment_contents(messages: &[Value]) -> HashMap<String, Arc<str>> {
+    let mut contents = HashMap::new();
+    for turn in transcript_canonical_turns(messages, TranscriptTurnItemSource::CachedMessages) {
+        let Some(items) = turn.get("items").and_then(Value::as_array) else {
+            continue;
+        };
+        let segment_count = items
+            .iter()
+            .filter(|item| item["type"] == "user_message")
+            .count()
+            + 1;
+        for (index, segment) in items
+            .split(|item| item["type"] == "user_message")
+            .enumerate()
+        {
+            let content = segment
+                .iter()
+                .filter(|item| item["type"] == "assistant_text")
+                .map(|item| strip_codex_ui_directives(item["content"].as_str().unwrap_or_default()))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            let is_last = index + 1 == segment_count;
+            let status = if is_last {
+                turn.get("runtimeStatus")
+                    .filter(|value| !value.is_null())
+                    .or_else(|| turn.get("status"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+            } else {
+                "done"
+            };
+            let error = is_last
+                .then(|| turn.get("error").and_then(Value::as_str))
+                .flatten();
+            let content: Arc<str> = visible_assistant_content(&content, status, error).into();
+            for item in segment {
+                if let Some(id) = string_field(item, "id") {
+                    contents.insert(id, content.clone());
+                }
+            }
+        }
+    }
+    contents
+}
+
+fn cached_message_search_sources(
+    message: &Value,
+    role: &str,
+    segment_contents: &HashMap<String, Arc<str>>,
+) -> Vec<(String, String)> {
     let Some(message_id) = string_field(message, "id") else {
         return Vec::new();
     };
@@ -244,6 +296,32 @@ fn cached_message_search_sources(message: &Value, role: &str) -> Vec<(String, St
             markdown_search_text(visible_user_request_content(&content)),
         )];
     }
+    let segment_content = segment_contents.get(&message_id).or_else(|| {
+        message
+            .get("blocks")
+            .and_then(Value::as_array)?
+            .iter()
+            .find_map(|block| segment_contents.get(block.get("id")?.as_str()?.trim()))
+    });
+    let content = strip_codex_ui_directives(&content);
+    let content = if let Some(segment_content) = segment_content {
+        if segment_content.is_empty() {
+            String::new()
+        } else {
+            content
+        }
+    } else {
+        // Unkeyed runtime messages normalize status directly, without runtimeStatus.
+        visible_assistant_content(
+            &content,
+            message
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            message.get("error").and_then(Value::as_str),
+        )
+    };
+    let final_content = segment_content.map(AsRef::as_ref).unwrap_or(&content);
     let mut sources = Vec::new();
     for block in message
         .get("blocks")
@@ -254,7 +332,7 @@ fn cached_message_search_sources(message: &Value, role: &str) -> Vec<(String, St
     {
         if let (Some(id), Some(text)) = (string_field(block, "id"), string_field(block, "content"))
         {
-            if !text.trim().is_empty() && text.trim() != content.trim() {
+            if !text.trim().is_empty() && text.trim() != final_content.trim() {
                 sources.push((id, assistant_block_search_text(&text)));
             }
         }
@@ -375,6 +453,190 @@ mod tests {
             search_cached_transcript(&messages, "  ", 250)["totalMatches"],
             0
         );
+    }
+
+    #[test]
+    fn cached_search_ignores_hidden_failed_final_content() {
+        for content in [
+            "needle",
+            "API error: needle",
+            "Task failed: needle",
+            "ERROR: needle",
+            r#"{"error": "needle"}"#,
+            r#"{"error_type": "needle"}"#,
+            r#"{"error_code": "needle"}"#,
+            "status: failed needle",
+            "type: FAILED needle",
+            "::archive-thread{}\nAPI error: needle",
+        ] {
+            let message = json!({
+                "id":"failed", "turnId":"failed-turn", "role":"assistant",
+                "status":"FAILED", "content":content, "error":"needle",
+            });
+            assert_eq!(
+                search_cached_transcript(&[message], "needle", 250)["totalMatches"],
+                0,
+                "hidden failed content was indexed: {content}",
+            );
+        }
+    }
+
+    #[test]
+    fn cached_search_uses_canonical_status_precedence_only_for_turns() {
+        for (status, runtime_status, expected) in [
+            ("failed", json!("done"), 1),
+            ("done", json!("FAILED"), 0),
+            ("failed", Value::Null, 0),
+            ("failed", json!(""), 1),
+        ] {
+            let mut message = json!({
+                "id":"assistant", "turnId":"turn", "role":"assistant",
+                "status":status, "runtimeStatus":runtime_status,
+                "content":"API error: needle", "error":"needle",
+            });
+            assert_eq!(
+                search_cached_transcript(&[message.clone()], "needle", 250)["totalMatches"],
+                expected,
+                "canonical turn status={status}, runtimeStatus={runtime_status}",
+            );
+            message.as_object_mut().unwrap().remove("turnId");
+            assert_eq!(
+                search_cached_transcript(&[message], "needle", 250)["totalMatches"],
+                if status == "failed" { 0 } else { 1 },
+                "unkeyed runtime message must use status={status}",
+            );
+        }
+    }
+
+    #[test]
+    fn cached_search_applies_failed_visibility_to_joined_turn_content() {
+        let mut messages = vec![
+            json!({
+                "id":"partial", "turnId":"turn", "role":"assistant",
+                "status":"done", "content":"Useful partial response",
+            }),
+            json!({
+                "id":"final", "turnId":"turn", "role":"assistant",
+                "status":"failed", "content":"API error: needle", "error":"needle",
+            }),
+        ];
+        let result = search_cached_transcript(&messages, "needle", 250);
+        assert_eq!(result["totalMatches"], 1);
+        assert_eq!(result["matches"][0]["itemId"], "final");
+        assert_eq!(
+            result["matches"][0]["cursor"],
+            format!("{CACHED_SEARCH_CURSOR_PREFIX}\"final\"")
+        );
+
+        messages[0]["content"] = json!("::archive-thread{}\nAPI error: first needle");
+        messages[1]["content"] = json!("Useful partial needle response");
+        assert_eq!(
+            search_cached_transcript(&messages, "needle", 250)["totalMatches"],
+            0
+        );
+        messages[1]["blocks"] = json!([
+            {"id":"commentary", "type":"text", "content":"Visible commentary needle"},
+        ]);
+        let result = search_cached_transcript(&messages, "needle", 250);
+        assert_eq!(result["totalMatches"], 1);
+        assert_eq!(result["matches"][0]["itemId"], "commentary");
+    }
+
+    #[test]
+    fn cached_search_keeps_early_assistant_segment_before_guidance_visible() {
+        let messages = vec![
+            json!({
+                "id":"early", "turnId":"turn", "role":"assistant",
+                "status":"failed", "content":"API error: early needle", "error":"needle",
+            }),
+            json!({
+                "id":"guidance", "turnId":"turn", "role":"user",
+                "status":"done", "runtimeGuidance":true, "content":"Please continue",
+            }),
+            json!({
+                "id":"final", "turnId":"turn", "role":"assistant",
+                "status":"failed", "content":"API error: final needle", "error":"needle",
+            }),
+        ];
+        let result = search_cached_transcript(&messages, "needle", 250);
+        assert_eq!(result["totalMatches"], 1);
+        assert_eq!(result["matches"][0]["itemId"], "early");
+        assert_eq!(
+            result["matches"][0]["cursor"],
+            format!("{CACHED_SEARCH_CURSOR_PREFIX}\"early\"")
+        );
+    }
+
+    #[test]
+    fn cached_search_deduplicates_text_blocks_against_joined_segment_content() {
+        let messages = vec![
+            json!({
+                "id":"first", "turnId":"turn", "role":"assistant",
+                "status":"done", "content":"First needle",
+            }),
+            json!({
+                "id":"last", "turnId":"turn", "role":"assistant",
+                "status":"done", "content":"Last needle",
+                "blocks":[{"id":"duplicate", "type":"text", "content":"First needle\n\nLast needle"}],
+            }),
+        ];
+        let result = search_cached_transcript(&messages, "needle", 250);
+        assert_eq!(result["totalMatches"], 2);
+        assert_eq!(result["matches"][0]["itemId"], "first");
+        assert_eq!(result["matches"][1]["itemId"], "last");
+    }
+
+    #[test]
+    fn cached_search_keeps_visible_prose_and_blocks_in_failed_messages() {
+        let mut message = json!({
+            "id":"failed", "turnId":"failed-turn", "role":"assistant",
+            "status":"failed", "content":"API error: needle", "error":" ",
+            "blocks":[{"id":"commentary", "type":"text", "content":"API error: needle"}],
+        });
+        let result = search_cached_transcript(&[message.clone()], "needle", 250);
+        assert_eq!(result["totalMatches"], 1);
+        assert_eq!(result["matches"][0]["itemId"], "commentary");
+
+        message["content"] = json!("Useful partial needle response");
+        message["blocks"] = json!([]);
+        assert_eq!(
+            search_cached_transcript(&[message.clone()], "needle", 250)["totalMatches"],
+            1
+        );
+        for error in [Value::Null, json!("")] {
+            message["content"] = json!("API error: needle");
+            message["error"] = error;
+            assert_eq!(
+                search_cached_transcript(&[message.clone()], "needle", 250)["totalMatches"],
+                1
+            );
+        }
+    }
+
+    #[test]
+    fn cached_search_ignores_only_cancelled_placeholder_content() {
+        for content in ["interrupted", " Cancelled ", "CANCELED", "aborted"] {
+            let mut message = json!({
+                "id":"cancelled", "turnId":"cancelled-turn", "role":"assistant",
+                "status":"cancelled", "content":content,
+            });
+            let query = content.trim();
+            assert_eq!(
+                search_cached_transcript(&[message.clone()], query, 250)["totalMatches"],
+                0
+            );
+            message["status"] = json!("done");
+            assert_eq!(
+                search_cached_transcript(&[message.clone()], query, 250)["totalMatches"],
+                1
+            );
+            message["status"] = json!("cancelled");
+            message["content"] = json!(format!("The operation was {query}"));
+            assert_eq!(
+                search_cached_transcript(&[message], query, 250)["totalMatches"],
+                1
+            );
+        }
     }
 
     #[test]

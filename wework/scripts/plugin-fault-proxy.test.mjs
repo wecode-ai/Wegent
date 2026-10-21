@@ -99,6 +99,35 @@ test(
 )
 
 test(
+  'dropped POST response commits once and permits an explicit retry without retaining credentials',
+  { timeout: 5000 },
+  async t => {
+    const { proxy, received } = await fixture(t)
+    proxy.rule = request => (request.method === 'POST' ? 'drop-response' : null)
+    const post = () =>
+      fetch(`${proxy.url}/api/plugins/installed?device_id=private`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer secret' },
+        body: 'credential-body',
+      })
+    await assert.rejects(post())
+    assert.equal(received.length, 1)
+    assert.equal(received[0].method, 'POST')
+    assert.equal(proxy.requests.length, 1)
+    assert.equal(proxy.requests[0].status, 200)
+    assert.equal(proxy.requests[0].committedResponseDropped, true)
+    proxy.rule = () => null
+    const response = await post()
+    assert.equal(response.status, 200)
+    assert.equal(await response.text(), 'real-upstream-body')
+    assert.equal(received.filter(request => request.method === 'POST').length, 2)
+    assert.equal(proxy.requests[1].status, 200)
+    assert.equal(proxy.requests[1].committedResponseDropped, undefined)
+    assert.ok(!/secret|private|credential-body/.test(JSON.stringify(proxy.requests)))
+  }
+)
+
+test(
   'device transport pause holds real upstream bytes and resumes them unchanged',
   { timeout: 5000 },
   async t => {

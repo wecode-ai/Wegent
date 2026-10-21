@@ -434,6 +434,17 @@ async function waitForTranscriptState(control, predicate, description, timeoutMs
   throw new Error(`${description}: ${JSON.stringify(latest?.pane?.transcript ?? null)}`)
 }
 
+async function reloadWorkbench(control, timeoutMs) {
+  const readyCount = control.readyCount
+  await control.command('reloadMainWindow', 'body')
+  await Promise.race([
+    control.awaitReadyAfter(readyCount),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('The reloaded Wework window did not reconnect')), timeoutMs)
+    ),
+  ])
+}
+
 async function verifyMoveToProject(control, { taskId, executorHome, timeoutMs }) {
   const targetPath = join(executorHome, 'task-move-target')
   await mkdir(targetPath, { recursive: true })
@@ -848,23 +859,32 @@ export function createDesktopScenario({
         'Pagination returned the live cache again'
       )
 
-      const pagedReadyCount = control.readyCount
-      await control.command('reloadMainWindow', 'body')
-      await Promise.race([
-        control.awaitReadyAfter(pagedReadyCount),
-        new Promise((_, reject) =>
-          setTimeout(
-            () => reject(new Error('The paginated conversation did not reconnect')),
-            uiTimeoutMs
-          )
-        ),
-      ])
+      await reloadWorkbench(control, uiTimeoutMs)
       await control.command('waitFor', `[data-testid="${pagedRowId}"]`, {
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', `[data-testid="${pagedRowId}"]`)
       const loadOlder = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-older-runtime-transcript-button"]`
       await control.command('waitFor', loadOlder, { timeoutMs: uiTimeoutMs })
+      for (let page = 0; page < 2; page += 1) {
+        await control.command('click', loadOlder)
+        await waitForTranscriptState(
+          control,
+          snapshot => snapshot.pane?.transcript?.loadingMoreBefore === false,
+          'Native item pagination did not finish',
+          uiTimeoutMs
+        )
+      }
+      const nativeSnapshot = JSON.parse(await control.command('performanceSnapshot', 'body'))
+      assert.ok(
+        nativeSnapshot.runtimeAssistantDisplayItemCount >= PAGED_ITEM_COUNT,
+        'The UI did not restore the middle of the running native turn'
+      )
+      // Restore a partially loaded live view before testing isolated search pages.
+      await reloadWorkbench(control, uiTimeoutMs)
+      await control.command('waitFor', `[data-testid="${pagedRowId}"]`)
+      await control.command('click', `[data-testid="${pagedRowId}"]`)
+      await control.command('waitFor', loadOlder)
       const findInput = '[data-testid="conversation-find-input"]'
       const settledCount =
         '[data-testid="conversation-find-bar"]:has([data-testid="conversation-find-input"]:not([aria-busy="true"])) [data-testid="conversation-find-count"]'
@@ -929,17 +949,7 @@ export function createDesktopScenario({
       })
       await control.command('click', taskRow)
 
-      const readyCountBeforeReload = control.readyCount
-      await control.command('reloadMainWindow', 'body')
-      await Promise.race([
-        control.awaitReadyAfter(readyCountBeforeReload),
-        new Promise((_, reject) =>
-          setTimeout(
-            () => reject(new Error('The reloaded Wework window did not reconnect')),
-            uiTimeoutMs
-          )
-        ),
-      ])
+      await reloadWorkbench(control, uiTimeoutMs)
       await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
         timeoutMs: uiTimeoutMs,
       })
