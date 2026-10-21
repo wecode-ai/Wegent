@@ -173,6 +173,10 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       assert.deepEqual(await serverOrder(), [a.id, b.id, c.id])
       assert.equal(finalItems.find(item => item.id === a.id).status, 'pending')
       assert.equal(finalItems.find(item => item.id === b.id).status, 'pending')
+      assert.equal(held.released, undefined)
+      const visibleCards = () =>
+        Promise.all(issues.map(issue => control.command('getText', scoped(card(issue.id)))))
+      const confirmedCards = await visibleCards()
       await held.release()
       // Keep the newer card stable across delivery and rendering of the late snapshot.
       await control.command('waitFor', scoped(card(a.id)), {
@@ -184,6 +188,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         timeoutMs: uiTimeoutMs,
       })
       await expectOrder(control, 'pending', [a.id, b.id, c.id])
+      assert.deepEqual(await visibleCards(), confirmedCards)
       await control.command('click', scoped(card(a.id)))
       await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
         text: 'Card A confirmed',
