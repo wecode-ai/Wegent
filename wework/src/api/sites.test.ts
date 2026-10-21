@@ -5,6 +5,19 @@ describe('createSitesApi', () => {
   const fetchMock = vi.fn()
   const storage = new Map<string, string>()
 
+  test('queries analytics through Backend with encoded project ID and only dates', async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({ daily: [] }) })
+    const api = createSitesApi('/api')
+    await api.getSiteAnalytics('site/1', { start_date: '2026-10-01', end_date: '2026-10-16' })
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/sites/site%2F1/analytics?start_date=2026-10-01&end_date=2026-10-16',
+      expect.objectContaining({
+        method: 'GET',
+        headers: expect.objectContaining({ Authorization: 'Bearer wegent-secret' }),
+      })
+    )
+  })
+
   beforeEach(() => {
     fetchMock.mockReset()
     storage.clear()

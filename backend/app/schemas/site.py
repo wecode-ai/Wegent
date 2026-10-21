@@ -33,6 +33,7 @@ ApplicationCapability = Literal[
     "open_experience",
     "configure_environment",
     "manage_access",
+    "view_analytics",
 ]
 EnvironmentVariableType = Literal["plain", "secret"]
 SiteAccessRole = Literal["owner", "collaborator"]
