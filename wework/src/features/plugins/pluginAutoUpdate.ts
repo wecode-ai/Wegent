@@ -42,7 +42,7 @@ interface PluginAutoUpdateDependencies {
 }
 
 interface CurrentDevicePluginAutoUpdateDependencies {
-  listLocalInstalledPlugins: () => Promise<{ deviceId?: string }>
+  listLocalInstalledPlugins: () => Promise<{ deviceId?: string; partial?: boolean }>
   listMarketplacePlugins: (deviceId: string) => Promise<PluginMarketplaceListResponse>
   updateBatch: () => Promise<PluginAutoUpdateBatchResponse>
   syncPlugin: (deviceId: string, installedPluginId: number) => Promise<PluginDeviceSyncResponse>
@@ -148,15 +148,23 @@ async function runPluginAutoUpdatePass({
 
     for (const [index, item] of batch.updated.entries()) {
       processedCount += 1
+      const installedPluginId =
+        Number.isSafeInteger(item?.installedPluginId) && item.installedPluginId > 0
+          ? item.installedPluginId
+          : 0
+      const version = typeof item?.version === 'string' ? item.version : ''
       try {
-        const failure = pluginSyncFailure(item, await syncPlugin(item.installedPluginId))
+        if (!installedPluginId || !version.trim()) {
+          throw new Error('Invalid plugin auto-update item')
+        }
+        const failure = pluginSyncFailure(item, await syncPlugin(installedPluginId))
         if (failure) failures.push(failure)
         else updatedCount += 1
       } catch (error) {
         failures.push({
-          installedPluginId: item.installedPluginId,
-          pluginName: `Plugin ${item.installedPluginId}`,
-          version: item.version,
+          installedPluginId,
+          pluginName: installedPluginId ? `Plugin ${installedPluginId}` : 'Invalid plugin update',
+          version,
           stage: null,
           errorCode: null,
           message: errorMessage(error),
@@ -198,6 +206,9 @@ export async function runCurrentDevicePluginAutoUpdate({
   if (!finishDeviceSync) return null
 
   try {
+    if (local.partial) {
+      throw new Error('Plugin auto-update requires a complete local plugin inventory')
+    }
     const marketplace = await listMarketplacePlugins(deviceId).catch(() => null)
     let deviceSyncPerformed = false
     const updateResult = await runPluginAutoUpdate({

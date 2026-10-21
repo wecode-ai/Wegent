@@ -26,6 +26,7 @@ const CHECKPOINT_RESOURCES = new Map([
   ['project-assignment-notification', ['macos-inspector-foreground']],
   // Fresh packaged runtime extraction contends when these cloud checkpoints share a runner.
   ['plugin-account-auth', ['desktop-runtime-intensive']],
+  ['plugin-uninstall-resilience', ['desktop-runtime-intensive']],
   ['cloud-device-lifecycle', ['desktop-runtime-intensive']],
   ['resilience', ['desktop-runtime-intensive']],
   ['environment-panel-scroll', ['desktop-runtime-intensive']],

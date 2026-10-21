@@ -248,6 +248,15 @@ pnpm --filter wework e2e:desktop:plugins -- --from-segment skill-mention-renderi
 
 mock 会按 cc-switch 的转换边界严格校验模型侧收到的请求，包括鉴权、模型 ID、stream 参数、消息历史、tool choice、shell 工具，以及 `apply_patch` 的 Lark grammar 或 function wrapper。任何字段错误都会返回非 2xx 并使测试失败。桌面测试同时保存三种接口的追问截图和完整 `model-requests.json`；GitHub Actions 无论成功或失败都会上传桌面诊断产物。
 
+`plugin-uninstall-resilience` 属于现有 Cloud 分片 13，使用隔离的真实 MinIO 验证插件安装、手动更新与自动更新的故障和恢复。Linux 从 `PATH` 启动 CI 镜像内的 `minio`，macOS 使用 Docker 启动固定版本的隔离 MinIO；不连接个人对象存储。可通过 `pnpm --filter wework e2e:desktop -- --segment plugin-uninstall-resilience` 运行。
+
+该 checkpoint 覆盖请求断连、提交后丢响应、首次安装包发布失败、升级失败保留旧运行版本，以及自动更新中失败项之后的健康项继续完成。包故障只阻挡隔离共享目录内尚不存在的目标 checksum，准备好人工重试确认框后才解除；测试核验界面、数据库安装身份、设备版本和实际技能内容。传输层可能重发尚未收到响应头的请求，因此用 `X-Request-ID` 的 SHA-256 指纹区分逻辑操作与底层尝试，不保存原始请求头或凭据。阶段报告与截图写入 `plugin-install-update-resilience-evidence.json` 及对应截图文件；失败必须非零退出。
+
+前端边界用例也通过该 checkpoint 默认执行：延迟真实已完成响应后释放，验证新安装状态不被旧清单覆盖；通过真实授权与独立 Electron 设备配置验证账号和设备缓存边界；只破坏隔离插件包的详情或相对图标，验证健康插件流程继续；保持真实登记故障且存在可升级版本，验证不完整清单不会触发自动同步、更新或状态修复，恢复后再核验实际升级。用例保留独立 JSON 报告和截图，不通过替换业务响应或直接填充插件缓存制造测试状态。
+
+本地可设置 `WEWORK_E2E_PLUGIN_FRONTEND_BOUNDARIES_ONLY=true`，集中运行上述四组前端边界用例。报告明确记录聚焦模式，断言与默认 CI 相同；CI 不设置此变量，仍执行完整 checkpoint。
+聚焦模式还可设置 `WEWORK_E2E_PLUGIN_FRONTEND_BOUNDARY_GROUPS`，用逗号选择 `late-response`、`plugin-detail`、`partial-inventory` 或 `account-and-device`；未知名称会直接报错。
+
 运行环境需要 Rust、 Electron 构建依赖和真实 Codex 二进制。默认从 `PATH` 查找 `codex`；也可以显式指定已安装或由 `prepare:codex` 准备的真实二进制：
 
 ```bash

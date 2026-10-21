@@ -2,7 +2,79 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { Readable } from 'node:stream'
 import test from 'node:test'
-import { handleExecutorEvents, handleExecutorRpc } from './index.js'
+import { handleExecutorEvents, handleExecutorRpc, handlePluginImage } from './index.js'
+
+test('serves a scoped plugin image as same-origin inert image bytes', async () => {
+  const request = executorEventRequest()
+  const path = '/device/plugins/healthy-plugin/assets/logo.svg'
+  request.url = `/wework/executor/v1/plugin-image?path=${encodeURIComponent(path)}`
+  request.headers = {
+    host: '127.0.0.1:1234',
+    origin: 'http://127.0.0.1:1234',
+    'sec-fetch-site': 'same-origin',
+  }
+  const response = responseFixture()
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg"/>'
+  await handlePluginImage(request, response, {
+    async request(method, params) {
+      assert.equal(method, 'executor.plugins.image.read')
+      assert.deepEqual(params, { path })
+      return { mimeType: 'image/svg+xml', bytesBase64: Buffer.from(svg).toString('base64') }
+    },
+  })
+  assert.equal(response.status, 200)
+  assert.equal(response.body, svg)
+  assert.equal(response.headers['content-type'], 'image/svg+xml')
+  assert.equal(response.headers['cache-control'], 'no-store')
+  assert.equal(response.headers['x-content-type-options'], 'nosniff')
+  assert.equal(response.headers['content-security-policy'], "default-src 'none'; sandbox")
+  assert.equal(response.headers['cross-origin-resource-policy'], 'same-origin')
+})
+
+test('rejects cross-origin and non-loopback image reads before calling the executor', async () => {
+  for (const config of [
+    { origin: 'https://other.example' },
+    { remoteAddress: '192.0.2.10' },
+    { fetchSite: 'cross-site' },
+  ]) {
+    const request = executorEventRequest()
+    request.url = '/wework/executor/v1/plugin-image?path=%2Fdevice%2Fplugins%2Flogo.svg'
+    request.headers = {
+      host: '127.0.0.1:1234',
+      origin: config.origin ?? 'http://127.0.0.1:1234',
+      'sec-fetch-site': config.fetchSite ?? 'same-origin',
+    }
+    request.socket.remoteAddress = config.remoteAddress ?? '127.0.0.1'
+    const response = responseFixture()
+    await handlePluginImage(request, response, {
+      request() {
+        throw new Error('Must not reach executor')
+      },
+    })
+    assert.equal(response.status, 403)
+  }
+})
+
+test('missing, invalid, and oversized plugin images fail locally without leaking paths', async () => {
+  for (const result of [
+    null,
+    { mimeType: 'text/html', bytesBase64: 'aGVsbG8=' },
+    { mimeType: 'image/png', bytesBase64: Buffer.alloc(2 * 1024 * 1024 + 1).toString('base64') },
+  ]) {
+    const request = executorEventRequest()
+    request.url = '/wework/executor/v1/plugin-image?path=%2Fprivate%2Fplugin%2Flogo.svg'
+    const response = responseFixture()
+    await handlePluginImage(request, response, {
+      request() {
+        if (!result) throw new Error('Sensitive local path and error')
+        return result
+      },
+    })
+    assert.equal(response.status, 404)
+    assert.equal(response.body, '')
+    assert.equal(response.headers['cache-control'], 'no-store')
+  }
+})
 
 test('preserves one request id across browser, DSH, and executor RPC', async () => {
   const request = executorRpcRequest(

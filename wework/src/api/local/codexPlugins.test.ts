@@ -263,6 +263,26 @@ test('a pending cloud link clears the previous release identity', () => {
     cloudPluginId: 71,
     cloudReleaseId: null,
   })
+  const registered = {
+    ...linked,
+    spec: {
+      ...linked.spec,
+      sourcePayload: { ...linked.spec.sourcePayload, cloudInstalledPluginId: 55 },
+    },
+  }
+  const [samePlugin] = applyPluginCloudLinks(
+    [registered],
+    [{ localPluginName: 'dev-tools', cloudPluginId: 71, cloudReleaseId: 2 }]
+  )
+  expect(samePlugin.spec.sourcePayload?.cloudInstalledPluginId).toBe(55)
+  const [otherPlugin] = applyPluginCloudLinks(
+    [registered],
+    [{ localPluginName: 'dev-tools', cloudPluginId: 72, cloudReleaseId: 2 }]
+  )
+  expect(otherPlugin.spec.sourcePayload?.cloudInstalledPluginId).toBeUndefined()
+  const [cleared] = applyPluginCloudLinks([registered], [])
+  expect(cleared.spec.sourcePayload?.cloudPluginId).toBeUndefined()
+  expect(cleared.spec.sourcePayload?.cloudInstalledPluginId).toBeUndefined()
 })
 
 test('clears stale OpenAI remote catalog installs that live membership dropped', () => {

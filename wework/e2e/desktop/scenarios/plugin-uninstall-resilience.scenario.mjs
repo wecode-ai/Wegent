@@ -3,6 +3,14 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { CLOUD_DEVICE_ID } from '../modules/shared.mjs'
 import { PluginFaultProxy } from '../modules/plugin-fault-proxy.mjs'
+import { verifyPluginCatalogBoundaries } from '../modules/plugin-catalog-boundaries.mjs'
+import { verifyPluginSourceContinuation } from '../modules/plugin-source-continuation.mjs'
+import { verifyPluginInstallUpdateResilience } from '../modules/plugin-install-update-resilience.mjs'
+import { verifyPluginLateResponseResilience } from '../modules/plugin-late-response-resilience.mjs'
+import { verifyPluginDetailResilience } from '../modules/plugin-detail-resilience.mjs'
+import { verifyPluginPartialInventoryResilience } from '../modules/plugin-partial-inventory-resilience.mjs'
+import { verifyPluginScopeBoundaries } from '../modules/plugin-scope-boundaries.mjs'
+import { RealPluginObjectStorage } from '../modules/real-plugin-object-storage.mjs'
 import {
   accountPlugin,
   assertInstallButton,
@@ -22,15 +30,29 @@ import {
 // transport is faulted; no plugin responses or cache state are synthesized.
 export async function createDesktopScenario({
   captureScreenshot,
+  codexSqliteHome,
+  electronUserDataDirectory,
+  executorHome,
+  homePath,
   resultDir,
   workbenchReadyTimeoutMs,
 }) {
-  const appEnvironment = {}
+  const appEnvironment = { ELECTRON_ENABLE_LOGGING: '1' }
+  const frontendBoundariesOnly = process.env.WEWORK_E2E_PLUGIN_FRONTEND_BOUNDARIES_ONLY === 'true'
+  const requestedFrontendGroups = (process.env.WEWORK_E2E_PLUGIN_FRONTEND_BOUNDARY_GROUPS ?? '')
+    .split(',')
+    .map(value => value.trim())
+    .filter(Boolean)
+  assert.ok(
+    frontendBoundariesOnly || requestedFrontendGroups.length === 0,
+    'Frontend group selection requires explicit focused mode'
+  )
   const evidence = []
   let cloud
   let apiProxy
   let deviceProxy
   let local
+  let restartDesktopApp
   const fixture = suffix =>
     installFixture(
       cloud,
@@ -50,6 +72,50 @@ export async function createDesktopScenario({
       'SELECT state FROM plugin_device_installations WHERE user_id = %s AND installed_kind_id = %s AND device_id = %s',
       [1, item.installedId, CLOUD_DEVICE_ID]
     )
+
+  async function catalogSourceFailure(control) {
+    const item = await fixture('catalog-source')
+    await openPlugin(control, item)
+    const startIndex = apiProxy.requests.length
+    apiProxy.rule = request =>
+      request.method === 'GET' && request.path === '/api/plugins/installed' ? 'disconnect' : null
+    try {
+      await control.command('click', testId('plugins-refresh-button'))
+      await control.command('waitFor', testId('plugin-operation-notice'))
+      await control.command('waitFor', testId(`plugin-marketplace-actions-${item.pluginId}`), {
+        enabled: true,
+      })
+      assert.ok(apiProxy.requests.slice(startIndex).some(request => request.fault === 'disconnect'))
+      await assertInventory(control, item.slug, true)
+      await control.command('click', testId('plugins-manage-button'))
+      await control.command('waitFor', testId('plugin-operation-notice'))
+      await control.command('waitFor', testId('plugin-management-installed-list'))
+      assert.ok(
+        (await control.command('getText', testId('plugin-management-page-content'))).includes(
+          item.slug
+        ),
+        'A failed cloud read erased healthy local or cached installed rows'
+      )
+      await captureScreenshot(control, 'plugin-catalog-source-failure.png', 'body')
+    } finally {
+      apiProxy.rule = () => null
+    }
+    const recoveryIndex = apiProxy.requests.length
+    await openPlugin(control, item)
+    await control.command('click', testId('plugins-refresh-button'))
+    await until(
+      () => apiProxy.requests.slice(recoveryIndex),
+      requests =>
+        requests.some(
+          request => request.path === '/api/plugins/installed' && request.status === 200
+        ),
+      'Explicit refresh did not recover the real installed source'
+    )
+    await assertSurfaces(control, item, true)
+    await uninstallInUi(control, item)
+    await assertInstallButton(control, item)
+    evidence.push({ case: 'catalog-source-failure-and-refresh-recovery' })
+  }
 
   async function lostResponse(control) {
     const item = await fixture('lost-response')
@@ -123,7 +189,7 @@ export async function createDesktopScenario({
     evidence.push({ case: 'unknown-outcome-and-explicit-retry', elapsedMs })
   }
 
-  async function heldCleanup(control, suffix) {
+  async function heldCleanup(control, suffix, beforePause) {
     const item = await fixture(suffix)
     const remoteHome = dirname(cloud.remoteCodexHome)
     const installed = await until(
@@ -135,6 +201,7 @@ export async function createDesktopScenario({
     assert.ok(installed.runtime?.codex_link)
     const runtimePath = resolve(remoteHome, 'capabilities', installed.runtime.codex_link)
     assert.ok(await pathExists(runtimePath), 'Fixture has no real runtime files')
+    if (beforePause) await beforePause(item)
     assert.ok(deviceProxy.websockets.size > 0, 'Device fault proxy has no real connection')
     deviceProxy.pauseDeviceDelivery(true)
     const started = await uninstallInUi(control, item)
@@ -188,11 +255,15 @@ export async function createDesktopScenario({
   }
 
   async function reinstallRace(control) {
-    const { item, remoteHome } = await heldCleanup(control, 'reinstall-pending')
-    const release = await cloud.publishPluginRelease({
-      slug: item.slug,
-      version: '2.0.0',
-      skills: { [item.slug]: 'Reinstalled version two' },
+    let release
+    const { item, remoteHome } = await heldCleanup(control, 'reinstall-pending', async fixture => {
+      // Publishing starts a real Python process. Keep it outside the held socket
+      // window so the fault targets cleanup ACKs without expiring its heartbeat.
+      release = await cloud.publishPluginRelease({
+        slug: fixture.slug,
+        version: '2.0.0',
+        skills: { [fixture.slug]: 'Reinstalled version two' },
+      })
     })
     // Start a real install while the old removal is still awaiting its device ACK.
     const install = pluginApi(
@@ -249,9 +320,18 @@ export async function createDesktopScenario({
     }
   }
 
+  const objectStorage = new RealPluginObjectStorage({ resultDir })
+  await objectStorage.start()
+
   return {
     requiresCloudEnvironment: true,
     appEnvironment,
+    backendEnv: {
+      ATTACHMENT_S3_ENDPOINT: objectStorage.endpoint,
+      ATTACHMENT_S3_ACCESS_KEY: objectStorage.accessKey,
+      ATTACHMENT_S3_SECRET_KEY: objectStorage.secretKey,
+      ATTACHMENT_S3_USE_SSL: 'false',
+    },
     async prepareCloud({ backendUrl }) {
       apiProxy = await new PluginFaultProxy(backendUrl).start()
       deviceProxy = await new PluginFaultProxy(backendUrl).start()
@@ -260,8 +340,12 @@ export async function createDesktopScenario({
     setCloudEnvironment(value) {
       cloud = value
     },
+    setRestartDesktopApp(value) {
+      restartDesktopApp = value
+    },
     async verify(control) {
       controlRef = control
+      assert.equal(cloud.backendEnv.ATTACHMENT_S3_ENDPOINT, objectStorage.endpoint)
       local = await cloud.waitForConnectedAppDevice()
       cloud.remoteExecutorEnv.WEGENT_SOCKET_URL = deviceProxy.url
       await cloud.restartCloudExecutor()
@@ -271,23 +355,139 @@ export async function createDesktopScenario({
         'Remote device bypassed fault proxy'
       )
       try {
-        await lostResponse(control)
-        await unknownResult(control)
-        await restartRecovery(control)
-        await reinstallRace(control)
-        await captureScreenshot(control, 'plugin-uninstall-resilience.png', 'body')
+        if (frontendBoundariesOnly) {
+          console.log(
+            `[plugin-boundary-e2e] Focused run: ${requestedFrontendGroups.join(', ') || 'four frontend boundary groups'}`
+          )
+        } else {
+          evidence.push(
+            await verifyPluginSourceContinuation({
+              control,
+              resultDir,
+              executorHome,
+              captureScreenshot,
+              workbenchReadyTimeoutMs,
+            })
+          )
+          // CI runs this by default; local comparisons can stop after the same assertions.
+          if (process.env.WEWORK_E2E_PLUGIN_SOURCE_CONTINUATION_ONLY === 'true') return
+          await control.command('click', testId('workspace-tab-select-fixed-task'))
+          await control.command('waitFor', testId('plugins-button'))
+          evidence.push(
+            await verifyPluginCatalogBoundaries({
+              cloud,
+              control,
+              apiProxy,
+              captureScreenshot,
+              workbenchReadyTimeoutMs,
+              resultDir,
+              deviceId: local.device_id,
+              executorHome,
+            })
+          )
+          // The same assertions run in CI; this limits local A/B comparisons to the boundary cases.
+          if (process.env.WEWORK_E2E_PLUGIN_CATALOG_BOUNDARIES_ONLY === 'true') return
+        }
+        const failures = []
+        const rendererDevice = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
+        assert.ok(rendererDevice.deviceId, 'The renderer has no real local device identity')
+        assert.equal(rendererDevice.deviceId, local.app_device_id)
+        const boundaryOptions = {
+          cloud,
+          control,
+          apiProxy,
+          deviceId: rendererDevice.deviceId,
+          executorHome,
+          codexSqliteHome,
+          electronUserDataDirectory,
+          homePath,
+          restartDesktopApp,
+          resultDir,
+          captureScreenshot,
+          workbenchReadyTimeoutMs,
+        }
+        // Independent fixtures retain every failure while allowing the remaining
+        // boundary groups to run. The checkpoint still exits nonzero on any error.
+        const boundaryGroups = [
+          ['late-response', verifyPluginLateResponseResilience],
+          ['plugin-detail', verifyPluginDetailResilience],
+          ['partial-inventory', verifyPluginPartialInventoryResilience],
+          ['account-and-device', verifyPluginScopeBoundaries],
+          ['install-and-update', verifyPluginInstallUpdateResilience],
+        ]
+        assert.ok(
+          requestedFrontendGroups.every(name =>
+            boundaryGroups.some(
+              ([candidate]) => candidate === name && candidate !== 'install-and-update'
+            )
+          ),
+          'Unknown frontend boundary group'
+        )
+        for (const [name, verify] of boundaryGroups.filter(
+          ([name]) =>
+            (!frontendBoundariesOnly || name !== 'install-and-update') &&
+            (requestedFrontendGroups.length === 0 || requestedFrontendGroups.includes(name))
+        )) {
+          try {
+            console.log(`[plugin-boundary-e2e] START ${name}`)
+            await control.command('click', testId('workspace-tab-select-fixed-task'))
+            await control.command('waitFor', testId('plugins-button'))
+            await control.command('click', testId('new-chat-button'))
+            evidence.push({ group: name, ...(await verify(boundaryOptions)) })
+            console.log(`[plugin-boundary-e2e] PASS ${name}`)
+          } catch (error) {
+            console.log(`[plugin-boundary-e2e] FAIL ${name}: ${error?.message ?? error}`)
+            failures.push(new Error(`${name}: ${error?.message ?? error}`, { cause: error }))
+            evidence.push({ group: name, passed: false, error: String(error?.stack ?? error) })
+          }
+        }
+        if (frontendBoundariesOnly) {
+          if (failures.length) throw new AggregateError(failures, 'Plugin boundary E2E failures')
+          return
+        }
+        try {
+          for (const verify of [
+            catalogSourceFailure,
+            lostResponse,
+            unknownResult,
+            restartRecovery,
+            reinstallRace,
+          ]) {
+            console.log(`[plugin-boundary-e2e] START ${verify.name}`)
+            await verify(control)
+            console.log(`[plugin-boundary-e2e] PASS ${verify.name}`)
+          }
+          await captureScreenshot(control, 'plugin-uninstall-resilience.png', 'body')
+        } catch (error) {
+          failures.push(error)
+          evidence.push({
+            group: 'uninstall-recovery',
+            passed: false,
+            error: String(error?.stack ?? error),
+          })
+        }
+        if (failures.length) throw new AggregateError(failures, 'Plugin boundary E2E failures')
       } finally {
         apiProxy.rule = () => null
         deviceProxy.pauseDeviceDelivery(false)
         await writeFile(
           join(resultDir, 'plugin-uninstall-evidence.json'),
-          JSON.stringify({ evidence, requests: apiProxy.requests }, null, 2)
+          JSON.stringify(
+            {
+              frontendBoundariesOnly,
+              requestedFrontendGroups,
+              evidence,
+              requests: apiProxy.requests,
+            },
+            null,
+            2
+          )
         )
       }
     },
     diagnostics: () => ({ evidence, requests: apiProxy?.requests }),
     async cleanup() {
-      await Promise.all([apiProxy?.stop(), deviceProxy?.stop()])
+      await Promise.all([apiProxy?.stop(), deviceProxy?.stop(), objectStorage.stop()])
     },
   }
 }

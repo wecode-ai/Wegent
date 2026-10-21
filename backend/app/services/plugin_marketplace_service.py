@@ -242,6 +242,16 @@ class PluginMarketplaceService:
         for device_row in stale_device_rows:
             kind = db.get(Kind, device_row.installed_kind_id)
             if (
+                kind
+                and kind.user_id == user_id
+                and kind.namespace == "default"
+                and kind.kind == "InstalledPlugin"
+                and kind.is_active is False
+                and device_row.state in {"uninstalling", "failed"}
+            ):
+                # Preserve durable removal work until the device acknowledges it.
+                continue
+            if (
                 device_row.installed_kind_id in active_ids
                 and kind
                 and kind.is_active

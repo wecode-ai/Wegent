@@ -9,6 +9,8 @@ import {
 } from '@/features/plugins/pluginMarketplaceCache'
 import { navigateTo } from '@/lib/navigation'
 import * as localPlugins from '@/api/local/codexPlugins'
+import * as localExecutor from '@/desktop/localExecutor'
+import * as runtimeEnvironment from '@/lib/runtime-environment'
 import '@/i18n'
 import { PluginManagementWorkspace } from './PluginManagementWorkspace'
 import type { InstalledPluginItem } from './PluginManagementRows'
@@ -100,7 +102,7 @@ describe('PluginManagementWorkspace cache', () => {
 
     expect(await screen.findByText('Cached Plugin')).toBeInTheDocument()
     expect(screen.queryByText('正在加载插件')).not.toBeInTheDocument()
-    expect(listInstalledPlugins).toHaveBeenCalledWith({ requireComplete: true })
+    expect(listInstalledPlugins).toHaveBeenCalledWith()
     expect(readState).not.toHaveBeenCalled()
     expect(fetch).toHaveBeenCalledTimes(1)
     expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain('device_id=resolved-device')
@@ -161,11 +163,42 @@ describe('PluginManagementWorkspace cache', () => {
       ...api,
       listInstalledPlugins: vi.fn().mockRejectedValue(new Error('Inventory unavailable')),
     })
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Cloud unavailable')))
     render(<PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Inventory unavailable')
     expect(screen.queryByText('正在加载插件')).not.toBeInTheDocument()
     expect(getPluginMarketplaceCache(pluginMarketplaceCacheKey('/api', 'cloud-token'))).toBeNull()
+  })
+
+  test('renders healthy cloud rows and the existing error notice when local inventory fails', async () => {
+    const api = localPlugins.createLocalCodexPluginApi()
+    vi.spyOn(localPlugins, 'createLocalCodexPluginApi').mockReturnValue({
+      ...api,
+      listInstalledPlugins: vi.fn().mockRejectedValue(new Error('Local unavailable')),
+    })
+    const cloud = cachedInstalledPlugin().raw
+    cloud.spec.pluginId = 1
+    cloud.spec.releaseId = 1
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ items: [cloud] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      )
+    )
+
+    render(<PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    expect(await screen.findByText('Cached Plugin')).toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent('Local unavailable')
+    expect(screen.queryByText('正在加载插件')).not.toBeInTheDocument()
+    expect(
+      getPluginMarketplaceCache(pluginMarketplaceCacheKey('/api', 'cloud-token'))
+        ?.installedPluginsFetchedAt
+    ).toBeUndefined()
   })
 
   test('resets the rendered inventory when the account changes and ignores the old read', async () => {
@@ -202,14 +235,59 @@ describe('PluginManagementWorkspace cache', () => {
     )
     expect(screen.getByText('Cached Plugin')).toBeInTheDocument()
 
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
+    const readsBeforeSwitch = vi.mocked(fetch).mock.calls.length
+
     rerender(<PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="other-account" />)
     expect(screen.queryByText('Cached Plugin')).not.toBeInTheDocument()
     expect(screen.getByText('正在加载插件')).toBeInTheDocument()
     await act(async () => {
       finishOldRead({ items: [], deviceId: 'device-1' })
     })
-    expect(fetch).not.toHaveBeenCalled()
+    expect(fetch).toHaveBeenCalledTimes(readsBeforeSwitch)
     expect(screen.getByText('正在加载插件')).toBeInTheDocument()
+  })
+
+  test('does not display or request cached membership from another known device', async () => {
+    vi.spyOn(runtimeEnvironment, 'isDesktopRuntime').mockReturnValue(true)
+    vi.spyOn(localExecutor, 'getKnownLocalExecutorDeviceId').mockReturnValue('new-device')
+    const api = localPlugins.createLocalCodexPluginApi()
+    vi.spyOn(localPlugins, 'createLocalCodexPluginApi').mockReturnValue({
+      ...api,
+      listInstalledPlugins: vi.fn(() => new Promise(() => {})),
+    })
+    setPluginMarketplaceCache({
+      cacheKey: pluginMarketplaceCacheKey('/api', 'cloud-token'),
+      marketplaceItems: [],
+      installedPlugins: [cachedInstalledPlugin().raw],
+      marketplaces: [],
+      selectedMarketplaceKey: '',
+      deviceId: 'old-device',
+      fetchedAt: Date.now(),
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise(() => {}))
+    )
+
+    render(<PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    expect(screen.queryByText('Cached Plugin')).not.toBeInTheDocument()
+    expect(screen.getByText('正在加载插件')).toBeInTheDocument()
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain('device_id=new-device')
+    act(() => {
+      setPluginMarketplaceCache({
+        cacheKey: pluginMarketplaceCacheKey('/api', 'cloud-token'),
+        marketplaceItems: [],
+        installedPlugins: [cachedInstalledPlugin().raw],
+        marketplaces: [],
+        selectedMarketplaceKey: '',
+        deviceId: 'old-device',
+        fetchedAt: Date.now(),
+      })
+    })
+    expect(screen.queryByText('Cached Plugin')).not.toBeInTheDocument()
   })
 
   test('renders cached installed plugins immediately without the loading state', async () => {

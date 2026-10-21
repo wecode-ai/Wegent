@@ -27,6 +27,7 @@ import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
+import { hasInFlightPluginDeviceSync } from '@/features/plugins/pluginDeviceAutoSync'
 import {
   getConversationDiagnosticsSnapshot,
   setConversationFrameProbeEnabled,
@@ -2954,8 +2955,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       }
       return String(finishedCount)
     }
-    case 'getWorkbenchDebugSnapshot':
-      return JSON.stringify(getWorkbenchDebugSnapshot())
+    case 'getWorkbenchDebugSnapshot': {
+      const snapshot = getWorkbenchDebugSnapshot()
+      if (!command.value) return JSON.stringify(snapshot)
+      return JSON.stringify({
+        ...snapshot,
+        pluginDeviceSyncInFlight: hasInFlightPluginDeviceSync(command.value),
+        systemPressure: await invokeDesktopHost('maintenance.getSystemPressure'),
+      })
+    }
     case 'getLocalHarnessDiagnostics':
       return JSON.stringify(await collectLocalHarnessDiagnostics())
     case 'getConversationDiagnosticsSnapshot':
@@ -2970,6 +2978,74 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'getComposerDiagnosticsSnapshot':
       return JSON.stringify(getComposerDiagnosticsSnapshot())
+    case 'getImageLoadState':
+      return JSON.stringify(
+        findDesktopControlElements(command.selector).map(element => {
+          if (!(element instanceof HTMLImageElement)) {
+            throw new Error('Image diagnostics require an image selector')
+          }
+          return {
+            complete: element.complete,
+            naturalWidth: element.naturalWidth,
+            naturalHeight: element.naturalHeight,
+            sourceProtocol: new URL(element.currentSrc || element.src, window.location.href)
+              .protocol,
+          }
+        })
+      )
+    case 'getPluginImageRequestTimings': {
+      const path = command.value
+      if (
+        !path ||
+        path.length > 32768 ||
+        !(path.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(path) || path.startsWith('\\\\'))
+      ) {
+        throw new Error('Plugin image timing diagnostics require an absolute image path')
+      }
+      performance.setResourceTimingBufferSize(10_000)
+      const completed = performance.getEntriesByType('resource') as PerformanceResourceTiming[]
+      return JSON.stringify(
+        completed
+          .filter(resource => {
+            const url = new URL(resource.name, window.location.href)
+            return (
+              url.origin === window.location.origin &&
+              url.pathname === '/wework/executor/v1/plugin-image' &&
+              url.searchParams.get('path') === path
+            )
+          })
+          .map(resource => ({
+            initiatorType: resource.initiatorType,
+            responseStatus:
+              (resource as PerformanceResourceTiming & { responseStatus?: number })
+                .responseStatus ?? null,
+            startedAt: performance.timeOrigin + resource.startTime,
+            completedAt: performance.timeOrigin + resource.startTime + resource.duration,
+          }))
+      )
+    }
+    case 'getCompletedResourceTimings': {
+      const path = command.value
+      if (!path?.startsWith('/api/') || path.includes('?') || path.includes('#')) {
+        throw new Error('Resource timing diagnostics require an API pathname without a query')
+      }
+      performance.setResourceTimingBufferSize(10_000)
+      const completed = performance.getEntriesByType('resource') as PerformanceResourceTiming[]
+      return JSON.stringify(
+        completed
+          .filter(
+            resource =>
+              ['fetch', 'xmlhttprequest'].includes(resource.initiatorType) &&
+              new URL(resource.name, window.location.href).pathname === path
+          )
+          .map(resource => ({
+            path,
+            startedAt: performance.timeOrigin + resource.startTime,
+            completedAt: performance.timeOrigin + resource.startTime + resource.duration,
+            durationMs: resource.duration,
+          }))
+      )
+    }
     case 'getComposerPluginInventoryDiagnostics': {
       const { getPluginInventoryDiagnostics } =
         await import('@/features/plugins/pluginMarketplaceCache')
