@@ -89,6 +89,7 @@ export function useStandInModels(
     [identity, readyCatalog]
   )
   return {
+    loading: Boolean(services?.standInApi && draft.executionDeviceId && !readyCatalog),
     models: readyCatalog?.models ?? [],
     selectedModel,
     fixed: Boolean(fixedModel),

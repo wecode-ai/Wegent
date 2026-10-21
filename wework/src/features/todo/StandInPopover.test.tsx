@@ -9,6 +9,7 @@ import type {
 } from '@wegent/collaboration'
 import { StandInPopover } from './StandInPopover'
 import { createLocalProjectChatAgentApi } from '@/api/local/localDelivery'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 
 function fixture(initial: Partial<WorkspaceStandInSettings> = {}) {
   let settings: WorkspaceStandInSettings = {
@@ -67,6 +68,63 @@ describe('StandInPopover', () => {
     const toggle = await screen.findByTestId('stand-in-auto')
     await user.click(toggle)
     expect(request).toHaveBeenCalledTimes(2)
+  })
+
+  it('waits for configuration validation before enabling a saved stand-in', async () => {
+    const model = { runtime: 'codex' as const, provider: 'local', model_id: 'default' }
+    const { props, save } = fixture({ executionDeviceId: 'current', version: 2, model })
+    let finishCatalog!: (catalog: { models: (typeof model)[] }) => void
+    const catalog = new Promise<{ models: (typeof model)[] }>(resolve => {
+      finishCatalog = resolve
+    })
+    const services = {
+      standInApi: { catalog: vi.fn(() => catalog) },
+      modelApi: { listModels: vi.fn(async () => ({ data: [] })) },
+    } as unknown as WorkbenchServices
+    const user = userEvent.setup()
+    render(<StandInPopover {...props} services={services} />)
+    await user.click(screen.getByTestId('stand-in-open'))
+    await screen.findByTestId('stand-in-prompt')
+    expect(screen.getByTestId('stand-in-auto')).toBeDisabled()
+    await act(async () => finishCatalog({ models: [model] }))
+    await waitFor(() => expect(screen.getByTestId('stand-in-auto')).toBeEnabled())
+    await user.click(screen.getByTestId('stand-in-auto'))
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+    expect(screen.queryByTestId('stand-in-enable-notice')).not.toBeInTheDocument()
+  })
+
+  it('saves the loaded default model before enabling a reopened manual configuration', async () => {
+    const { props, save } = fixture()
+    let finishCatalog!: (catalog: { models: Record<string, unknown>[] }) => void
+    const catalog = new Promise<{ models: Record<string, unknown>[] }>(resolve => {
+      finishCatalog = resolve
+    })
+    const services = {
+      standInApi: { catalog: vi.fn(() => catalog) },
+      modelApi: { listModels: vi.fn(async () => ({ data: [] })) },
+    } as unknown as WorkbenchServices
+    const user = userEvent.setup()
+    render(<StandInPopover {...props} services={services} />)
+    await user.click(screen.getByTestId('stand-in-open'))
+    await user.type(await screen.findByTestId('stand-in-prompt'), 'Manual settings')
+    expect(screen.getByTestId('stand-in-save')).toBeDisabled()
+    await act(async () =>
+      finishCatalog({
+        models: [{ runtime: 'codex', provider: 'local', model_id: 'default', is_default: true }],
+      })
+    )
+    await user.click(screen.getByTestId('stand-in-save'))
+    await waitFor(() => expect(screen.queryByTestId('stand-in-settings')).not.toBeInTheDocument())
+    expect(save).toHaveBeenCalledWith(
+      'project',
+      expect.objectContaining({ model: expect.objectContaining({ model_id: 'default' }) })
+    )
+    await user.click(screen.getByTestId('stand-in-open'))
+    await user.click(await screen.findByTestId('stand-in-auto'))
+    await waitFor(() =>
+      expect(screen.getByTestId('stand-in-auto')).toHaveAttribute('aria-checked', 'true')
+    )
+    expect(screen.queryByTestId('stand-in-enable-notice')).not.toBeInTheDocument()
   })
 
   it('locks the switch during persistence and accepts server metadata without inventing edits', async () => {
