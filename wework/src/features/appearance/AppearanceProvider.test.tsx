@@ -120,6 +120,27 @@ describe('AppearanceProvider', () => {
     })
   })
 
+  test('follows appearance changes written by another window', async () => {
+    render(
+      <AppearanceProvider>
+        <Harness />
+      </AppearanceProvider>
+    )
+
+    const stored = JSON.stringify({ mode: 'dark' })
+    act(() => {
+      localStorage.setItem('wework.appearance', stored)
+      window.dispatchEvent(
+        new StorageEvent('storage', { key: 'wework.appearance', newValue: stored })
+      )
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('resolved-mode')).toHaveTextContent('dark')
+    })
+    expect(document.documentElement.dataset.theme).toBe('dark')
+  })
+
   test('updates system mode when system preference changes', async () => {
     render(
       <AppearanceProvider>

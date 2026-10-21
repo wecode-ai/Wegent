@@ -919,7 +919,46 @@ export interface SharedWorkspaceRuntimeApi extends RuntimeConversationClient {
   ): Promise<Blob>;
 }
 
+export interface WorkspaceStandInWorkspace {
+  projectKey: string;
+  workspacePath: string;
+  executionMode: "current_workspace" | "git_worktree";
+  branch?: string | null;
+}
+
+export interface WorkspaceStandInSettings {
+  goalMode?: boolean;
+  modelOptions?: Record<string, string>;
+  model?: import("../agent-form/runnerRouting").RunnerModelIdentity | null;
+  workspace?: WorkspaceStandInWorkspace | null;
+  id?: string;
+  name?: string;
+  tags?: string[];
+  agentId?: string | null;
+  enabled: boolean;
+  prompt: string;
+  executionDeviceId: string;
+  version: number;
+}
+
 export interface SharedWorkspaceApi {
+  standIn?: {
+    run?(
+      projectId: string,
+      issueId: string,
+      deviceId: string,
+      standInId?: string,
+    ): Promise<WorkspaceRuntimeTaskAddress>;
+    get(
+      projectId: string,
+      deviceId?: string,
+      standInId?: string,
+    ): Promise<WorkspaceStandInSettings>;
+    save(
+      projectId: string,
+      settings: WorkspaceStandInSettings,
+    ): Promise<WorkspaceStandInSettings>;
+  };
   /** Device-addressed execution transcripts and live runtime events. */
   runtime?: SharedWorkspaceRuntimeApi;
   /** Live project threads, when supported by the host. */

@@ -169,6 +169,7 @@ export interface ProjectBoardBodyProps<TItem> {
     onChange: (value: ProjectBoardGroupBy) => void,
   ): ReactNode;
   renderBoardSettingsAction?(): ReactNode;
+  toolbarAction?: ReactNode;
   rootLabel: string;
   rootUnitLabel: string;
   searchPlaceholder: string;
@@ -212,6 +213,7 @@ export function ProjectBoardBody<TItem>({
   renderExternalGroupPicker,
   renderGroupPicker,
   renderBoardSettingsAction,
+  toolbarAction,
   renderItem,
   renderItemsFooter,
   renderQuickStart,
@@ -343,6 +345,7 @@ export function ProjectBoardBody<TItem>({
               className="min-w-0 flex-1 bg-transparent text-text-primary outline-none"
             />
           </label>
+          {toolbarAction}
           <div
             data-testid="cloud-board-view-actions"
             className="ml-auto flex shrink-0 items-center gap-2"

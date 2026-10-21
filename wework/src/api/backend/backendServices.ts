@@ -1,3 +1,4 @@
+import { createStandInExecutorApi } from '@/api/standIn'
 import {
   createRemoteProjectDevicePluginApi,
   type ProjectDevicePluginApi,
@@ -207,6 +208,9 @@ export function createBackendWorkbenchServices(
     },
     imSessionApi: createImSessionApi(client),
     runtimeWorkApi,
+    standInApi: createStandInExecutorApi((method, payload, deviceId) =>
+      composerRuntimeIpc.request(method, payload, deviceId)
+    ),
     composerCatalogApi: createRuntimeComposerApi(composerRuntimeIpc, deviceId =>
       cloudPluginApi.listInstalledPlugins(deviceId).then(response => response.items)
     ),
