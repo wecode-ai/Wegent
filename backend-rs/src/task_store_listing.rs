@@ -11,8 +11,6 @@
 
 use brz_mysql::MysqlRow;
 
-use crate::task_store_detail::SubtaskDocumentRow;
-
 /// `subtask_store.list_by_task` page parameters. `owner_user_id` carries the
 /// non-member filter the caller's `is_member` produced (`Some` restricts to
 /// that owner).
@@ -152,7 +150,7 @@ pub fn subtask_context_columns() -> String {
 /// loaded later. A caller that only reads the rows ignores it.
 #[derive(Debug)]
 pub struct SubtaskListing {
-    pub rows: Vec<SubtaskDocumentRow>,
+    pub rows: Vec<MysqlRow>,
     pub contexts: Option<Vec<MysqlRow>>,
 }
 
@@ -337,12 +335,12 @@ pub async fn ordered_subtasks_by_task<M: brz_mysql::Mysql>(
 ) -> brz_mysql::MysqlResult<SubtaskListing> {
     let rows = mysql
         .fetch_all(
-            crate::task_store_detail::subtasks_by_message_ordered_statement(table),
+            crate::task_store_statements::subtasks_by_message_ordered_statement(table),
             (task_id,),
         )
         .await?;
     Ok(SubtaskListing {
-        rows: crate::task_store_detail::subtask_documents_from_chunks(rows)?,
+        rows,
         contexts: None,
     })
 }

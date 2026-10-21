@@ -172,19 +172,7 @@ fn decode_task_row(row: &MysqlRow) -> MysqlResult<TaskRow> {
     })
 }
 
-fn decode_compressed_task_row(
-    document: &crate::task_store::TaskDocumentRow,
-) -> MysqlResult<TaskRow> {
-    let row = &document.row;
-    Ok(TaskRow {
-        id: row.get_required("id")?,
-        user_id: row.get_required("user_id")?,
-        json: Some(Json(document.json.to_value())),
-    })
-}
-
-fn decode_subtask_row(document: &crate::task_store::SubtaskDocumentRow) -> MysqlResult<SubtaskRow> {
-    let row = &document.row;
+fn decode_subtask_row(row: &MysqlRow) -> MysqlResult<SubtaskRow> {
     Ok(SubtaskRow {
         id: row.get_required("id")?,
         user_id: row.get_required("user_id")?,
@@ -193,10 +181,7 @@ fn decode_subtask_row(document: &crate::task_store::SubtaskDocumentRow) -> Mysql
         prompt: row.get("prompt")?,
         message_id: row.get_required("message_id")?,
         status: row.get_required("status")?,
-        result: document
-            .result
-            .as_ref()
-            .map(|result| Json(result.to_value())),
+        result: row.get("result")?,
         created_at: row.get("created_at")?,
         sender_user_id: row.get_required("sender_user_id")?,
     })
@@ -264,7 +249,7 @@ impl<'a> ChatHistoryRepository<'a> {
             .task_store
             .get_task_owned(task_id, owner_user_id)
             .await?;
-        row.as_ref().map(decode_compressed_task_row).transpose()
+        row.as_ref().map(decode_task_row).transpose()
     }
 
     /// `subtask_store.list_ids_by_task`: the task's subtask ids.

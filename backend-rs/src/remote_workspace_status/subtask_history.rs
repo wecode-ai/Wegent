@@ -10,7 +10,7 @@
 //! the last `limit` (100) items. The window bounds both the bot ids that
 //! `get_bots_for_subtasks` resolves and the `task_dict["subtasks"]` list the
 //! status handler reads its executor bindings from.
-use brz_mysql::Mysql;
+use brz_mysql::{Mysql, MysqlRow};
 
 use super::app_state::AppState;
 use brz_json::{JsonProjection, OpaqueJson};
@@ -37,10 +37,7 @@ pub struct SubtaskRow {
     pub executor_deleted_at: bool,
 }
 
-fn decode_subtask_row(
-    document: &crate::task_store::SubtaskDocumentRow,
-) -> brz_mysql::MysqlResult<SubtaskRow> {
-    let row = &document.row;
+fn decode_subtask_row(row: &MysqlRow) -> brz_mysql::MysqlResult<SubtaskRow> {
     Ok(SubtaskRow {
         id: row.get_required("id")?,
         message_id: row.get_required("message_id")?,
@@ -48,7 +45,9 @@ fn decode_subtask_row(
         bot_ids: row
             .get_required::<brz_mysql::Json<JsonProjection<Vec<Option<i64>>>>>("bot_ids")?
             .0,
-        result: document.result.clone(),
+        result: row
+            .get::<brz_mysql::Json<OpaqueJson>>("result")?
+            .map(|json| json.0),
         executor_namespace: row.get("executor_namespace")?,
         executor_name: row.get("executor_name")?,
         executor_deleted_at: row.get_required("executor_deleted_at")?,
