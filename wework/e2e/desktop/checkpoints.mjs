@@ -62,8 +62,11 @@ export const DESKTOP_CHECKPOINTS = [
   'plugin-account-auth-dws',
   'plugin-account-auth-conversation',
   'plugin-account-auth-github',
+  'plugin-account-auth-coordination',
 
   'plugin-uninstall-resilience',
+  'plugin-write-coordination',
+  'plugin-registration-coordination',
   'plugin-uninstall-lost-response',
   'plugin-uninstall-unknown-result',
   'plugin-uninstall-restart-recovery',
@@ -168,11 +171,14 @@ export const DESKTOP_CHECKPOINT_GROUPS = new Map([
       'plugin-account-auth-dws',
       'plugin-account-auth-conversation',
       'plugin-account-auth-github',
+      'plugin-account-auth-coordination',
     ],
   ],
   [
     'plugin-uninstall-resilience',
     [
+      'plugin-write-coordination',
+      'plugin-registration-coordination',
       'plugin-uninstall-lost-response',
       'plugin-uninstall-unknown-result',
       'plugin-uninstall-restart-recovery',

@@ -42,24 +42,22 @@ runs:
         BUILD_RUNTIMES_FROM_SOURCE: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
         EXECUTOR_ARTIFACT: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
         EXECUTOR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        OCI_RUNTIME_WAIT_SECONDS: "420"
+        # Allow the producer's 25-minute deadline plus runner queue time.
+        # The 35-minute consumer deadline leaves time for setup and archiving.
+        OCI_RUNTIME_WAIT_SECONDS: "1800"
         CI: true
         WEWORK_E2E_PREBUILT_EXECUTOR_PATH: ${{ github.workspace }}/.ci-artifacts/wegent-executor
-        WEWORK_E2E_PREBUILT_EXECUTOR_WAIT_SECONDS: "420"
+        WEWORK_E2E_PREBUILT_EXECUTOR_WAIT_SECONDS: "1800"
         WEWORK_ELECTRON_DEPENDENCIES_READY: "true"
       run: |
         mkdir -p .ci-artifacts
-        # Fork runtime producers have a 25-minute job deadline.
-        if [[ "$EXECUTOR_ARTIFACT" == "true" ]]; then
-          export WEWORK_E2E_PREBUILT_EXECUTOR_WAIT_SECONDS=1500
-        fi
         restore_executor() {
           if [[ "$EXECUTOR_ARTIFACT" == "true" ]]; then
             artifact_directory="$(mktemp -d .ci-artifacts/executor-download.XXXXXX)"
             trap 'rm -rf "$artifact_directory"' EXIT
             ACTIONS_ARTIFACT_WORKFLOW=e2e-tests.yml \
               ACTIONS_ARTIFACT_HEAD_SHA="$EXECUTOR_HEAD_SHA" \
-              ACTIONS_ARTIFACT_WAIT_SECONDS=1500 \
+              ACTIONS_ARTIFACT_WAIT_SECONDS=1800 \
               .github/scripts/download-actions-artifact.sh \
                 executor-e2e-binary "$artifact_directory"
             test -f "$artifact_directory/wegent-executor"
