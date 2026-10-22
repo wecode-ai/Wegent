@@ -14,8 +14,7 @@ export interface HistoryTask {
   id: number
   title: string
   prompt: string
-  team: HistoryTeam
-  subtasks: Array<{ role: string; prompt: string }>
+  team_id: number | null
 }
 
 export function checked<T>(response: ApiResponse<T>, status = 200): T {
@@ -119,7 +118,7 @@ export class HistoryAccount {
     const tasks = await this.tasks()
     const task = tasks.find(item => item.prompt === name)
     expect(task, `Persisted history ${name}`).toBeDefined()
-    expect(task!.team.id).toBe(team.id)
+    expect(task!.team_id).toBe(team.id)
     // Finish execution before seeding another entry so completion cannot reorder history.
     await expect
       .poll(
