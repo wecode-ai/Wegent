@@ -1548,6 +1548,19 @@ impl AppIpcServer {
         let args = string_list(params.get("args"))?;
         let path = string_field(&params, "path").or_else(|| string_field(&params, "cwd"));
         let env = string_env(params.get("env"))?;
+        let linked_provider = match command_key {
+            "git_github_pull_request_view" => Some("github"),
+            "git_gitlab_merge_request_view" => Some("gitlab"),
+            _ => None,
+        };
+        if let Some(provider) = linked_provider {
+            if let Err(error) =
+                super::linked_change_requests::validate_linked_request(provider, &args, &env).await
+            {
+                return serde_json::to_value(CommandResult::error(error, 0.0, false))
+                    .map_err(|error| AppIpcError::new("internal_error", error.to_string()));
+            }
+        }
         if is_workspace_file_command(command_key) {
             return serde_json::to_value(
                 execute_workspace_file_command_with_input(

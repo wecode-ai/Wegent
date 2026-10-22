@@ -364,7 +364,7 @@ export async function loadTaskChangeRequests(
   const linkedTargets = targets.filter(target => target.changeRequestUrl)
   const groups = groupTargets(targets.filter(target => !target.changeRequestUrl))
   const [linkedResults, results] = await Promise.all([
-    Promise.all(linkedTargets.map(target => loadLinkedChangeRequest(api, target))),
+    loadLinkedChangeRequests(api, linkedTargets),
     Promise.allSettled(groups.map(group => loadRepository(api, group))),
   ])
   return [
@@ -382,6 +382,21 @@ export async function loadTaskChangeRequests(
           }))
     ),
   ]
+}
+
+async function loadLinkedChangeRequests(
+  api: DeviceCommandApi,
+  targets: TaskChangeRequestTarget[]
+): Promise<TaskChangeRequestSnapshot[]> {
+  const results: TaskChangeRequestSnapshot[] = []
+  for (let offset = 0; offset < targets.length; offset += 4) {
+    results.push(
+      ...(await Promise.all(
+        targets.slice(offset, offset + 4).map(target => loadLinkedChangeRequest(api, target))
+      ))
+    )
+  }
+  return results
 }
 
 export function linkedChangeRequestTarget(

@@ -1,7 +1,44 @@
 import { describe, expect, it, vi } from 'vitest'
+import type { DeviceCommandApi } from './environment'
 import { linkedChangeRequestTarget, loadTaskChangeRequests } from './changeRequests'
 
 describe('linked change requests', () => {
+  it('bounds concurrent CLI lookups while preserving the target order', async () => {
+    let active = 0
+    let peak = 0
+    const pending: Array<() => void> = []
+    const executeCommand = vi.fn<DeviceCommandApi['executeCommand']>((_device, input) => {
+      active += 1
+      peak = Math.max(peak, active)
+      const url = input.args![0]
+      return new Promise(resolve => {
+        pending.push(() => {
+          active -= 1
+          resolve({
+            success: true,
+            stdout: { number: Number(url.split('/').at(-1)), url, state: 'OPEN' },
+          })
+        })
+      })
+    })
+    const targets = Array.from(
+      { length: 9 },
+      (_, index) =>
+        linkedChangeRequestTarget('local-device', `https://github.com/org/app/pull/${index + 1}`)!
+    )
+    const result = loadTaskChangeRequests({ executeCommand }, targets)
+    expect(executeCommand).toHaveBeenCalledTimes(4)
+    pending.splice(0).forEach(resolve => resolve())
+    await vi.waitFor(() => expect(executeCommand).toHaveBeenCalledTimes(8))
+    pending.splice(0).forEach(resolve => resolve())
+    await vi.waitFor(() => expect(executeCommand).toHaveBeenCalledTimes(9))
+    pending.splice(0).forEach(resolve => resolve())
+    expect((await result).map(snapshot => snapshot.changeRequest?.number)).toEqual([
+      1, 2, 3, 4, 5, 6, 7, 8, 9,
+    ])
+    expect(peak).toBe(4)
+  })
+
   it.each([
     [
       'https://github.com/org/repo/pull/123456',
