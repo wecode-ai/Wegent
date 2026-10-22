@@ -15,6 +15,9 @@ export async function verifyIssueRuntimeTitleIsolation(control, content, project
     title,
   })
   assert.equal(renamed.accepted, true, 'The executor did not rename the conversation')
+  const afterRename = await rpc('todos.get', { project_id: project.id, task_id: issue.id })
+  assert.equal(afterRename.title, issue.title, 'Renaming the conversation renamed the Issue')
+  assert.equal(afterRename.version, issue.version, 'Renaming the conversation mutated the Issue')
   const assistantCount = Number(
     await control.command('getElementCount', `${content} [data-testid="message-assistant"]`)
   )
@@ -50,7 +53,6 @@ export async function verifyIssueRuntimeTitleIsolation(control, content, project
   assert.equal(observedTitle, title, 'The renderer did not receive the runtime title update')
   const persisted = await rpc('todos.get', { project_id: project.id, task_id: issue.id })
   assert.equal(persisted.title, issue.title, 'A private conversation title renamed the bound Issue')
-  assert.equal(persisted.version, issue.version, 'The runtime title event mutated the bound Issue')
   await control.command('waitFor', `${content} [data-testid="work-item-guide-summary-title"]`, {
     text: issue.title,
     visible: true,
