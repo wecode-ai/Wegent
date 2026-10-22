@@ -121,30 +121,6 @@ export function createStreamingToolChecks({
       timeoutMs: uiTimeoutMs,
     })
     await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
-    const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-    const address = debug.pane?.currentRuntimeTask
-    assert.ok(address?.deviceId && address?.taskId, 'The long-code task address is missing')
-    const transcriptDeadline = Date.now() + uiTimeoutMs
-    while (true) {
-      const messages = JSON.parse(
-        await control.command('getRuntimeConversationMessages', 'body', {
-          value: JSON.stringify(address),
-        })
-      )
-      if (
-        messages.some(
-          message =>
-            message.status === 'done' &&
-            message.blocks?.some(block => block.id === 'wework-long-code-reasoning')
-        )
-      )
-        break
-      assert.ok(
-        Date.now() < transcriptDeadline,
-        'The canonical long-code transcript did not arrive'
-      )
-      await new Promise(resolve => setTimeout(resolve, 100))
-    }
     const completedSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
     await writeFile(
       join(resultDir, 'streaming-text-long-code-identity.json'),
@@ -161,7 +137,7 @@ export function createStreamingToolChecks({
     assert.equal(
       Number(await control.command('getElementCount', LONG_CODE_MARKED_SELECTOR)),
       1,
-      'The long code DOM was replaced during streaming or canonical history refresh'
+      'The long code DOM was replaced while more lines streamed'
     )
 
     let syntaxHighlighted = 'false'

@@ -17,7 +17,6 @@ import {
 import i18n from '@/i18n'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
-import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 import {
   compareMessageStyles,
   summarizeRuntimePaneMemory,
@@ -1176,9 +1175,6 @@ export function useWorkbenchPaneSession({
         applyRequestUserInputResponseToBlock(block, response)
       )
       setMessages(nextMessages)
-      if (!pendingRequestUserInputPayload(nextMessages)) {
-        lifecycleStore.userInputResponded(currentRuntimeTask)
-      }
       debugRuntimePaneMessageFlow('request-user-input-response-applied', {
         address: runtimeAddressDebug(currentRuntimeTask),
         requestUserInputKey: requestUserInputResponseKey(response),
@@ -1187,7 +1183,7 @@ export function useWorkbenchPaneSession({
         nextMessages: summarizeWorkbenchMessages(nextMessages),
       })
     },
-    [currentRuntimeTask, lifecycleStore]
+    [currentRuntimeTask]
   )
 
   const sendRuntimeMessage = useCallback(

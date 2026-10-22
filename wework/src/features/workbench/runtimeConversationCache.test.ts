@@ -43,11 +43,8 @@ import {
   takeAppliedRuntimeConversationGuidance,
   takeInterruptedRuntimeConversationGuidance,
   restoreOptimisticallyInterruptedRuntimeConversation,
-  updateRuntimeConversationBlocks,
 } from './runtimeConversationCache'
 import { getLatestRuntimeLiveActivityFromTurns } from './runtimeThinking'
-import { applyRequestUserInputResponseToBlock } from '@wegent/chat-core/runtime-user-input'
-import type { RuntimeConversationTurn } from '@/types/workbench'
 
 const address = {
   deviceId: 'device-1',
@@ -446,110 +443,6 @@ describe('runtimeConversationCache', () => {
           }),
         ]),
       }),
-    ])
-  })
-
-  test('retains only the submitted form until runtime acknowledgment after terminal history', () => {
-    const form = {
-      id: 'request-user-input-2',
-      subtaskId: 'terminal-turn',
-      type: 'tool' as const,
-      toolName: 'request_user_input',
-      status: 'pending' as const,
-      createdAt: 2,
-      renderPayload: {
-        kind: 'request_user_input',
-        requestId: 2,
-        questions: [{ id: 'audience', question: '访问范围' }],
-      },
-    }
-    reconcileRuntimeConversationSnapshot(address, [
-      {
-        id: 'terminal-turn',
-        status: 'streaming',
-        items: [
-          { id: form.id, type: 'block', block: form },
-          { id: 'stale-text', type: 'assistant_text', content: 'temporary', createdAt: 2 },
-          {
-            id: 'other-question',
-            type: 'block',
-            block: {
-              ...form,
-              id: 'other-question',
-              renderPayload: { ...form.renderPayload, requestId: 3 },
-            },
-          },
-        ],
-      },
-    ])
-    const operation = beginRuntimeConversationOperation(address, {
-      requestUserInputKey: 'request:2',
-    })
-    const terminal: RuntimeConversationTurn[] = [
-      {
-        id: 'terminal-turn',
-        status: 'done',
-        items: [{ id: 'final', type: 'assistant_text', content: 'completed', createdAt: 3 }],
-      },
-    ]
-    replaceRuntimeConversationSnapshot(address, terminal)
-    expect(getRuntimeConversationTurns(address)[0].items.map(item => item.id)).toEqual([
-      form.id,
-      'final',
-    ])
-
-    const response = { requestId: 2, answers: { audience: { answers: ['owner'] } } }
-    updateRuntimeConversationBlocks(address, block =>
-      applyRequestUserInputResponseToBlock(block, response)
-    )
-    operation.dispose()
-
-    expect(getRuntimeConversationTurns(address)[0]).toMatchObject({
-      status: 'done',
-      items: expect.arrayContaining([
-        expect.objectContaining({
-          id: form.id,
-          block: expect.objectContaining({
-            status: 'done',
-            renderPayload: expect.objectContaining({ response }),
-          }),
-        }),
-      ]),
-    })
-    expect(getRuntimeConversationTurns(address)[0].items.map(item => item.id)).toEqual([
-      form.id,
-      'final',
-    ])
-    replaceRuntimeConversationSnapshot(address, terminal)
-    expect(getRuntimeConversationTurns(address)[0].items).toHaveLength(2)
-
-    const secondOperation = beginRuntimeConversationOperation(address, {
-      requestUserInputKey: 'request:3',
-    })
-    reconcileRuntimeConversationSnapshot(address, [
-      {
-        id: 'terminal-turn',
-        status: 'done',
-        items: [
-          {
-            id: 'other-question',
-            type: 'block',
-            block: {
-              ...form,
-              id: 'other-question',
-              renderPayload: { ...form.renderPayload, requestId: 3 },
-            },
-          },
-        ],
-      },
-    ])
-    replaceRuntimeConversationSnapshot(address, terminal)
-    expect(getRuntimeConversationTurns(address)[0].items).toHaveLength(3)
-    secondOperation.dispose()
-    replaceRuntimeConversationSnapshot(address, terminal)
-    expect(getRuntimeConversationTurns(address)[0].items.map(item => item.id)).toEqual([
-      form.id,
-      'final',
     ])
   })
 

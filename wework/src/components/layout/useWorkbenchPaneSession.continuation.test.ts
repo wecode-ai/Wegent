@@ -23,7 +23,6 @@ import {
   RuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
 import { useWorkbenchPaneSession } from './useWorkbenchPaneSession'
-import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 
 const mocks = vi.hoisted(() => ({
   context: {} as Record<string, unknown>,
@@ -127,83 +126,6 @@ function expectDraftPreserved(session: ReturnType<typeof useWorkbenchPaneSession
 }
 
 describe('pane continuation without composer submission', () => {
-  test.each([
-    { accepted: true, newQuestion: false },
-    { accepted: false, newQuestion: false },
-    { accepted: true, newQuestion: true },
-  ])(
-    'settles the accepted async answer without clearing a newer question: %j',
-    async ({ accepted, newQuestion }) => {
-      const { result } = await renderSession()
-      const questionStartedAt = Date.now()
-      const question = (id: number): RuntimeConversationTurn => ({
-        id: `question-turn-${id}`,
-        status: 'done',
-        items: [
-          {
-            id: `question-${id}`,
-            type: 'block',
-            block: {
-              id: `question-${id}`,
-              type: 'tool',
-              toolName: 'request_user_input',
-              status: 'done',
-              createdAt: questionStartedAt + (id === 1 ? -1000 : 1000),
-              renderPayload: {
-                kind: 'request_user_input',
-                delivery: 'async',
-                requestId: id,
-                questions: [{ id: 'direction', question: 'Which direction?' }],
-              },
-            },
-          },
-        ],
-      })
-      act(() => {
-        reconcileRuntimeConversationSnapshot(address, [question(1)])
-        lifecycleStore.userInputRequested(address, 'async')
-      })
-      expect(lifecycleStore.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(true)
-      mocks.send.mockImplementation(async () => {
-        if (accepted) {
-          const reply = getRuntimeConversationMessages(address).findLast(
-            message => message.role === 'user'
-          )!
-          reconcileRuntimeConversationSnapshot(address, [
-            {
-              id: 'reply-turn',
-              clientUserMessageId: reply.id,
-              status: 'done',
-              items: [{ id: reply.id, type: 'user_message', message: reply }],
-            },
-            ...(newQuestion ? [question(2)] : []),
-          ])
-          if (newQuestion) {
-            expect(
-              pendingRequestUserInputPayload(getRuntimeConversationMessages(address))
-            ).toMatchObject({ requestId: 2 })
-            lifecycleStore.userInputRequested(address, 'async')
-          }
-        }
-        return accepted
-      })
-
-      await act(async () => {
-        expect(
-          await result.current.sendRequestUserInputResponse({
-            requestId: 1,
-            answers: { direction: { answers: ['Complete'] } },
-          })
-        ).toBe(accepted)
-      })
-
-      expect(lifecycleStore.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(
-        !accepted || newQuestion
-      )
-      expectDraftPreserved(result.current)
-    }
-  )
-
   test.each([true, false])(
     'retains a form while terminal history arrives before its response acknowledgment (accepted=%s)',
     async accepted => {
