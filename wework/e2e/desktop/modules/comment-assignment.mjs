@@ -11,7 +11,9 @@ export async function verifyCommentAssignment(control, { request, project, owner
   await control.command('openWeworkScheme', 'body', {
     value: `wework://boards/${project.id}/issues/${issue.id}`,
   })
-  const form = scoped('[data-testid="task-comment-form"]')
+  const activity = scoped(`[data-testid="cloud-task-activity-${issue.id}"]`)
+  await control.command('waitFor', activity)
+  const form = `${activity} [data-testid="task-comment-form"]`
   const editor = `${form} [data-testid="cloud-task-activity-composer"]`
   const selector = `${form} [data-testid="task-comment-form-assignee"]`
   const send = `${form} [data-testid="send-message-button"]`

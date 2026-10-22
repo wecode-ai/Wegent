@@ -101,6 +101,17 @@ describe('comment assignment', () => {
     expect(assign).toHaveBeenCalledTimes(1)
   })
 
+  it('clears a failed assignment error when choosing a different assignee', async () => {
+    assign.mockRejectedValueOnce(new Error('Version conflict'))
+    render('')
+    act(() => transfer.setTarget('1'))
+    await act(() => transfer.submit(''))
+    expect(transfer.error).toBe('Version conflict')
+    act(() => transfer.setTarget('2'))
+    expect(transfer.target).toBe('2')
+    expect(transfer.error).toBeNull()
+  })
+
   it('never selects an assignee without assignment permission', () => {
     enabled = false
     render(mention(1))

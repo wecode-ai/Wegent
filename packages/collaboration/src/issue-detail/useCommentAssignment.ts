@@ -51,5 +51,10 @@ export function useCommentAssignment(
     }
   }
 
-  return { members, target, setTarget: setManualTarget, busy, error, submit }
+  function setTarget(next: string) {
+    setError(null)
+    setManualTarget(next)
+  }
+
+  return { members, target, setTarget, busy, error, submit }
 }
