@@ -12,6 +12,7 @@ const FORM = `${CONTENT} [data-testid="task-comment-form"]`
 const COMPOSER = `${FORM} [data-testid="cloud-task-activity-composer"]`
 const SEND = `${FORM} [data-testid="send-message-button"]`
 const BADGE = `${FORM} [data-testid="attachment-badge"]`
+const PENDING = `${FORM} [data-testid="uploading-attachment-badge"], ${FORM} [data-testid="pending-image-attachment"]`
 const ROOT_TEXT = 'Image comment survives upload and reopening'
 const REPLY_TEXT = 'Reply keeps both image attachments'
 const RECOVERY_TEXT = 'Keep this image draft when its staged file is unavailable'
@@ -82,18 +83,14 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs, workbenchRead
       mimeType: 'image/png',
       value: PNG.toString('base64'),
     })
-    // Pending previews use the same alt text before native staging completes.
-    await control.command('waitFor', `${BADGE} img[alt="${filename}"]`)
-    assert.equal(Number(await control.command('getElementCount', BADGE)), count)
-    assert.equal(
-      Number(
-        await control.command(
-          'getElementCount',
-          `${FORM} [data-testid="uploading-attachment-badge"]`
-        )
-      ),
-      0
+    // Pending images already have previews; only a ready badge confirms staging.
+    await control.command(
+      'waitFor',
+      `${BADGE} [data-testid="attachment-image-preview"][alt="${filename}"]`
     )
+    await control.command('waitFor', PENDING, { visible: false })
+    assert.equal(Number(await control.command('getElementCount', BADGE)), count)
+    assert.equal(Number(await control.command('getElementCount', PENDING)), 0)
   }
 
   async function persistedComment(control, text, filenames) {

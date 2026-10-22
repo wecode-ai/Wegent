@@ -16,6 +16,8 @@ Local projects from Tasks appear automatically under Local workspace. Reloading 
 
 The Executor stores local ownership; the backend stores cloud ownership. A collaboration group owner is a project group reference, not a resource-library Agent's Team ID. Assigning it does not automatically execute the group's workflow.
 
+When a project has no execution environment, the New Issue page and creation dialog show no environment notice. You can still create and handle Issues manually. Offline devices and failed environment checks retain their notices and configuration, viewing, or retry actions.
+
 ## Change an existing Issue's owner
 
 After selecting or clearing an owner in Issue details, select **Save assignment** beside the owner. The header does not show a duplicate save action. Saving also submits other pending detail edits. If saving fails, the draft and save action remain available for correction and resubmission.

@@ -15,6 +15,7 @@ export function projectRuntimeConversationTurn(
   const messages: WorkbenchMessage[] = [];
   let assistantItems: RuntimeConversationItem[] = [];
   let followsGuidance = false;
+  let assistantAnchor = "assistant";
 
   const flushAssistant = (isLast: boolean, splitBefore: boolean) => {
     const shouldProjectEmptyAssistant =
@@ -28,14 +29,11 @@ export function projectRuntimeConversationTurn(
       (item) => item.type === "assistant_text",
     );
     const blocks = processingBlocks(assistantItems);
-    const firstItem = assistantItems[0];
     const createdAt =
       textItems[0]?.createdAt ??
       (blocks[0] ? new Date(blocks[0].createdAt).toISOString() : "");
     messages.push({
-      id: `runtime-view:${turn.id ?? turn.clientUserMessageId ?? "pending"}:${
-        firstItem?.id ?? "assistant"
-      }`,
+      id: `runtime-view:${turn.id ?? turn.clientUserMessageId ?? "pending"}:${assistantAnchor}`,
       role: "assistant",
       content: textItems.map((item) => item.content).join("\n\n"),
       status: isLast ? turnStatus(turn) : "done",
@@ -87,6 +85,11 @@ export function projectRuntimeConversationTurn(
           : item.message,
       );
       followsGuidance = item.message.runtimeGuidance === true;
+      // Output items can be reordered or recovered while the same reply streams.
+      // Only user boundaries establish another assistant view within a turn.
+      if (hadAssistant || followsGuidance || assistantAnchor !== "assistant") {
+        assistantAnchor = `after:${item.id}`;
+      }
       if (followsGuidance && turn.id !== null) {
         const block = projectedGuidanceBlock(item.message, turn.id);
         assistantItems.push({ id: block.id, type: "block", block });

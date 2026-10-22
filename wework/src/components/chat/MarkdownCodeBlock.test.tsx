@@ -1,3 +1,4 @@
+import { copyTextToClipboard } from '@/lib/clipboard'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/styles/globals.css'
@@ -14,6 +15,8 @@ function MarkdownCodeBlock(props: ComponentProps<typeof SharedMarkdownCodeBlock>
   )
 }
 
+vi.mock('@/lib/clipboard', () => ({ copyTextToClipboard: vi.fn() }))
+
 const trackMock = vi.fn()
 
 vi.mock('@/telemetry/client', () => ({
@@ -23,10 +26,7 @@ vi.mock('@/telemetry/client', () => ({
 describe('MarkdownCodeBlock', () => {
   beforeEach(() => {
     trackMock.mockReset()
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: { writeText: vi.fn().mockResolvedValue(undefined) },
-    })
+    vi.mocked(copyTextToClipboard).mockReset().mockResolvedValue(undefined)
   })
 
   test('tracks code block copy actions', async () => {
@@ -40,6 +40,14 @@ describe('MarkdownCodeBlock', () => {
         source: 'chat',
       })
     )
+  })
+
+  test('copies code through the desktop Markdown clipboard service', async () => {
+    render(<MarkdownCodeBlock lang="sql">SELECT 1</MarkdownCodeBlock>)
+
+    fireEvent.click(screen.getByTestId('markdown-code-copy-button'))
+
+    await waitFor(() => expect(copyTextToClipboard).toHaveBeenCalledExactlyOnceWith('SELECT 1'))
   })
 
   test('keeps streaming code mounted while incrementally highlighting it', async () => {

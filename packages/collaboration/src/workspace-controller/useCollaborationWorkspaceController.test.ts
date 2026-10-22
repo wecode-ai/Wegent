@@ -448,6 +448,136 @@ describe("collaboration workspace controller", () => {
     },
   );
 
+  it.each(
+    (["controller", "activity"] as const).flatMap((source) =>
+      (["read", "snapshot"] as const).map((first) => ({ source, first })),
+    ),
+  )(
+    "keeps an external content refresh when $source read and $first completes first",
+    async ({ source, first }) => {
+      const unread = { ...issue, is_unread: true, content_revision: 2 };
+      const refreshed = {
+        ...unread,
+        version: 2,
+        status: "in_progress",
+        content_revision: 3,
+      };
+      const readResponse = deferred<CollaborationIssue>();
+      const snapshotResponse = deferred<{
+        items: CollaborationIssue[];
+        members: [];
+        agents: [];
+        taskBindings: [];
+      }>();
+      const snapshot = {
+        items: [refreshed],
+        members: [] as [],
+        agents: [] as [],
+        taskBindings: [] as [],
+      };
+      state = {
+        ...state,
+        projects: [project],
+        project,
+        selectedIssue: unread,
+        issues: [unread],
+        projectItems: { [project.id]: [unread] },
+      };
+      const { api, commands } = createController();
+      vi.mocked(api.issues.markRead).mockReturnValue(readResponse.promise);
+      vi.mocked(api.issues.getBoardSnapshot).mockReturnValue(
+        snapshotResponse.promise,
+      );
+
+      const reading =
+        source === "controller"
+          ? commands.markIssueRead(unread)
+          : readResponse.promise.then((updated) =>
+              commands.confirmIssueRead(updated),
+            );
+      const refreshing = commands.loadProjectSnapshot(project.id, {
+        invalidate: true,
+      });
+      const completeRead = async () => {
+        readResponse.resolve({ ...unread, is_unread: false });
+        await reading;
+      };
+      const completeSnapshot = async () => {
+        snapshotResponse.resolve(snapshot);
+        await refreshing;
+      };
+      if (first === "read") {
+        await completeRead();
+        await completeSnapshot();
+      } else {
+        await completeSnapshot();
+        await completeRead();
+      }
+
+      expect(state.selectedIssue).toMatchObject(refreshed);
+      expect(state.issues).toEqual([refreshed]);
+      expect(state.projectItems[project.id]).toEqual([refreshed]);
+      expect(api.issues.getBoardSnapshot).toHaveBeenCalledOnce();
+      expect(await reading).toMatchObject(
+        first === "read"
+          ? {
+              ...unread,
+              is_unread: false,
+            }
+          : refreshed,
+      );
+    },
+  );
+
+  it("preserves a confirmed read across stale board and detail responses while newer content stays unread", async () => {
+    const unread = {
+      ...issue,
+      content_revision: 2,
+      is_unread: true,
+      activity_read_sequence: 1,
+    };
+    const read = { ...unread, is_unread: false, activity_read_sequence: 7 };
+    const { api, commands } = createController();
+    state = {
+      ...state,
+      projects: [project],
+      project,
+      issues: [unread],
+      selectedIssue: unread,
+      projectItems: { [project.id]: [unread] },
+    };
+    vi.mocked(api.issues.markRead).mockResolvedValue(read);
+    await expect(commands.markIssueRead(unread)).resolves.toEqual(read);
+    vi.mocked(api.issues.getBoardSnapshot).mockResolvedValue({
+      items: [unread],
+      members: [],
+      agents: [],
+      taskBindings: [],
+    });
+    vi.mocked(api.issues.get).mockResolvedValue(unread);
+
+    await commands.loadProjectSnapshot(project.id);
+    await commands.loadSelectedIssue(issue.id);
+
+    expect(state.selectedIssue).toEqual(read);
+    expect(state.issues).toEqual([read]);
+    expect(state.projectItems[project.id]).toEqual([read]);
+
+    const newer = { ...unread, content_revision: 3, version: 2 };
+    vi.mocked(api.issues.getBoardSnapshot).mockResolvedValue({
+      items: [newer],
+      members: [],
+      agents: [],
+      taskBindings: [],
+    });
+    await commands.loadProjectSnapshot(project.id);
+    expect(state.selectedIssue).toMatchObject({
+      ...newer,
+      is_unread: true,
+      activity_read_sequence: 7,
+    });
+  });
+
   it("does not mark an issue read if navigation closes it before detail loads", async () => {
     const { api, commands } = createController();
     const response = deferred<CollaborationIssue>();

@@ -621,6 +621,7 @@ export function createLocalProjectChatAgentApi(
       projectId: string,
       options?: { forceRefresh?: boolean }
     ): Promise<LocalProjectChatAgent[]> {
+      if (options?.forceRefresh) cache.invalidate(`agents:${projectId}`)
       return cache.get(
         `agents:${projectId}`,
         async () => {
@@ -855,7 +856,7 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
     can_view_detail: true,
     can_edit: ['Owner', 'Maintainer', 'Developer'].includes(role),
     security_level: record.metadata.security_level === 'related' ? 'related' : 'open',
-    content_revision: 1,
+    content_revision: record.version,
     activity_read_sequence:
       typeof record.metadata.activity_read_sequence === 'number'
         ? record.metadata.activity_read_sequence
@@ -865,6 +866,9 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
         ? record.metadata.has_additional_context
         : true,
     is_unread: record.metadata.is_unread === true,
+    assignment_history: Array.isArray(record.metadata.assignment_history)
+      ? (record.metadata.assignment_history as CloudLoopItem['assignment_history'])
+      : [],
     status_history: Array.isArray(record.metadata.status_history)
       ? (record.metadata.status_history as CloudLoopItem['status_history'])
       : [],

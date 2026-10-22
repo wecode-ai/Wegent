@@ -470,6 +470,7 @@ describe("ProjectAgentConfiguration", () => {
   it("reuses the current-device Agent without inventing a Team binding", async () => {
     const binding = {
       name: "current-device-agent",
+      displayName: "当前设备智能体",
       runtime: "codex",
       executionPolicy: { mode: "project_pool" },
       modelPolicy: { mode: "user_select" },
@@ -505,11 +506,11 @@ describe("ProjectAgentConfiguration", () => {
     await click("project-agent-option-current-device-resource");
     await click("project-agent-wegent-create");
 
-    expect(create).toHaveBeenCalledWith(project.id, {
-      ...binding,
-      name: "当前设备智能体",
-    });
+    expect(create).toHaveBeenCalledWith(project.id, binding);
     expect(create.mock.calls[0][1]).not.toHaveProperty("wegentTeamId");
+    expect(element("project-agent-row-created-codex").textContent).toContain(
+      "当前设备智能体",
+    );
   });
 
   it("creates a project Agent through the resource-library host and binds it to the project", async () => {

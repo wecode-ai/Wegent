@@ -29,6 +29,7 @@ core_segments=(
   collaboration-human-round-resume
   collaboration-local-group-cancellation
   collaboration-issue-comment-mention
+  collaboration-issue-assignment-activity
   collaboration-issue-comment-attachments
   collaboration-issue-comment-notification
   collaboration-issue-mcp-comments
@@ -208,7 +209,7 @@ core_shards=(
   project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,stand-in,stand-in-workspace,stand-in-controls,collaboration-local-group-coordinate,collaboration-human-round-resume
   resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-task-discovery,collaboration-app-queue-identity,collaboration-issue-archive,collaboration-board-sorting,collaboration-board-move-recovery,collaboration-local-group-cancellation
   workspace-attachments,automation-lifecycle,drawing-attachment
-  project-assignment-notification,priority-filter,collaboration-issue-comment-mention,collaboration-issue-comment-attachments,stand-in-notifications
+  project-assignment-notification,priority-filter,collaboration-issue-comment-mention,collaboration-issue-assignment-activity,collaboration-issue-comment-attachments,stand-in-notifications
   transcript-sync,background-terminals
   runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification,collaboration-issue-mcp-comments,latest-conversation-history
@@ -819,7 +820,12 @@ classify_wework_path() {
       select_target "core:stand-in-permissions"
       return
       ;;
-    wework/e2e/desktop/scenarios/collaboration-local-agent-dispatch.scenario.mjs)
+    wework/e2e/desktop/modules/workspace-agent-setup.mjs)
+      select_target "core:collaboration-local-agent-dispatch"
+      select_target "core:collaboration-remote-agent-dispatch"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-local-agent-dispatch.scenario.mjs|wework/e2e/desktop/modules/local-issue-assignee-recovery.mjs)
       select_target "core:collaboration-local-agent-dispatch"
       return
       ;;
@@ -857,6 +863,14 @@ classify_wework_path() {
     # the Wework collaboration render path.
     wework/e2e/desktop/scenarios/collaboration-issue-comment-mention.scenario.mjs)
       select_target "core:collaboration-issue-comment-mention"
+      return
+      ;;
+    wework/src/features/todo/IssueAssignmentEvent* | \
+      wework/src/features/todo/assignmentHistoryLabels* | \
+      wework/src/features/todo/issueActivityTimeline* | \
+      wework/src/features/todo/useIssueActivityHistory* | \
+      wework/e2e/desktop/scenarios/collaboration-issue-assignment-activity.scenario.mjs)
+      select_target "core:collaboration-issue-assignment-activity"
       return
       ;;
     wework/e2e/desktop/scenarios/collaboration-issue-comment-attachments.scenario.mjs)
@@ -910,6 +924,7 @@ classify_wework_path() {
       select_target "core:task-status-sync"
       select_target "core:task-board-association"
       if [[ "$path" == wework/src/api/local/localDelivery* ]]; then
+        select_target "core:collaboration-issue-assignment-activity"
         select_target "core:collaboration-human-round-resume"
         select_target "core:collaboration-local-group-coordinate"
         select_target "core:task-board-bulk-actions"
@@ -1452,6 +1467,7 @@ classify_path() {
       select_target "core:collaboration-group-onboarding"
       select_collaboration_dispatch_checkpoints
       select_target "core:collaboration-issue-comment-mention"
+      select_target "core:collaboration-issue-assignment-activity"
       select_target "core:collaboration-issue-comment-attachments"
       select_target "core:collaboration-issue-comment-notification"
       select_target "core:collaboration-board-sorting"

@@ -7,6 +7,7 @@ import {
   clearLocalCodexPluginsReadStateCache,
   createLocalCodexPluginApi,
 } from '@/api/local/codexPlugins'
+import * as codexPlugins from '@/api/local/codexPlugins'
 import { clearLocalConnectorAuthHealthCache } from '@/api/local/localConnectorAuth'
 import { clearPluginDeviceAutoSyncAttempts } from '@/features/plugins/pluginDeviceAutoSync'
 import {
@@ -4687,7 +4688,7 @@ describe('PluginsWorkspace', () => {
     )
   })
 
-  test('does not start plugin/list until device package sync finishes', async () => {
+  test('does not reconcile the current local catalog until device package sync finishes', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     let releaseSyncGate: (() => void) | null = null
     const deviceAutoSyncGate = new Promise<void>(resolve => {
@@ -4705,7 +4706,6 @@ describe('PluginsWorkspace', () => {
     const pendingInstalled = new Promise(resolve => {
       resolveInstalled = resolve
     })
-    let pluginListStarted = false
     const previousInvoke = vi.mocked(requestLocalExecutor).getMockImplementation()
     vi.mocked(requestLocalExecutor).mockImplementation((command: string, args?: unknown) => {
       if (command === 'codex.app_server_request') {
@@ -4716,36 +4716,51 @@ describe('PluginsWorkspace', () => {
         if (request.method === 'plugin/installed') {
           return pendingInstalled
         }
-        if (request.method === 'plugin/list') {
-          pluginListStarted = true
-        }
       }
       return previousInvoke?.(command, args) as Promise<unknown>
     })
 
-    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    // Shared background reads can outlive test cleanup. Observe only the API
+    // instance owned by this component, rather than every executor request.
+    const currentApi = createLocalCodexPluginApi()
+    const readCurrentCatalog = vi.spyOn(currentApi, 'readState')
+    const createApi = vi
+      .spyOn(codexPlugins, 'createLocalCodexPluginApi')
+      .mockReturnValue(currentApi)
 
-    expect(await screen.findByText('Documents')).toBeInTheDocument()
-    expect(pluginListStarted).toBe(false)
-    expect(marketplaceMock.getReportDeviceCalls()).toBe(0)
+    try {
+      render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
 
-    resolveInstalled?.({
-      marketplaces: [
-        {
-          name: 'wegent',
-          path: '/Users/test/.wework/capabilities/store/plugins',
-          interface: { displayName: 'wegent' },
-          plugins: [],
-        },
-      ],
-    })
+      expect(await screen.findByText('Documents')).toBeInTheDocument()
+      expect(readCurrentCatalog).not.toHaveBeenCalled()
+      expect(marketplaceMock.getReportDeviceCalls()).toBe(0)
 
-    await waitFor(() => expect(marketplaceMock.getSyncDeviceCalls()).toBe(1))
-    expect(pluginListStarted).toBe(false)
-    expect(marketplaceMock.getReportDeviceCalls()).toBe(0)
+      resolveInstalled?.({
+        marketplaces: [
+          {
+            name: 'wegent',
+            path: '/Users/test/.wework/capabilities/store/plugins',
+            interface: { displayName: 'wegent' },
+            plugins: [],
+          },
+        ],
+      })
 
-    releaseSyncGate?.()
-    await waitFor(() => expect(pluginListStarted).toBe(true))
+      await waitFor(() => expect(marketplaceMock.getSyncDeviceCalls()).toBe(1))
+      expect(readCurrentCatalog).not.toHaveBeenCalled()
+      expect(marketplaceMock.getReportDeviceCalls()).toBe(0)
+
+      releaseSyncGate?.()
+      await waitFor(() =>
+        expect(readCurrentCatalog).toHaveBeenCalledWith({
+          mergeAllMarketplaces: true,
+          marketplaceKinds: ['local'],
+          refresh: true,
+        })
+      )
+    } finally {
+      createApi.mockRestore()
+    }
   })
 
   test('auto-syncs a confirmed gap before plugin/list starts', async () => {

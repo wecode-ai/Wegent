@@ -378,6 +378,11 @@ Core DSH 使用端口 `0` 直接绑定操作系统分配的端口。Electron 读
 监听地址后再逐项验证 host、Executor、Terminal 和应用入口，不通过提前打开再关闭
 监听器探测端口，避免并行启动时其他服务抢占已探测的端口。
 
+Linux 云端测试的后端、数据库等服务需要在启动前公布端口。共享分配器读取
+`/proc/sys/net/ipv4/ip_local_port_range`，在内核动态端口范围之外选择可绑定的
+非特权端口，并通过端口注册目录隔离并行 checkpoint，避免服务初始化期间被
+Core DSH 等使用端口 `0` 的进程抢占。
+
 GitHub Actions 上传前会再次执行同样的清理，并在 Artifact 路径中排除
 任意深度的 `managed-components`，防止 teardown 失败时把主实例或插件开发子实例的
 完整 Web/WASM 组件包上传为诊断证据；顶层清理和 Artifact 路径也都会排除测试 `.zip`

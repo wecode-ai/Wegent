@@ -2013,7 +2013,7 @@ describe("CollaborationPlatformApp real component flow", () => {
       expect.objectContaining({ includeDefaultAgent: true }),
     );
     expect(api.agents.create).toHaveBeenCalledWith(project.id, {
-      name: "当前设备智能体",
+      name: "current-device-agent",
       displayName: "当前设备智能体",
       runtime: "codex",
       model: null,
@@ -2070,7 +2070,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     await click(byTestId("collaboration-project-create-confirm"));
 
     expect(api.agents.create).toHaveBeenCalledWith(project.id, {
-      name: "当前设备智能体",
+      name: "current-device-agent",
       displayName: "当前设备智能体",
       runtime: "codex",
       model: null,
@@ -2672,8 +2672,15 @@ describe("CollaborationPlatformApp real component flow", () => {
 
     expect(byTestId("collaboration-issue-home")).toBeTruthy();
     expect(
-      byTestId("issue-execution-environment-notice").textContent,
-    ).toContain("不影响创建和人工处理 Issue");
+      byTestId("collaboration-issue-home").getAttribute(
+        "data-execution-environment-readiness",
+      ),
+    ).toBe("unassigned");
+    expect(
+      container.querySelector(
+        '[data-testid="issue-execution-environment-notice"]',
+      ),
+    ).toBeNull();
     expect(byTestId("collaboration-issue-guide-1").textContent).toContain(
       "拆解一个新需求",
     );
@@ -2715,9 +2722,11 @@ describe("CollaborationPlatformApp real component flow", () => {
     ).toBeNull();
   });
 
-  it("opens the selected project's execution environment settings from the notice", async () => {
+  it("opens the selected project's execution environment settings from the offline notice", async () => {
     const { api } = createApi();
-    api.projects.listExecutionEnvironments = vi.fn(async () => []);
+    api.projects.listExecutionEnvironments = vi.fn(async () => [
+      { ...environment, status: "offline" as const },
+    ]);
     await render(<PlatformHarness api={api} />);
 
     await click(byTestId("issue-execution-environment-notice-action"));
@@ -2818,11 +2827,27 @@ describe("CollaborationPlatformApp real component flow", () => {
     ).toBeNull();
   });
 
-  it("lets read-only members view environment details and tells them to contact a manager", async () => {
+  it("does not show an unassigned environment notice to read-only members", async () => {
     const { api } = createApi({
       initialProjects: [{ ...project, access_role: "Viewer" }],
     });
     api.projects.listExecutionEnvironments = vi.fn(async () => []);
+    await render(<PlatformHarness api={api} />);
+
+    expect(
+      container.querySelector(
+        '[data-testid="issue-execution-environment-notice"]',
+      ),
+    ).toBeNull();
+  });
+
+  it("lets read-only members view offline environment details and contact a manager", async () => {
+    const { api } = createApi({
+      initialProjects: [{ ...project, access_role: "Viewer" }],
+    });
+    api.projects.listExecutionEnvironments = vi.fn(async () => [
+      { ...environment, status: "offline" as const },
+    ]);
     await render(<PlatformHarness api={api} />);
 
     expect(
