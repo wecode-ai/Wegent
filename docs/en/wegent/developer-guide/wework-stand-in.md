@@ -4,17 +4,17 @@ sidebar_position: 42
 
 # Wework Stand-in
 
-The AI Stand-in button beside New Issue opens quick project configuration. My Stand-ins in the sidebar provides a project-based list. The panel separates the automatic handling switch from Stand-in settings. Automatic handling is off by default with the current device selected. Settings remain editable and can be saved for manual delegation while automatic handling is off.
+The AI Stand-in button beside New Issue opens quick project configuration. My Stand-ins in the sidebar provides a project-based list. Automatic handling is off by default with the current device selected. Settings remain editable and can be saved for manual delegation while automatic handling is off.
 
-For an existing configuration without pending edits, the switch persists immediately. It is locked during persistence, and a failed request retains the confirmed state and displays an error. First activation or pending edits keep the switch off and change the primary action to Save and enable automatic handling. Cancel leaves it off. The ordinary Save settings action preserves the current automatic handling state. Turning automatic handling off stops new assignments while retaining settings and running tasks; it does not save the configuration draft.
+Automatically handle tasks assigned to me is a checkbox below the configuration fields. Edit it together with the Agent, device, workspace, and optional instructions. Checking or unchecking only changes the draft; Save persists the entire form together. After saving, only new assignments are handled. Turning automatic handling off lets running tasks finish. Saving locks the form against duplicate submissions and edits. A failed save retains all selections and instructions, displays the error, and allows another save. The list and entry outside the form show the saved automatic handling state.
 
-Cancel, outside clicks, and Escape discard unsaved edits without undoing a persisted switch. Switch updates preserve draft edits and refresh their version for subsequent saves. Executor metadata such as timestamps does not count as a configuration edit.
+Cancel, outside clicks, and Escape discard all unsaved edits, including the automatic handling selection. Copy from another project shows accessible project and configuration names, omitting the configuration name for defaults and never displaying internal numeric IDs. Selecting a source only fills the current form. Save applies it to the current project without changing the source configuration or automatically enabling handling.
 
 Settings belong to each Executor and live in its local SQLite store. For cloud projects, select an owned connected cloud device to read and edit that device's configuration. Device switches load the selected device's version. Settings on other devices remain independent. Configuring another device does not require contacting an offline old device or transferring ownership. An offline device's settings become editable after reconnection.
 
 Configure Agent → Device → Local project → Workspace → Model. Choose an existing project Agent to retain its instructions, skills, plugins, and MCP configuration, or use the general assistant. Fixed Agent models remain locked; otherwise the device's default model is selected. Only available local projects on the selected device are offered. Use the current workspace or create a Git worktree from a selected branch. Without an explicit local project, execution inherits the project environment.
 
-While the model catalog loads, keep the model selector mounted and disable saving settings. Once ready, save the default model with the configuration so reopening does not treat default selection as an unsaved edit. Enabling an existing configuration waits for environment and model validation, preventing loading state from being mistaken for pending edits. Disabling an enabled Stand-in does not wait for validation.
+While the model catalog loads, keep the model selector mounted and allow editing the automatic handling checkbox and saving. Loaded model selections are saved with the form; when no model is specified, the Executor resolves the device default. Personal stand-in settings do not depend on project roles or catalog readiness.
 
 Optional instructions reuse the ordinary composer without saving placeholder text. Goal mode is available in its plus menu. The model belongs to the configuration list outside the composer; Save and Cancel share a footer. Manual Issue creation can explicitly delegate to a Stand-in while automatic handling is disabled. Attachments finish uploading before assignment and execution start.
 
@@ -44,19 +44,19 @@ Focused tests cover durable versioned settings, independent tag rules, assignmen
 
 Use isolated Electron instances, projects, accounts, and Executor data. Cloud cases also start a real backend, database, and remote Executor. Each checkpoint establishes its own prerequisites and disables configurations before environment teardown. Actual results and failure evidence belong in the PR.
 
-| Case                   | Steps                                                           | Expected result                                                  |
-| ---------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Defaults and cancel    | Open settings, edit instructions, cancel                        | Disabled on the current device; edits discarded                  |
-| Independent settings   | Edit and save settings with automatic handling off              | Settings persist without enabling automatic handling             |
-| Immediate switch       | Enable a saved configuration, disable it, then cancel           | Switch persists immediately and cancellation does not undo it    |
-| Enable pending edits   | Edit settings, enable, then save and enable                     | Remains off until confirmation; activation uses the new settings |
-| Disable with a draft   | Edit an enabled configuration, disable, then continue editing   | Only automatic handling changes; draft and new version retained  |
-| Enable and reload      | Save, then reload                                               | Open eyes, sidebar mask, and selection bar persist               |
-| Automatic execution    | Assign new work after enabling; leave board                     | Ordinary Runtime task completes and remains linked               |
-| Exclusions and disable | Check historical, other-user, unassigned, and post-disable work | No execution; assignee unchanged                                 |
-| Version recovery       | Save a stale draft after an external update, reopen             | Conflict retains draft; reopen loads current version             |
-| Agent                  | Select a project Agent and assign work                          | Existing instructions and model reach native execution           |
-| Tag routing            | Configure review/docs rules and assign tagged work              | Each uses its own instructions; ambiguous work is skipped        |
-| Repeated polling       | Edit processed work and wait multiple polls                     | One linked task and model request per assignment                 |
-| Cloud device           | Select remote Executor, save, reopen                            | Configuration belongs to remote device; local remains disabled   |
-| Existing binding       | Enable matching rules on another device and wait multiple polls | Already-linked assignments are not recreated                     |
+| Case                   | Steps                                                           | Expected result                                                |
+| ---------------------- | --------------------------------------------------------------- | -------------------------------------------------------------- |
+| Defaults and cancel    | Open settings, edit instructions, cancel                        | Disabled on the current device; edits discarded                |
+| Independent settings   | Edit and save settings with automatic handling off              | Settings persist without enabling automatic handling           |
+| Draft selection        | Check or uncheck a saved configuration, then cancel             | Nothing persists; reopening shows the saved state              |
+| Enable pending edits   | Edit settings, check automatic handling, then save              | Execution stays off until Save, then uses the edited settings  |
+| Disable with a draft   | Edit an enabled configuration, uncheck, then save               | Disabled state and edited settings persist together            |
+| Enable and reload      | Save, then reload                                               | Open eyes, sidebar mask, and selection bar persist             |
+| Automatic execution    | Assign new work after enabling; leave board                     | Ordinary Runtime task completes and remains linked             |
+| Exclusions and disable | Check historical, other-user, unassigned, and post-disable work | No execution; assignee unchanged                               |
+| Version recovery       | Save a stale draft after an external update, reopen             | Conflict retains draft; reopen loads current version           |
+| Agent                  | Select a project Agent and assign work                          | Existing instructions and model reach native execution         |
+| Tag routing            | Configure review/docs rules and assign tagged work              | Each uses its own instructions; ambiguous work is skipped      |
+| Repeated polling       | Edit processed work and wait multiple polls                     | One linked task and model request per assignment               |
+| Cloud device           | Select remote Executor, save, reopen                            | Configuration belongs to remote device; local remains disabled |
+| Existing binding       | Enable matching rules on another device and wait multiple polls | Already-linked assignments are not recreated                   |
