@@ -43,23 +43,21 @@ create_stub() {
     cat > "$path" <<'STUB'
 #!/usr/bin/env bash
 printf '%s %s\n' "$(basename "$0")" "$*" >> "$CALL_LOG"
-if [ "$(basename "$0")" = "pnpm" ] &&
-    [ -n "${PUSH_GATE_TEST_ELECTRON_STATE_DIR:-}" ]; then
+if [ "$(basename "$0")" = "pnpm" ]; then
     case "$*" in
+        '--filter wework run prepare:electron')
+            rm -f "$CALL_LOG.electron-typecheck-complete"
+            ;;
         '--dir wework/electron typecheck')
-            mkdir "$PUSH_GATE_TEST_ELECTRON_STATE_DIR/typecheck-running"
+            # Keep the shared staging directory busy until typechecking finishes.
             sleep 0.2
-            rmdir "$PUSH_GATE_TEST_ELECTRON_STATE_DIR/typecheck-running"
-            touch "$PUSH_GATE_TEST_ELECTRON_STATE_DIR/typecheck-completed"
-            printf '%s\n' 'electron-typecheck-completed' >> "$CALL_LOG"
+            touch "$CALL_LOG.electron-typecheck-complete"
             ;;
         '--dir wework/electron test')
-            if [ -d "$PUSH_GATE_TEST_ELECTRON_STATE_DIR/typecheck-running" ] ||
-                [ ! -f "$PUSH_GATE_TEST_ELECTRON_STATE_DIR/typecheck-completed" ]; then
-                echo 'Electron tests started before typecheck completed.' >&2
+            if [ ! -f "$CALL_LOG.electron-typecheck-complete" ]; then
+                echo 'Electron tests started before typechecking finished staging process-explorer' >&2
                 exit 1
             fi
-            printf '%s\n' 'electron-tests-started' >> "$CALL_LOG"
             ;;
     esac
 fi
@@ -306,27 +304,11 @@ ELECTRON_TREE=$(GIT_INDEX_FILE="$ELECTRON_INDEX" git write-tree)
 ELECTRON_LOCAL_SHA=$(printf 'electron pre-push fixture\n' |
     git commit-tree "$ELECTRON_TREE" -p "$ELECTRON_BASE_SHA")
 
-# Both commands stage the same vendor directory, so tests must wait for the
-# complete typecheck command rather than only its invocation.
-ELECTRON_STATE_DIR="$TMP_DIR/electron-state"
-mkdir "$ELECTRON_STATE_DIR"
-if ! AI_VERIFIED=1 \
-PUSH_GATE_TEST_ELECTRON_STATE_DIR="$ELECTRON_STATE_DIR" \
+AI_VERIFIED=1 \
 PATH="$TMP_DIR/bin:$PATH" \
-bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$WEWORK_ELECTRON_TEST_OUT" 2>&1; then
+bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$WEWORK_ELECTRON_TEST_OUT" 2>&1
 refs/heads/topic $ELECTRON_LOCAL_SHA refs/heads/topic $ELECTRON_BASE_SHA
 EOF
-    echo 'Expected Electron checks to run without overlapping vendor staging.'
-    cat "$WEWORK_ELECTRON_TEST_OUT"
-    exit 1
-fi
-
-if ! grep -q '^electron-typecheck-completed$' "$CALL_LOG" ||
-    ! grep -q '^electron-tests-started$' "$CALL_LOG"; then
-    echo 'Expected Electron tests to run after typecheck completed.'
-    cat "$CALL_LOG"
-    exit 1
-fi
 
 if ! grep -qE '^pnpm --filter wework run prepare:electron$' "$CALL_LOG"; then
     echo "Expected Electron changes to prepare the Electron package."

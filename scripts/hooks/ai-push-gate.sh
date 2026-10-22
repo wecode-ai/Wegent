@@ -660,8 +660,8 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
             CI=true pnpm --filter wework run prepare:electron > "$TEMP_DIR/wework_electron_install.log" 2>&1
             ELECTRON_INSTALL_EXIT=$?
             if [ "$ELECTRON_INSTALL_EXIT" -eq 0 ]; then
-                # Both Electron commands replace the same staged vendor sources.
-                # Finish typecheck before unit tests stage that directory again.
+                # Both Electron package commands stage the same vendor directory.
+                # Finish typechecking before unit tests can replace those files.
                 pnpm --dir wework/electron typecheck > "$TEMP_DIR/wework_electron_tsc.log" 2>&1
                 ELECTRON_TSC_EXIT=$?
             else
