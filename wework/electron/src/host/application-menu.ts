@@ -103,6 +103,7 @@ const EN_LABELS = {
   paste: 'Paste',
   selectAll: 'Select all',
   view: 'View',
+  refresh: 'Refresh',
   fullscreen: 'Toggle full screen',
   increaseFontSize: 'Increase font size',
   decreaseFontSize: 'Decrease font size',
@@ -151,6 +152,7 @@ const ZH_LABELS: typeof EN_LABELS = {
   paste: '粘贴',
   selectAll: '全选',
   view: '查看',
+  refresh: '刷新',
   fullscreen: '切换全屏',
   increaseFontSize: '增大字号',
   decreaseFontSize: '减小字号',
@@ -379,6 +381,13 @@ export class ApplicationMenu {
         id: 'view',
         label: labels.view,
         submenu: [
+          {
+            id: 'view.refresh',
+            label: labels.refresh,
+            accelerator: 'CommandOrControl+R',
+            click: () => this.withWindow(window => window.webContents.reload()),
+          },
+          separator,
           {
             id: 'view.search',
             label: labels.search,
