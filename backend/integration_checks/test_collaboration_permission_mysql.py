@@ -269,6 +269,58 @@ def test_independent_project_creation_does_not_lock_absent_parent_grants(
         engine.dispose()
 
 
+@pytest.mark.parametrize("same_identity", [False, True])
+def test_concurrent_resource_grants_do_not_lock_absent_rows(
+    mysql_url: str, same_identity: bool
+) -> None:
+    engine = sa.create_engine(mysql_url, isolation_level="REPEATABLE READ")
+    ResourceMember.__table__.create(engine)
+    ready = Barrier(2, timeout=10)
+
+    def synchronize(_db, _cursor, statement, _params, _context, _many) -> None:
+        if statement.startswith("INSERT INTO resource_members"):
+            ready.wait()
+
+    def authorize(resource_id: int) -> int:
+        with Session(engine) as db:
+            # Authentication and permission checks can establish an older snapshot.
+            assert db.query(ResourceMember.id).count() == 0
+            grant = ensure_resource_grant(
+                db,
+                workspace_id=11,
+                resource_type="Team",
+                resource_id=resource_id,
+                added_by_user_id=1,
+                role=BaseRole.Developer,
+            )
+            grant_id = grant.id
+            db.commit()
+            return grant_id
+
+    sa.event.listen(engine, "before_cursor_execute", synchronize)
+    try:
+        identities = (101, 101 if same_identity else 102)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(authorize, identity) for identity in identities]
+            ids = [future.result(timeout=20) for future in futures]
+        assert len(set(ids)) == (1 if same_identity else 2)
+        with Session(engine) as db:
+            grants = db.query(ResourceMember).all()
+            assert len(grants) == len(set(identities))
+            assert {grant.resource_id for grant in grants} == set(identities)
+            assert all(
+                grant.role == "Developer"
+                and grant.status == "approved"
+                and grant.entity_type == "workspace"
+                and grant.entity_id == "11"
+                and grant.user_id == 0
+                for grant in grants
+            )
+    finally:
+        sa.event.remove(engine, "before_cursor_execute", synchronize)
+        engine.dispose()
+
+
 @pytest.mark.parametrize("interrupted_ddl", [False, True])
 def test_populated_v1_database_preserves_records_and_both_backend_writers(
     mysql_url, interrupted_ddl

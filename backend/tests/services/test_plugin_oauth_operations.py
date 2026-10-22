@@ -3,12 +3,17 @@
 import json
 import time
 from copy import deepcopy
+from unittest.mock import Mock
 
 import pytest
 from pydantic import SecretStr
+from sqlalchemy.orm import Session
 
 from app.schemas.plugin_account_auth import PluginNativeExecution, PluginOAuthFinish
-from app.services.plugin_account_connections import PluginAccountAuthError
+from app.services.plugin_account_connections import (
+    PluginAccountAuthError,
+    PluginAccountConnectionService,
+)
 from app.services.plugin_auth_execution import PluginAuthExecutionService
 from app.services.plugin_oauth_credentials import business_credential
 from app.services.plugin_oauth_operations import PluginOAuthOperations
@@ -20,6 +25,37 @@ service = fixtures.service
 enroll = fixtures.enroll
 grant = fixtures.grant
 migrations = fixtures.migrations
+
+
+@pytest.mark.parametrize("operation", ["begin", "finish"])
+def test_refresh_requires_coordination_before_reading_credentials(
+    operation, monkeypatch
+):
+    connections = PluginAccountConnectionService()
+    operations = PluginOAuthOperations(PluginAuthExecutionService(connections))
+    db = Mock(spec=Session)
+
+    def unavailable(*_args):
+        raise PluginAccountAuthError("plugin_auth_backend_unavailable", 503)
+
+    monkeypatch.setattr(connections, "_coordinate_owner", unavailable)
+    request = (
+        PluginNativeExecution(installed_plugin_id=1, connector_slug="mail")
+        if operation == "begin"
+        else PluginOAuthFinish(
+            connection_id="a" * 64,
+            operation_id="b" * 64,
+            succeeded=False,
+            attempted=False,
+        )
+    )
+
+    with pytest.raises(PluginAccountAuthError, match="plugin_auth_backend_unavailable"):
+        getattr(operations, operation)(
+            db, user_id=1, device_id="device", request=request
+        )
+
+    assert db.mock_calls == []
 
 
 def test_business_credential_excludes_provider_renewal_material():
