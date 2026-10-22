@@ -391,7 +391,7 @@ export async function createDesktopScenario({
     })
     await refresh(control, primary)
     await waitRuntime(blocked, '1.0.0')
-    await assertSurfaces(control, primary, true)
+    await assertSurfaces(control, primary, true, workbenchReadyTimeoutMs)
     await openPlugin(control, primary)
     await control.command('click', testId(`plugin-marketplace-row-${primary.pluginId}`))
     await control.command('waitFor', testId(`plugin-detail-actions-${primary.installedId}`))
@@ -399,7 +399,7 @@ export async function createDesktopScenario({
     await verifyPluginEnabledState(control, disabled, false, workbenchReadyTimeoutMs)
     const fresh = await install('recovery-fresh-after-move', device)
     await refresh(control, fresh)
-    await assertSurfaces(control, fresh, true)
+    await assertSurfaces(control, fresh, true, workbenchReadyTimeoutMs)
     const mixed = await manifest()
     for (const fixture of [primary, disabled, blocked, missing, fresh]) {
       assertCurrentRuntime(pluginEntry(mixed, fixture.installedId), {
@@ -444,7 +444,7 @@ export async function createDesktopScenario({
       undefined,
       'Restart revived an explicitly uninstalled plugin'
     )
-    await assertSurfaces(control, primary, false)
+    await assertSurfaces(control, primary, false, workbenchReadyTimeoutMs)
     await openPlugin(control, primary)
     await control.command(
       'clickWhenEnabled',

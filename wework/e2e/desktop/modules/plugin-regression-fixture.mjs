@@ -83,22 +83,29 @@ export async function inventory(control) {
   return JSON.parse(await control.command('getComposerPluginInventoryDiagnostics', 'body'))
 }
 
-export async function assertInventory(control, slug, present) {
+export async function assertInventory(control, slug, present, timeoutMs = 10_000) {
+  let lastState = null
   await until(
-    () => inventory(control),
+    async () => {
+      lastState = await inventory(control)
+      return lastState
+    },
     state =>
       state.sharedInventory.installedPlugins.some(item => item.pluginKey === slug) === present &&
       state.composerApps.some(item => item.pluginKey === slug) === present,
-    `Shared inventory and composer disagree about ${slug}: expected present=${present}`
+    `Shared inventory and composer disagree about ${slug}: expected present=${present}; ` +
+      `sharedInventory=${JSON.stringify(lastState?.sharedInventory?.installedPlugins ?? null)} ` +
+      `composerApps=${JSON.stringify(lastState?.composerApps ?? null)}`,
+    timeoutMs
   )
 }
 
-export async function assertSurfaces(control, fixture, present) {
+export async function assertSurfaces(control, fixture, present, timeoutMs = 10_000) {
   assert.ok(
     Number.isSafeInteger(fixture.installedId) && fixture.installedId > 0,
     'Fixture installedId must be a positive safe integer'
   )
-  await assertInventory(control, fixture.slug, present)
+  await assertInventory(control, fixture.slug, present, timeoutMs)
   await control.command('click', testId('plugins-manage-button'))
   await control.command(
     'waitFor',
