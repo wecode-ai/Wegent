@@ -117,7 +117,6 @@ import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import { useRuntimeTaskReminders } from './runtimeTaskReminders'
 import { CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME } from '@/features/model-settings/codexOfficialModels'
 import { WorkbenchContext, WorkbenchPaneContext } from './useWorkbench'
-import { projectTaskTrackingApi } from './projectTaskTracking'
 import {
   consumePluginTrial,
   dismissTrialGuide,
@@ -295,7 +294,6 @@ export function WorkbenchProvider({
     [canSyncRuntimeTaskLifecycle, sharedLifecycleStore]
   )
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot(sharedLifecycleStore)
-  const trackingTitleSignaturesRef = useRef(new Map<string, string>())
   const runtimeTaskSettleSyncGenerationRef = useRef(new Map<string, number>())
   const runtimeTaskSettleSyncGenerationCounterRef = useRef(0)
   const runtimeTaskSettleSyncActiveRef = useRef(true)
@@ -2160,29 +2158,6 @@ export function WorkbenchProvider({
         })
       })
   })
-  const syncRuntimeTaskTitle = useStableEvent((address: RuntimeTaskAddress, title: string) => {
-    const normalizedTitle = title.trim()
-    if (!normalizedTitle) return
-    const trackingApi = projectTaskTrackingApi(resolvedServices, address)
-    if (!trackingApi) return
-    const key = `${address.deviceId}:${address.taskId}`
-    if (trackingTitleSignaturesRef.current.get(key) === normalizedTitle) return
-    trackingTitleSignaturesRef.current.set(key, normalizedTitle)
-    void trackingApi
-      .updateTaskTrackingTitle(address, normalizedTitle)
-      .then(result => {
-        if (result === null) {
-          trackingTitleSignaturesRef.current.delete(key)
-        }
-      })
-      .catch(error => {
-        trackingTitleSignaturesRef.current.delete(key)
-        console.warn('[Wework] Failed to synchronize project task title', {
-          address,
-          error,
-        })
-      })
-  })
   const updateCanonicalRuntimeContextUsage = useStableEvent(
     (address: RuntimeTaskAddress, usage: RuntimeContextUsage) => {
       const currentAddress =
@@ -2235,7 +2210,6 @@ export function WorkbenchProvider({
               address,
               title: payload.title,
             })
-            syncRuntimeTaskTitle(address, payload.title)
           },
           onRuntimeGoalUpdated: (address, payload) => {
             const goal = payload.goal ?? null
@@ -2267,7 +2241,6 @@ export function WorkbenchProvider({
       syncRuntimeGoalSnapshot,
       syncRuntimeTaskSnapshot,
       syncRuntimeTaskUntilExecutorSettles,
-      syncRuntimeTaskTitle,
       syncRuntimeTaskLifecycle,
       updateCanonicalRuntimeContextUsage,
       updateLocalRuntimeTaskSnapshot,
