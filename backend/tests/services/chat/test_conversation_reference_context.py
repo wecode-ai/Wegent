@@ -130,8 +130,11 @@ async def test_conversation_reference_is_injected_as_untrusted_context(
     assert isinstance(result.final_message, list)
     reference_block, user_block = result.final_message
     assert reference_block["type"] == "input_text"
-    assert reference_block["text"].startswith("<referenced_conversations>")
+    assert reference_block["text"].startswith(
+        '<referenced_conversations focus="current">'
+    )
     assert reference_block["text"].endswith("</referenced_conversations>")
+    assert "describe the state this request continues from" in reference_block["text"]
     assert "explicitly referenced the following earlier conversations" in (
         reference_block["text"]
     )

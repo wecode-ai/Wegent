@@ -603,6 +603,7 @@ def _build_user_message_content(
             db,
             contexts=conversation_contexts,
             user_id=reference_user_id,
+            focus="history",
         )
         if reference_prompt:
             reference_blocks.append({"type": "text", "text": reference_prompt})

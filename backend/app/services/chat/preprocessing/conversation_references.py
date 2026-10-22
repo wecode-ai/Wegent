@@ -21,8 +21,10 @@ from app.stores.tasks import subtask_store, task_access_store, task_store
 from app.utils.prompt_utils import extract_display_prompt
 from shared.prompts.constants import (
     REFERENCED_CONVERSATIONS_CLOSE,
-    REFERENCED_CONVERSATIONS_OPEN,
+    REFERENCED_CONVERSATIONS_FOCUS_CURRENT,
+    REFERENCED_CONVERSATIONS_FOCUS_HISTORY,
     REFERENCED_CONVERSATIONS_PREAMBLE,
+    REFERENCED_CONVERSATIONS_TAG,
 )
 
 MAX_REFERENCE_MESSAGES = 100
@@ -103,8 +105,14 @@ def build_conversation_reference_context(
     task_id: int,
     user_id: int,
     max_chars: int = MAX_REFERENCE_CHARS,
+    focus: str = "current",
 ) -> str:
-    """Render one accessible task as explicit, untrusted model context."""
+    """Render one accessible task as explicit, untrusted model context.
+
+    ``focus`` marks whether the reference belongs to the message being sent
+    (``current``) or was replayed from earlier history, so the model can pick
+    the right state when a session and its reference disagree.
+    """
     task, title = resolve_conversation_reference(db, task_id=task_id, user_id=user_id)
     subtasks = subtask_store.list_by_task(
         db,
@@ -131,10 +139,17 @@ def build_conversation_reference_context(
     )
     # A random boundary prevents transcript text from closing the untrusted block.
     boundary = token_hex(8)
+    focus_note = (
+        REFERENCED_CONVERSATIONS_FOCUS_HISTORY
+        if focus == "history"
+        else REFERENCED_CONVERSATIONS_FOCUS_CURRENT
+    )
+    focus_attr = "history" if focus == "history" else "current"
     return "\n".join(
         [
-            REFERENCED_CONVERSATIONS_OPEN,
+            f'{REFERENCED_CONVERSATIONS_TAG} focus="{focus_attr}">',
             REFERENCED_CONVERSATIONS_PREAMBLE,
+            focus_note,
             (
                 f'<referenced_conversation id="{boundary}" task_id="{task.id}" '
                 f'title="{escape(title, quote=True)}">'
@@ -151,6 +166,7 @@ def build_conversation_references_prompt(
     *,
     contexts: Iterable[Any],
     user_id: int,
+    focus: str = "current",
 ) -> str:
     """Build all conversation reference blocks for a user message."""
     references: list[str] = []
@@ -180,6 +196,7 @@ def build_conversation_references_prompt(
                 task_id=task_id,
                 user_id=user_id,
                 max_chars=min(MAX_REFERENCE_CHARS, remaining_chars),
+                focus=focus,
             )
         except HTTPException:
             # A referenced task can be deleted or lose the reader's access

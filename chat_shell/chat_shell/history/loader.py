@@ -24,7 +24,7 @@ from typing import Any, Optional
 from chat_shell.core.config import settings
 from chat_shell.messages.utils import group_tool_call_messages as _group_messages
 from shared.prompts.constants import (
-    REFERENCED_CONVERSATIONS_OPEN,
+    REFERENCED_CONVERSATIONS_TAG,
     parse_prompt_blocks,
 )
 from shared.utils.attachment_block import (
@@ -43,7 +43,7 @@ _CONTEXT_BLOCK_PREFIXES = (
     "<knowledge_base>",
     "<selected_documents>",
     "<system-reminder>",
-    REFERENCED_CONVERSATIONS_OPEN,
+    REFERENCED_CONVERSATIONS_TAG,
 )
 
 
