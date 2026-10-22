@@ -40,6 +40,7 @@ export interface CollaborationPlatformState {
   executionEnvironments: CollaborationExecutionEnvironment[];
   resources: CollaborationPlatformResources;
   loading: boolean;
+  resourceLoadFailed: boolean;
   error: string | null;
 }
 
@@ -210,6 +211,7 @@ export function useCollaborationPlatformController({
     executionEnvironments: [],
     resources: emptyResources,
     loading: true,
+    resourceLoadFailed: false,
     error: null,
   });
   const loadRevisionRef = useRef(0);
@@ -218,21 +220,21 @@ export function useCollaborationPlatformController({
     workspaces: [] as CollaborationWorkspace[],
     projects: [] as CollaborationProject[],
   });
-  const navigationSourcesRef = useRef<SharedWorkspaceApi[]>([])
+  const navigationSourcesRef = useRef<SharedWorkspaceApi[]>([]);
   const refreshKeyRef = useRef(refreshKey);
 
   const load = useCallback(
     async (force = false) => {
       const revision = ++loadRevisionRef.current;
-      const sources = navigationApis?.length ? navigationApis : [api]
-      const previousSources = navigationSourcesRef.current
+      const sources = navigationApis?.length ? navigationApis : [api];
+      const previousSources = navigationSourcesRef.current;
       if (
         sources.length !== previousSources.length ||
         sources.some((source, index) => source !== previousSources[index])
       ) {
-        navigationSourcesRef.current = sources
-        navigationCacheReadyRef.current = false
-        navigationCacheRef.current = { workspaces: [], projects: [] }
+        navigationSourcesRef.current = sources;
+        navigationCacheReadyRef.current = false;
+        navigationCacheRef.current = { workspaces: [], projects: [] };
       }
       if (force) navigationCacheReadyRef.current = false;
       const rootView = location.rootView ?? "home";
@@ -254,6 +256,7 @@ export function useCollaborationPlatformController({
           collaborationGroups: [],
           executionEnvironments: [],
           loading: false,
+          resourceLoadFailed: false,
           error: null,
         }));
         return;
@@ -289,6 +292,7 @@ export function useCollaborationPlatformController({
         loading: workspaceId
           ? current.workspace?.id !== workspaceId
           : !navigationCacheReadyRef.current,
+        resourceLoadFailed: false,
         error: null,
       }));
       if (!workspaceId) {
@@ -351,7 +355,8 @@ export function useCollaborationPlatformController({
             executionEnvironments: [],
             resources: snapshot.resources,
             loading: false,
-            error: resourceLoadFailed ? loadFailedMessage : null,
+            resourceLoadFailed,
+            error: null,
           }));
         };
         const updateSnapshot = (
@@ -381,6 +386,9 @@ export function useCollaborationPlatformController({
           void api.resources
             .list()
             .then((resources) => {
+              resourceLoadFailed = Boolean(
+                resources.unavailable_sources?.length,
+              );
               updateSnapshot(0, { resources });
             })
             .catch(() => {
@@ -548,6 +556,7 @@ export function useCollaborationPlatformController({
             executionEnvironments: [],
             resources: emptyResources,
             loading: false,
+            resourceLoadFailed: false,
             error: null,
           }));
         }

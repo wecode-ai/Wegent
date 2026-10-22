@@ -487,6 +487,8 @@ mod tests {
     use axum::http::header::AUTHORIZATION;
     use base64::{engine::general_purpose::STANDARD, Engine as _};
 
+    static ENDPOINT_TEST_LOCK: Mutex<()> = Mutex::const_new(());
+
     #[test]
     fn authorization_requires_the_exact_instance_token() {
         let mut headers = HeaderMap::new();
@@ -568,6 +570,7 @@ mod tests {
 
     #[tokio::test]
     async fn persistent_endpoint_authenticates_and_reuses_one_mcp_session() {
+        let _guard = ENDPOINT_TEST_LOCK.lock().await;
         use futures_util::FutureExt;
 
         let endpoint = ensure_space_mcp_http_endpoint().await.unwrap();
@@ -632,30 +635,95 @@ mod tests {
             assert_eq!(reused.token, endpoint.token);
         }
 
-        let tools = client
-            .post(&endpoint.url)
-            .bearer_auth(&endpoint.token)
-            .header(MCP_SESSION_ID_HEADER, session_id)
+        let list_tools = |id| {
+            client
+                .post(&endpoint.url)
+                .bearer_auth(&endpoint.token)
+                .header(MCP_SESSION_ID_HEADER, &session_id)
+                .json(&json!({
+                    "jsonrpc": "2.0", "id": id, "method": "tools/list", "params": {}
+                }))
+                .send()
+        };
+        let (first, second) = tokio::join!(list_tools(3), list_tools(4));
+        for tools in [first.unwrap(), second.unwrap()] {
+            assert_eq!(tools.status(), StatusCode::OK);
+            let tools = tools.json::<Value>().await.unwrap();
+            assert!(tools["result"]["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|tool| tool["name"] == "read_item_attachment"));
+        }
+
+        // Stop the real server thread while retaining its managed entry. The next
+        // turn must detect completion and establish a usable new HTTP session.
+        {
+            let mut running = running_endpoint().lock().unwrap();
+            running
+                .as_mut()
+                .unwrap()
+                .shutdown_tx
+                .take()
+                .unwrap()
+                .send(())
+                .unwrap();
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let finished = running_endpoint()
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .server_task
+                .as_ref()
+                .unwrap()
+                .is_finished();
+            if finished {
+                break;
+            }
+            assert!(Instant::now() < deadline, "MCP server thread did not exit");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let rebuilt = ensure_space_mcp_http_endpoint().await.unwrap();
+        assert_eq!(rebuilt.token, endpoint.token);
+        let registered =
+            register_space_mcp_context(SpaceMcpRequestContext::new(None, None, None)).unwrap();
+        let initialized = client
+            .post(&rebuilt.url)
+            .bearer_auth(&rebuilt.token)
+            .header(CONTEXT_HANDLE_HEADER, registered.context_handle)
             .json(&json!({
-                "jsonrpc": "2.0",
-                "id": 3,
-                "method": "tools/list",
-                "params": {}
+                "jsonrpc": "2.0", "id": 4, "method": "initialize",
+                "params": {"protocolVersion": "2025-06-18"}
             }))
             .send()
             .await
             .unwrap();
-        assert_eq!(tools.status(), StatusCode::OK);
-        let tools = tools.json::<Value>().await.unwrap();
-        assert!(tools["result"]["tools"]
-            .as_array()
+        assert_eq!(initialized.status(), StatusCode::OK);
+        let rebuilt_session = initialized
+            .headers()
+            .get(MCP_SESSION_ID_HEADER)
             .unwrap()
-            .iter()
-            .any(|tool| tool["name"] == "read_item_attachment"));
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let tools = client
+            .post(&rebuilt.url)
+            .bearer_auth(&rebuilt.token)
+            .header(MCP_SESSION_ID_HEADER, rebuilt_session)
+            .json(&json!({"jsonrpc": "2.0", "id": 5, "method": "tools/list", "params": {}}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(tools.status(), StatusCode::OK);
+        assert!(tools.json::<Value>().await.unwrap()["result"]["tools"].is_array());
     }
 
     #[tokio::test]
     async fn accepted_context_grant_remains_valid_for_the_mcp_session() {
+        let _guard = ENDPOINT_TEST_LOCK.lock().await;
         let endpoint = ensure_space_mcp_http_endpoint().await.unwrap();
         let expires_at_unix = chrono::Local::now().timestamp() + 1;
         let grant = STANDARD.encode(
@@ -723,6 +791,7 @@ mod tests {
 
     #[tokio::test]
     async fn notifications_endpoint_exposes_only_send_notification() {
+        let _guard = ENDPOINT_TEST_LOCK.lock().await;
         let endpoint = ensure_space_mcp_http_endpoint().await.unwrap();
         let notifications_url = format!(
             "{}/notifications/mcp",

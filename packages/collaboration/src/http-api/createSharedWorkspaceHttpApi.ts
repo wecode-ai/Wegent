@@ -437,9 +437,12 @@ export function createSharedWorkspaceHttpApi(
         if (agent.team_id == null) {
           throw new Error("Cloud agent is missing its team id");
         }
+        const team = await transport.get<{ name: string }>(
+          `/teams/${encoded(agent.team_id)}`,
+        );
         const query = new URLSearchParams({
           force: "true",
-          confirm_name: agent.name,
+          confirm_name: team.name,
         });
         await transport.delete(
           `/teams/${encoded(agent.team_id)}?${query.toString()}`,

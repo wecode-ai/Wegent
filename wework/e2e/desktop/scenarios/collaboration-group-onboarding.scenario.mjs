@@ -405,6 +405,25 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         0,
         'The deleted Agent returned after reopening the catalog'
       )
+      const defaultRow = await waitForTestIdByText(
+        control,
+        scoped('[data-testid="collaboration-agents-page"]'),
+        'collaboration-agents-row-',
+        '当前设备智能体',
+        uiTimeoutMs
+      )
+      const defaultId = defaultRow.slice('collaboration-agents-row-'.length)
+      await control.command(
+        'click',
+        scoped(`[data-testid="collaboration-agents-settings-${defaultId}"]`)
+      )
+      await control.command('waitFor', editor)
+      assert.equal(
+        Number(await control.command('getElementCount', deleteButton)),
+        0,
+        'The default current-device Agent offered settings deletion'
+      )
+      await control.command('click', '[data-testid="cloud-project-chat-agent-cancel"]')
     },
 
     diagnostics() {

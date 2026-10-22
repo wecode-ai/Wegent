@@ -275,6 +275,8 @@ const platformMessages = {
     ownerHint: "决定空间内新建智能体和其他资源的默认归属。",
     workspaceSettingsHint: "管理空间基本信息、成员和协作资源。",
     loadFailed: "加载协作空间失败",
+    resourcesLoadFailed:
+      "部分资源加载失败，列表可能不完整。请重新打开列表重试。",
     navigationLoadFailed: "部分空间或项目加载失败，列表可能不完整。",
     retryNavigation: "重试",
     searchSpaces: "搜索空间",
@@ -502,6 +504,8 @@ const platformMessages = {
     workspaceSettingsHint:
       "Manage the workspace profile, members, and collaboration resources.",
     loadFailed: "Failed to load collaboration spaces",
+    resourcesLoadFailed:
+      "Some resources could not be loaded. Reopen the list to retry.",
     navigationLoadFailed:
       "Some spaces or projects could not load. The list may be incomplete.",
     retryNavigation: "Retry",
@@ -4397,6 +4401,15 @@ export function CollaborationPlatformApp({
           >
             {createCollaborationTranslator(locale)("standIn.retry")}
           </button>
+        </div>
+      )}
+      {state.resourceLoadFailed && (
+        <div
+          className="collaboration-alert"
+          role="alert"
+          data-testid="collaboration-resource-load-error"
+        >
+          {messages.resourcesLoadFailed}
         </div>
       )}
       {content}

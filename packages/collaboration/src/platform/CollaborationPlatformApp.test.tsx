@@ -1220,7 +1220,10 @@ describe("CollaborationPlatformApp real component flow", () => {
           refresh.reject(new Error("Resource refresh failed")),
         );
       }
-      expect(container.textContent).toContain("加载协作空间失败");
+      expect(container.textContent).toContain("部分资源加载失败");
+      expect(
+        container.querySelector('[data-testid="collaboration-agents-page"]'),
+      ).not.toBeNull();
       expect(
         container.querySelector('[data-testid="agent-settings"]'),
       ).toBeNull();
