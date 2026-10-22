@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { test } from 'vitest'
+import { test, vi } from 'vitest'
 import { createProjectSpacePickerRegression } from '../e2e/desktop/modules/project-space-picker.mjs'
 
 function fixtureBackend({ failCreateAt } = {}) {
@@ -43,6 +43,50 @@ function fixtureBackend({ failCreateAt } = {}) {
   }
   return { request, resources, failures, calls, preparationFailure }
 }
+
+test('waits for the addressed runtime task snapshot after the picker header appears', async () => {
+  vi.useFakeTimers()
+  try {
+    const address = { deviceId: 'selected-device', taskId: 'selected-task' }
+    const snapshots = [
+      null,
+      { ...address, taskId: 'previous-task' },
+      { ...address, deviceId: 'another-device' },
+      address,
+    ]
+    const pickerOpened = new Error('The addressed task is ready for the picker')
+    let snapshotReads = 0
+    let navigations = 0
+    const control = {
+      async command(action, selector) {
+        if (action === 'getWorkbenchDebugSnapshot') {
+          return JSON.stringify({
+            workbench: { currentRuntimeTask: snapshots[snapshotReads++] },
+          })
+        }
+        if (action === 'navigate') navigations += 1
+        if (action === 'click' && selector === '[data-testid="work-item-change-board"]') {
+          assert.equal(snapshotReads, snapshots.length)
+          throw pickerOpened
+        }
+      },
+    }
+    const regression = createProjectSpacePickerRegression({
+      uiTimeoutMs: 10_000,
+      workbenchReadyTimeoutMs: 180_000,
+    })
+
+    const verification = regression.verify(control, address).catch(error => error)
+    await vi.advanceTimersByTimeAsync(300)
+
+    assert.equal(await verification, pickerOpened)
+    assert.equal(navigations, 1, 'Waiting for the snapshot must not navigate again')
+    assert.equal(snapshotReads, snapshots.length)
+    assert.equal(vi.getTimerCount(), 0)
+  } finally {
+    vi.useRealTimers()
+  }
+})
 
 test('cleans every recorded fixture after a partial preparation failure', async () => {
   const backend = fixtureBackend({ failCreateAt: 5 })
