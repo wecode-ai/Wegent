@@ -46,12 +46,12 @@ impl PluginSyncRequest {
             .and_then(Value::as_str)
             .unwrap_or("merge");
         let plugins_only = scope == Some("plugins") || scope == Some("plugin_delta");
-        let valid_scope = match (complete, scope, mode) {
-            (false, Some("plugin_delta"), "merge") => true,
-            (true, Some("plugins"), "merge" | "replace") => true,
-            (true, None | Some("all"), "replace") => true,
-            _ => false,
-        };
+        let valid_scope = matches!(
+            (complete, scope, mode),
+            (false, Some("plugin_delta"), "merge")
+                | (true, Some("plugins"), "merge" | "replace")
+                | (true, None | Some("all"), "replace")
+        );
         if !valid_scope
             || (plugins_only && (payload.get("skills").is_some() || payload.get("mcps").is_some()))
         {

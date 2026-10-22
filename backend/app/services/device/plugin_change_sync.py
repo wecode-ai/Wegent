@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.orm import Session
 
-from app.db.session import get_db_session
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.device import DeviceCapabilitySyncResponse, DeviceCapabilitySyncResult
@@ -405,6 +404,7 @@ async def _sync_and_record(
     from app.services.plugin_device_installation_service import (
         plugin_device_installation_service,
     )
+    from app.services.plugin_write_operations import run_plugin_operation
 
     try:
         result = await service.sync_plugin_change(
@@ -412,10 +412,11 @@ async def _sync_and_record(
             device_id=device_id,
             installed_plugin_ids=installed_plugin_ids,
         )
-        with get_db_session() as db:
-            plugin_device_installation_service.record_device_sync_result(
-                db, user_id=user_id, result=result
-            )
+        await run_plugin_operation(
+            plugin_device_installation_service.record_device_sync_result,
+            user_id=user_id,
+            result=result,
+        )
     except Exception:
         logger.exception(
             "Plugin change remains pending: user_id=%s device_id=%s", user_id, device_id

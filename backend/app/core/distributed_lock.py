@@ -27,6 +27,10 @@ Usage:
             pass
         finally:
             distributed_lock.release("my_task")
+
+Correctness-sensitive writers use ``owned_lock`` with a complete Redis key.
+It returns a redis-py Lock with token-checked release/renewal and propagates
+Redis errors. Its lifetime must include the database commit or rollback.
 """
 
 import asyncio
@@ -37,6 +41,7 @@ from typing import AsyncGenerator, Generator, Optional
 
 import redis
 from redis.asyncio import Redis as AsyncRedis
+from redis.lock import Lock
 
 from app.core.config import settings
 
@@ -44,6 +49,10 @@ logger = logging.getLogger(__name__)
 
 # Lock key prefix
 LOCK_KEY_PREFIX = "wegent:lock:"
+
+
+class DistributedLockUnavailableError(RuntimeError):
+    """Redis is unavailable for an operation requiring mutual exclusion."""
 
 
 class DistributedLock:
@@ -81,6 +90,32 @@ class DistributedLock:
                 logger.warning(f"[DistributedLock] Failed to connect to Redis: {e}")
                 self._redis_client = None
         return self._redis_client
+
+    def owned_lock(
+        self,
+        lock_key: str,
+        *,
+        expire_seconds: float = 60,
+        blocking_timeout: float = 0,
+        redis_client: Optional[redis.Redis] = None,
+    ) -> Lock:
+        """Build a token-owned lock; Redis failures must reach the caller.
+
+        ``lock_key`` is the complete key, allowing different runtimes to share
+        one protocol. An explicit client preserves the caller's Redis database
+        and command timeouts. The caller acquires the returned lock and keeps
+        it until its transaction ends. Redis-py's Lock checks its owner token
+        atomically when renewing or releasing it, including across threads.
+        """
+        client = redis_client if redis_client is not None else self.redis_client
+        if client is None:
+            raise DistributedLockUnavailableError("Redis client is unavailable")
+        return client.lock(
+            lock_key,
+            timeout=expire_seconds,
+            blocking_timeout=blocking_timeout,
+            thread_local=False,
+        )
 
     def acquire(self, lock_name: str, expire_seconds: int = 60) -> bool:
         """

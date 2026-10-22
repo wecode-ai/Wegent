@@ -11,11 +11,13 @@ from contextlib import AbstractContextManager
 from copy import deepcopy
 from typing import Any
 
-from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
-from app.models.user import User
+from app.services.plugin_write_coordination import (
+    acquire_plugin_write_lock,
+    configure_plugin_session,
+)
 from shared.telemetry.decorators import trace_sync
 
 PLUGIN_SYNC_VERSION = 2
@@ -103,19 +105,9 @@ def register_plugin_snapshot_intent(
 
 
 def lock_plugin_sync_state(db: Session, user_id: int) -> Kind:
-    """Lock owner before protocol and install rows, including the first snapshot."""
-    # SQLite has no row locks. A no-op write takes its transaction's write lock
-    # without changing timestamps, and also works inside a request savepoint.
-    if db.get_bind().dialect.name == "sqlite":
-        db.execute(
-            update(User)
-            .where(User.id == user_id)
-            .values(updated_at=User.updated_at)
-            .execution_options(synchronize_session=False)
-        )
-    owner = db.query(User.id).filter(User.id == user_id).with_for_update().first()
-    if owner is None:
-        raise ValueError("Plugin sync owner not found")
+    """Serialize protocol writes with the account lease and revision CAS."""
+    configure_plugin_session(db)
+    acquire_plugin_write_lock(db, user_id)
     pending = [
         row
         for row in set(db.new) | set(db.dirty)
@@ -175,7 +167,6 @@ def _sync_state(db: Session, user_id: int) -> Kind:
             Kind.name == PLUGIN_SYNC_STATE_NAME,
             Kind.is_active.is_(True),
         )
-        .with_for_update()
         .populate_existing()
         .one_or_none()
     )

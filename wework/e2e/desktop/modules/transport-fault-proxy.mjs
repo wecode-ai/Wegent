@@ -11,8 +11,10 @@ export class TransportFaultProxy {
     this.sockets = new Set()
     this.upstreams = new Set()
     this.websockets = new Set()
+    this.deviceSockets = new Set()
     this.rule = () => null
     this.paused = false
+    this.acknowledgementsPaused = false
     this.server = createServer((request, response) => this.forward(request, response))
     this.server.on('connection', socket => this.track(socket))
     this.server.on('upgrade', (request, socket, head) => this.upgrade(request, socket, head))
@@ -94,11 +96,15 @@ export class TransportFaultProxy {
     upstream.once('upgrade', (response, socket, upstreamHead) => {
       this.track(socket)
       this.websockets.add(socket)
+      this.deviceSockets.add(downstream)
       socket.once('close', () => {
         this.websockets.delete(socket)
         downstream.destroy()
       })
-      downstream.once('close', () => socket.destroy())
+      downstream.once('close', () => {
+        this.deviceSockets.delete(downstream)
+        socket.destroy()
+      })
       const headers = response.rawHeaders.reduce((lines, value, index, all) => {
         if (index % 2 === 0) lines.push(`${value}: ${all[index + 1]}`)
         return lines
@@ -111,6 +117,7 @@ export class TransportFaultProxy {
       downstream.pipe(socket)
       socket.pipe(downstream)
       if (this.paused) socket.pause()
+      if (this.acknowledgementsPaused) downstream.pause()
     })
     upstream.end()
   }
@@ -118,6 +125,14 @@ export class TransportFaultProxy {
   pauseDeviceDelivery(paused) {
     this.paused = paused
     for (const socket of this.websockets) {
+      if (paused) socket.pause()
+      else socket.resume()
+    }
+  }
+
+  pauseDeviceAcknowledgements(paused) {
+    this.acknowledgementsPaused = paused
+    for (const socket of this.deviceSockets) {
       if (paused) socket.pause()
       else socket.resume()
     }

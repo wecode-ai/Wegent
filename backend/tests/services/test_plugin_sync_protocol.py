@@ -24,6 +24,7 @@ from app.services.device.plugin_sync_protocol import (
     register_plugin_snapshot_intent,
     supports_plugin_sync_v2,
 )
+from app.services.plugin_write_errors import PluginWriteError
 
 
 @pytest.fixture
@@ -160,6 +161,73 @@ def test_failed_snapshot_rolls_back_sequence_and_releases_lock(snapshot_sessions
         snapshot_sessions, user_id=1, load_payload=_load_empty, complete=False
     )
     assert recovered["plugin_sync"]["generation"] == 1
+
+
+@pytest.mark.parametrize("failure", ["lease_lost", "revision_conflict"])
+def test_failed_coordination_rolls_back_generation_and_watermark(
+    snapshot_sessions, plugin_write_backend, failure
+):
+    register_plugin_snapshot_intent(
+        snapshot_sessions,
+        user_id=1,
+        device_id="device",
+        payload=_intent(7, [123]),
+    )
+
+    def invalidate_coordination(db):
+        state = db.query(Kind).filter_by(kind="PluginSyncState", user_id=1).one()
+        advance_plugin_snapshot_watermark(
+            state,
+            "device",
+            generation=8,
+            complete=False,
+            installed_plugin_ids=[456],
+        )
+        if failure == "lease_lost":
+            plugin_write_backend.values.pop("wegent:plugin-write:1")
+        else:
+            policy = (
+                db.query(Kind)
+                .filter_by(
+                    user_id=1,
+                    kind="ConnectorAuthPolicy",
+                    namespace="plugin-auth",
+                    name="account",
+                )
+                .one()
+            )
+            document = deepcopy(policy.json)
+            document["spec"]["revision"] += 1
+            policy.json = document
+            db.flush()
+        return _load_empty(db)
+
+    expected_error = (
+        "plugin_write_lease_lost"
+        if failure == "lease_lost"
+        else "plugin_write_conflict"
+    )
+    with pytest.raises(PluginWriteError, match=expected_error):
+        load_versioned_plugin_payload(
+            snapshot_sessions,
+            user_id=1,
+            load_payload=invalidate_coordination,
+            complete=False,
+        )
+
+    assert not plugin_write_backend.values
+    with snapshot_sessions() as db:
+        state = db.query(Kind).filter_by(kind="PluginSyncState", user_id=1).one()
+        assert state.json["spec"]["generation"] == 7
+        assert plugin_snapshot_watermark(state, "device", 123) == 7
+        assert plugin_snapshot_watermark(state, "device", 456) == 0
+        policy = db.query(Kind).filter_by(kind="ConnectorAuthPolicy", user_id=1).one()
+        assert policy.json["spec"]["revision"] == 1
+
+    recovered = load_versioned_plugin_payload(
+        snapshot_sessions, user_id=1, load_payload=_load_empty, complete=False
+    )
+    assert recovered["plugin_sync"]["generation"] == 8
 
 
 def test_generation_state_is_scoped_by_owner_namespace_and_name(snapshot_sessions):

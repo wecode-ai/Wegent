@@ -21,6 +21,8 @@ from app.services.device.plugin_change_sync import (
     validate_ack,
 )
 
+pytestmark = pytest.mark.usefixtures("plugin_write_sessions")
+
 
 def _payload(generation=7, *, removed=False, complete=False):
     plugin = {
@@ -378,7 +380,9 @@ async def test_legacy_device_change_retains_existing_full_sync_protocol():
 
 
 @pytest.mark.asyncio
-async def test_new_current_device_does_not_wait_for_old_background_device(monkeypatch):
+async def test_new_current_device_does_not_wait_for_old_background_device(
+    test_db, monkeypatch
+):
     from app.services.device import plugin_change_sync as module
 
     old_started = asyncio.Event()
@@ -393,7 +397,7 @@ async def test_new_current_device_does_not_wait_for_old_background_device(monkey
     service = DeviceCapabilitySyncService()
     service.supports_plugin_delta = AsyncMock(return_value=True)
     service.sync_plugin_change = AsyncMock(side_effect=sync_change)
-    request_db, record_db = Mock(), Mock()
+    request_db = Mock()
     monkeypatch.setattr(
         "app.services.device_service.device_service.get_online_devices",
         AsyncMock(return_value=[{"device_id": "current"}, {"device_id": "legacy"}]),
@@ -402,7 +406,6 @@ async def test_new_current_device_does_not_wait_for_old_background_device(monkey
         "app.services.plugin_device_identity.plugin_device_id",
         lambda _db, _user, device: device,
     )
-    monkeypatch.setattr(module, "get_db_session", lambda: nullcontext(record_db))
     record = Mock()
     monkeypatch.setattr(
         "app.services.plugin_device_installation_service.plugin_device_installation_service.record_device_sync_result",
@@ -430,6 +433,8 @@ async def test_new_current_device_does_not_wait_for_old_background_device(monkey
         await asyncio.gather(*pending)
     record.assert_called_once()
     assert record.call_args.kwargs["result"].device_id == "legacy"
+    assert record.call_args.kwargs["db"] is not test_db
+    assert record.call_args.kwargs["db"] is not request_db
 
 
 @pytest.mark.parametrize("select_plugin", [False, True])
@@ -583,7 +588,7 @@ async def test_mixed_merge_keeps_plugin_delta_and_independent_capabilities_separ
 async def test_legacy_current_device_still_retries_when_other_device_uses_v2(
     test_db, test_user, monkeypatch
 ):
-    from app.services.device import plugin_change_result as module
+    from app.services import plugin_device_sync as module
 
     installed = Kind(
         user_id=test_user.id,
@@ -615,24 +620,28 @@ async def test_legacy_current_device_still_retries_when_other_device_uses_v2(
         module.plugin_device_installation_service, "record_plugin_sync_response", record
     )
 
-    result = await module._ensure_installed_plugin_on_device(
+    user_id = test_user.id
+    installed_id = installed.id
+    result = await module.ensure_installed_plugin_on_device(
         test_db,
-        user_id=test_user.id,
+        user_id=user_id,
         device_id="legacy-current",
-        installed_id=installed.id,
+        installed_id=installed_id,
         previous=previous,
     )
 
     assert result is recovered
     sync.assert_awaited_once_with(
         test_db,
-        user_id=test_user.id,
+        user_id=user_id,
         device_id="legacy-current",
-        installed_plugin_id=installed.id,
+        installed_plugin_id=installed_id,
     )
-    record.assert_called_once_with(
-        test_db,
-        user_id=test_user.id,
-        installed_kind_id=installed.id,
-        response=recovered,
-    )
+    record.assert_called_once()
+    recorded = dict(record.call_args.kwargs)
+    assert recorded.pop("db") is not test_db
+    assert recorded == {
+        "user_id": user_id,
+        "installed_kind_id": installed_id,
+        "response": recovered,
+    }

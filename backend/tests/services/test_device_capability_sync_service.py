@@ -236,6 +236,72 @@ async def test_build_desired_capabilities_keeps_disabled_plugins_installed(
     assert payload["mode"] == "replace"
 
 
+def test_deferred_plugins_merge_skills_and_mcps_without_resolving_plugins(
+    test_db, test_user, monkeypatch
+):
+    skill = _create_skill(test_db, test_user.id)
+    installed_skill = _create_installed_skill(test_db, test_user.id, skill)
+    installed_mcp = _create_installed_mcp(test_db, test_user.id)
+    service = DeviceCapabilitySyncService()
+    load_plugins = Mock(side_effect=AssertionError("plugin preparation failed"))
+    monkeypatch.setattr(service, "_load_installed_plugins", load_plugins)
+
+    payload = service.build_desired_capabilities(
+        test_db, user_id=test_user.id, include_plugins=False
+    )
+
+    assert payload["mode"] == "merge"
+    assert "plugins" not in payload
+    assert [item["installed_skill_id"] for item in payload["skills"]] == [
+        installed_skill.id
+    ]
+    assert [item["installed_mcp_id"] for item in payload["mcps"]] == [installed_mcp.id]
+    load_plugins.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_deferred_plugin_sync_reloads_skills_and_mcps_during_dispatch(
+    test_db, test_user, monkeypatch
+):
+    skill = _create_skill(test_db, test_user.id)
+    _create_installed_skill(test_db, test_user.id, skill)
+    _create_installed_mcp(test_db, test_user.id)
+    service = DeviceCapabilitySyncService(session_factory=lambda: nullcontext(test_db))
+    supports_delta = AsyncMock(return_value=True)
+    monkeypatch.setattr(service, "supports_plugin_delta", supports_delta)
+    load_plugins = Mock(side_effect=AssertionError("must not resolve plugins"))
+    monkeypatch.setattr(service, "_load_installed_plugins", load_plugins)
+    payloads = []
+
+    async def dispatch(**kwargs):
+        payloads.append(kwargs["payload"])
+        if len(payloads) == 1:
+            new_skill = _create_skill(test_db, test_user.id, name="browser")
+            _create_installed_skill(
+                test_db, test_user.id, new_skill, name="builtin-browser"
+            )
+        return DeviceCapabilitySyncResult(
+            device_id="device-1", success=True, acknowledged=True
+        )
+
+    monkeypatch.setattr(service, "sync_device_payload", dispatch)
+
+    result = await service.sync_current_device_capabilities(
+        user_id=test_user.id, device_id="device-1", include_plugins=False
+    )
+
+    assert result.success is True
+    assert len(payloads) == 2
+    assert [len(payload["skills"]) for payload in payloads] == [1, 2]
+    assert all(payload["mode"] == "merge" for payload in payloads)
+    assert all("plugins" not in payload for payload in payloads)
+    assert all("plugin_sync" not in payload for payload in payloads)
+    assert all("removed_plugins" not in payload for payload in payloads)
+    assert all(len(payload["mcps"]) == 1 for payload in payloads)
+    load_plugins.assert_not_called()
+    supports_delta.assert_not_awaited()
+
+
 @pytest.mark.anyio
 async def test_sync_user_global_capabilities_replaces_all_online_devices(
     test_db, test_user, monkeypatch

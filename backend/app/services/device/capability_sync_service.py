@@ -99,21 +99,36 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
         user_id: int,
         mode: str = "replace",
         device_id: str | None = None,
+        include_plugins: bool = True,
     ) -> dict[str, Any]:
-        """Build the full desired capability set from user install records."""
+        """Build desired state, merging Skills/MCP only when plugins are deferred."""
         self._validate_mode(mode)
         skills = self._load_enabled_installed_skills(db, user_id=user_id)
-        plugins = self._load_installed_plugins(db, user_id=user_id, device_id=device_id)
+        plugins = (
+            self._load_installed_plugins(db, user_id=user_id, device_id=device_id)
+            if include_plugins
+            else []
+        )
         mcps = self._load_enabled_installed_mcps(db, user_id=user_id)
+        # Replace treats an absent plugins array as empty on existing clients.
+        # Merge preserves local plugins until their preparation can succeed.
+        effective_mode = mode if include_plugins else "merge"
         logger.info(
             "Built desired capabilities: user_id=%s mode=%s skill_names=%s plugin_names=%s mcp_names=%s",
             user_id,
-            mode,
+            effective_mode,
             [item.get("name") for item in skills],
             [item.get("name") for item in plugins],
             [item.get("name") for item in mcps],
         )
-        return {"mode": mode, "skills": skills, "plugins": plugins, "mcps": mcps}
+        payload: dict[str, Any] = {
+            "mode": effective_mode,
+            "skills": skills,
+            "mcps": mcps,
+        }
+        if include_plugins:
+            payload["plugins"] = plugins
+        return payload
 
     def build_desired_plugins(
         self, db: Session, *, user_id: int, device_id: str
@@ -219,14 +234,21 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
         device_id: str,
         mode: str = "replace",
         timeout_seconds: int = SYNC_TIMEOUT_SECONDS,
+        include_plugins: bool = True,
     ) -> DeviceCapabilitySyncResult:
-        """Sync a fresh full snapshot and correct changes made during the round trip."""
+        """Sync a fresh snapshot and correct changes made during the round trip."""
 
-        versioned = await self.supports_plugin_delta(user_id, device_id)
+        versioned = include_plugins and await self.supports_plugin_delta(
+            user_id, device_id
+        )
 
         def build(snapshot_db: Session) -> dict[str, Any]:
             return self.build_desired_capabilities(
-                snapshot_db, user_id=user_id, mode=mode, device_id=device_id
+                snapshot_db,
+                user_id=user_id,
+                mode=mode,
+                device_id=device_id,
+                include_plugins=include_plugins,
             )
 
         def load_payload() -> dict[str, Any]:

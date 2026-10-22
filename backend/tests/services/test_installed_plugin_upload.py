@@ -18,7 +18,10 @@ from app.api.endpoints.installed_plugins import (
 from app.models.kind import Kind
 from app.models.skill_binary import SkillBinary
 from app.schemas.device import DeviceCapabilitySyncResponse, DeviceCapabilitySyncResult
-from app.schemas.installed_plugin import BuiltinPluginInstallRequest
+from app.schemas.installed_plugin import (
+    BuiltinPluginInstallRequest,
+    InstalledPluginUpdateRequest,
+)
 from app.services.builtin_plugin_registry import (
     BUILTIN_MINI_PROGRAM_PLUGIN_NAME,
     BUILTIN_PLUGIN_NAMES,
@@ -32,6 +35,8 @@ from app.services.plugin_package_parser import (
     MAX_PLUGIN_PACKAGE_SIZE_BYTES,
     plugin_package_parser,
 )
+
+pytestmark = pytest.mark.usefixtures("plugin_write_sessions")
 
 
 class ChunkedUpload:
@@ -138,6 +143,50 @@ def test_upload_plugin_accepts_codex_plugin_manifest(test_db, test_user):
     assert installed.spec.displayName == "Superpowers"
     assert installed.spec.interface is not None
     assert installed.spec.interface.shortDescription == "Codex test plugin"
+
+
+def test_install_update_uninstall_and_reinstall_advance_business_revision(
+    test_db, test_user
+):
+    service = InstalledPluginService()
+    package_bytes = _create_plugin_zip()
+    installed = service.upload_plugin(
+        db=test_db,
+        user_id=test_user.id,
+        package_bytes=package_bytes,
+        filename="superpowers.zip",
+    )
+    installed_id = int(installed.metadata["labels"]["id"])
+    row = test_db.get(Kind, installed_id)
+    assert row.json["spec"]["revision"] == 1
+
+    service.update_installed_plugin(
+        db=test_db,
+        user_id=test_user.id,
+        installed_id=installed_id,
+        request=InstalledPluginUpdateRequest(enabled=False),
+    )
+    assert row.json["spec"]["revision"] == 2
+    service.uninstall_installed_plugin(
+        db=test_db, user_id=test_user.id, installed_id=installed_id
+    )
+    assert row.json["spec"]["revision"] == 3
+    assert row.is_active is False
+
+    reinstalled = service.upload_plugin(
+        db=test_db,
+        user_id=test_user.id,
+        package_bytes=package_bytes,
+        filename="superpowers.zip",
+    )
+
+    assert int(reinstalled.metadata["labels"]["id"]) == installed_id
+    assert row.json["spec"]["revision"] == 4
+    assert row.is_active is True
+    assert (
+        test_db.query(SkillBinary).filter(SkillBinary.kind_id == installed_id).count()
+        == 1
+    )
 
 
 def test_upload_plugin_accepts_claude_plugin_manifest(test_db, test_user):

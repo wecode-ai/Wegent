@@ -174,7 +174,7 @@ removing coverage or rerunning failures.
 Long scenarios are split into independent checkpoints as well as balanced shards:
 
 - `plugin-account-auth` expands into password sync, exclusive credential transfer, OAuth, DWS accounts, conversation QR, and GitHub checkpoints.
-- `plugin-uninstall-resilience` expands into lost response, unknown result, restart recovery, and reinstall race checkpoints.
+- `plugin-uninstall-resilience` expands into write coordination, lost response, unknown result, restart recovery, and reinstall race checkpoints. `plugin-write-coordination` independently checks API responsiveness during contention, post-commit ACK conflicts, and later sync recovery. Removal recovery checkpoints create another active installation so catalog refresh is tested alongside pending cleanup.
 - `harness-apps` expands into development and installation/runtime lifecycle checkpoints.
 - `streaming-text` expands into content, tool details, timers, scrolling, message order, and subagent checkpoints.
 

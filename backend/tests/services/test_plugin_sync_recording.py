@@ -20,6 +20,8 @@ from app.services.plugin_device_installation_service import (
     PluginDeviceInstallationService,
 )
 
+pytestmark = pytest.mark.usefixtures("plugin_write_sessions")
+
 
 def _installed(db, user_id, name, *, active=True, release=17):
     installed = Kind(

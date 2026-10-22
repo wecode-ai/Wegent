@@ -30,8 +30,8 @@ Devices on the same account negotiate independently. Installation initiated from
 
 ## Ordering and acknowledgements
 
-- Backend stores account snapshot sequences and device watermarks in existing `Kind` resources. A short user-row lock serializes fresh snapshot reads. It commits and releases database connections before network calls.
-- Sent intent watermarks fence obsolete acknowledgements. Recording checks generation and the dispatched version, checksum, enablement and component state against current desired state. Delta acknowledgements affect only requested plugins.
+- Backend stores account snapshot sequences and device watermarks in existing `Kind` resources. Snapshot and acknowledgement writes reuse the account Redis lease and business-revision CAS from the main write coordinator, with fresh committed reads. It commits and releases leases and database connections before network calls.
+- Sent intent watermarks fence obsolete acknowledgements. Recording reacquires the lease and checks generation and the dispatched version, checksum, enablement and component state against current desired state. Lost leases or business-revision conflicts reject writeback. Delta acknowledgements affect only requested plugins.
 - Executor persists accepted intent, complete-snapshot watermarks, plugin generations and removal tombstones. Independent plugins may arrive out of order. Delayed snapshots cannot delete newer installations, failed operations remain retryable, and delayed installs cannot revive removed plugins.
 - Identical requests with the same generation share in-flight results. Different generations recheck ordering and local health, including installation–removal–reinstallation sequences.
 - Persistent ordering state is scoped to the active authentication binding. Previous handlers in the process cannot take control back after an account switch.

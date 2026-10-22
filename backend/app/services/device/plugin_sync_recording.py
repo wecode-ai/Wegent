@@ -58,8 +58,8 @@ def record_versioned_result(
             if row.installed_kind_id not in expected
         )
     ids = sorted(set(expected) | removed_ids)
-    # A locking read refreshes ORM identities and serializes against install/remove
-    # transactions. No network work occurs while these locks are held.
+    # The account write lease and revision CAS serialize this refresh with
+    # install/remove transactions. No network work occurs inside the lease.
     installs = (
         db.query(Kind)
         .filter(
@@ -70,7 +70,6 @@ def record_versioned_result(
         )
         .order_by(Kind.id)
         .populate_existing()
-        .with_for_update()
         .all()
     )
     current = {
