@@ -2989,7 +2989,25 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return String(finishedCount)
     }
     case 'getWorkbenchDebugSnapshot':
-      return JSON.stringify(getWorkbenchDebugSnapshot())
+      return JSON.stringify({
+        ...getWorkbenchDebugSnapshot(),
+        network: performance.getEntriesByType('resource').map(entry => {
+          const timing = entry as PerformanceResourceTiming
+          return {
+            path: new URL(timing.name, location.href).pathname,
+            initiatorType: timing.initiatorType,
+            startTime: timing.startTime,
+            duration: timing.duration,
+            fetchStart: timing.fetchStart,
+            connectStart: timing.connectStart,
+            connectEnd: timing.connectEnd,
+            requestStart: timing.requestStart,
+            responseStart: timing.responseStart,
+            responseEnd: timing.responseEnd,
+            nextHopProtocol: timing.nextHopProtocol,
+          }
+        }),
+      })
     case 'getLocalHarnessDiagnostics':
       return JSON.stringify(await collectLocalHarnessDiagnostics())
     case 'getConversationDiagnosticsSnapshot':

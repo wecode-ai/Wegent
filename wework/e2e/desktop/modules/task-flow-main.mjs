@@ -830,7 +830,8 @@ async function verifyLocalModelRouting({
     control,
     composerSelector,
     CHECKPOINT_TASK_PROMPT,
-    'checkpoint_task'
+    'checkpoint_task',
+    WORKBENCH_READY_TIMEOUT_MS
   )
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: CHECKPOINT_TASK_COMPLETION_TEXT,
@@ -3664,6 +3665,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
       control.setScenario('turn_navigation')
       const environmentPanelTurnCount = E2E_TRANSCRIPT_PAGE_SIZE + 4
+      const modelResponseTimeoutMs = Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
       for (let index = 0; index < environmentPanelTurnCount; index += 1) {
         const turnNumber = index + 1
         await sendPrompt(
@@ -3676,7 +3678,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
           {
             text: `${TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX}_${turnNumber}`,
-            timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+            timeoutMs: modelResponseTimeoutMs,
           }
         )
       }
@@ -4655,11 +4657,12 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       }
     }
     await runTeardownStep('desktop application', async () => stopDesktopAppProcess(app))
+    // Scenario fixtures can still need the controller, proxies, and backend during cleanup.
+    await runTeardownStep('desktop scenario', async () => desktopScenario?.cleanup?.())
     await runTeardownStep('desktop controller', async () => control.close())
     await runTeardownStep('blocking network proxy', async () => blockingNetworkProxy?.stop())
     await runTeardownStep('cloud history search proxy', async () => cloudHistorySearch?.cleanup())
     await runTeardownStep('cloud environment', async () => cloudEnvironment?.stop())
-    await runTeardownStep('desktop scenario', async () => desktopScenario?.cleanup?.())
     await runTeardownStep('Codex SQLite home', async () =>
       rm(codexSqliteHome, {
         recursive: true,
@@ -4689,10 +4692,10 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         cleanupError ??= error
       }
     }
+    for (const failure of teardownFailures) {
+      console.error(`[desktop-e2e] ${failure.label} teardown failed:`, failure.error)
+    }
     if (testFailed) {
-      for (const failure of teardownFailures) {
-        console.error(`[desktop-e2e] ${failure.label} teardown failed: ${String(failure.error)}`)
-      }
       if (cleanupError) {
         console.error(`[desktop-e2e] result cleanup failed: ${String(cleanupError)}`)
       }

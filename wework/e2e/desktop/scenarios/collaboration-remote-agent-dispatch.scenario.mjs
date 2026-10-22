@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createDispatchIssueBoundaryRegression } from '../modules/dispatch-issue-boundary.mjs'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { verifyExecutionActivityOrder } from '../modules/issue-execution-activity-order.mjs'
@@ -204,7 +205,7 @@ async function createAgent(control, request, projectId, timeoutMs, environmentId
 
 async function createAndAssignIssue(control, request, projectId, agent, timeoutMs, title = ISSUE) {
   await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
-  await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
+  await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), { value: title })
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
     value: `${MARKER}。由单个智能体在远程 Executor 上完成并提交待确认。`,
@@ -704,6 +705,7 @@ export function createDesktopScenario({
     resolveModelStarted = resolve
   })
   const request = (pathname, options) => requestJson(backendUrl, authToken, pathname, options)
+  const dispatchBoundary = createDispatchIssueBoundaryRegression(request)
 
   return {
     requiresCloudEnvironment: true,
@@ -760,6 +762,7 @@ export function createDesktopScenario({
               `if (!read) throw new Error('Executor cannot read its bound Issue')`,
               `const result = await tools[read.name](${JSON.stringify({ space_id: project.id, item_id: issue.id })})`,
               `if (result.isError || !JSON.stringify(result).includes(${JSON.stringify(issue.id)})) throw new Error('Bound Issue read failed')`,
+              dispatchBoundary.script(),
               `text(${JSON.stringify(MANUAL_READ_OK)})`,
             ].join('\n')
           )
@@ -775,6 +778,7 @@ export function createDesktopScenario({
           JSON.stringify(output)?.includes(MANUAL_READ_OK),
           `The real bound Issue read did not succeed: ${JSON.stringify(output)}`
         )
+        await dispatchBoundary.verify()
         writeEvents(response, responseId, [
           assistantMessage(serialized.includes(CONTINUATION) ? CONTINUATION_RESULT : COMPLETION),
         ])
@@ -792,6 +796,13 @@ export function createDesktopScenario({
         'Direct execution did not receive the bound Issue reference'
       )
       if (modelRequests >= 3) {
+        if (!dispatchBoundary.verified) {
+          const events = await dispatchBoundary.events(body)
+          if (events) {
+            writeEvents(response, responseId, events)
+            return true
+          }
+        }
         if (!requestContainsToolOutput(body, MANUAL_READ_CALL)) {
           const selection = mcpToolRequestEvents(body, {
             toolName: 'get_board_item',
@@ -865,6 +876,7 @@ export function createDesktopScenario({
         remoteDevice.id
       )
       const authorizedProject = await request(`/api/v1/cloud-projects/${project.id}`)
+      await dispatchBoundary.prepare(authorizedProject)
       assert.equal(
         authorizedProject.execution_environment?.repositories?.length ?? 0,
         0,
@@ -1008,7 +1020,7 @@ export function createDesktopScenario({
         captureScreenshot
       )
       assert.equal(
-        modelRequests - toolSearchRequests,
+        modelRequests - toolSearchRequests - dispatchBoundary.modelRequests,
         5,
         'Manual execution and its reply made unexpected model requests'
       )
@@ -1033,6 +1045,7 @@ export function createDesktopScenario({
         requestsAfterReply,
         'Managing a default human automation invoked the model'
       )
+      assert.equal(dispatchBoundary.verified, true, 'Dispatch scope tools were not exercised')
     },
 
     diagnostics() {

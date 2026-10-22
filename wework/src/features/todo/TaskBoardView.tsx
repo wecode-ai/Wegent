@@ -303,6 +303,7 @@ export function TaskBoardView({
     [boardStatuses, items, t]
   )
   const board = useStandardCloudBoardController({
+    defaultSort: [],
     createColumns,
     defaultGroupBy: 'status',
     extensions: {

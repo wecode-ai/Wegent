@@ -385,6 +385,12 @@ jobs:
           pnpm --dir wework/electron install --frozen-lockfile
           pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
 
+      - name: Set up real object storage for Issue MCP E2E
+        if: contains(matrix.segments, 'collaboration-issue-mcp-comments')
+        uses: ./.github/actions/setup-minio-e2e
+        with:
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
+
       - name: Run Wework desktop Core shard E2E
         env:
           CI: true
@@ -703,6 +709,12 @@ jobs:
         run: |
           pnpm --dir wework/electron install --frozen-lockfile
           pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
+
+      - name: Set up real object storage for Issue MCP E2E
+        if: contains(matrix.segments, 'collaboration-issue-mcp-comments')
+        uses: ./.github/actions/setup-minio-e2e
+        with:
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Run Windows Wework desktop Core shard E2E
         id: windows-core-e2e

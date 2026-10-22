@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { Readable } from 'node:stream'
 
-import { PluginFaultProxy } from './plugin-fault-proxy.mjs'
+import { TransportFaultProxy } from './transport-fault-proxy.mjs'
 import { createCachedHistoryTask, verifyCachedHistorySearch } from './cached-history-search.mjs'
 import { ensureExperimentalFeaturesEnabled } from './preferences-automation-flows.mjs'
 import {
@@ -44,7 +44,7 @@ const prompt = index =>
 const answer = index => `Cloud history answer ${index}`
 
 /** Buffer only the two bounded read APIs; forward their original bytes exactly once. */
-class HistorySearchFaultProxy extends PluginFaultProxy {
+class HistorySearchFaultProxy extends TransportFaultProxy {
   async forward(request, response) {
     const path = new URL(request.url, this.target).pathname
     if (request.method !== 'POST' || ![SEARCH_PATH, TRANSCRIPT_PATH].includes(path)) {
