@@ -164,11 +164,14 @@ export async function createDesktopScenario({
     await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
       timeoutMs: workbenchReadyTimeoutMs,
     })
+    // Focusing the composer with content first mirrors the known-good invoke flow.
+    await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: 'prime' })
     await control.command('clickWhenEnabled', testId('composer-plugin-picker-button'))
     await control.command('waitFor', testId('composer-plugin-picker'), {
       timeoutMs: workbenchReadyTimeoutMs,
     })
     await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Escape' })
+    await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: '' })
   }
 
   async function invoke(control, fixture, version, phase, { offline = false } = {}) {
