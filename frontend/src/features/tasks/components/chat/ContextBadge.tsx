@@ -131,6 +131,11 @@ export default function ContextBadge({
 
   return (
     <div
+      data-testid={
+        context.type === 'conversation'
+          ? `input-conversation-reference-${context.task_id ?? context.id}`
+          : undefined
+      }
       className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border ${getBadgeColor()} ${
         isClickable ? 'cursor-pointer hover:shadow-md transition-shadow' : ''
       }`}
