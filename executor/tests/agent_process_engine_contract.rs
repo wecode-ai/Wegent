@@ -129,6 +129,7 @@ async fn agent_process_engine_runs_planned_claude_command_and_parses_stream_outp
     let fake_claude = write_fake_executable(
         "fake-claude",
         r#"#!/bin/sh
+cat >/dev/null
 printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"planned"}]}}'
 "#,
     );
@@ -215,6 +216,7 @@ async fn agent_process_engine_applies_claude_specific_process_timeout() {
     let fake_claude = write_fake_executable(
         "fake-claude-timeout",
         r#"#!/bin/sh
+cat >/dev/null
 sleep 5
 "#,
     );
@@ -291,6 +293,7 @@ async fn agent_process_engine_creates_workspace_task_dir_before_running_claude()
     let fake_claude = write_fake_executable(
         "fake-claude-cwd",
         r#"#!/bin/sh
+cat >/dev/null
 printf '{"type":"assistant","message":{"content":[{"type":"text","text":"%s"}]}}\n' "$(pwd)"
 "#,
     );
@@ -330,6 +333,7 @@ async fn agent_process_engine_uses_unified_workspace_for_local_task_dir() {
     let fake_claude = write_fake_executable(
         "fake-claude-local-cwd",
         r#"#!/bin/sh
+cat >/dev/null
 printf '{"type":"assistant","message":{"content":[{"type":"text","text":"%s"}]}}\n' "$(pwd)"
 "#,
     );
@@ -368,6 +372,7 @@ async fn agent_process_engine_clones_git_workspace_before_running_claude() {
     let fake_claude = write_fake_executable(
         "fake-claude-git-cwd",
         r#"#!/bin/sh
+cat >/dev/null
 if [ ! -d ".git" ]; then exit 30; fi
 if [ ! -f "source.txt" ]; then exit 31; fi
 if [ ! -x "$GIT_ASKPASS" ]; then exit 32; fi
@@ -511,6 +516,7 @@ exit 20
         "fake-claude-after-git-timeout",
         &format!(
             r#"#!/bin/sh
+cat >/dev/null
 mkdir -p '{}'
 touch '{}'
 printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text":"unexpected"}}]}}}}'
@@ -593,6 +599,7 @@ async fn agent_process_engine_preserves_incomplete_existing_git_workspace() {
         "fake-claude-after-incomplete-git",
         &format!(
             r#"#!/bin/sh
+cat >/dev/null
 mkdir -p '{}'
 touch '{}'
 "#,
@@ -728,6 +735,7 @@ exit 42
     let fake_claude = write_fake_executable(
         "fake-claude-after-hook-nonzero",
         r#"#!/bin/sh
+cat >/dev/null
 printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"continued"}]}}'
 "#,
     );

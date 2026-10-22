@@ -178,8 +178,20 @@ Backend 重建或迁移市场目录后，会核对已安装 Kind 的 `pluginId`�
 
 PR Review 等插件通过 `wework_space.list_board_item_comments` 读取 Issue 动态中的讨论，通过 `add_board_item_comment` 发布可见评论。两个工具使用相同的项目、Issue 权限和动态消息存储；返回的评论 ID 就是动态消息 ID。写入后通过现有 Socket.IO 推送刷新界面，重载后仍可读取。
 
+评论中 @ 成员时，先用 `get_assignment_candidates` 获取成员 ID 和名称，再给 `add_board_item_comment` 传入 `mentions`，例如 `{"body":"@qindi 请 review","mentions":[{"type":"user","id":"52","label":"qindi"}]}`，并显式传入目标 `space_id`、`item_id`。仅在正文写 `@姓名` 不会触发通知。共享 Backend 项目的 MCP 评论和页面共用提及权限校验、事务与通知链路：重复提及同一人只生成一条通知，自我提及不通知，无权接收的提及导致评论和通知一起回滚。不要再调用 `send_notification` 重复提醒。纯本地项目没有共享成员收件箱，结构化提及会明确报错。
+
+```mermaid
+flowchart LR
+    MCP[Backend 或原生 Executor MCP] --> Activity[Issue 评论入口]
+    UI[页面评论] --> Send[ProjectChatSend 与结构化 mentions]
+    Activity --> Send
+    Send --> Auth[已有的作者与接收人权限校验]
+    Auth --> Tx[同一事务保存评论与去重通知]
+    Tx --> Delivery[提交后推送动态与成员通知]
+```
+
 原生 Executor 对应的 HTTP 接口是 `GET/POST /api/v1/cloud-projects/{project_id}/loop-items/{item_id}/activity-comments`。读取默认返回最近 200 条，最多 500 条，按序号升序排列；使用 `after_sequence` 向后分页。只读成员可以读取，不能写入；其它 Issue 的消息不会出现在结果中。
 
 旧的 `/loop-items/{item_id}/comments` 仍承载 provider 评论和历史分配事件，不能直接删除底层数据；这些历史记录不会自动迁入 Issue 动态。插件应使用项目空间工具，不再把旧接口返回 ID 视为 Issue 动态已发布的证据。
 
-桌面 CI 的 Core 分片 15 包含 `collaboration-issue-mcp-comments`：验证 MCP 写入后可见、重载后持久化、原生 HTTP 写入实时可见、MCP 读回 PR 链接、跨 Issue 隔离以及页面没有协作加载错误。测试清理先退出 Electron，再关闭云端测试服务，避免仍打开的页面因服务关闭而显示错误。
+桌面 CI 的 Core 分片 15 包含 `collaboration-issue-mcp-comments`：验证 MCP 写入后可见、重载后持久化、原生 HTTP 写入实时可见、两种入口 @ 继承成员后仅一条收件箱通知、普通文本不通知、MCP 读回提及与 PR 链接、跨 Issue 隔离以及页面没有协作加载错误。测试清理先退出 Electron，再关闭云端测试服务，避免仍打开的页面因服务关闭而显示错误。

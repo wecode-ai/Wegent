@@ -5,6 +5,7 @@ import { ensureProjectExpandedInActiveSidebar } from '../modules/project-sidebar
 import { waitForCompletedRuntimeTaskThread } from '../modules/runtime-task-evidence.mjs'
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
+import { handleEmptyReplyPrediction } from '../modules/response-protocol.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -234,6 +235,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       const chunks = []
       for await (const chunk of request) chunks.push(chunk)
       const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      if (handleEmptyReplyPrediction(body, response)) return true
       const requestText = JSON.stringify(body)
       const prompt = Object.values(PROMPTS)
         .map(candidate => ({ candidate, index: requestText.lastIndexOf(candidate) }))

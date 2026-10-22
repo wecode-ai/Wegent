@@ -1924,6 +1924,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'requestMainWindowClose':
       return ''
     case 'requestStartupSplashClose':
+    case 'refreshFromApplicationMenu':
       return ''
     case 'reloadMainWindow': {
       if (command.value === 'capture') return captureDesktopControlScreenshot(command.selector)
@@ -3327,6 +3328,12 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
           return
         } else if (command.action === 'reloadMainWindow') {
           window.location.reload()
+          return
+        } else if (command.action === 'refreshFromApplicationMenu') {
+          const activated = await invokeDesktopHost('e2e.activateApplicationMenu', {
+            id: 'view.refresh',
+          })
+          if (!activated) throw new Error('View > Refresh is unavailable')
           return
         }
       }

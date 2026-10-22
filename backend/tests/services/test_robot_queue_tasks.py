@@ -5,6 +5,7 @@
 import json
 import uuid
 from contextlib import contextmanager
+from threading import get_ident
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -689,9 +690,11 @@ async def test_queue_wakeup_only_emits_availability(
     from app.tasks.robot_queue_tasks import consume_queues_background
 
     _make_execution(test_db, test_user)
+    event_loop_thread = get_ident()
 
     @contextmanager
     def _test_session():
+        assert get_ident() != event_loop_thread
         yield test_db
 
     sio = AsyncMock()

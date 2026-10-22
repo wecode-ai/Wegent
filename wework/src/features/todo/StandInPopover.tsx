@@ -81,13 +81,7 @@ export function StandInPopover({
     workspaceResult?.deviceId === draft.executionDeviceId ? workspaceResult : null
   const runtimeWork = currentWorkspace?.work ?? null
   const workspaceError = currentWorkspace?.error ?? null
-  const workspaceLoading = Boolean(
-    services?.runtimeWorkApi && draft.executionDeviceId && !currentWorkspace
-  )
   const [notice, setNotice] = useState<string | null>(null)
-  const canConfigure =
-    project.project_store === 'local' ||
-    ['Developer', 'Maintainer', 'Owner'].includes(project.access_role ?? '')
   const load = useCallback(
     (signal: { cancelled: boolean }) => {
       if (!api.standIn) return Promise.resolve()
@@ -257,7 +251,7 @@ export function StandInPopover({
     )
   )
   const save = async (prompt: string) => {
-    if (!api.standIn || !loaded || loading || saving || !canConfigure) return
+    if (!api.standIn || !loaded || loading || saving) return
     setSaving(true)
     setError(null)
     try {
@@ -289,7 +283,6 @@ export function StandInPopover({
     )
     return sourceProject ? [{ ...row, projectName: sourceProject.name }] : []
   })
-  const agentMissing = Boolean(draft.agentId && !agents.some(agent => agent.id === draft.agentId))
   const editor = (
     <>
       <div className="p-4">
@@ -325,7 +318,7 @@ export function StandInPopover({
             <select
               data-testid="stand-in-reuse-select"
               value=""
-              disabled={saving || !loaded || !canConfigure}
+              disabled={saving || !loaded}
               onChange={event => {
                 const source = reuseProfiles[Number(event.target.value)]
                 if (!source) return
@@ -355,7 +348,7 @@ export function StandInPopover({
         )}
         {reuseNotice && (
           <p role="status" className="mb-3 text-xs text-text-muted">
-            {t(agentMissing ? 'standIn.copy_agent_required' : 'standIn.copied')}
+            {t('standIn.copied')}
           </p>
         )}
 
@@ -370,15 +363,8 @@ export function StandInPopover({
               onChange={setDraft}
               onSave={save}
               onValidityChange={setComposerValid}
-              disabled={saving || !canConfigure || !loaded}
-              submitDisabled={
-                loading ||
-                agentMissing ||
-                workspaceLoading ||
-                Boolean(workspaceError) ||
-                !draft.executionDeviceId ||
-                selectionMissing
-              }
+              disabled={saving || !loaded}
+              submitDisabled={!draft.executionDeviceId || selectionMissing}
               runtimeWork={runtimeWork}
               devices={devices}
               services={services}
@@ -391,7 +377,7 @@ export function StandInPopover({
                   <select
                     id={`${promptId}-device`}
                     data-testid="stand-in-device"
-                    disabled={saving || !canConfigure}
+                    disabled={saving}
                     value={draft.executionDeviceId}
                     onChange={event => void selectDevice(event.target.value)}
                     className="h-8 min-w-0 max-w-44 cursor-pointer appearance-none bg-transparent text-sm outline-none"
@@ -432,7 +418,7 @@ export function StandInPopover({
                     aria-label={t('standIn.agent')}
                     data-testid="stand-in-agent"
                     value={draft.agentId ?? ''}
-                    disabled={saving || !canConfigure || !loaded}
+                    disabled={saving || !loaded}
                     onChange={event =>
                       setDraft(current => ({
                         ...current,
@@ -463,7 +449,7 @@ export function StandInPopover({
             )}
           </>
         ) : null}
-        <fieldset className="mt-4" disabled={saving || loading || !canConfigure || !loaded}>
+        <fieldset className="mt-4" disabled={saving || loading || !loaded}>
           <legend className="text-sm font-medium text-text-primary">{t('standIn.auto')}</legend>
           <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-text-primary md:min-h-8">
             <input
@@ -483,9 +469,6 @@ export function StandInPopover({
             {t('standIn.auto_description')}
           </p>
         </fieldset>
-        {!canConfigure && (
-          <p className="mt-3 text-xs text-text-muted">{t('standIn.no_permission')}</p>
-        )}
         {error && (
           <div role="alert" className="mt-3 text-xs text-error">
             <p>{error}</p>
@@ -529,7 +512,6 @@ export function StandInPopover({
                 !loaded ||
                 loading ||
                 saving ||
-                !canConfigure ||
                 !composerValid ||
                 !draft.executionDeviceId ||
                 selectionMissing

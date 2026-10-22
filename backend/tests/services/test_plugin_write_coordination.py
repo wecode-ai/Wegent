@@ -281,6 +281,33 @@ def test_policy_bootstrap_timeout_is_a_safe_retryable_error(
     assert not plugin_write_backend.values
 
 
+@pytest.mark.parametrize(
+    ("failure", "expected_error"),
+    [
+        (RuntimeError("claim failed"), RuntimeError),
+        (TimeoutError("private"), coordination.PluginWriteError),
+    ],
+)
+def test_initialization_failure_logs_lease_cleanup(
+    test_db, plugin_write_backend, monkeypatch, caplog, failure, expected_error
+):
+    monkeypatch.setattr(coordination, "read_policy_revision", Mock(side_effect=failure))
+
+    with caplog.at_level("INFO", logger=coordination.__name__):
+        with pytest.raises(expected_error):
+            coordination.acquire_plugin_write_lock(test_db, 17)
+
+    releases = [
+        record.message
+        for record in caplog.records
+        if record.message.startswith("Plugin write lease releasing")
+    ]
+    assert len(releases) == 1
+    assert f"user_id=17 session_id={id(test_db)}" in releases[0]
+    assert "held_ms=" in releases[0]
+    assert not plugin_write_backend.values
+
+
 def test_superseded_revision_rejects_commit_even_when_redis_reports_owned(
     test_db, plugin_write_backend
 ):

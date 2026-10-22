@@ -100,6 +100,24 @@ describe('StandInPopover', () => {
     expect(save).not.toHaveBeenCalled()
   })
 
+  it('saves personal settings regardless of the project role or resource catalogs', async () => {
+    const { props, save } = fixture({ agentId: 'missing-agent', version: 1 })
+    props.project.access_role = 'Viewer'
+    props.api.agents.list = vi.fn(async () => {
+      throw new Error('Catalog unavailable')
+    })
+    const user = userEvent.setup()
+    render(<StandInPopover {...props} />)
+    await user.click(screen.getByTestId('stand-in-open'))
+    await screen.findByTestId('stand-in-prompt')
+    await user.click(screen.getByTestId('stand-in-save'))
+    await waitFor(() => expect(save).toHaveBeenCalledOnce())
+    expect(save).toHaveBeenCalledWith(
+      'project',
+      expect.objectContaining({ agentId: 'missing-agent' })
+    )
+  })
+
   it('shows an Agent created outside the cached client when opened', async () => {
     const { props } = fixture()
     let records: Array<{ id: string; name: string; runtime: string; status: string }> = []
@@ -119,7 +137,7 @@ describe('StandInPopover', () => {
     expect(request).toHaveBeenCalledTimes(2)
   })
 
-  it('allows editing automatic handling while validation still blocks saving', async () => {
+  it('saves the selected automatic state without waiting for model readiness', async () => {
     const model = { runtime: 'codex' as const, provider: 'local', model_id: 'default' }
     const { props, save } = fixture({ executionDeviceId: 'current', version: 2, model })
     let finishCatalog!: (catalog: { models: (typeof model)[] }) => void
@@ -136,12 +154,11 @@ describe('StandInPopover', () => {
     await screen.findByTestId('stand-in-prompt')
     await user.click(screen.getByTestId('stand-in-auto'))
     expect(screen.getByTestId('stand-in-auto')).toHaveAttribute('aria-checked', 'true')
-    expect(screen.getByTestId('stand-in-save')).toBeDisabled()
+    expect(screen.getByTestId('stand-in-save')).toBeEnabled()
     expect(save).not.toHaveBeenCalled()
-    await act(async () => finishCatalog({ models: [model] }))
-    await waitFor(() => expect(screen.getByTestId('stand-in-save')).toBeEnabled())
     await user.click(screen.getByTestId('stand-in-save'))
     expect(save).toHaveBeenCalledWith('project', expect.objectContaining({ enabled: true, model }))
+    await act(async () => finishCatalog({ models: [model] }))
   })
 
   it('saves the loaded default model before enabling a reopened manual configuration', async () => {
@@ -158,7 +175,7 @@ describe('StandInPopover', () => {
     render(<StandInPopover {...props} services={services} />)
     await user.click(screen.getByTestId('stand-in-open'))
     await user.type(await screen.findByTestId('stand-in-prompt'), 'Manual settings')
-    expect(screen.getByTestId('stand-in-save')).toBeDisabled()
+    expect(screen.getByTestId('stand-in-save')).toBeEnabled()
     await act(async () =>
       finishCatalog({
         models: [{ runtime: 'codex', provider: 'local', model_id: 'default', is_default: true }],

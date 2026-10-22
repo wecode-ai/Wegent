@@ -7,6 +7,51 @@ use crate::task_runtime::{store::task_provider, TaskProviderKind, TaskRuntimeErr
 #[cfg(test)]
 mod tests;
 
+pub(super) fn create_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "space_id": {"type": "string"},
+            "item_id": {"type": "string"},
+            "body": {"type": "string", "minLength": 1},
+            "mentions": {
+                "type": "array", "maxItems": 64,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "type": {"type": "string", "enum": ["user", "agent"]},
+                        "id": {"type": "string", "minLength": 1, "maxLength": 128},
+                        "label": {"type": "string", "minLength": 1, "maxLength": 255}
+                    },
+                    "required": ["type", "id", "label"]
+                }
+            }
+        },
+        "required": ["space_id", "item_id", "body"]
+    })
+}
+
+pub(super) async fn add_local(
+    runtime: &TaskRuntime,
+    arguments: &Value,
+) -> Result<Value, TaskRuntimeError> {
+    let project_id = string_argument(arguments, "space_id")?;
+    let item_id = string_argument(arguments, "item_id")?;
+    let body = string_argument(arguments, "body")?;
+    if arguments
+        .get("mentions")
+        .is_some_and(|mentions| mentions != &json!([]))
+    {
+        return Err(TaskRuntimeError::Invalid(
+            "Structured mentions require a shared Backend project".to_owned(),
+        ));
+    }
+    runtime
+        .add_comment(project_id, item_id, body)
+        .await
+        .and_then(|comment| serde_json::to_value(comment).map_err(super::invalid_json))
+}
+
 pub(super) async fn list(
     runtime: &TaskRuntime,
     arguments: &Value,

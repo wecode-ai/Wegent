@@ -47,9 +47,7 @@ impl LocalTaskStore {
             .to_owned();
         let id = key(project_id, user_id, &stand_in_id)?;
         if value.get("id").is_some_and(|id| !id.is_string())
-            || value.get("name").is_some_and(|name| {
-                !name.is_string() || name.as_str().unwrap().chars().count() > 100
-            })
+            || value.get("name").is_some_and(|name| !name.is_string())
         {
             return Err(TaskRuntimeError::Invalid(
                 "invalid Stand-in identity".into(),
@@ -57,11 +55,8 @@ impl LocalTaskStore {
         }
         let tags = value.get("tags").cloned().unwrap_or_else(|| json!([]));
         if !tags.as_array().is_some_and(|tags| {
-            tags.len() <= 50
-                && tags.iter().all(|tag| {
-                    tag.as_str()
-                        .is_some_and(|tag| !tag.trim().is_empty() && tag.chars().count() <= 100)
-                })
+            tags.iter()
+                .all(|tag| tag.as_str().is_some_and(|tag| !tag.trim().is_empty()))
         }) {
             return Err(TaskRuntimeError::Invalid(
                 "tags must be nonempty tag names".into(),
@@ -118,13 +113,13 @@ impl LocalTaskStore {
         let enabled = value["enabled"]
             .as_bool()
             .ok_or_else(|| TaskRuntimeError::Invalid("enabled is required".into()))?;
-        let prompt = value["prompt"]
+        value["prompt"]
             .as_str()
             .ok_or_else(|| TaskRuntimeError::Invalid("prompt is required".into()))?;
         let device = value["executionDeviceId"]
             .as_str()
             .ok_or_else(|| TaskRuntimeError::Invalid("device is required".into()))?;
-        if prompt.chars().count() > 8000 || (enabled && device.trim().is_empty()) {
+        if enabled && device.trim().is_empty() {
             return Err(TaskRuntimeError::Invalid("invalid StandIn settings".into()));
         }
         let mut guard = self.connection()?;

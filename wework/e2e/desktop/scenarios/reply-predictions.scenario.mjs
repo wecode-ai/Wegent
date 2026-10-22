@@ -103,14 +103,11 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       await control.command('waitFor', '[data-testid="reply-prediction-enabled"]')
       assert.equal(Number(await control.command('getElementCount', MODEL_SELECT)), 0)
       await control.command('scrollIntoView', '[data-testid="reply-prediction-settings"]')
-      await capture('reply-01-unconfigured.png')
-      await control.command('click', '[data-testid="reply-prediction-enabled"]')
       await control.command(
         'waitFor',
         '[data-testid="reply-prediction-enabled"][aria-checked="true"]'
       )
-      assert.equal(Number(await control.command('getElementCount', MODEL_SELECT)), 0)
-      await capture('reply-02-fork-predictions-enabled.png')
+      await capture('reply-01-default-enabled.png')
       await control.command('click', '[data-testid="settings-back-button"]')
       await createSingleRootLocalProject(control, workspacePath, '回复建议验证')
       await control.command('waitFor', INPUT)
@@ -278,6 +275,13 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       await control.command('waitFor', '[data-testid="archived-conversations-settings-page"]')
       assert.equal(await control.command('getLocalStorageItem', 'body', { value: cacheKey }), '')
       assert.equal(Number(await control.command('getElementCount', deleteButton)), 0)
+      await control.command('navigate', 'body', { value: '/settings/general' })
+      await control.command('waitFor', '[data-testid="reply-prediction-settings"]')
+      await control.command('scrollIntoView', '[data-testid="reply-prediction-settings"]')
+      await control.command(
+        'waitFor',
+        '[data-testid="reply-prediction-enabled"][aria-checked="false"]'
+      )
     },
     diagnostics() {
       return { normalRequests, predictionRequests }

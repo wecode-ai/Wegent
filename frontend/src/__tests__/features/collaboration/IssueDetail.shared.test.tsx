@@ -1211,7 +1211,6 @@ describe('shared IssueDetail', () => {
 
     renderDetail(api)
 
-    fireEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
     expect(await screen.findByText('实现任务')).toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('cloud-todo-attachment-open-attachment-1'))
