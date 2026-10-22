@@ -77,6 +77,7 @@ import {
 } from '@/features/workbench/runtimeConversationCache'
 import {
   getRuntimeTaskLifecycleKey,
+  type RuntimeTaskLifecycleSnapshot,
   useRuntimeTaskLifecycle,
   useRuntimeTaskLifecycleStoreSnapshot,
 } from '@/features/workbench/runtimeTaskLifecycle'
@@ -919,17 +920,36 @@ function isRuntimeTaskWaiting(task: RuntimeTaskSummary): boolean {
   )
 }
 
+function isRuntimeTaskLifecycleWaiting(
+  task: RuntimeTaskSummary,
+  lifecycle: RuntimeTaskLifecycleSnapshot | null | undefined
+): boolean {
+  if (!lifecycle) return isRuntimeTaskWaiting(task)
+  if (lifecycle.derived.shouldShowSidebarWaiting) return true
+  if (lifecycle.task?.interactionStatus) return false
+  return isRuntimeTaskWaiting(task)
+}
+
+function isRuntimeTaskWaitingForSidebar(
+  workspace: RuntimeDeviceWorkspace,
+  task: RuntimeTaskSummary,
+  lifecycleTasks: ReadonlyMap<string, RuntimeTaskLifecycleSnapshot>
+): boolean {
+  const lifecycleKey = getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task))
+  return isRuntimeTaskLifecycleWaiting(task, lifecycleTasks.get(lifecycleKey))
+}
+
 function getRuntimeTaskPriorityReason(
   workspace: RuntimeDeviceWorkspace,
   task: RuntimeTaskSummary,
   unreadTaskKeys: ReadonlySet<string>,
   runningTaskKeys: ReadonlySet<string>,
-  waitingTaskKeys: ReadonlySet<string>
+  lifecycleTasks: ReadonlyMap<string, RuntimeTaskLifecycleSnapshot>
 ): RuntimeTaskPriorityReason | null {
   if (unreadTaskKeys.has(getRuntimeTaskReminderItemKey(workspace, task))) return 'unread'
   const address = getRuntimeTaskAddress(workspace, task)
   const lifecycleKey = getRuntimeTaskLifecycleKey(address)
-  if (waitingTaskKeys.has(lifecycleKey) || isRuntimeTaskWaiting(task)) return 'waiting'
+  if (isRuntimeTaskWaitingForSidebar(workspace, task, lifecycleTasks)) return 'waiting'
   if (runningTaskKeys.has(lifecycleKey)) return 'active'
   return null
 }
@@ -1605,7 +1625,8 @@ function RuntimeTaskRow({
   const showWaitingStatus =
     !showQueuedStatus &&
     !showQueuePausedStatus &&
-    (taskLifecycle?.derived.shouldShowSidebarWaiting || priorityReason === 'waiting')
+    (isRuntimeTaskLifecycleWaiting(task, taskLifecycle) ||
+      (!taskLifecycle && priorityReason === 'waiting'))
   const queuePosition =
     queued && Number.isInteger(task.queuePosition) && Number(task.queuePosition) > 0
       ? Number(task.queuePosition)
@@ -2513,15 +2534,6 @@ function ProjectItem({
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot()
-  const waitingTaskKeys = useMemo(
-    () =>
-      new Set(
-        [...lifecycleSnapshot.tasks.entries()]
-          .filter(([, lifecycle]) => lifecycle.derived.shouldShowSidebarWaiting)
-          .map(([key]) => key)
-      ),
-    [lifecycleSnapshot.tasks]
-  )
   const runtimeWorkspaces = runtimeProjectWork?.deviceWorkspaces
   const allRuntimeTaskItems = useMemo(
     () => getRuntimeSidebarTaskItems(runtimeWorkspaces ?? []),
@@ -2659,8 +2671,7 @@ function ProjectItem({
     )
   ).length
   const projectWaitingTaskCount = allRuntimeTaskItems.filter(({ workspace, task }) => {
-    const key = getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task))
-    return waitingTaskKeys.has(key) || isRuntimeTaskWaiting(task)
+    return isRuntimeTaskWaitingForSidebar(workspace, task, lifecycleSnapshot.tasks)
   }).length
   const projectUnreadTaskCount = allRuntimeTaskItems.filter(({ workspace, task }) =>
     unreadTaskKeys.has(getRuntimeTaskReminderItemKey(workspace, task))
@@ -3352,15 +3363,6 @@ export function DesktopSidebar({
   } = useSidebarPaneDragScrollLock()
   const visibleUnreadRuntimeTaskKeys = unreadRuntimeTaskKeys ?? EMPTY_RUNTIME_TASK_KEYS
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot()
-  const waitingTaskKeys = useMemo(
-    () =>
-      new Set(
-        [...lifecycleSnapshot.tasks.entries()]
-          .filter(([, lifecycle]) => lifecycle.derived.shouldShowSidebarWaiting)
-          .map(([key]) => key)
-      ),
-    [lifecycleSnapshot.tasks]
-  )
   const sidebarStateDeviceId = getLocalRuntimeStateDeviceId(devices)
   const standaloneProjectWork = useMemo(
     () =>
@@ -3578,7 +3580,7 @@ export function DesktopSidebar({
           task,
           visibleUnreadRuntimeTaskKeys,
           lifecycleSnapshot.runningTaskKeys,
-          waitingTaskKeys
+          lifecycleSnapshot.tasks
         ),
       }))
     )
@@ -3593,7 +3595,7 @@ export function DesktopSidebar({
         task,
         visibleUnreadRuntimeTaskKeys,
         lifecycleSnapshot.runningTaskKeys,
-        waitingTaskKeys
+        lifecycleSnapshot.tasks
       ),
     }))
 
@@ -3601,9 +3603,9 @@ export function DesktopSidebar({
   }, [
     chatTaskItemsWithPinState,
     lifecycleSnapshot.runningTaskKeys,
+    lifecycleSnapshot.tasks,
     sidebarRuntimeProjects,
     visibleUnreadRuntimeTaskKeys,
-    waitingTaskKeys,
   ])
   const priorityViewSources = useMemo<DesktopSidebarPrioritySource<RuntimePriorityTaskItem>[]>(
     () =>
