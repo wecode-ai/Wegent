@@ -386,6 +386,9 @@ export async function createDesktopScenario({
         await rm(foreign, { recursive: true })
       },
     })
+    await control.command('waitFor', testId('new-chat-button'), {
+      timeoutMs: workbenchReadyTimeoutMs,
+    })
     await refresh(control, primary)
     await waitRuntime(blocked, '1.0.0')
     await assertSurfaces(control, primary, true)
@@ -432,6 +435,9 @@ export async function createDesktopScenario({
     await uninstallInUi(control, primary)
     await assertInstallButton(control, primary)
     await restartDesktopApp()
+    await control.command('waitFor', testId('new-chat-button'), {
+      timeoutMs: workbenchReadyTimeoutMs,
+    })
     await refresh(control, primary)
     assert.equal(
       await entry(primary),
