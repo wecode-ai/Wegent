@@ -6,6 +6,7 @@ import { MODEL_API_KEY } from '../e2e/desktop/modules/shared.mjs'
 import {
   handleEmptyReplyPrediction,
   isReplyPredictionRequest,
+  REPLY_PREDICTION_PROMPT,
 } from '../e2e/desktop/modules/response-protocol.mjs'
 
 function predictionMetadata(requestKind = 'turn') {
@@ -54,6 +55,27 @@ test('returns an empty prediction response without consuming ordinary scenario r
   assert.equal(events.at(-1).type, 'response.completed')
   const message = events.find(event => event.item?.type === 'message')
   assert.deepEqual(JSON.parse(message.item.content[0].text), { suggestion: null })
+})
+
+test('recognizes converted Chat and Anthropic predictions without native metadata', () => {
+  for (const content of [
+    REPLY_PREDICTION_PROMPT,
+    [{ type: 'text', text: REPLY_PREDICTION_PROMPT }],
+  ]) {
+    const prediction = { role: 'user', content }
+    assert.equal(isReplyPredictionRequest({ messages: [prediction] }), true)
+    assert.equal(
+      isReplyPredictionRequest({ messages: [prediction, { role: 'user', content: 'Continue' }] }),
+      false
+    )
+    assert.equal(isReplyPredictionRequest({ messages: [{ role: 'assistant', content }] }), false)
+  }
+  assert.equal(
+    isReplyPredictionRequest({
+      messages: [{ role: 'user', content: 'Predict one natural next USER message' }],
+    }),
+    false
+  )
 })
 
 test('serves background predictions without advancing the active tool scenario', async () => {
