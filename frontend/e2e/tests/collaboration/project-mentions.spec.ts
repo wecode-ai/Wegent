@@ -214,6 +214,12 @@ test.describe('member-only comments with an unavailable assigned robot', () => {
     await page.getByTestId(`collaboration-issue-mention-member-${mentions.recipient.id}`).click()
     const text = `Inherited member browser mention ${crypto.randomUUID()}`
     await composer.pressSequentially(` ${text}`)
+    const assignee = page.getByTestId('collaboration-issue-comment-form-assignee')
+    await expect(assignee).toHaveAttribute('data-value', String(mentions.recipient.id))
+    // Keep this regression focused on notification without transferring the Issue.
+    await assignee.click()
+    await page.getByTestId('collaboration-issue-comment-form-assignee-option-empty').click()
+    await expect(assignee).toHaveAttribute('data-value', '')
     await page.getByTestId('collaboration-issue-comment-submit').click()
     await expect(page.getByTestId('collaboration-comments')).toContainText(text)
 
