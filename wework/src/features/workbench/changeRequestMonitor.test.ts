@@ -2,6 +2,7 @@ import { renderHook } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { DeviceCommandResponse } from '@/types/api'
 import type { DeviceCommandApi } from '@/api/environment'
+import { linkedChangeRequestTarget } from '@/api/changeRequests'
 import type { RuntimeDeviceWorkspace, RuntimeTaskSummary } from '@/types/api'
 import {
   ChangeRequestMonitor,
@@ -48,6 +49,44 @@ describe('runtimeTaskChangeRequestTarget', () => {
 })
 
 describe('ChangeRequestMonitor', () => {
+  it('keeps distinct PR links in one repository separate and marks failed refreshes stale', async () => {
+    const executeCommand = vi
+      .fn<DeviceCommandApi['executeCommand']>()
+      .mockImplementation(async (_deviceId, request) => {
+        const url = request.args![0]
+        return {
+          success: true,
+          stdout: { number: Number(url.split('/').at(-1)), url, state: 'OPEN' },
+        }
+      })
+    const monitor = new ChangeRequestMonitor({ executeCommand })
+    const targets = [1, 2].map(
+      number =>
+        linkedChangeRequestTarget('local-device', `https://github.com/org/repo/pull/${number}`)!
+    )
+    const unregister = targets.map(target => monitor.register(target))
+    try {
+      await monitor.refresh()
+      expect(targets.map(target => monitor.getSnapshot(target)?.changeRequest?.number)).toEqual([
+        1, 2,
+      ])
+      executeCommand.mockResolvedValue({ success: false, stderr: 'network unavailable' })
+      await monitor.refresh()
+      expect(targets.map(target => monitor.getSnapshot(target))).toEqual([
+        expect.objectContaining({
+          stale: true,
+          changeRequest: expect.objectContaining({ number: 1 }),
+        }),
+        expect.objectContaining({
+          stale: true,
+          changeRequest: expect.objectContaining({ number: 2 }),
+        }),
+      ])
+    } finally {
+      unregister.forEach(stop => stop())
+    }
+  })
+
   it('does not refresh again when an equivalent hook target is recreated', async () => {
     const executeCommand = vi
       .fn<DeviceCommandApi['executeCommand']>()

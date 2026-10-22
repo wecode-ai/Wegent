@@ -614,7 +614,7 @@ pub(super) fn collect_assistant_message(
     fallback_timestamp: i64,
     fold_commentary: bool,
     interleave_visible_text: bool,
-    has_later_process: bool,
+    unphased_is_process: bool,
     assistant: &mut AssistantTurnAccumulation,
     options: TranscriptBuildOptions,
 ) {
@@ -627,7 +627,7 @@ pub(super) fn collect_assistant_message(
                 options,
             ));
         } else {
-            match assistant_message_phase(item, fold_commentary, has_later_process) {
+            match assistant_message_phase(item, fold_commentary, unphased_is_process) {
                 AssistantMessagePhase::Process => {
                     assistant.blocks.push(process_text_block(
                         item,
@@ -683,12 +683,12 @@ enum AssistantMessagePhase {
 fn assistant_message_phase(
     item: &Value,
     fold_commentary: bool,
-    has_later_process: bool,
+    unphased_is_process: bool,
 ) -> AssistantMessagePhase {
     match assistant_message_phase_name(item).as_deref() {
         Some("analysis") => AssistantMessagePhase::Process,
         Some("commentary") if fold_commentary => AssistantMessagePhase::Process,
-        None if has_later_process
+        None if unphased_is_process
             || string_field(item, "status")
                 .is_some_and(|status| normalized_phase_or_status(status) == "inprogress") =>
         {

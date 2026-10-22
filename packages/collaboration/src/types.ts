@@ -8,6 +8,15 @@ import type { ProjectCreateHostAdapter } from "./project-create/types";
 
 export type CollaborationProjectId = string;
 
+export interface CollaborationIssueBadge {
+  id: string;
+  label: string;
+  url?: string;
+  icon?: string;
+  tone?: "neutral" | "success" | "warning" | "danger";
+  tooltip?: string;
+}
+
 export type CollaborationRole = "Owner" | "Maintainer" | "Developer" | "Viewer";
 export type CollaborationWorkspaceRole = CollaborationRole;
 
@@ -146,6 +155,7 @@ export interface CollaborationIssue {
   description: string;
   status: string;
   priority: CollaborationPriority;
+  badges?: CollaborationIssueBadge[];
   start_at?: string | null;
   due_at: string | null;
   tags: string[];

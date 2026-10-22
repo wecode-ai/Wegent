@@ -94,13 +94,7 @@ export function StandInPopover({
     workspaceResult?.deviceId === draft.executionDeviceId ? workspaceResult : null
   const runtimeWork = currentWorkspace?.work ?? null
   const workspaceError = currentWorkspace?.error ?? null
-  const workspaceLoading = Boolean(
-    services?.runtimeWorkApi && draft.executionDeviceId && !currentWorkspace
-  )
   const [notice, setNotice] = useState<string | null>(null)
-  const canConfigure =
-    project.project_store === 'local' ||
-    ['Developer', 'Maintainer', 'Owner'].includes(project.access_role ?? '')
   const load = useCallback(
     (signal: { cancelled: boolean }) => {
       if (!api.standIn) return Promise.resolve()
@@ -256,7 +250,7 @@ export function StandInPopover({
     )
   )
   const persist = async (settings: WorkspaceStandInSettings, action: 'settings' | 'automatic') => {
-    if (!api.standIn || !loaded || loading || saving || !canConfigure) return
+    if (!api.standIn || !loaded || loading || saving) return
     setSaving(true)
     setError(null)
     try {
@@ -303,7 +297,6 @@ export function StandInPopover({
   const reuseProfiles = profiles.filter(
     row => row.projectId !== project.id || row.projectStore !== projectStore
   )
-  const agentMissing = Boolean(draft.agentId && !agents.some(agent => agent.id === draft.agentId))
   const savedConfiguration = {
     ...saved,
     executionDeviceId: saved.executionDeviceId || currentDeviceId,
@@ -334,12 +327,7 @@ export function StandInPopover({
           aria-busy={saving}
           aria-label={t('standIn.auto_label')}
           data-testid="stand-in-auto"
-          disabled={
-            saving ||
-            !canConfigure ||
-            !loaded ||
-            (!saved.enabled && saved.version > 0 && !composerValid)
-          }
+          disabled={saving || !loaded || (!saved.enabled && saved.version > 0 && !composerValid)}
           onClick={toggleAutomatic}
           className="flex w-full items-center justify-between gap-4 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-40"
         >
@@ -403,7 +391,7 @@ export function StandInPopover({
             <select
               data-testid="stand-in-reuse-select"
               value=""
-              disabled={saving || !loaded || !canConfigure}
+              disabled={saving || !loaded}
               onChange={event => {
                 const source = reuseProfiles[Number(event.target.value)]
                 if (!source) return
@@ -437,7 +425,7 @@ export function StandInPopover({
         )}
         {reuseNotice && (
           <p role="status" className="mb-3 text-xs text-text-muted">
-            {t(agentMissing ? 'standIn.copy_agent_required' : 'standIn.copied')}
+            {t('standIn.copied')}
           </p>
         )}
 
@@ -452,15 +440,8 @@ export function StandInPopover({
               onChange={setDraft}
               onSave={save}
               onValidityChange={setComposerValid}
-              disabled={saving || !canConfigure || !loaded}
-              submitDisabled={
-                loading ||
-                agentMissing ||
-                workspaceLoading ||
-                Boolean(workspaceError) ||
-                !draft.executionDeviceId ||
-                selectionMissing
-              }
+              disabled={saving || !loaded}
+              submitDisabled={!draft.executionDeviceId || selectionMissing}
               runtimeWork={runtimeWork}
               devices={devices}
               services={services}
@@ -473,7 +454,7 @@ export function StandInPopover({
                   <select
                     id={`${promptId}-device`}
                     data-testid="stand-in-device"
-                    disabled={saving || !canConfigure}
+                    disabled={saving}
                     value={draft.executionDeviceId}
                     onChange={event => void selectDevice(event.target.value)}
                     className="h-8 min-w-0 max-w-44 cursor-pointer appearance-none bg-transparent text-sm outline-none"
@@ -514,7 +495,7 @@ export function StandInPopover({
                     aria-label={t('standIn.agent')}
                     data-testid="stand-in-agent"
                     value={draft.agentId ?? ''}
-                    disabled={saving || !canConfigure || !loaded}
+                    disabled={saving || !loaded}
                     onChange={event =>
                       setDraft(current => ({
                         ...current,
@@ -545,9 +526,6 @@ export function StandInPopover({
             )}
           </>
         ) : null}
-        {!canConfigure && (
-          <p className="mt-3 text-xs text-text-muted">{t('standIn.no_permission')}</p>
-        )}
         {error && (
           <div role="alert" className="mt-3 text-xs text-error">
             <p>{error}</p>
@@ -592,7 +570,6 @@ export function StandInPopover({
                 !loaded ||
                 loading ||
                 saving ||
-                !canConfigure ||
                 !composerValid ||
                 !draft.executionDeviceId ||
                 selectionMissing
