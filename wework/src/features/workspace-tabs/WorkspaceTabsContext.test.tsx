@@ -461,6 +461,34 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(sessionStorage.getItem('wework.settingsReturnPath')).toBe('/cloud-work')
   })
 
+  test.each(['/settings', '/settings/connections?addDevice=1'])(
+    'ignores an invalid persisted settings tab (%s) while retaining a workspace tab',
+    contentRoute => {
+      localStorage.setItem(
+        'wework.workspaceTabs.v3:context-test',
+        JSON.stringify({
+          activeTabId: 'invalid-settings',
+          tabs: [
+            { id: 'invalid-settings', kind: 'task', title: '任务', contentRoute },
+            {
+              id: 'kept-board',
+              kind: 'board',
+              title: '协作',
+              contentRoute: '/todo?projectId=kept',
+            },
+          ],
+        })
+      )
+      window.history.replaceState({}, '', '/settings')
+
+      render(<RoutingHarness />)
+
+      expect(screen.getByTestId('tab-ids')).not.toHaveTextContent('invalid-settings')
+      expect(screen.getByTestId('active-tab-id')).toHaveTextContent('kept-board')
+      expect(screen.getByTestId('active-tab-route').textContent).toBe('/todo?projectId=kept')
+    }
+  )
+
   test('notifies resource owners when a workspace tab closes', () => {
     const onTabsClosed = vi.fn()
     window.addEventListener(WORKSPACE_TABS_CLOSED_EVENT, onTabsClosed)

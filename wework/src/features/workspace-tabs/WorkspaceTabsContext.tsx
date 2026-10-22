@@ -91,6 +91,7 @@ function validTab(value: unknown): value is WorkspaceTab {
     typeof candidate.id === 'string' &&
     typeof candidate.title === 'string' &&
     typeof candidate.contentRoute === 'string' &&
+    !isSettingsRoute(candidate.contentRoute.split('?', 1)[0]) &&
     ['task', 'board', 'agent', 'auxiliary'].includes(candidate.kind)
   )
 }

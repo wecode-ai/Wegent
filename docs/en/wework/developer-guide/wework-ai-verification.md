@@ -55,6 +55,8 @@ Settings preserves the active workspace tab in the background. **Work → Tasks 
 
 Settings routes never overwrite a workspace tab's kind or content route. Reloading settings initializes ordinary workspace tabs while the application route continues to display settings, so returning to a workspace cannot reopen settings.
 
+Persisted-tab validation excludes invalid settings entries while retaining valid workspace tabs.
+
 ## Native context menus
 
 Electron does not create a WebContents context menu automatically. The Wework Electron main process listens for `context-menu` centrally and builds native menus for the main window, workspace windows, and auxiliary windows.
