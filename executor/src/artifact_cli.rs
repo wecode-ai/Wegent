@@ -220,12 +220,7 @@ fn task_workspace(task_id: &str) -> Result<PathBuf, String> {
             return Ok(PathBuf::from(value));
         }
     }
-    let root = env::var("WORKSPACE_ROOT")
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "/workspace".to_owned());
-    Ok(PathBuf::from(root).join(task_id))
+    Ok(crate::workspace_paths::task_workspace_dir(task_id))
 }
 
 fn backend_url() -> Result<String, String> {

@@ -8,6 +8,13 @@ use std::process::Output;
 use tokio::{net::TcpListener, process::Command, sync::mpsc};
 
 async fn declare_artifact(task_token: Option<&str>) -> (Output, Option<Value>) {
+    declare_artifact_with_root(task_token, false).await
+}
+
+async fn declare_artifact_with_root(
+    task_token: Option<&str>,
+    local_root: bool,
+) -> (Output, Option<Value>) {
     let workspace = tempfile::tempdir().unwrap();
     std::fs::create_dir(workspace.path().join("local-conversation")).unwrap();
     std::fs::write(
@@ -43,6 +50,14 @@ async fn declare_artifact(task_token: Option<&str>) -> (Output, Option<Value>) {
         .env("WEGENT_BACKEND_TASK_ID", "123")
         .env("WEGENT_RUNTIME_BACKEND_URL", format!("http://{address}"))
         .env("WEGENT_RUNTIME_AUTH_TOKEN", "runtime-credential");
+    if local_root {
+        command
+            .env_remove("WORKSPACE_ROOT")
+            .env_remove("WEGENT_WORKSPACE_ROOT")
+            .env_remove("WEGENT_EXECUTOR_PROJECTS_DIR")
+            .env("EXECUTOR_MODE", "local")
+            .env("LOCAL_WORKSPACE_ROOT", workspace.path());
+    }
     match task_token {
         Some(token) => command.env("AUTH_TOKEN", token),
         None => command.env_remove("AUTH_TOKEN"),
@@ -51,6 +66,16 @@ async fn declare_artifact(task_token: Option<&str>) -> (Output, Option<Value>) {
     let request = receiver.try_recv().ok();
     server.abort();
     (output, request)
+}
+
+#[tokio::test]
+async fn declaration_resolves_native_workspace_without_a_container_root() {
+    let (output, request) = declare_artifact_with_root(Some("task-credential"), true).await;
+
+    assert!(output.status.success(), "{:?}", output.status);
+    let request = request.unwrap();
+    assert_eq!(request["body"]["relative_path"], "report.txt");
+    assert_eq!(request["body"]["file_size"], 17);
 }
 
 #[tokio::test]

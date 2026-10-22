@@ -44,6 +44,10 @@ $WEGENT_EXECUTOR_BINARY artifact declare --path outputs/report.pdf
 
 声明仅发送文件名、相对路径、规范化工作区根目录、大小、修改时间和 SHA-256，不上传文件内容。`WEGENT_BACKEND_TASK_ID` 用于 Backend API 路径；`WEGENT_TASK_ID` 保留本地会话身份并用于工作区定位。认证只使用该轮执行的 `AUTH_TOKEN`（Task Token），不能使用独立的 runtime credential。
 
+Executor 工作目录、`WEGENT_TASK_WORKSPACE` 和声明命令复用同一套工作区路径解析。本地设备配置 `LOCAL_WORKSPACE_ROOT` 时，不得把逻辑别名 `/workspace` 当作物理工作区目录。
+
+内置 `Ghost/default/wegent-wework` 要求先成功声明最终交付文件，再引导用户使用对话文件卡片，不能用本地路径或 `computer://` 链接代替。初始化 YAML 不覆盖已存在的 Ghost；已有数据库需执行 `alembic upgrade head`，由迁移 `a9c4e7b2d610` 精准替换已识别的旧规则，保留资源 ID 和其他配置。已自定义的交付区段不会自动覆盖，需要管理员核对后更新。
+
 Backend 从 Task Token 对应的 assistant subtask 捕获 executor 名称和 namespace，并与工作区根目录一起保存为产物来源。下载始终使用这份来源快照，不选择任务最新的 executor；即使原 subtask 后续发生恢复重绑，也不能把旧卡片改指向新设备。原来源不可用时返回不可用，分享和复制任务不会携带这些设备产物。
 
 设备下载复用 `workspace_read_file_chunk` 的规范路径校验；HTTP executor 下载使用必须指定 `root_path` 的 `/filesystem/artifact`。读取前解析真实路径并检查仍位于原工作区内，因此声明后把文件替换为指向工作区外的符号链接也会被拒绝。旧 executor 不支持该端点时明确失败；校验失败后也不得退回 `/files`。文件内容只在用户下载时经过 Backend 转发，不写入 Backend 产物存储；卡片读取的是原工作区的当前文件，不是永久保存的历史副本。

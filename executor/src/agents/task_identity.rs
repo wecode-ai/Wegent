@@ -50,12 +50,7 @@ pub(super) fn task_identity_env(request: &ExecutionRequest) -> BTreeMap<String, 
 
     if !task_id.is_empty() {
         env.insert("WEGENT_TASK_ID".to_owned(), task_id.to_owned());
-        let workspace_root = std::env::var("WORKSPACE_ROOT")
-            .ok()
-            .map(|value| value.trim().to_owned())
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/workspace"));
+        let workspace_root = crate::workspace_paths::workspace_root();
         let task_workspace = request
             .cwd()
             .map(PathBuf::from)
