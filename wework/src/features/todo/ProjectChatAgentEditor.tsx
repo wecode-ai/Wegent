@@ -1,5 +1,4 @@
 import { useAgentRouting } from '@/features/collaboration/useAgentRouting'
-import { useAgentCreationDefaults } from '@/features/collaboration/useAgentCreationDefaults'
 import {
   AgentEnvironmentFields,
   AgentModelFields,
@@ -91,13 +90,14 @@ export function ProjectChatAgentEditor({
   const [modelNamespace, setModelNamespace] = useState('default')
   const [allowedModels, setAllowedModels] = useState<LocalProjectChatAgentModel[]>([])
   const [runtime, setRuntime] = useState<LocalProjectChatAgent['runtime']>('codex')
-  const creationDefaults = useAgentCreationDefaults(!editing)
   const routing = useAgentRouting(api, runtime, projectId, {
-    creationDefaults,
+    defer: true,
+    creation: !editing,
   })
   const runtimeTab = useAgentRuntimeTab(routing)
   const loadRouting = routing.load
-  const [capabilityMode, setCapabilityMode] = useState<UnifiedAgentCapabilityMode>('follow_device')
+  const [selectedCapabilityMode, setCapabilityMode] =
+    useState<UnifiedAgentCapabilityMode>('follow_device')
   const [mcpConfig, setMcpConfig] = useState('{}')
   const [models, setModels] = useState<
     Array<{
@@ -117,7 +117,11 @@ export function ProjectChatAgentEditor({
   const [loadingAgent, setLoadingAgent] = useState(editing)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const deviceState = useCurrentAgentDevice(deviceApi, pluginApi)
+  const [capabilitiesActive, setCapabilitiesActive] = useState(false)
+  const [skillLoadError, setSkillLoadError] = useState<string | null>(null)
+  const [savedSkills, setSavedSkills] = useState<UnifiedAgentDefinition['skills']>([])
+  const deviceState = useCurrentAgentDevice(deviceApi, pluginApi, capabilitiesActive)
+  const defaultDeviceAgent = isDefaultLocalAgentName(name)
   const [legacyConfig, setLegacyConfig] = useState<{
     capabilityDescription: string
     maxConcurrentExecutions: number
@@ -131,6 +135,7 @@ export function ProjectChatAgentEditor({
   })
 
   useEffect(() => {
+    if (!defaultDeviceAgent || !routing.activated) return
     let active = true
     void modelApi
       .listModels()
@@ -149,14 +154,22 @@ export function ProjectChatAgentEditor({
         if (active) setModels([])
       })
 
+    return () => {
+      active = false
+    }
+  }, [defaultDeviceAgent, modelApi, routing.activated])
+
+  useEffect(() => {
+    if (!capabilitiesActive) return
+    let active = true
     if (skillApi) {
       void skillApi
         .listSkills()
         .then(items => {
           if (active) setSkills(items.filter(skill => skill.visible !== false))
         })
-        .catch(() => {
-          if (active) setSkills([])
+        .catch(cause => {
+          if (active) setSkillLoadError(cause instanceof Error ? cause.message : String(cause))
         })
         .finally(() => {
           if (active) setLoadingSkills(false)
@@ -182,6 +195,13 @@ export function ProjectChatAgentEditor({
         })
     }
 
+    return () => {
+      active = false
+    }
+  }, [capabilitiesActive, skillApi, pluginApi, t])
+
+  useEffect(() => {
+    let active = true
     if (editingAgentId) {
       void api
         .list(projectId)
@@ -216,6 +236,7 @@ export function ProjectChatAgentEditor({
           setCapabilityMode(agent.capabilityMode)
           setMcpConfig(JSON.stringify(agent.mcpServers ?? {}, null, 2))
           setSelectedSkillKeys(storedSkillKeys(agent.additionalSkills))
+          setSavedSkills(agent.additionalSkills)
           setSelectedPluginIds(agent.plugins.map(plugin => plugin.id))
           setPlugins(current => {
             const merged = new Map(current.map(plugin => [plugin.id, plugin]))
@@ -246,7 +267,7 @@ export function ProjectChatAgentEditor({
     return () => {
       active = false
     }
-  }, [api, editingAgentId, modelApi, pluginApi, projectId, skillApi, t, loadRouting])
+  }, [api, editingAgentId, projectId, t, loadRouting])
 
   const selectedSkillSet = useMemo(() => new Set(selectedSkillKeys), [selectedSkillKeys])
   const selectedPluginSet = useMemo(() => new Set(selectedPluginIds), [selectedPluginIds])
@@ -254,6 +275,10 @@ export function ProjectChatAgentEditor({
     () => resolveAgentPromptCapabilityReferences(systemPrompt, plugins, skills),
     [plugins, skills, systemPrompt]
   )
+  const capabilityMode =
+    promptCapabilities.pluginIds.size || promptCapabilities.skillKeys.size
+      ? 'manual'
+      : selectedCapabilityMode
   const effectiveSelectedPluginSet = useMemo(
     () => new Set([...selectedPluginSet, ...promptCapabilities.pluginIds]),
     [promptCapabilities.pluginIds, selectedPluginSet]
@@ -262,7 +287,6 @@ export function ProjectChatAgentEditor({
     () => new Set([...selectedSkillSet, ...promptCapabilities.skillKeys]),
     [promptCapabilities.skillKeys, selectedSkillSet]
   )
-  const defaultDeviceAgent = isDefaultLocalAgentName(name)
   const selectedAllowedModelKeys = useMemo(
     () => new Set(allowedModels.map(modelKey)),
     [allowedModels]
@@ -318,14 +342,16 @@ export function ProjectChatAgentEditor({
         systemPrompt,
         skills:
           capabilityMode === 'manual'
-            ? skills
-                .filter(skill => effectiveSelectedSkillSet.has(skillKey(skill)))
-                .map(skill => ({
-                  skillId: skill.id,
-                  name: skill.name,
-                  namespace: skill.namespace || 'default',
-                  isPublic: skill.is_public,
-                }))
+            ? !capabilitiesActive
+              ? savedSkills
+              : skills
+                  .filter(skill => effectiveSelectedSkillSet.has(skillKey(skill)))
+                  .map(skill => ({
+                    skillId: skill.id,
+                    name: skill.name,
+                    namespace: skill.namespace || 'default',
+                    isPublic: skill.is_public,
+                  }))
             : [],
         plugins:
           capabilityMode === 'manual' && runtime === 'codex'
@@ -384,6 +410,7 @@ export function ProjectChatAgentEditor({
 
   return (
     <AgentFormDialog
+      onAdvancedOpen={() => setCapabilitiesActive(true)}
       runtimeTab={
         defaultDeviceAgent
           ? {
@@ -656,6 +683,7 @@ export function ProjectChatAgentEditor({
       }}
       promptEditor={
         <AgentPromptEditor
+          onFocus={() => setCapabilitiesActive(true)}
           busy={busy || loadingAgent}
           field={{
             label: t('workbench.agent_creator_prompt', '提示词'),
@@ -680,7 +708,11 @@ export function ProjectChatAgentEditor({
         />
       }
       saveDisabled={
-        loadingAgent || (defaultDeviceAgent ? allowedModels.length === 0 : !routing.valid)
+        loadingAgent ||
+        (defaultDeviceAgent ? allowedModels.length === 0 : !routing.valid) ||
+        (capabilityMode === 'manual' &&
+          capabilitiesActive &&
+          (loadingSkills || loadingPlugins || Boolean(skillLoadError || pluginLoadError)))
       }
       saveLabel={
         editing

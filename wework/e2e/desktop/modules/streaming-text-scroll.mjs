@@ -51,8 +51,10 @@ import {
   assertScrollPositionRemainsStable,
 } from './streaming-text-fixture.mjs'
 import assert from 'node:assert/strict'
+import { sendPromptUntilScenarioRequest } from './shared.mjs'
 
 export function createStreamingScrollChecks({
+  modelResponseTimeoutMs,
   uiTimeoutMs,
   capture,
   releaseTimerFinalCompletion,
@@ -176,8 +178,13 @@ export function createStreamingScrollChecks({
         testId.startsWith('runtime-local-task-row-')
       )
     )
-    await control.command('fill', COMPOSER_SELECTOR, { value: INITIAL_PROMPT })
-    await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+    await sendPromptUntilScenarioRequest(
+      control,
+      COMPOSER_SELECTOR,
+      INITIAL_PROMPT,
+      'streaming_scroll_initial',
+      modelResponseTimeoutMs
+    )
     await control.command('waitFor', '[data-testid="message-assistant"]', {
       text: 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_INITIAL_COMPLETE',
       timeoutMs: uiTimeoutMs,

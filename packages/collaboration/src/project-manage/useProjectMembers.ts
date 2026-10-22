@@ -34,6 +34,7 @@ export function useProjectMembers<
   onProjectUpdated,
   projectScopeRef,
   canManage,
+  enabled = true,
   reportError,
   openMembersRequestId,
   onOpenMembersRequestConsumed,
@@ -45,6 +46,7 @@ export function useProjectMembers<
   onProjectUpdated?(project: Project): void
   projectScopeRef: RefObject<{ projectId: string }>
   canManage: boolean
+  enabled?: boolean
   reportError(cause: unknown, fallback: string): void
   openMembersRequestId?: number
   onOpenMembersRequestConsumed?(requestId: number): void
@@ -76,7 +78,9 @@ export function useProjectMembers<
   }
 
   useEffect(() => {
+    if (!enabled) return
     let active = true
+    setLoading(true)
     void api.listMembers(projectId).then(
       next => {
         if (!active) return
@@ -92,7 +96,7 @@ export function useProjectMembers<
     return () => {
       active = false
     }
-  }, [api, host, projectId, reportError])
+  }, [api, enabled, host, projectId, reportError])
 
   useEffect(() => {
     if (!membersOpen || typeof document === 'undefined') return

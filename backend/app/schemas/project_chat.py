@@ -23,6 +23,7 @@ BotRuntime = Literal["codex", "claude_code", "wegent"]
 BotWorkspacePolicy = Literal["project", "git_worktree"]
 WorkspaceBindingType = Literal["backend_project", "device_project", "standalone"]
 
+from app.schemas.loop_item_position import LoopItemPosition
 from app.schemas.runner_routing import ExecutionPolicy, ModelPolicy, RunnerSelection
 
 
@@ -218,6 +219,7 @@ class LoopItemAssign(ProjectChatSchema):
     runner_selection: RunnerSelection | None = None
     notify_assignee: bool = True
     notify_self: bool = False
+    position: LoopItemPosition | None = None
 
     version: int = Field(ge=1)
     assignee_type: Literal["user", "agent", "team", "group"]

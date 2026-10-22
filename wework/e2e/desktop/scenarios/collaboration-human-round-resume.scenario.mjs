@@ -322,7 +322,7 @@ async function createGroup(control, request, projectId, ownerId, uiTimeoutMs) {
 
 async function createAndAssignIssue(control, request, projectId, uiTimeoutMs) {
   await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
-  await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
+  await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), { value: ISSUE })
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
     value: `${MARKER}。负责人必须并发分配一个 AI 任务和一个人工任务，等待个人 Task 正式交付后继续。`,
@@ -697,6 +697,11 @@ export function createDesktopScenario({
         false,
         '人工 assignment 被错误实现为人工子 Issue'
       )
+      assert.equal(
+        humanAssignment.payload.actorName,
+        LEADER,
+        'The assigner must be the actual manager agent, not its credential owner'
+      )
       assert.equal(humanAssignment.payload.action, 'create_personal_task')
       assert.equal(humanAssignment.payload.itemId, String(rootIssue.id))
       assert.equal(humanAssignment.payload.assignmentId, HUMAN_ASSIGNMENT_ID)
@@ -813,6 +818,9 @@ export function createDesktopScenario({
       await control.command('waitFor', '[data-testid="issue-dispatch-notification-create-task"]', {
         text: HUMAN_TASK,
         timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="issue-dispatch-notification-create-task"]', {
+        text: LEADER,
       })
       await control.command('click', '[data-testid="issue-dispatch-notification-create-task"]')
       await control.command(

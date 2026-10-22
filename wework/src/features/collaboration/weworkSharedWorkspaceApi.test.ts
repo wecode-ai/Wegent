@@ -420,6 +420,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       startAt: null,
       dueAt: null,
       automationRuleId: null,
+      position: { beforeItemId: 'anchor' },
     })
     expect(deliveryApi.updateLoopItem).toHaveBeenCalledWith(
       'issue-1',
@@ -428,6 +429,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         assignee_user_id: 8,
         start_at: null,
         due_at: null,
+        position: { beforeItemId: 'anchor' },
       })
     )
     await api.issues.assign('project-1', 'issue-1', {

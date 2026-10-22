@@ -22,7 +22,11 @@ function selectCurrentDevice(devices: DeviceInfo[]): DeviceInfo | null {
   )
 }
 
-export function useCurrentAgentDevice(deviceApi?: DeviceApi, pluginApi?: ProjectPluginCatalogApi) {
+export function useCurrentAgentDevice(
+  deviceApi?: DeviceApi,
+  pluginApi?: ProjectPluginCatalogApi,
+  enabled = true
+) {
   const { t } = useTranslation()
   const [device, setDevice] = useState<DeviceInfo | null>(null)
   const [pluginNames, setPluginNames] = useState<string[]>([])
@@ -30,7 +34,7 @@ export function useCurrentAgentDevice(deviceApi?: DeviceApi, pluginApi?: Project
   const [loading, setLoading] = useState(Boolean(deviceApi))
 
   useEffect(() => {
-    if (!deviceApi) return
+    if (!enabled || !deviceApi) return
 
     let active = true
     void deviceApi
@@ -59,7 +63,7 @@ export function useCurrentAgentDevice(deviceApi?: DeviceApi, pluginApi?: Project
     return () => {
       active = false
     }
-  }, [deviceApi, pluginApi])
+  }, [deviceApi, enabled, pluginApi])
 
   return useMemo(
     () => ({

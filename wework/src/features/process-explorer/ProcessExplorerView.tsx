@@ -512,10 +512,10 @@ function renderNodes(
 }
 
 function matchesFilter(record: ProcessRecord, filter: string): boolean {
+  if (/^\d+$/.test(filter)) return String(record.pid) === filter
   return (
     record.name.toLowerCase().includes(filter) ||
-    record.detail?.toLowerCase().includes(filter) === true ||
-    String(record.pid).includes(filter)
+    record.detail?.toLowerCase().includes(filter) === true
   )
 }
 
