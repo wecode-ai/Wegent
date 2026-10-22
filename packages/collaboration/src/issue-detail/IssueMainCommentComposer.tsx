@@ -1,4 +1,4 @@
-import { Paperclip, SlidersHorizontal } from "lucide-react";
+import { ChevronDown, Paperclip, SlidersHorizontal } from "lucide-react";
 import { useId, useRef, useState, type Ref, type ReactNode } from "react";
 import { ComposerAutocompleteInput } from "../composer/ComposerAutocompleteInput";
 import type { ComposerExternalMentionCandidate } from "../composer/composerAutocompleteInputTypes";
@@ -6,7 +6,12 @@ import type { ComposerInputHandle } from "../composer/composerInputTypes";
 import type { CollaborationTranslate } from "../i18n";
 import { IssueCommentComposer } from "./IssueActivityPresentation";
 import type { IssueMentionOption } from "./issueCommentMentions";
-import { issueCommentSubmission } from "./issueCommentMentions";
+import { IssueDetailSearchableSelect } from "./IssueDetailControls";
+import {
+  useCommentAssignment,
+  type CommentAssignment,
+} from "./useCommentAssignment";
+export type { CommentAssignment } from "./useCommentAssignment";
 
 export interface IssueMainCommentTestIds {
   form: string;
@@ -43,12 +48,17 @@ export function IssueMainCommentComposer({
   mentionCandidates = [],
   translate,
   inputRef,
+  assignment,
   testIds = desktopTestIds,
 }: {
   value: string;
   onChange(value: string): void;
   /** The comment body, plus the structured targets it still names. */
-  onSubmit(body: string, mentions: IssueMentionOption[]): void;
+  onSubmit(
+    body: string,
+    mentions: IssueMentionOption[],
+  ): void | boolean | Promise<void | boolean>;
+  assignment?: CommentAssignment;
   disabled: boolean;
   sending: boolean;
   uploading: boolean;
@@ -73,10 +83,15 @@ export function IssueMainCommentComposer({
   const fileInput = useRef<HTMLInputElement>(null);
   const editorRef = useRef<HTMLElement>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const canSend = !disabled && !sending && !uploading && Boolean(value.trim());
+  const transfer = useCommentAssignment(value, assignment, onSubmit);
+  const blocked = disabled || sending || transfer.busy;
+  const canSend =
+    !blocked && !uploading && Boolean(value.trim() || transfer.target);
+  const sendLabel = transfer.target
+    ? translate(value.trim() ? "todo.send_and_assign" : "todo.assign_only")
+    : labels.send;
   const submit = (draft: string) => {
-    const { body, mentions } = issueCommentSubmission(draft);
-    onSubmit(body, mentions);
+    if (canSend) void transfer.submit(draft);
   };
 
   return (
@@ -84,7 +99,8 @@ export function IssueMainCommentComposer({
       data-testid={testIds.form}
       canSend={canSend}
       onSubmit={() => submit(value)}
-      sendLabel={labels.send}
+      sendLabel={sendLabel}
+      showSendLabel={Boolean(assignment)}
       sendTestId={testIds.send}
       before={attachments}
       input={
@@ -94,7 +110,7 @@ export function IssueMainCommentComposer({
           onChange={onChange}
           onSubmit={(nextValue) => submit(nextValue ?? value)}
           canSend={canSend}
-          disabled={disabled || sending}
+          disabled={blocked}
           placeholder={labels.placeholder}
           testId={testIds.input}
           translate={translate}
@@ -117,7 +133,7 @@ export function IssueMainCommentComposer({
               data-testid={testIds.settings}
               aria-label={labels.settings}
               title={labels.settings}
-              disabled={!settings || disabled || sending}
+              disabled={blocked}
               aria-expanded={settingsOpen}
               aria-controls={settingsId}
               onClick={() => setSettingsOpen((open) => !open)}
@@ -125,14 +141,13 @@ export function IssueMainCommentComposer({
               <SlidersHorizontal className="h-4 w-4" />
             </button>
           )}
-          <span className="flex-1" />
           <input
             ref={fileInput}
             data-testid={testIds.file}
             type="file"
             multiple
             hidden
-            disabled={!onSelectFiles || disabled || sending}
+            disabled={!onSelectFiles || blocked}
             onChange={(event) => {
               const files = Array.from(event.target.files ?? []);
               if (files.length) void onSelectFiles?.(files);
@@ -144,11 +159,42 @@ export function IssueMainCommentComposer({
             data-testid={testIds.attach}
             aria-label={labels.attach}
             title={labels.attach}
-            disabled={!onSelectFiles || disabled || sending}
+            disabled={!onSelectFiles || blocked}
             onClick={() => fileInput.current?.click()}
           >
             <Paperclip className="h-4 w-4" />
           </button>
+          <span className="flex-1" />
+          {assignment ? (
+            <IssueDetailSearchableSelect
+              testId={`${testIds.form}-assignee`}
+              accessibleLabel={translate("todo.comment_assign_to")}
+              value={transfer.target}
+              onChange={transfer.setTarget}
+              disabled={blocked}
+              searchPlaceholder={translate("todo.search_assignee")}
+              emptyLabel={translate("todo.no_matching_assignee")}
+              className="task-detail-comment-assignee"
+              triggerContent={
+                <>
+                  <span>{translate("todo.comment_assign_to")}</span>
+                  <span className="truncate">
+                    {transfer.members.find(
+                      (member) => String(member.user_id) === transfer.target,
+                    )?.user_name ?? translate("todo.keep_assignee")}
+                  </span>
+                  <ChevronDown className="h-4 w-4 shrink-0" />
+                </>
+              }
+              options={[
+                { value: "", label: translate("todo.keep_assignee") },
+                ...transfer.members.map((member) => ({
+                  value: String(member.user_id),
+                  label: member.user_name,
+                })),
+              ]}
+            />
+          ) : null}
         </>
       }
       after={
@@ -158,9 +204,9 @@ export function IssueMainCommentComposer({
               {settings}
             </div>
           ) : null}
-          {error ? (
+          {error || transfer.error ? (
             <p role="alert" className="task-detail-comment-inline-error">
-              {error}
+              {transfer.error || error}
             </p>
           ) : null}
         </>
