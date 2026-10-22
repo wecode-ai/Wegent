@@ -90,6 +90,7 @@ import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChange
 import type { CloudProjectMember } from '@/api/deliveries'
 
 interface TaskActivityViewProps {
+  commentAssignment?: import('@wegent/collaboration').CommentAssignment
   client?: ProjectChatClient
   project: CloudProject
   task: CloudLoopItem
@@ -214,6 +215,7 @@ function isVersionConflict(cause: unknown): boolean {
 }
 
 export function TaskActivityView({
+  commentAssignment,
   client,
   project,
   task,
@@ -903,6 +905,7 @@ export function TaskActivityView({
   }
 
   async function sendNewComment(text: string, mentions: ProjectChatMention[]): Promise<boolean> {
+    let persisted = false
     const attachments = attachmentSelection.attachments
     if (!client || !text || sending) return false
     if (!attachmentSelection.isAttachmentReadyToSend) {
@@ -936,6 +939,7 @@ export function TaskActivityView({
           : {}),
       })
       followCard(message.messageId)
+      persisted = true
       setMessages(current => mergeProjectChatMessages(current, [message]))
       setNewCommentDraft('')
       attachmentSelection.resetAttachments()
@@ -978,29 +982,29 @@ export function TaskActivityView({
     } finally {
       setSending(false)
     }
-    return false
+    return persisted
   }
 
   async function submitTimelineComment(
     text: string,
     mentions: ProjectChatMention[]
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (!replyTarget) {
-      await sendNewComment(text, mentions)
-      return
+      return sendNewComment(text, mentions)
     }
     if (!attachmentSelection.isAttachmentReadyToSend) {
       setError(t('workbench.task_activity_attachment_uploading'))
-      return
+      return false
     }
     const result = await sendCardReply(replyTarget, text, mentions, attachmentSelection.attachments)
     if (!result.ok) {
       setError(result.error ?? t('workbench.project_chat_send_failed'))
-      return
+      return false
     }
     setReplyTarget(null)
     setNewCommentDraft('')
     attachmentSelection.resetAttachments()
+    return true
   }
 
   const renderActivityMessage = (
@@ -1144,6 +1148,7 @@ export function TaskActivityView({
                 </div>
               ) : null}
               <TaskCommentComposer
+                assignment={!replyTarget ? commentAssignment : undefined}
                 predictionAddress={
                   replyTarget && !replyHumanDispatch
                     ? boundCardSessionAddress(replyTarget, taskBindings)
@@ -1152,7 +1157,7 @@ export function TaskActivityView({
                 key={task.id}
                 value={newCommentDraft}
                 onChange={setNewCommentDraft}
-                onSubmit={(body, mentions) => void submitTimelineComment(body, mentions)}
+                onSubmit={submitTimelineComment}
                 disabled={!client}
                 sending={sending}
                 error={error ?? (!client ? t('workbench.project_chat_cloud_required') : null)}
@@ -1170,10 +1175,11 @@ export function TaskActivityView({
             <>
               {linear || client?.executeTaskComment ? (
                 <TaskCommentComposer
+                  assignment={commentAssignment}
                   key={task.id}
                   value={newCommentDraft}
                   onChange={setNewCommentDraft}
-                  onSubmit={(body, mentions) => void sendNewComment(body, mentions)}
+                  onSubmit={sendNewComment}
                   disabled={!client}
                   sending={sending}
                   error={error ?? (!client ? t('workbench.project_chat_cloud_required') : null)}
