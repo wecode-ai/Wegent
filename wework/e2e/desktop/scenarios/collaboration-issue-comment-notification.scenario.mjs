@@ -8,7 +8,10 @@ const PROJECT_NAME = '评论提及通知验收'
 const MENTIONER_NAME = 'desktop-e2e-mentioner'
 const MENTIONER_PASSWORD = 'desktop-e2e-mentioner-password'
 const ISSUE_TITLE = '评论 @ 必须通知被提及的成员'
-const COMMENT_TEXT = '这条评论在验收里 @ 了你，应该收到通知'
+const COMMENT_LINK = 'https://github.com/wecode-ai/Wegent/pull/3933'
+const COMMENT_DOCUMENT_PATH = '/comment-link-fixture'
+const COMMENT_DOCUMENT_TEXT = 'Wework comment link fixture loaded'
+const COMMENT_LATEST_DOCUMENT_TEXT = 'Wework latest comment link fixture loaded'
 const CLIENT_MESSAGE_PREFIX = 'desktop-e2e-mention'
 const FLASH_ANIMATION = 'task-detail-comment-flash'
 
@@ -73,7 +76,10 @@ async function waitForApiValue(load, predicate, message, timeoutMs) {
 /**
  * The @ notification is produced by the backend when another member comments,
  * so the scenario posts that comment over the same Socket.IO contract the app
- * uses and then drives the recipient's own window through the inbox.
+ * uses and then drives the recipient's own window through the inbox. The same
+ * comment carries a recognized GitHub link chip and a plain link so landing
+ * from the notification also verifies that both open in the Wework browser
+ * without navigating the workbench itself.
  */
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
   let backendUrl = ''
@@ -85,8 +91,22 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
   let project = null
   let issue = null
   let emptyUnreadIssue = null
+  let commentDocumentLink = ''
+  let pendingCommentDocumentLink = ''
+  let latestCommentDocumentLink = ''
+  let pendingDocumentResponse = null
+  let pendingDocumentRequestCount = 0
+  let latestDocumentRequestCount = 0
 
   const ownerRequest = (pathname, options) => requestJson(backendUrl, ownerToken, pathname, options)
+  const commentText = () =>
+    [
+      '这条评论在验收里 @ 了你，应该收到通知',
+      `[wecode-ai/Wegent#3933](${COMMENT_LINK})`,
+      `[外链文档](${commentDocumentLink})`,
+      `[等待加载的文档](${pendingCommentDocumentLink})`,
+      `[最新文档](${latestCommentDocumentLink})`,
+    ].join('\n')
 
   async function postMentionComment(messageId) {
     const { io } = createRequire(
@@ -113,7 +133,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
           clientMessageId: messageId,
           projectId: String(project.id),
           taskId: issue.id,
-          content: COMMENT_TEXT,
+          content: commentText(),
           mentions: [{ type: 'user', id: String(owner.id), label: owner.user_name }],
         })
       assert.equal(ack.ok, true, `Mentioning a member failed: ${JSON.stringify(ack)}`)
@@ -136,6 +156,192 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
     }
     assert.fail(`The mentioned comment never flashed: animation-name=${latest}`)
+  }
+
+  async function waitForBrowserPage(control, label, expectedUrl, expectedText) {
+    const deadline = Date.now() + Math.max(uiTimeoutMs, 30_000)
+    let latest = null
+    let documentState = null
+    let latestError = null
+    while (Date.now() < deadline) {
+      try {
+        latest = JSON.parse(
+          await control.command('getEmbeddedBrowserPageState', 'body', { value: label })
+        )
+      } catch (error) {
+        latestError = error instanceof Error ? error.message : String(error)
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+        continue
+      }
+      if (latest.navigationError) {
+        assert.fail(
+          `The Wework browser failed to open ${expectedUrl}: ${JSON.stringify(
+            latest.navigationError
+          )}`
+        )
+      }
+      if (
+        latest.url &&
+        latest.visible &&
+        !latest.isLoading &&
+        new URL(latest.url).href === new URL(expectedUrl).href
+      ) {
+        try {
+          documentState = JSON.parse(
+            await control.command('getEmbeddedBrowserDocumentState', 'body', { value: label })
+          )
+        } catch (error) {
+          latestError = error instanceof Error ? error.message : String(error)
+        }
+        if (
+          documentState?.href === new URL(expectedUrl).href &&
+          documentState.readyState === 'complete' &&
+          (expectedText === undefined || documentState.bodyText === expectedText)
+        ) {
+          return latest
+        }
+      }
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+    }
+    assert.fail(
+      `The Wework browser did not open ${expectedUrl}: ${JSON.stringify({ latest, documentState })}${
+        latestError ? ` (${latestError})` : ''
+      }`
+    )
+  }
+
+  async function collaborationBrowserLabel(control, browserPanel) {
+    await control.command('waitFor', browserPanel, { visible: true, timeoutMs: uiTimeoutMs })
+    const browserLabel = await control.command(
+      'getAttribute',
+      `${browserPanel} [data-testid="workspace-browser-panel"]`,
+      { value: 'data-embedded-browser-label' }
+    )
+    assert.ok(browserLabel, 'The visible collaboration browser must expose its logical label')
+    return browserLabel
+  }
+
+  async function closeCommentBrowser(control, activeSurface, routeBeforeClick) {
+    const browserPanel = `${activeSurface} [data-testid="collaboration-embedded-browser-panel"]`
+    const issueTitle = `${activeSurface} [data-testid="cloud-todo-detail-title"]`
+    await control.command(
+      'click',
+      `${browserPanel} [data-testid="collaboration-embedded-browser-close"]`,
+      { visible: true }
+    )
+    await control.command('waitFor', browserPanel, { visible: false, timeoutMs: uiTimeoutMs })
+    await control.command('waitFor', issueTitle, {
+      visible: true,
+      stableMs: 250,
+      timeoutMs: uiTimeoutMs,
+    })
+    assert.equal(await control.command('getValue', issueTitle), ISSUE_TITLE)
+    assert.equal(
+      await control.command('getRoute'),
+      routeBeforeClick,
+      `Clicking an Issue comment link navigated the workbench away from ${routeBeforeClick}`
+    )
+  }
+
+  async function verifyPendingCommentNavigation(control, activeSurface, routeBeforeClick) {
+    const documentLink = url =>
+      `${activeSurface} a[data-testid="assistant-markdown-link"][href="${url}"]`
+    const browserPanel = `${activeSurface} [data-testid="collaboration-embedded-browser-panel"]`
+    let heldResponse = null
+    let openingNativeLabel = null
+    try {
+      await control.command('click', documentLink(pendingCommentDocumentLink), { visible: true })
+      heldResponse = await waitForApiValue(
+        async () => pendingDocumentResponse,
+        Boolean,
+        'The first comment document never began loading',
+        uiTimeoutMs
+      )
+      assert.equal(heldResponse.destroyed, false, 'The first request must still be connected')
+      assert.equal(heldResponse.writableEnded, false, 'The first response must still be held')
+      const browserLabel = await collaborationBrowserLabel(control, browserPanel)
+      const openingPage = JSON.parse(
+        await control.command('getEmbeddedBrowserPageState', 'body', { value: browserLabel })
+      )
+      assert.equal(openingPage.visible, true)
+      assert.equal(openingPage.navigationError, null)
+      assert.equal(openingPage.isLoading, true, 'The first document must still be loading')
+      assert.equal(openingPage.url, pendingCommentDocumentLink)
+      assert.ok(openingPage.nativeLabel, 'The loading page must identify its native browser')
+      openingNativeLabel = openingPage.nativeLabel
+      // The held HTTP response keeps the first user-triggered browser.open pending.
+      // A second UI click must win when that original native open completes.
+      await control.command('click', documentLink(latestCommentDocumentLink), { visible: true })
+    } finally {
+      if (heldResponse && !heldResponse.destroyed && !heldResponse.writableEnded) {
+        heldResponse.end(
+          `<!doctype html><title>Pending comment document</title><p>${COMMENT_DOCUMENT_TEXT}</p>`
+        )
+      }
+      if (pendingDocumentResponse === heldResponse) pendingDocumentResponse = null
+    }
+    for (const requestNumber of [1, 2, 3]) {
+      if (requestNumber > 1) {
+        await control.command('click', documentLink(latestCommentDocumentLink), { visible: true })
+      }
+      const loadedPage = await waitForBrowserPage(
+        control,
+        await collaborationBrowserLabel(control, browserPanel),
+        latestCommentDocumentLink,
+        `${COMMENT_LATEST_DOCUMENT_TEXT}: request ${requestNumber}`
+      )
+      if (requestNumber < 3) {
+        assert.equal(
+          loadedPage.nativeLabel,
+          openingNativeLabel,
+          'Replacing the pending URL and reloading must reuse the same native browser'
+        )
+      } else {
+        assert.notEqual(
+          loadedPage.nativeLabel,
+          openingNativeLabel,
+          'Reopening a closed panel must create a new native browser'
+        )
+      }
+      console.log(
+        `[e2e] Comment browser verified: ${['pending open replacement', 'same URL reload', 'closed panel reopen'][requestNumber - 1]}`
+      )
+      if (requestNumber !== 1) {
+        await closeCommentBrowser(control, activeSurface, routeBeforeClick)
+      }
+    }
+    assert.equal(pendingDocumentRequestCount, 1)
+    assert.equal(latestDocumentRequestCount, 3)
+  }
+
+  async function verifyCommentLinks(control, activeSurface) {
+    const githubLink = `${activeSurface} [data-testid="composer-link-chip"][data-composer-link-url="${COMMENT_LINK}"]`
+    const documentLink = `${activeSurface} a[data-testid="assistant-markdown-link"][href="${commentDocumentLink}"]`
+    await control.command('waitFor', githubLink, { visible: true, timeoutMs: uiTimeoutMs })
+    await control.command('waitFor', documentLink, { visible: true, timeoutMs: uiTimeoutMs })
+    await control.command('setAppPreferences', 'body', {
+      value: JSON.stringify({
+        browserExternalLinkTarget: 'wework',
+        browserLocalLinkTarget: 'wework',
+      }),
+    })
+
+    const routeBeforeClick = await control.command('getRoute')
+    const browserPanel = `${activeSurface} [data-testid="collaboration-embedded-browser-panel"]`
+    for (const [selector, expectedUrl, expectedText] of [
+      [githubLink, COMMENT_LINK],
+      [documentLink, commentDocumentLink, COMMENT_DOCUMENT_TEXT],
+    ]) {
+      await control.command('click', selector, { visible: true })
+      await waitForBrowserPage(
+        control,
+        await collaborationBrowserLabel(control, browserPanel),
+        expectedUrl,
+        expectedText
+      )
+      await closeCommentBrowser(control, activeSurface, routeBeforeClick)
+    }
+    await verifyPendingCommentNavigation(control, activeSurface, routeBeforeClick)
   }
 
   /**
@@ -170,9 +376,39 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
   return {
     requiresCloudEnvironment: true,
 
+    handleHttp(request, response, url) {
+      if (request.method !== 'GET' || url.pathname !== COMMENT_DOCUMENT_PATH) return false
+      response.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8',
+        'cache-control': 'no-store',
+      })
+      if (url.searchParams.get('load') === 'pending') {
+        pendingDocumentRequestCount += 1
+        assert.equal(pendingDocumentRequestCount, 1, 'The pending document was requested twice')
+        pendingDocumentResponse = response
+        return true
+      }
+      const text =
+        url.searchParams.get('revision') === 'latest'
+          ? `${COMMENT_LATEST_DOCUMENT_TEXT}: request ${++latestDocumentRequestCount}`
+          : COMMENT_DOCUMENT_TEXT
+      response.end(`<!doctype html><title>Wework comment link fixture</title><p>${text}</p>`)
+      return true
+    },
+
+    cleanup() {
+      pendingDocumentResponse?.destroy()
+      pendingDocumentResponse = null
+    },
+
     async prepareCloud(cloud) {
       backendUrl = cloud.backendUrl
       ownerToken = cloud.authToken
+      const modelServerPort = process.env.WEWORK_E2E_MODEL_SERVER_PORT?.trim()
+      assert.ok(modelServerPort, 'The desktop E2E model server port is unavailable')
+      commentDocumentLink = `http://127.0.0.1:${modelServerPort}${COMMENT_DOCUMENT_PATH}`
+      pendingCommentDocumentLink = `${commentDocumentLink}?load=pending`
+      latestCommentDocumentLink = `${commentDocumentLink}?revision=latest`
       owner = await ownerRequest('/api/users/me')
       mentioner = await ownerRequest('/api/admin/users', {
         method: 'POST',
@@ -323,6 +559,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await waitForFlash(control, commentSelectorFor(activeSurface, message.messageId), uiTimeoutMs)
       const linkFlashMs = Date.now() - linkStartedAt
       assertNavigationBudget('The DingTalk link', linkCommentMs, linkFlashMs)
+      await verifyCommentLinks(control, activeSurface)
+      await captureScreenshot(control, 'comment-notification-03-comment-links.png')
       const readIssue = await waitForApiValue(
         () => ownerRequest(`/api/v1/loop-items/${issue.id}`),
         value =>
