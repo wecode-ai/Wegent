@@ -692,6 +692,8 @@ New E2E tests should prefer this helper and `data-testid` locators instead of un
 
 ## CI Guidance
 
+The platform E2E base image, `docker/wework-e2e/browser.Dockerfile`, preinstalls the Docker CLI through `docker.io` and checks `docker --version` during its build. Shards use that CLI when preparing the remote workspace Executor without running apt update or installation. The Dockerfile content hash determines the image tag, so CI builds a new image after changes and reuses it in subsequent runs.
+
 Local list bootstrap reads and manual refreshes share one revision. A superseded bootstrap read must exit before both publishing its list and starting cloud synchronization, preventing stale startup work from restarting synchronization and clearing a selected local project. The original task-discovery E2E keeps its execution-mode and local execution assertions unchanged.
 
 Cloud Issue change notifications must invalidate an in-flight older board snapshot and start a read after the notification. Use the shared controller’s `loadProjectSnapshot(projectId, { invalidate: true })` to reuse its mutation-generation protection. This prevents a reassignment notification from sharing an older read triggered by unassignment. Ordinary duplicate reads remain coalesced. Frontend CI runs the controller concurrency regression; the original human Issue E2E retains its 10-second UI wait.
