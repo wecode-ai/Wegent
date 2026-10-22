@@ -6,12 +6,12 @@ const scoped = selector => `${CONTENT} ${selector}`
 /** The existing checkpoint supplies a real completed session and its delivery. */
 export async function verifyLinkedTasksScrolling(control, { request, projectId, issueId }) {
   for (let index = 0; index < 9; index += 1) {
-    await request(`/api/v1/cloud-projects/${projectId}/loop-items`, {
+    await request(`/api/v1/loop-items/${issueId}/tasks`, {
       method: 'POST',
       body: JSON.stringify({
-        title: `Linked child ${index + 1}`,
-        parent_id: issueId,
-        notify_assignee: false,
+        deviceId: 'archived-history-device',
+        taskId: `${issueId}-history-${index}`,
+        taskTitle: `Historical task ${index + 1}`,
       }),
     })
   }
@@ -34,7 +34,7 @@ export async function verifyLinkedTasksScrolling(control, { request, projectId, 
   await control.command('scrollIntoView', toggle)
   await control.command('click', toggle)
   await control.command('waitFor', `${toggle}[aria-expanded="true"]`)
-  assert.equal(await countRows(), 10, 'Expand must reveal the full mixed task list')
+  assert.equal(await countRows(), 10, 'Expand must reveal the full linked task list')
   const before = await metrics(list)
   assert.ok(before.clientHeight > 0 && before.clientHeight <= 280)
   assert.ok(before.scrollHeight > before.clientHeight, 'Task rows must not shrink to fit')
