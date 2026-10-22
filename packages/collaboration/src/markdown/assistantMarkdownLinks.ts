@@ -187,9 +187,9 @@ export function resolveDirectMarkdownImageSrc(
 }
 
 export function localMarkdownImagePath(src: string): string | null {
-  if (src.startsWith("file://")) return localPathFromMarkdownImageSrc(src);
-  const decodedPath = decodeMarkdownFilePath(src);
-  return isLocalImagePath(decodedPath) ? decodedPath : null;
+  if (src.startsWith('file://')) return localPathFromMarkdownImageSrc(src)
+  const decodedPath = decodeMarkdownFilePath(src)
+  return isLocalImagePath(decodedPath) ? decodedPath : null
 }
 
 export function localPathFromMarkdownImageSrc(src: string): string {
