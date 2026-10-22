@@ -576,6 +576,8 @@ function AssistantMarkdownLink({
   return (
     <a
       href={href}
+      target="_blank"
+      rel="noopener noreferrer"
       className={ASSISTANT_MARKDOWN_LINK_CLASS}
       data-testid="assistant-markdown-link"
       onClick={event => {
@@ -583,7 +585,9 @@ function AssistantMarkdownLink({
         event.stopPropagation()
         if (!href) return
         void Promise.resolve(openExternalUrl(href)).catch(error => {
-          console.error('[Wework] Failed to open assistant link', error)
+          console.error('[Wework] Failed to open assistant link', {
+            error: error instanceof Error ? error.name : typeof error,
+          })
         })
       }}
     >

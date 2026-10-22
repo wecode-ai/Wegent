@@ -1,4 +1,4 @@
-//! The approved CP contract for the two migrated collaboration catalog APIs.
+//! The approved CP contract for migrated project reads.
 
 use brz_mysql::{FromMysqlRow, Mysql, MysqlRow};
 use serde_json::{Value, json};
