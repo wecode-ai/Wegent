@@ -329,6 +329,13 @@ assistant 之前。canonical `turns` 是前端 transcript 的唯一输入，不�
 
 ### Assistant 轮内显示顺序与字号
 
+运行中 transcript 的缓存用于切回任务或恢复页面时读取已有消息。缓存消息已有
+`runtimeItems` 时，canonical `turns` 必须直接使用这些条目，保留原生 item ID、
+条目类型和顺序，包括空数组。不能再用展示用的 `content` 与 `blocks` 重建条目：
+这会把正文换成聚合消息 ID，并把正文移到过程消息前，导致后续原生 ID 的增量被
+追加为另一段正文。`streaming-content` E2E 在普通文本输出中途恢复页面，再继续
+输出，分别检查缓存条目、正文唯一性和过程消息位置；不能只检查完成快照。
+
 同一个 assistant turn 内的最终文本、过程文本和工具块必须按 runtime item 的到达顺序
 投影到界面，不能先按类型分组再固定渲染。特别是最终文本先到、过程文本后到时，后到
 的过程文本必须显示在最终文本下方；刷新 transcript 后也应保持同一顺序。

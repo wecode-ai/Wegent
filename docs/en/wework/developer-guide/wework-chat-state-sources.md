@@ -394,6 +394,16 @@ message only in the compatibility `messages` array is insufficient.
 
 ### Assistant In-Turn Display Order and Typography
 
+The running transcript cache serves existing messages when reopening a task or
+restoring a page. When a cached message has `runtimeItems`, canonical `turns`
+must use those items directly, preserving native item IDs, types, and order,
+including an empty array. Rebuilding items from presentation `content` and
+`blocks` changes the text identity to an aggregate message ID and moves it
+before process messages, so later deltas with the native ID create a second
+text segment. The `streaming-content` E2E restores the page midway through a
+plain-text response and then resumes output, checking cached items, text
+uniqueness, and process placement before completion as well as the final state.
+
 Final text, process text, and tool blocks within one assistant turn must be
 projected in runtime item arrival order. The UI must not group them by type and
 then render them in a fixed layout. In particular, when final text arrives
