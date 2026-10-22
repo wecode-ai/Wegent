@@ -138,6 +138,7 @@ function project(id: string, visibility: 'private' | 'public', version = 1): Pro
 
 function createApi() {
   return {
+    getProject: vi.fn(),
     listMembers: vi.fn().mockResolvedValue([]),
     listItems: vi.fn().mockResolvedValue({ items: [] }),
     searchUsers: vi.fn().mockResolvedValue({ users: [] }),
@@ -362,6 +363,45 @@ describe('ProjectManageView project scope', () => {
     expect(api.updateMember).toHaveBeenCalledWith('project-a', 2, {
       capability_description: '前端实现与交互验收',
     })
+  })
+
+  it('does not apply an old self-role refresh after navigating to another project', async () => {
+    const api = createApi()
+    const host = createHost()
+    const member: ProjectManageMember = {
+      user_id: 2,
+      user_name: 'member',
+      email: null,
+      role: 'Maintainer',
+      direct_role: 'Maintainer',
+      inherited_role: 'Developer',
+    }
+    vi.mocked(api.listMembers).mockResolvedValue([member])
+    vi.mocked(api.updateMember).mockResolvedValue({
+      ...member,
+      role: 'Viewer',
+      direct_role: 'Viewer',
+    })
+    const refresh = deferred<ProjectManageProject>()
+    vi.mocked(api.getProject).mockReturnValue(refresh.promise)
+    const projectA = { ...project('project-a', 'private'), current_user_id: 2 }
+    const projectB = project('project-b', 'private')
+    const onProjectUpdated = vi.fn()
+    renderView(api, host, projectA, onProjectUpdated)
+    await flushPromises()
+    const tree = renderView(api, host, projectA, onProjectUpdated)
+    findByTestId(tree, 'cloud-project-member-role-2').props.onChange({
+      target: { value: 'Viewer' },
+    })
+    await flushPromises()
+    expect(api.getProject).toHaveBeenCalledWith('project-a')
+
+    renderView(api, host, projectB, onProjectUpdated)
+    refresh.resolve({ ...projectA, access_role: 'Viewer' })
+    await flushPromises()
+
+    expect(onProjectUpdated).not.toHaveBeenCalled()
+    expect(host.trackFailed).not.toHaveBeenCalled()
   })
 
   it('does not write an old project mutation response into the new project', async () => {

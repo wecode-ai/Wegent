@@ -47,6 +47,7 @@ describe('CloudProjectManageView', () => {
   function createApi(overrides: Record<string, unknown> = {}) {
     return {
       projects: {
+        get: vi.fn().mockResolvedValue(project),
         update: vi
           .fn()
           .mockImplementation(
