@@ -297,6 +297,15 @@ export function createDesktopScenario({
         )
         assert.equal(bound.device_id, REMOTE_DOCKER_DEVICE_ID)
         await until(
+          () => rpc('runtime.tasks.list', { preferCached: true }),
+          result =>
+            result.workspaces
+              .flatMap(workspace => workspace.tasks)
+              .find(task => task.taskId === bound.task_id),
+          modelResponseTimeoutMs,
+          'The bound remote task was not created on its owning Runtime'
+        )
+        await until(
           () => rpc('runtime.tasks.get', { taskId: bound.task_id }),
           result => {
             assert.notEqual(result.task?.status, 'failed', JSON.stringify(result))
