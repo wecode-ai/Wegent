@@ -779,7 +779,9 @@ classify_wework_path() {
     wework/e2e/desktop/scenarios/collaboration-runtime-reconciliation.scenario.mjs | \
       wework/e2e/desktop/modules/database-lock.mjs | \
       wework/e2e/desktop/modules/runtime-event-proxy.mjs | \
-      wework/scripts/runtime-event-proxy.test.mjs)
+      wework/e2e/desktop/modules/runtime-reconciliation-model.mjs | \
+      wework/scripts/runtime-event-proxy.test.mjs | \
+      wework/scripts/runtime-reconciliation-model.test.mjs)
       select_target "core:collaboration-runtime-reconciliation"
       return
       ;;
@@ -1107,9 +1109,10 @@ classify_wework_path() {
       return
       ;;
 
-    # Claude conversations cover both local and remote executor routing.
+    # Runtime messaging also owns accepted interactive-input answers.
     wework/src/features/workbench/useWorkbenchRuntimeMessaging*)
       select_target "core:core-task-flow"
+      select_target "core:permission-modes"
       select_target "core:project-ai-settings"
       select_target "core:claude-runtime"
       select_cloud_worktree_checkpoints

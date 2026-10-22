@@ -740,7 +740,9 @@ for reconciliation_fixture in \
   wework/e2e/desktop/scenarios/collaboration-runtime-reconciliation.scenario.mjs \
   wework/e2e/desktop/modules/database-lock.mjs \
   wework/e2e/desktop/modules/runtime-event-proxy.mjs \
-  wework/scripts/runtime-event-proxy.test.mjs; do
+  wework/e2e/desktop/modules/runtime-reconciliation-model.mjs \
+  wework/scripts/runtime-event-proxy.test.mjs \
+  wework/scripts/runtime-reconciliation-model.test.mjs; do
   assert_desktop_case "Runtime reconciliation fixture selects its core CI shard: $reconciliation_fixture" \
     'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
@@ -1100,10 +1102,10 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/lib/local-harness.ts"
 
-assert_desktop_case "Claude runtime messaging selects task and Claude coverage" \
+assert_desktop_case "Runtime messaging selects task, input-answer and Claude coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"core-task-flow"},{"id":"core-5","name":"Core / shard 5","segments":"project-ai-settings"},{"id":"core-6","name":"Core / shard 6","segments":"claude-runtime"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"core-task-flow"},{"id":"core-4","name":"Core / shard 4","segments":"permission-modes"},{"id":"core-5","name":"Core / shard 5","segments":"project-ai-settings"},{"id":"core-6","name":"Core / shard 6","segments":"claude-runtime"}]}
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-3","name":"Cloud / shard 3","segments":"cloud-worktree-archive-restore"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"cloud-worktree-tools"},{"id":"cloud-9","name":"Cloud / shard 9","segments":"cloud-worktree-create"},{"id":"cloud-10","name":"Cloud / shard 10","segments":"cloud-worktree-capability"},{"id":"cloud-14","name":"Cloud / shard 14","segments":"cloud-worktree-queued-cancel"}]}
 wework_desktop_other_e2e=false

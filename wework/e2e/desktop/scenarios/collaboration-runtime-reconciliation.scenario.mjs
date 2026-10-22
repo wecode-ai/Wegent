@@ -7,16 +7,8 @@ import { join } from 'node:path'
 import { holdDatabaseLock } from '../modules/database-lock.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { readProjectChatMessages } from '../modules/project-chat-snapshot.mjs'
-import {
-  assistantMessage,
-  codexRequestKind,
-  createSse,
-  readRequestBody,
-  responseCompleted,
-  responseCreated,
-  streamingTextEvents,
-} from '../modules/response-protocol.mjs'
 import { RuntimeEventProxy } from '../modules/runtime-event-proxy.mjs'
+import { createRuntimeReconciliationModel } from '../modules/runtime-reconciliation-model.mjs'
 import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
 import { stopProcessGroup } from '../process-lifecycle.mjs'
 import { reloadMainWindow, selectCollaborationDomain } from '../modules/workspace-flows.mjs'
@@ -25,14 +17,6 @@ const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const MARKER = `RUNTIME_RECONCILIATION_${process.pid}`
 const ORDERS = ['snapshot-first', 'event-first', 'terminal-interleaved']
 const TERMINAL = new Set(['done', 'completed', 'succeeded'])
-
-function deferred() {
-  let resolve
-  const promise = new Promise(done => {
-    resolve = done
-  })
-  return { promise, resolve }
-}
 
 function jsonValue(value) {
   return typeof value === 'string' ? JSON.parse(value) : value
@@ -76,36 +60,6 @@ async function connectSocket(backendUrl, authToken, timeoutMs) {
   }
 }
 
-function streamDelta(stream, delta) {
-  return {
-    type: 'response.output_text.delta',
-    item_id: stream.itemId,
-    output_index: 0,
-    content_index: 0,
-    delta,
-  }
-}
-
-function modelCase(order) {
-  const marker = `${MARKER}_${order}`
-  const prefix = `${marker}_PARTIAL`
-  const tail = ` Final output is complete: ${'0123456789 abcdefghijklmnopqrstuvwxyz '.repeat(48)}${marker}_END`
-  return {
-    order,
-    marker,
-    prefix,
-    tail,
-    text: prefix + tail,
-    continuePrompt: `${marker}_CONTINUE`,
-    continuePrefix: `${marker}_NEW_TURN_RUNNING`,
-    continueText: `${marker}_NEW_TURN_RUNNING ${marker}_NEW_TURN_COMPLETE`,
-    initialGate: deferred(),
-    continueGate: deferred(),
-    initialRequests: 0,
-    continueRequests: 0,
-  }
-}
-
 async function loadSnapshotProjector() {
   const source = new URL('../../../../packages/chat-core/src/', import.meta.url)
   // Node 24 strips TypeScript; only the package's extensionless imports need resolving.
@@ -137,7 +91,8 @@ export async function createDesktopScenario({
   resultDir,
 }) {
   const executionSnapshot = await loadSnapshotProjector()
-  const cases = ORDERS.map(modelCase)
+  const model = createRuntimeReconciliationModel({ marker: MARKER, orders: ORDERS })
+  const { cases } = model
   const heldTasks = new Set()
   const evidence = []
   let cloud
@@ -264,8 +219,14 @@ export async function createDesktopScenario({
     testCase.issue = await request(`/v1/cloud-projects/${project.id}/loop-items`, {
       title: testCase.marker,
       description: `${testCase.marker}: preserve the complete final result across Runtime synchronization.`,
-      assignee_agent_id: agent.id,
     })
+    // Managed dispatch sends the Issue reference, not its title or description.
+    // Register that identity before assignment can reach the mock model service.
+    testCase.issue = await request(
+      `/v1/loop-items/${testCase.issue.id}`,
+      { version: testCase.issue.version, assignee_agent_id: agent.id },
+      'PATCH'
+    )
     testCase.execution = await until(
       async () =>
         (await request(`/v1/cloud-projects/${project.id}/executions?include_terminal=true`)).items,
@@ -588,36 +549,7 @@ export async function createDesktopScenario({
     setCloudEnvironment(environment) {
       cloud = environment
     },
-    async handleHttp(requestMessage, response, url) {
-      if (
-        requestMessage.method !== 'POST' ||
-        !['/responses', '/v1/responses'].includes(url.pathname)
-      )
-        return false
-      const body = await readRequestBody(requestMessage)
-      const serialized = JSON.stringify(body)
-      const testCase = cases.find(candidate => serialized.includes(candidate.marker))
-      const id = `${MARKER}-${randomUUID()}`
-      if (!testCase || ['prewarm', 'compaction'].includes(codexRequestKind(body))) {
-        response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
-        response.end(
-          createSse([responseCreated(id), assistantMessage('Ready'), responseCompleted(id)])
-        )
-        return true
-      }
-      const continuation = serialized.includes(testCase.continuePrompt)
-      const counter = continuation ? 'continueRequests' : 'initialRequests'
-      testCase[counter] += 1
-      assert.equal(testCase[counter], 1, 'A reconciliation case invoked its model more than once')
-      const text = continuation ? testCase.continueText : testCase.text
-      const prefix = continuation ? testCase.continuePrefix : testCase.prefix
-      const stream = streamingTextEvents(id, text, 'final_answer')
-      response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
-      response.write(createSse([...stream.start, streamDelta(stream, prefix)]))
-      await (continuation ? testCase.continueGate : testCase.initialGate).promise
-      response.end(createSse([streamDelta(stream, text.slice(prefix.length)), ...stream.finish]))
-      return true
-    },
+    handleHttp: model.handleHttp,
     async verify(control) {
       socket = await connectSocket(backendUrl, authToken, uiTimeoutMs)
       await setupRemote()
@@ -634,15 +566,13 @@ export async function createDesktopScenario({
         for (const testCase of cases) await verifyRefresh(control, testCase)
         await verifyStaleTerminals(control, cases.at(-1))
       } finally {
-        cases.forEach(testCase => {
-          testCase.initialGate.resolve()
-          testCase.continueGate.resolve()
-        })
+        model.release()
         await writeFile(
           join(resultDir, 'runtime-reconciliation-evidence.json'),
           JSON.stringify(
             {
               evidence,
+              modelRequests: model.diagnostics(),
               heldEvents: proxy.events
                 .filter(entry => entry.held)
                 .map(entry => ({
@@ -658,12 +588,9 @@ export async function createDesktopScenario({
         )
       }
     },
-    diagnostics: () => ({ evidence }),
+    diagnostics: () => ({ evidence, modelRequests: model.diagnostics() }),
     async cleanup() {
-      cases.forEach(testCase => {
-        testCase.initialGate.resolve()
-        testCase.continueGate.resolve()
-      })
+      model.release()
       socket?.disconnect()
       await proxy?.stop()
     },

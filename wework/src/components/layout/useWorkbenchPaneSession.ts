@@ -1793,7 +1793,7 @@ export function useWorkbenchPaneSession({
           return next
         })
       }
-      applyLocalRequestUserInputResponse(response)
+      if (answerIsUserMessage) applyLocalRequestUserInputResponse(response)
       return true
     },
     [
