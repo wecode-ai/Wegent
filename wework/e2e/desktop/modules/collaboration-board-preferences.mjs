@@ -28,8 +28,6 @@ async function switchAccount(control, restartDesktopApp, token, user) {
   await control.command('click', '[data-testid="settings-button"]')
   await control.command('waitFor', '[data-testid="logout-menu-button"]')
   await control.command('click', '[data-testid="logout-menu-button"]')
-  await control.command('click', '[data-testid="settings-button"]')
-  await control.command('waitFor', '[data-testid="login-menu-button"]')
   assert.equal(
     await control.command('getLocalStorageItem', 'body', { value: 'wework.cloudConnection' }),
     '',
