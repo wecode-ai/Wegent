@@ -1185,11 +1185,13 @@ async function endDesktopControlDrag(command: DesktopControlCommand): Promise<st
     dispatchDesktopControlPointerEvent(activeDrag.sourceElement, 'pointermove', endOptions)
     dispatchDesktopControlPointerEvent(target, 'pointermove', endOptions)
     await waitForDesktopControlTick()
+    const pointerUpStartedAt = performance.now()
     dispatchDesktopControlPointerEvent(document, 'pointerup', { ...endOptions, buttons: 0 })
     dispatchDesktopControlPointerEvent(activeDrag.sourceElement, 'pointerup', {
       ...endOptions,
       buttons: 0,
     })
+    const pointerUpDispatchedAt = performance.now()
     if (command.waitForSelector) {
       await waitForDesktopControlElement({
         ...command,
@@ -1199,6 +1201,9 @@ async function endDesktopControlDrag(command: DesktopControlCommand): Promise<st
       })
       return JSON.stringify({
         durationMs: Math.round(performance.now() - startedAt),
+        pointerMoveMs: Math.round(pointerUpStartedAt - startedAt),
+        pointerUpDispatchMs: Math.round(pointerUpDispatchedAt - pointerUpStartedAt),
+        splitReadyMs: Math.round(performance.now() - pointerUpDispatchedAt),
         sourceText: activeDrag.sourceText,
       })
     }
@@ -1357,7 +1362,10 @@ async function doubleClickDesktopControlElement(selector: string): Promise<strin
   return secondElement.textContent?.trim() ?? ''
 }
 
-async function waitForDesktopControlElement(command: DesktopControlCommand): Promise<string> {
+async function waitForDesktopControlElement(
+  command: DesktopControlCommand,
+  onMatch?: (element: HTMLElement) => string
+): Promise<string> {
   const timeoutMs = command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
   const startedAt = Date.now()
   let matchedAt: number | null = null
@@ -1381,11 +1389,13 @@ async function waitForDesktopControlElement(command: DesktopControlCommand): Pro
       : elements
     const text = matchingElements.map(element => element.textContent?.trim() ?? '').join('\n')
     const hasExpectedText = !command.text || text.includes(command.text)
-    const isEnabled = !command.enabled || matchingElements.some(desktopControlElementEnabled)
-    if (matchingElements.length > 0 && hasExpectedText && isEnabled) {
+    const matchedElement = matchingElements.find(
+      element => !command.enabled || desktopControlElementEnabled(element)
+    )
+    if (matchedElement && hasExpectedText) {
       matchedAt ??= Date.now()
       if (Date.now() - matchedAt >= (command.stableMs ?? 0)) {
-        return text
+        return onMatch ? onMatch(matchedElement) : text
       }
     } else {
       matchedAt = null
@@ -2476,9 +2486,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       })
       return ''
     }
+    case 'stopElementMetricsSampling':
     case 'getElementMetricsSample': {
       const sample = activeElementMetricsSample
       if (!sample) throw new Error('Element metrics sampling has not started')
+      if (command.action === 'stopElementMetricsSampling') sample.stop()
       return JSON.stringify({
         done: sample.done,
         frames: sample.frames,
@@ -2855,15 +2867,24 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'clickWhenEnabled': {
       startConversationDiagnosticCapture()
-      await waitForDesktopControlElement({ ...command, enabled: true })
-      const element = findDesktopControlElements(command.selector).find(
-        desktopControlElementEnabled
-      )
-      if (!element) {
-        throw new Error(`Selector "${command.selector}" became disabled before click`)
+      return waitForDesktopControlElement({ ...command, enabled: true }, element => {
+        element.click()
+        return element.textContent?.trim() ?? ''
+      })
+    }
+    case 'setExpanded': {
+      const expected = command.value
+      if (expected !== 'true' && expected !== 'false') {
+        throw new Error('setExpanded requires a true or false value')
       }
-      element.click()
-      return element.textContent?.trim() ?? ''
+      return waitForDesktopControlElement({ ...command, enabled: true }, element => {
+        const expanded = element.getAttribute('aria-expanded')
+        if (expanded !== 'true' && expanded !== 'false') {
+          throw new Error(`Selector "${command.selector}" has no valid aria-expanded state`)
+        }
+        if (expanded !== expected) element.click()
+        return element.textContent?.trim() ?? ''
+      })
     }
     case 'clickDescendantInElementWithText': {
       const text = command.text ?? ''
@@ -2970,7 +2991,25 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return String(finishedCount)
     }
     case 'getWorkbenchDebugSnapshot':
-      return JSON.stringify(getWorkbenchDebugSnapshot())
+      return JSON.stringify({
+        ...getWorkbenchDebugSnapshot(),
+        network: performance.getEntriesByType('resource').map(entry => {
+          const timing = entry as PerformanceResourceTiming
+          return {
+            path: new URL(timing.name, location.href).pathname,
+            initiatorType: timing.initiatorType,
+            startTime: timing.startTime,
+            duration: timing.duration,
+            fetchStart: timing.fetchStart,
+            connectStart: timing.connectStart,
+            connectEnd: timing.connectEnd,
+            requestStart: timing.requestStart,
+            responseStart: timing.responseStart,
+            responseEnd: timing.responseEnd,
+            nextHopProtocol: timing.nextHopProtocol,
+          }
+        }),
+      })
     case 'getLocalHarnessDiagnostics':
       return JSON.stringify(await collectLocalHarnessDiagnostics())
     case 'getConversationDiagnosticsSnapshot':

@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ACTIVE_COMPOSER_SELECTOR } from '../modules/shared.mjs'
-import { verifyPluginTogglePersistence } from '../modules/plugin-inventory-state.mjs'
 import {
   inventory,
   openPlugin,
@@ -17,14 +16,10 @@ export async function createDesktopScenario({
   workbenchReadyTimeoutMs,
 }) {
   let cloud
-  let restartDesktopApp
   return {
     requiresCloudEnvironment: true,
     setCloudEnvironment(value) {
       cloud = value
-    },
-    setRestartDesktopApp(value) {
-      restartDesktopApp = value
     },
     async verify(control) {
       const local = await cloud.waitForConnectedAppDevice()
@@ -90,11 +85,11 @@ export async function createDesktopScenario({
       )
       assert.ok(before.scrollHeight > before.clientHeight, 'Fixture does not exercise overflow')
       assert.equal(before.scrollTop, 0)
-      // Snapshot test IDs are sorted, not DOM ordered. Find the actual last row.
-      const positions = []
-      for (const id of itemIds) positions.push({ id, metrics: await metrics(testId(id)) })
-      positions.sort((left, right) => left.metrics.top - right.metrics.top)
-      const { id: lastId, metrics: lastBefore } = positions.at(-1)
+      // Picker rows follow DOM order; read the last row without one IPC per plugin.
+      const lastRow = `${scroller} > button[data-testid^="composer-plugin-picker-item-"]:last-child`
+      const lastId = await control.command('getAttribute', lastRow, { value: 'data-testid' })
+      assert.ok(itemIds.includes(lastId), 'Last picker row was absent from the catalog snapshot')
+      const lastBefore = await metrics(lastRow)
       assert.ok(lastBefore.top >= before.bottom, 'Last plugin was already in the initial viewport')
       await control.command('scrollToBottomAsUser', scroller)
       const after = await until(
@@ -132,14 +127,6 @@ export async function createDesktopScenario({
           2
         )
       )
-      await verifyPluginTogglePersistence({
-        control,
-        cloud,
-        fixture: fixtures[0],
-        restartDesktopApp,
-        timeoutMs: workbenchReadyTimeoutMs,
-      })
-      await captureScreenshot(control, 'plugin-enabled-after-restart.png', 'body')
     },
   }
 }

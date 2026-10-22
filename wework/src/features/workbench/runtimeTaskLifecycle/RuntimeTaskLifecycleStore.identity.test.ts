@@ -60,6 +60,16 @@ describe('runtime task lifecycle device identity', () => {
         latestId: 'new-turn',
         outcome: 'succeeded',
       })
+
+      store.turnStarted(canonical, 'correction-after-merge')
+      store.syncTranscript(alias, {
+        taskId: canonical.taskId,
+        messages: [],
+        running: false,
+        turns: [{ id: 'old-turn', status: 'completed', completedAt: 1000, items: [] }],
+      })
+      expect(store.getTask(canonical)?.turn.id).toBe('correction-after-merge')
+      expect(store.getTask(alias)?.derived.shouldShowSidebarRunning).toBe(true)
     }
   )
 

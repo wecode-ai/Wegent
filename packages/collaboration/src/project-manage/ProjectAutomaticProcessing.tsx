@@ -328,6 +328,9 @@ export function ProjectAutomaticProcessing({
   const [groups, setGroups] = useState<CollaborationGroup[]>([]);
   const [availableAgents, setAvailableAgents] =
     useState<CollaborationAgent[]>(agents);
+  const [availableMembers, setAvailableMembers] =
+    useState<CollaborationMember[]>(members);
+  const [optionsLoading, setOptionsLoading] = useState(true);
   const [hooks, setHooks] = useState<WorkspaceIncomingHook[]>([]);
   const [draft, setDraft] = useState<AutomaticProcessingDraft>(EMPTY_DRAFT);
   const [editing, setEditing] = useState(false);
@@ -369,15 +372,19 @@ export function ProjectAutomaticProcessing({
   useEffect(() => {
     let active = true;
     setGroups([]);
+    setAvailableMembers([]);
+    setOptionsLoading(true);
     setOptionsError("");
     void Promise.all([
       api.projects.listCollaborationGroups?.(project.id) ?? [],
       api.agents.list(project.id),
+      api.members.list(project.id),
     ])
-      .then(([nextGroups, nextAgents]) => {
+      .then(([nextGroups, nextAgents, nextMembers]) => {
         if (!active) return;
         setGroups(nextGroups);
         setAvailableAgents(nextAgents);
+        setAvailableMembers(nextMembers);
       })
       .catch((cause: unknown) => {
         if (!active) return;
@@ -389,6 +396,9 @@ export function ProjectAutomaticProcessing({
                 "加载自动处理失败",
               ),
         );
+      })
+      .finally(() => {
+        if (active) setOptionsLoading(false);
       });
     return () => {
       active = false;
@@ -445,7 +455,7 @@ export function ProjectAutomaticProcessing({
 
   const targetOptions = useMemo(
     () => ({
-      human: members.map((member) => ({
+      human: availableMembers.map((member) => ({
         id: String(member.user_id),
         name: member.user_name,
       })),
@@ -458,7 +468,7 @@ export function ProjectAutomaticProcessing({
         name: group.name,
       })),
     }),
-    [availableAgents, groups, members],
+    [availableAgents, groups, availableMembers],
   );
   const selectedHook = hooks.find((hook) => hook.id === draft.hookId) ?? null;
   const externalEventTypes = selectedHook
@@ -722,6 +732,7 @@ export function ProjectAutomaticProcessing({
               type="button"
               className="collaboration-primary-button inline-flex shrink-0 items-center gap-1.5"
               data-testid="automatic-processing-create"
+              disabled={optionsLoading || Boolean(optionsError)}
               onClick={openCreate}
             >
               <Plus aria-hidden="true" className="h-4 w-4" />

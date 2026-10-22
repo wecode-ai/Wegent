@@ -11,6 +11,7 @@ export { createLocalWorkspaceApi, createWeworkPlatformApi }
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -1041,6 +1042,7 @@ export function WeworkSharedProject({
             allIssues,
             assignments,
             taskBindings,
+            onRead,
             onChange,
             onClose,
             onCreateTask,
@@ -1136,12 +1138,14 @@ export function WeworkSharedProject({
                     taskComposer?.issue.id === issue.id ? () => setTaskComposer(null) : closeDrawers
                   }
                   onUpdated={updated => onChange(updated as unknown as CollaborationIssue)}
+                  onRead={updated => onRead(updated as unknown as CollaborationIssue)}
                   onClose={closeDrawers}
                 />
               )}
             </IssueConversationDrawers>
           )}
           renderBoardIssueCard={({
+            column,
             display,
             focused,
             issue,
@@ -1181,6 +1185,7 @@ export function WeworkSharedProject({
             return (
               <div className="w-full" data-testid={collaborationTestIds.issue(issue.id)}>
                 <CloudTodoBoardCard
+                  columnKey={column.key}
                   item={
                     {
                       ...issue,
@@ -1351,6 +1356,23 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
   const navigationRequestRevisionRef = useRef(0)
   const resolvedWorkspaceProjectRef = useRef<string | null>(null)
 
+  // An external route supersedes an internal project's pending lookup, even
+  // when it only selects another Issue or comment in the same project.
+  useLayoutEffect(() => {
+    navigationRequestRevisionRef.current += 1
+    pendingNavigationProjectIdRef.current = undefined
+    return () => {
+      navigationRequestRevisionRef.current += 1
+    }
+  }, [
+    activeProject?.projectId,
+    activeProject?.projectStore,
+    platformApi,
+    props.focusedCommentId,
+    props.focusedCommentRequestKey,
+    props.focusedItemId,
+  ])
+
   useEffect(() => {
     const activeProjectId = activeProject ? String(activeProject.projectId) : null
     if (pendingNavigationProjectIdRef.current !== undefined) {
@@ -1423,6 +1445,8 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
     location.projectId,
     navigationSyncRevision,
     platformApi,
+    props.focusedCommentId,
+    props.focusedCommentRequestKey,
     props.focusedItemId,
   ])
 

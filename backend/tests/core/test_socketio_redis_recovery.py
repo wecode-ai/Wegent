@@ -8,6 +8,7 @@ import json
 import socket
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
@@ -128,17 +129,56 @@ class RedisSubscriptionServer:
             if heartbeat is not None:
                 heartbeat.cancel()
                 await asyncio.gather(heartbeat, return_exceptions=True)
-            writer.close()
-            await writer.wait_closed()
-            self.handlers.discard(task)
-            if not self.handlers:
-                self.connections_closed.set()
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except ConnectionError:
+                # The client can reset or break a stalled connection while reconnecting.
+                pass
+            finally:
+                self.handlers.discard(task)
+                if not self.handlers:
+                    self.connections_closed.set()
 
     async def close(self) -> None:
         tasks = tuple(self.handlers)
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("close_error", [None, ConnectionResetError, BrokenPipeError])
+async def test_connection_cleanup_handles_peer_disconnect(
+    close_error: type[ConnectionError] | None,
+) -> None:
+    stub = RedisSubscriptionServer(partial_response=False)
+    reader = asyncio.StreamReader()
+    reader.feed_eof()
+    writer = MagicMock(spec=asyncio.StreamWriter)
+    writer.wait_closed = AsyncMock(side_effect=close_error)
+
+    await stub.handle(reader, writer)
+
+    writer.close.assert_called_once_with()
+    writer.wait_closed.assert_awaited_once_with()
+    assert not stub.handlers
+    assert stub.connections_closed.is_set()
+
+
+@pytest.mark.asyncio
+async def test_connection_cleanup_preserves_unexpected_close_errors() -> None:
+    stub = RedisSubscriptionServer(partial_response=False)
+    reader = asyncio.StreamReader()
+    reader.feed_eof()
+    writer = MagicMock(spec=asyncio.StreamWriter)
+    writer.wait_closed = AsyncMock(side_effect=RuntimeError("unexpected close failure"))
+
+    with pytest.raises(RuntimeError, match="unexpected close failure"):
+        await stub.handle(reader, writer)
+
+    assert not stub.handlers
+    assert stub.connections_closed.is_set()
 
 
 @pytest_asyncio.fixture(params=[True, False], ids=["partial-response", "idle"])

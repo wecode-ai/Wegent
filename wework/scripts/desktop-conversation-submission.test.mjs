@@ -17,7 +17,7 @@ import {
   DEFAULT_STEP_TIMEOUT_MS,
   triggerModelReloadUntilCloudFailure,
 } from '../e2e/desktop/modules/shared.mjs'
-import { sendOrderFollowUp } from '../e2e/desktop/scenarios/streaming-text.scenario.mjs'
+import { sendOrderFollowUp } from '../e2e/desktop/modules/streaming-text-fixture.mjs'
 
 test('retains a submission error without an unhandled model observer rejection', async () => {
   const sharedUrl = pathToFileURL(

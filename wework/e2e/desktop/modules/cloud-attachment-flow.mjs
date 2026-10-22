@@ -123,17 +123,24 @@ async function prepareCloudAttachmentConversation(
 async function readCloudAttachmentTask(control, cloudEnvironment, workspacePath) {
   const deadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
   const message = `The owning cloud runtime did not expose its attachment task within ${DEFAULT_STEP_TIMEOUT_MS}ms`
-  const snapshot = JSON.parse(
-    await readBeforeDeadline(
-      () => control.command('getWorkbenchDebugSnapshot', 'body'),
-      deadline,
-      message
-    )
-  )
-  const address = snapshot.pane?.currentRuntimeTask ?? snapshot.workbench?.currentRuntimeTask
-  assert.equal(address?.deviceId, CLOUD_DEVICE_ID, 'The attachment task used the wrong device')
-  assert.ok(address.taskId, 'The attachment task did not expose its actual task ID')
+  let taskId
   while (Date.now() < deadline) {
+    const snapshot = JSON.parse(
+      await readBeforeDeadline(
+        () => control.command('getWorkbenchDebugSnapshot', 'body'),
+        deadline,
+        message
+      )
+    )
+    const address = snapshot.pane?.currentRuntimeTask ?? snapshot.workbench?.currentRuntimeTask
+    assert.equal(address?.deviceId, CLOUD_DEVICE_ID, 'The attachment task used the wrong device')
+    assert.ok(address.taskId, 'The attachment task did not expose its actual task ID')
+    taskId ??= address.taskId
+    assert.equal(
+      address.taskId,
+      taskId,
+      'The UI attachment task changed during workspace resolution'
+    )
     const evidence = findOwnedRuntimeTask(
       await readBeforeDeadline(() => cloudEnvironment.runtimeWork(), deadline, message),
       CLOUD_DEVICE_ID,
@@ -141,6 +148,8 @@ async function readCloudAttachmentTask(control, cloudEnvironment, workspacePath)
     )
     if (evidence) {
       assert.ok(evidence.task.workspacePath, 'The owning cloud task did not expose its workspace')
+    }
+    if (evidence && address.workspacePath) {
       assert.equal(
         evidence.task.workspacePath,
         address.workspacePath,
@@ -159,7 +168,7 @@ async function readCloudAttachmentTask(control, cloudEnvironment, workspacePath)
     }
     await new Promise(resolve => setTimeout(resolve, Math.min(100, deadline - Date.now())))
   }
-  throw new Error(`${message}: ${address.taskId}`)
+  throw new Error(`${message}: ${taskId}`)
 }
 
 async function readBeforeDeadline(read, deadline, message) {

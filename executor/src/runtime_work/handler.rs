@@ -120,6 +120,7 @@ impl RestoreStartupGate {
     }
 }
 
+mod active_text;
 mod archives;
 mod automation_rpc;
 mod background_terminals;

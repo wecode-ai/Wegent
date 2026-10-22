@@ -7,7 +7,7 @@ async function sampleDrawerMotion(control, scope, action, direction, timeoutMs, 
     'startElementMetricsSampling',
     scope('[data-testid="issue-drawer-workspace"]'),
     {
-      value: '800',
+      value: String(timeoutMs),
       target: '.issue-drawer-surface',
     }
   )
@@ -17,6 +17,24 @@ async function sampleDrawerMotion(control, scope, action, direction, timeoutMs, 
   do {
     sample = JSON.parse(await control.command('getElementMetricsSample', 'body'))
     if (sample.done) break
+    const firstDetail = sample.frames[0]?.elements.find(element =>
+      element.className.includes('issue-drawer-detail')
+    )
+    const lastDetail = sample.frames
+      .at(-1)
+      ?.elements.find(element => element.className.includes('issue-drawer-detail'))
+    // Transport and render delays must not consume the animation's capture window.
+    if (
+      firstDetail &&
+      lastDetail &&
+      firstDetail.left !== lastDetail.left &&
+      lastDetail.trackAnimations.every(
+        animation => animation.state === 'finished' || animation.state === 'idle'
+      )
+    ) {
+      sample = JSON.parse(await control.command('stopElementMetricsSampling', 'body'))
+      break
+    }
     assert.ok(Date.now() < deadline, 'Drawer frame sampling timed out')
     await new Promise(resolve => setTimeout(resolve, 30))
   } while (!sample.done)

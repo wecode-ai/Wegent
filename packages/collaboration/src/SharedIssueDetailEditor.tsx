@@ -88,9 +88,12 @@ import { TagEditor, type TagEditorHandle } from "./issue-detail/TagEditor";
 import { IssuePropertiesPopover } from "./issue-detail/IssuePropertiesPopover";
 import { IssuePropertyRow as RailProp } from "./issue-detail/IssuePropertyRow";
 import { IssueAssignmentHistoryDisclosure } from "./issue-detail/IssueAssignmentHistoryDisclosure";
+import { IssueSaveButton } from "./issue-detail/IssueSaveButton";
 import { localizeStandardStatuses } from "./i18n";
 import { ExecutionConfigurationNotice } from "./runtime-profile/ExecutionConfigurationNotice";
 import { useCollaborationPortalTheme } from "./theme";
+import { useIssueAssigneeResources } from "./issue-detail/useIssueAssigneeResources";
+import { useIssueCreation } from "./issue-detail/useIssueCreation";
 
 function cn(...values: Array<string | false | null | undefined>): string {
   return values.filter(Boolean).join(" ");
@@ -247,7 +250,6 @@ type TodoDraft = {
   startDate: string;
   dueDate: string;
   assigneeTarget: IssueAssigneeTarget;
-  notifyAssignee: boolean;
   tags: string[];
 };
 
@@ -278,7 +280,7 @@ function isIssueAssigneeTarget(value: unknown): value is IssueAssigneeTarget {
   if (value === "") return true;
   if (typeof value !== "string") return false;
   if (/^user:\d+$/.test(value) || /^team:\d+$/.test(value)) return true;
-  return /^(agent|group):.+$/.test(value);
+  return /^(agent|group|resource):.+$/.test(value);
 }
 
 function todoDraftKey(
@@ -307,10 +309,6 @@ function readTodoDraft(key: string): TodoDraft | null {
       assigneeTarget: isIssueAssigneeTarget(parsed.assigneeTarget)
         ? parsed.assigneeTarget
         : "",
-      notifyAssignee:
-        typeof parsed.notifyAssignee === "boolean"
-          ? parsed.notifyAssignee
-          : true,
       tags: Array.isArray(parsed.tags)
         ? parsed.tags.filter((tag): tag is string => typeof tag === "string")
         : [],
@@ -749,6 +747,7 @@ export function TodoEditor(props: TodoEditorProps) {
   const showPanelControls = props.showPanelControls !== false;
   const showFullscreenControl = props.showFullscreenControl !== false;
   const item = editProps?.item ?? null;
+  const creation = useIssueCreation(editorPort);
   const [securityBusy, setSecurityBusy] = useState(false);
   const isAITableEdit =
     item !== null && editProps?.project?.task_provider === "dingtalk_aitable";
@@ -835,10 +834,6 @@ export function TodoEditor(props: TodoEditorProps) {
     setIssueDraftField("tags", value);
     if (readFirst) setEditingContent(true);
   };
-  const [notifyAssignee, setNotifyAssignee] = useState(
-    draft?.notifyAssignee ?? true,
-  );
-  const [notificationChoiceOpen, setNotificationChoiceOpen] = useState(false);
   const [tagDraft, setTagDraft] = useState("");
   // A create draft or initial parent can reference a task that was archived
   // since; a deleted parent is not in the live item list, so fall back to a
@@ -901,6 +896,12 @@ export function TodoEditor(props: TodoEditorProps) {
   >({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const workspaceAgents = useIssueAssigneeResources(
+    editorPort,
+    project,
+    setSaveError,
+    item?.assignee_agent_id,
+  );
   const [tasksExpanded, setTasksExpanded] = useState(false);
   const [fullScreen, setFullScreen] = useState(false);
   const [assignmentChainOpen, setAssignmentChainOpen] = useState(false);
@@ -1217,6 +1218,7 @@ export function TodoEditor(props: TodoEditorProps) {
     editorPort,
     editItemId,
     editProjectId,
+    item?.assignee_agent_id,
     project?.collaboration_groups,
     props.loadTeams,
     props.taskRefreshKey,
@@ -1311,7 +1313,6 @@ export function TodoEditor(props: TodoEditorProps) {
       startDate,
       dueDate,
       assigneeTarget,
-      notifyAssignee,
       tags,
     };
     localStorage.setItem(draftKey, JSON.stringify(snapshot));
@@ -1320,7 +1321,6 @@ export function TodoEditor(props: TodoEditorProps) {
     description,
     draftKey,
     dueDate,
-    notifyAssignee,
     parentId,
     priority,
     startDate,
@@ -1460,6 +1460,9 @@ export function TodoEditor(props: TodoEditorProps) {
   const assigneeAgent = projectAgents.find(
     (agent) => assigneeTarget === `agent:${agent.id}`,
   );
+  const assigneeResource = workspaceAgents.find(
+    (agent) => assigneeTarget === `resource:${agent.id}`,
+  );
   const assigneeTeam = wegentTeams.find(
     (team) => assigneeTarget === `team:${team.id}`,
   );
@@ -1471,6 +1474,7 @@ export function TodoEditor(props: TodoEditorProps) {
     assigneeTeam?.displayName ||
     assigneeTeam?.name ||
     assigneeAgent?.name ||
+    assigneeResource?.name ||
     assignee?.user_name ||
     (item && assigneeTarget && assigneeTarget === issueAssigneeTarget(item)
       ? assigneeTarget.startsWith("group:")
@@ -1502,7 +1506,7 @@ export function TodoEditor(props: TodoEditorProps) {
         : null);
   const createTitle = title.trim() || issueDraftFromText(description).title;
 
-  async function submitCreate() {
+  async function submitCreate(notifyAssignee = true) {
     if (
       props.mode !== "create" ||
       !createTitle ||
@@ -1551,29 +1555,19 @@ export function TodoEditor(props: TodoEditorProps) {
     const create = async (
       overrides: Partial<SharedIssueDetailCreateInput> = {},
     ): Promise<CloudLoopItem> => {
-      let created = await editorPort.issues.create(props.project.id, {
-        ...createInput,
-        ...overrides,
-      });
+      const target = await resolveAssigneeTarget(assigneeTarget);
+      const progress = await creation.create(
+        props.project.id,
+        { ...createInput, ...overrides },
+        Boolean(target),
+      );
+      let created = progress.issue;
       // Human ownership must be part of creation so task.created automation
       // cannot start AI work before a follow-up assignment reaches the server.
-      if (assigneeTarget && !hasHumanAssignee) {
-        created = assigneeTarget.startsWith("group:")
-          ? await editorPort.issues.update(created.id, {
-              version: created.version,
-              assignee_group_id: assigneeTarget.slice(6),
-            })
-          : await editorPort.issues.assign(props.project.id, created.id, {
-              version: created.version,
-              assigneeType: assigneeTarget.split(":", 1)[0] as
-                | "user"
-                | "agent"
-                | "team",
-              assigneeId: assigneeTarget.slice(assigneeTarget.indexOf(":") + 1),
-              ...(assigneeTarget.startsWith("user:") ? { notifyAssignee } : {}),
-            });
+      if (progress.syncAssignee && target !== issueAssigneeTarget(created)) {
+        created = await persistAssignee(created, target, notifyAssignee);
       }
-      await uploadAttachments(created.id, pendingFiles);
+      await creation.upload(created.id, pendingFiles);
       if (draftKey) {
         localStorage.removeItem(draftKey);
         draftAttachmentStore.delete(draftKey);
@@ -1607,11 +1601,22 @@ export function TodoEditor(props: TodoEditorProps) {
     }
   }
 
+  async function resolveAssigneeTarget(
+    target: IssueAssigneeTarget,
+  ): Promise<IssueAssigneeTarget> {
+    if (!target.startsWith("resource:")) return target;
+    if (!project || !editorPort.agentResources)
+      throw new Error("Workspace Agent is not available");
+    const id = await editorPort.agentResources.bind(project, target.slice(9));
+    return `agent:${id}`;
+  }
+
   async function persistAssignee(
     source: CloudLoopItem,
-    target: IssueAssigneeTarget,
+    selectedTarget: IssueAssigneeTarget,
     shouldNotify: boolean,
   ): Promise<CloudLoopItem> {
+    const target = await resolveAssigneeTarget(selectedTarget);
     if (!target)
       return editorPort.issues.update(source.id, {
         version: source.version,
@@ -1646,7 +1651,7 @@ export function TodoEditor(props: TodoEditorProps) {
     });
   }
 
-  async function saveDetails() {
+  async function saveDetails(notifyAssignee = true) {
     if (
       props.mode !== "edit" ||
       (!editable && !canAssign) ||
@@ -1667,6 +1672,7 @@ export function TodoEditor(props: TodoEditorProps) {
           assigneeTarget,
           notifyAssignee,
         );
+        setAssigneeTarget(issueAssigneeTarget(updated));
         props.onUpdated(updated);
         return;
       }
@@ -1719,6 +1725,7 @@ export function TodoEditor(props: TodoEditorProps) {
           assign: persistAssignee,
         },
       );
+      setAssigneeTarget(issueAssigneeTarget(updated));
       props.onUpdated(updated);
       if (readFirst) {
         setEditingContent(false);
@@ -1975,7 +1982,12 @@ export function TodoEditor(props: TodoEditorProps) {
   }
 
   function handleKeyDown(event: ReactKeyboardEvent) {
-    if (event.defaultPrevented) return;
+    // Portaled controls own their keyboard events even though React bubbles them here.
+    if (
+      event.defaultPrevented ||
+      !event.currentTarget.contains(event.target as Node)
+    )
+      return;
     if (event.key === "Escape") {
       event.stopPropagation();
       (props.onEscape ?? onClose)();
@@ -2115,158 +2127,124 @@ export function TodoEditor(props: TodoEditorProps) {
     />
   );
   const assigneeSelect = (
-    <>
-      {notificationChoiceOpen ? (
-        <div
-          className="shared-issue-detail-confirm-backdrop"
-          role="presentation"
-        >
-          <section
-            className="shared-issue-detail-confirm"
-            role="dialog"
-            aria-modal="true"
-          >
-            <h2>{t("notifications.ask_title", "是否通知负责人")}</h2>
-            <p>
-              {t("notifications.ask_body", "可以选择是否向负责人发送通知。")}
-            </p>
-            <div>
-              <button
-                type="button"
-                data-testid="wework-assignment-notify-confirm-cancel-button"
-                onClick={() => {
-                  setNotifyAssignee(false);
-                  setNotificationChoiceOpen(false);
-                }}
-              >
-                {t("notifications.without_notification", "不通知")}
-              </button>
-              <button
-                type="button"
-                data-testid="wework-assignment-notify-confirm"
-                onClick={() => {
-                  setNotifyAssignee(true);
-                  setNotificationChoiceOpen(false);
-                }}
-              >
-                {t("notifications.with_notification", "通知")}
-              </button>
-            </div>
-          </section>
-        </div>
-      ) : null}
-      <IssueDetailSearchableSelect
-        testId={
-          isCreate ? "cloud-todo-create-assignee" : "cloud-todo-detail-assignee"
-        }
-        accessibleLabel={t("todo.assignee", "负责人")}
-        value={assigneeTarget}
-        onChange={(target) => {
-          setAssigneeTarget(target);
-          setNotifyAssignee(true);
-          if (
-            target.startsWith("user:") &&
-            target !== `user:${project?.current_user_id}`
-          ) {
-            setNotificationChoiceOpen(true);
-          }
-        }}
-        disabled={!canAssign || saving}
-        className={overlayControlClass}
-        searchPlaceholder={t("todo.search_assignee", "搜索负责人")}
-        emptyLabel={t("todo.no_matching_assignee", "没有匹配的负责人")}
-        actions={
-          isCreate && canAssign
-            ? [
-                ...(props.onAddAssigneeMember
-                  ? [
-                      {
-                        label: t("todo.assignee_add_member", "添加人员"),
-                        icon: <UserPlus className="h-4 w-4" />,
-                        testId: "cloud-todo-create-assignee-add-member",
-                        onSelect: props.onAddAssigneeMember,
-                      },
-                    ]
-                  : []),
-                ...(props.onAddAssigneeAgent
-                  ? [
-                      {
-                        label: t("todo.assignee_add_agent", "添加智能体"),
-                        icon: <Bot className="h-4 w-4" />,
-                        testId: "cloud-todo-create-assignee-add-agent",
-                        onSelect: props.onAddAssigneeAgent,
-                      },
-                    ]
-                  : []),
-              ]
-            : undefined
-        }
-        groupLimit={5}
-        showAllLabel={(_group, count) =>
-          t("todo.view_all_count", "查看全部 {{count}} 个", { count })
-        }
-        options={[
-          {
-            value: "",
-            label: t("todo.unassigned", "未指派"),
-          },
-          ...projectGroups.map((group) => ({
-            value: `group:${group.id}` as IssueAssigneeTarget,
-            label: group.name,
-            group: t("issue_creation.group", "协作小组"),
+    <IssueDetailSearchableSelect<IssueAssigneeTarget>
+      testId={
+        isCreate ? "cloud-todo-create-assignee" : "cloud-todo-detail-assignee"
+      }
+      accessibleLabel={t("todo.assignee", "负责人")}
+      value={assigneeTarget}
+      onChange={setAssigneeTarget}
+      disabled={!canAssign || saving}
+      className={overlayControlClass}
+      searchPlaceholder={t("todo.search_assignee", "搜索负责人")}
+      emptyLabel={t("todo.no_matching_assignee", "没有匹配的负责人")}
+      actions={
+        isCreate && canAssign
+          ? [
+              ...(props.onAddAssigneeMember
+                ? [
+                    {
+                      label: t("todo.assignee_add_member", "添加人员"),
+                      icon: <UserPlus className="h-4 w-4" />,
+                      testId: "cloud-todo-create-assignee-add-member",
+                      onSelect: props.onAddAssigneeMember,
+                    },
+                  ]
+                : []),
+              ...(props.onAddAssigneeAgent
+                ? [
+                    {
+                      label: t("todo.assignee_add_agent", "添加智能体"),
+                      icon: <Bot className="h-4 w-4" />,
+                      testId: "cloud-todo-create-assignee-add-agent",
+                      onSelect: props.onAddAssigneeAgent,
+                    },
+                  ]
+                : []),
+            ]
+          : undefined
+      }
+      groupLimit={5}
+      showAllLabel={(_group, count) =>
+        t("todo.view_all_count", "查看全部 {{count}} 个", { count })
+      }
+      options={[
+        {
+          value: "",
+          label: t("todo.unassigned", "未指派"),
+        },
+        ...projectGroups.map((group) => ({
+          value: `group:${group.id}` as IssueAssigneeTarget,
+          label: group.name,
+          group: t("issue_creation.group", "协作小组"),
+        })),
+        ...(item?.assignee_group_id &&
+        !projectGroups.some((group) => group.id === item.assignee_group_id)
+          ? [
+              {
+                value: `group:${item.assignee_group_id}` as IssueAssigneeTarget,
+                label: item.assignee_group_name || item.assignee_group_id,
+                group: t("issue_creation.group", "协作小组"),
+              },
+            ]
+          : []),
+        ...projectMembers
+          .filter(
+            (member) =>
+              member.can_be_assignee !== false && member.role !== "Viewer",
+          )
+          .map((member) => ({
+            value: `user:${member.user_id}` as IssueAssigneeTarget,
+            label: member.user_name,
+            group: t("todo.members", "成员"),
           })),
-          ...(item?.assignee_group_id &&
-          !projectGroups.some((group) => group.id === item.assignee_group_id)
-            ? [
-                {
-                  value:
-                    `group:${item.assignee_group_id}` as IssueAssigneeTarget,
-                  label: item.assignee_group_name || item.assignee_group_id,
-                  group: t("issue_creation.group", "协作小组"),
-                },
-              ]
-            : []),
-          ...projectMembers
-            .filter(
-              (member) =>
-                member.can_be_assignee !== false && member.role !== "Viewer",
-            )
-            .map((member) => ({
-              value: `user:${member.user_id}` as IssueAssigneeTarget,
-              label: member.user_name,
-              group: t("todo.members", "成员"),
-            })),
-          ...projectAgents.map((agent) => ({
-            value: `agent:${agent.id}` as IssueAssigneeTarget,
-            label: agent.name,
-            group: t("todo.agents", "机器人"),
+        ...projectAgents.map((agent) => ({
+          value: `agent:${agent.id}` as IssueAssigneeTarget,
+          label: agent.name,
+          group: t("todo.agents", "机器人"),
+        })),
+        ...workspaceAgents.map((agent) => ({
+          value: `resource:${agent.id}` as IssueAssigneeTarget,
+          label: agent.name,
+          group: t("todo.workspace_agents", "空间智能体"),
+        })),
+        ...wegentTeams
+          .filter((team) =>
+            projectAgents.some((agent) => agent.teamId === team.id),
+          )
+          .map((team) => ({
+            value: `team:${team.id}` as IssueAssigneeTarget,
+            label: team.displayName || team.name,
+            group: t("todo.agent_teams", "Wegent 智能体"),
           })),
-          ...wegentTeams
-            .filter((team) =>
-              projectAgents.some((agent) => agent.teamId === team.id),
-            )
-            .map((team) => ({
-              value: `team:${team.id}` as IssueAssigneeTarget,
-              label: team.displayName || team.name,
-              group: t("todo.agent_teams", "Wegent 智能体"),
-            })),
-        ]}
-      />
-    </>
+      ]}
+    />
   );
+  const notificationAvailable =
+    assigneeTarget.startsWith("user:") && (isCreate || assigneeChanged);
+  const notificationSaveLabels = {
+    saveAndNotify: t("todo.save_and_notify", "保存并通知"),
+    saveWithoutNotification: t(
+      "todo.save_without_notification",
+      "仅保存不通知",
+    ),
+    options: t("todo.save_options", "保存选项"),
+  };
   const assigneeSaveButton =
     assigneeChanged && (editable || canAssign) ? (
-      <button
-        type="button"
-        data-testid="cloud-todo-save"
-        disabled={!title.trim() || saving}
-        onClick={() => void saveDetails()}
+      <IssueSaveButton
+        testId="cloud-todo-save"
+        disabled={!title.trim() || saving || scheduleRangeInvalid}
+        saving={saving}
+        notificationAvailable={notificationAvailable}
+        labels={notificationSaveLabels}
+        onSave={saveDetails}
         className="task-detail-assignment-save"
       >
         {saving
           ? t("todo.saving", "保存中…")
           : t("todo.save_assignment", "保存分配")}
-      </button>
+      </IssueSaveButton>
     ) : null;
   const parentSelect = (
     <IssueDetailSearchableSelect
@@ -3105,28 +3083,37 @@ export function TodoEditor(props: TodoEditorProps) {
                         >
                           {t("common.cancel", "取消")}
                         </button>
-                        <button
-                          type="button"
-                          data-testid="cloud-todo-save"
+                        <IssueSaveButton
+                          testId="cloud-todo-save"
+                          className="task-detail-assignment-save"
+                          saving={saving}
+                          notificationAvailable={notificationAvailable}
+                          labels={notificationSaveLabels}
                           disabled={
                             !dirty ||
                             !title.trim() ||
                             saving ||
                             scheduleRangeInvalid
                           }
-                          onClick={() => void saveDetails()}
+                          onSave={saveDetails}
                         >
                           {saving
                             ? t("todo.saving", "保存中…")
                             : t("common.save", "保存")}
-                        </button>
+                        </IssueSaveButton>
                       </span>
                     ) : null}
                   </div>
                 </div>
               ) : null}
               {saveError && (
-                <p className="mt-2 text-xs text-destructive">{saveError}</p>
+                <p
+                  role="alert"
+                  data-testid="cloud-todo-save-error"
+                  className="mt-2 text-xs text-destructive"
+                >
+                  {saveError}
+                </p>
               )}
               {workspacePanel && item ? (
                 <>
@@ -4228,17 +4215,19 @@ export function TodoEditor(props: TodoEditorProps) {
               <span className="flex-1" />
               {isCreate ? (
                 <>
-                  <button
-                    type="button"
-                    data-testid="cloud-todo-create-confirm"
+                  <IssueSaveButton
+                    testId="cloud-todo-create-confirm"
                     disabled={!createTitle || saving || scheduleRangeInvalid}
-                    onClick={() => void submitCreate()}
+                    saving={saving}
+                    notificationAvailable={notificationAvailable}
+                    labels={notificationSaveLabels}
+                    onSave={submitCreate}
                     className="h-8 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-50"
                   >
                     {saving
                       ? t("todo.creating_issue", "正在创建…")
                       : t("todo.create_issue", "创建任务")}
-                  </button>
+                  </IssueSaveButton>
                 </>
               ) : (
                 <>

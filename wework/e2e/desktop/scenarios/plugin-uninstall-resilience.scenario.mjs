@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { CLOUD_DEVICE_ID } from '../modules/shared.mjs'
-import { PluginFaultProxy } from '../modules/plugin-fault-proxy.mjs'
+import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 import {
   accountPlugin,
   assertInstallButton,
@@ -21,6 +21,7 @@ import {
 // Real MySQL, Python API, gateway, Executor and Electron. Only the network
 // transport is faulted; no plugin responses or cache state are synthesized.
 export async function createDesktopScenario({
+  checkpoint,
   captureScreenshot,
   resultDir,
   workbenchReadyTimeoutMs,
@@ -253,8 +254,8 @@ export async function createDesktopScenario({
     requiresCloudEnvironment: true,
     appEnvironment,
     async prepareCloud({ backendUrl }) {
-      apiProxy = await new PluginFaultProxy(backendUrl).start()
-      deviceProxy = await new PluginFaultProxy(backendUrl).start()
+      apiProxy = await new TransportFaultProxy(backendUrl).start()
+      deviceProxy = await new TransportFaultProxy(backendUrl).start()
       appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL = apiProxy.url
     },
     setCloudEnvironment(value) {
@@ -271,10 +272,15 @@ export async function createDesktopScenario({
         'Remote device bypassed fault proxy'
       )
       try {
-        await lostResponse(control)
-        await unknownResult(control)
-        await restartRecovery(control)
-        await reinstallRace(control)
+        const checks = new Map([
+          ['plugin-uninstall-lost-response', lostResponse],
+          ['plugin-uninstall-unknown-result', unknownResult],
+          ['plugin-uninstall-restart-recovery', restartRecovery],
+          ['plugin-uninstall-reinstall-race', reinstallRace],
+        ])
+        const check = checks.get(checkpoint)
+        assert.ok(check, `Unknown uninstall checkpoint: ${checkpoint}`)
+        await check(control)
         await captureScreenshot(control, 'plugin-uninstall-resilience.png', 'body')
       } finally {
         apiProxy.rule = () => null

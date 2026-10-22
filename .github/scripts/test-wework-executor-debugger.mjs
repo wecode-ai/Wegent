@@ -1,12 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import {
-  chmodSync,
-  copyFileSync,
-  mkdtempSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { copyFileSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -14,16 +8,14 @@ const directory = mkdtempSync(join(tmpdir(), "wework-executor-debugger-"));
 try {
   const executor = join(directory, "executor");
   const wrapper = `${executor}.gdb`;
-  writeFileSync(executor, '#!/usr/bin/env bash\nprintf "%s\\n" "$@"\n');
-  chmodSync(executor, 0o755);
+  symlinkSync("/usr/bin/printf", executor);
   copyFileSync(
     new URL("./run-wework-executor-with-gdb.sh", import.meta.url),
     wrapper,
   );
-  chmodSync(wrapper, 0o755);
   const result = spawnSync(
     "bash",
-    [wrapper, "--workbench-schema", "--version"],
+    [wrapper, "%s\n", "--workbench-schema", "--version"],
     {
       env: { PATH: process.env.PATH },
       encoding: "utf8",
