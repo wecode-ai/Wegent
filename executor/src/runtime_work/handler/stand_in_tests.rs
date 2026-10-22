@@ -2,6 +2,88 @@ use super::*;
 use axum::{routing::get, Json, Router};
 use std::sync::atomic::AtomicUsize;
 
+#[tokio::test]
+async fn cached_selection_failure_does_not_abort_local_polling() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
+    handler.worktrees = WorktreeManager::new(root.path().join("worktrees.json"));
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let project = store
+        .create_project(serde_json::from_value(json!({"name":"Selection"})).unwrap())
+        .unwrap();
+    let issue = store
+        .create_task(
+            &project.id,
+            serde_json::from_value(json!({"title":"Failed selection","assignee_user_id":7}))
+                .unwrap(),
+        )
+        .unwrap();
+    let key = format!("stand-in-decision:{}:7:{}-1", project.id, issue.id);
+    store
+        .save_stand_in_decision(&key, &json!({"version":1,"error":"invalid selection"}))
+        .unwrap();
+    let configs = ["one", "two"].map(|id| json!({"id":id,"projectId":project.id,"projectStore":"local","userId":7,"tags":[],"autoSelect":true,"personalVersion":1,"enabledAfter":"2020-01-01T00:00:00Z"}));
+    handler.poll_local_stand_in(&configs).await.unwrap();
+    assert!(store.list_task_bindings(&issue.id).unwrap().is_empty());
+    assert_eq!(
+        store.stand_in_decision(&key).unwrap().unwrap()["error"],
+        "invalid selection"
+    );
+}
+
+#[tokio::test]
+async fn cached_selection_failure_does_not_block_later_cloud_assignments() {
+    let started = Arc::new(AtomicUsize::new(0));
+    let calls = started.clone();
+    let router = Router::new()
+        .route("/api/users/me", get(|| async { Json(json!({"id":7})) }))
+        .route("/api/v1/cloud-projects/project/loop-items", get(|| async { Json(json!({"items":[
+            {"id":"failed","assignee_user_id":7,"tags":["review"],"human_task_binding":{"humanAssignmentId":"failed-human","assignmentId":"assignment"}},
+            {"id":"later","assignee_user_id":7,"tags":["docs"],"human_task_binding":{"humanAssignmentId":"later-human","assignmentId":"assignment"}}
+        ]})) }))
+        .route("/api/v1/loop-items/{id}/assignments", get(|| async { Json(json!({"items":[{"id":"assignment","status":"active","created_at":"2026-10-20T12:00:01Z"}]})) }))
+        .route("/api/v1/loop-items/{id}/tasks", get(|| async { Json(json!([])) }))
+        .route("/api/v1/cloud-projects/project/chat-agents", get(move || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async { Json(json!([])) }
+        }))
+        .route("/api/v1/cloud-projects/project/execution-environments", get(|| async { Json(json!({"items":[{"device_key":"mac","can_use":true}]})) }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
+    handler.worktrees = WorktreeManager::new(root.path().join("worktrees.json"));
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
+        backend_url: url,
+        auth_token: "test".into(),
+        ..Default::default()
+    })));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    store
+        .save_stand_in_decision(
+            "stand-in-decision:project:7:failed-human",
+            &json!({"version":1,"error":"invalid selection"}),
+        )
+        .unwrap();
+    let configs = [("one","review"),("two","review"),("docs","docs")].map(|(id,tag)| json!({"id":id,"projectId":"project","projectStore":"cloud","userId":7,"tags":[tag],"autoSelect":true,"personalVersion":1,"enabledAfter":"2020-01-01T00:00:00Z","agentId":"probe"}));
+    handler.poll_cloud_stand_in(&configs).await.unwrap();
+    assert_eq!(
+        started.load(Ordering::SeqCst),
+        1,
+        "The later matching assignment must reach task preparation"
+    );
+    assert!(store
+        .stand_in_decision("stand-in-decision:project:7:later-human")
+        .unwrap()
+        .is_none());
+    server.abort();
+}
+
 #[test]
 fn tag_rules_return_specific_candidates_and_preserve_role_order() {
     let configs = vec![

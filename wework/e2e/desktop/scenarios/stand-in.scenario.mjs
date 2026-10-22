@@ -592,6 +592,12 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       await waitForExecution(control, singleIssue.id, modelResponseTimeoutMs)
       assert.equal(selectionRequests, 1, 'A single matching role must not consume selection tokens')
       invalidSelection = true
+      const followingIssue = await requestExecutor(
+        control,
+        'todos.create',
+        { project_id: project.id, todo: { title: '其他任务不受角色选择失败影响', tags: ['docs'] } },
+        uiTimeoutMs
+      )
       const failedIssue = await requestExecutor(
         control,
         'todos.create',
@@ -631,6 +637,26 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         (await requestExecutor(control, 'todos.bindings', { task_id: failedIssue.id }, uiTimeoutMs))
           .length,
         0
+      )
+      await requestExecutor(
+        control,
+        'todos.update',
+        {
+          project_id: project.id,
+          task_id: followingIssue.id,
+          todo: {
+            version: followingIssue.version,
+            assignee_user_id: USER_ID,
+            position: { before_item_id: null },
+          },
+        },
+        uiTimeoutMs
+      )
+      await waitForExecution(control, followingIssue.id, modelResponseTimeoutMs)
+      assert.equal(
+        selectionRequests,
+        2,
+        'A failed decision must not block subsequent single-role assignments'
       )
       await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`, {
         requirements: false,

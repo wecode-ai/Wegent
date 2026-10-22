@@ -420,7 +420,10 @@ impl RuntimeWorkRpcHandler {
                 })
                 .cloned()
                 .collect();
-            let Some(config) = self.select_personal_role(&eligible, &issue_value).await? else {
+            let Some(config) = self
+                .select_polled_personal_role(&eligible, &issue_value)
+                .await
+            else {
                 continue;
             };
             if let Err(error) = self
@@ -513,7 +516,7 @@ impl RuntimeWorkRpcHandler {
             {
                 continue;
             }
-            let Some(config) = self.select_personal_role(&eligible, issue).await? else {
+            let Some(config) = self.select_polled_personal_role(&eligible, issue).await else {
                 continue;
             };
             if let Err(error) = self.start_cloud_stand_in(&config, issue).await {

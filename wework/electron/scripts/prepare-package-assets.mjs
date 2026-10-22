@@ -1,7 +1,6 @@
 import { hashComponentPath } from '../../scripts/lib/component-content-hash.mjs'
 import { spawn } from 'node:child_process'
-import { chmod, cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { chmod, cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
@@ -26,6 +25,7 @@ import { materializeBundledPluginResources } from '../../scripts/lib/bundled-plu
 import { resolveHarnessRuntimeCachePaths } from '../../scripts/lib/harness-runtime-cache.mjs'
 import { normalizeFileViewerAssetManifest } from '../../scripts/lib/harness-runtime-metadata.mjs'
 import { extractWeworkAppStaticResources } from '../../scripts/lib/wework-app-component-resources.mjs'
+import { withTemporaryBuildDirectory } from '../../scripts/lib/temporary-build-directory.mjs'
 import { packagedHarnessRuntimeCatalog } from '../../scripts/lib/packaged-harness-runtime.mjs'
 
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -49,148 +49,162 @@ const {
   materializedRoot: harnessRuntimeMaterializedRoot,
 } = resolveHarnessRuntimeCachePaths(weworkRoot, packageEnvironment)
 const configuredExecutorPath = process.env.WEWORK_EXECUTOR_PATH?.trim()
-const [executorPath, , , , appWebRoot] = await Promise.all([
-  configuredExecutorPath
-    ? waitForConfiguredExecutor(
-        resolve(configuredExecutorPath),
-        process.env.WEWORK_EXECUTOR_WAIT_SECONDS
-      )
-    : buildExecutor(executorProfile, packageTargets.cargoTarget, executorTargetDirectory),
-  run(pnpmCommand, ['prepare:codex', '--materialize'], weworkRoot, packageEnvironment),
-  run(pnpmCommand, ['prepare:dws'], weworkRoot, packageEnvironment),
-  run(pnpmCommand, ['prepare:harness-runtime', '--materialize'], weworkRoot, packageEnvironment),
-  buildDshApp(),
-])
-
-await rm(resourcesRoot, { recursive: true, force: true })
-await mkdir(join(resourcesRoot, 'bin'), { recursive: true, mode: 0o700 })
-const runtimeCatalog = JSON.parse(
-  await readFile(join(harnessRuntimeMaterializedRoot, 'runtimes.json'), 'utf8')
-)
-const packagedCatalog = packagedHarnessRuntimeCatalog(runtimeCatalog)
-const packagedRuntimes = packagedCatalog.runtimes
-const harnessResources = join(resourcesRoot, 'harness-runtime')
-await mkdir(harnessResources, { recursive: true, mode: 0o700 })
-for (const assetName of new Set(packagedRuntimes.map(runtime => runtime.assetName))) {
-  await cp(join(harnessRuntimeAssetDirectory, assetName), join(harnessResources, assetName))
-}
-await writeFile(
-  join(harnessResources, 'runtimes.json'),
-  `${JSON.stringify(packagedCatalog, null, 2)}\n`,
-  { mode: 0o600 }
-)
-await materializeBundledPluginResources(weworkRoot, join(resourcesRoot, 'bundled-plugins'))
-const corePluginsRoot = join(resourcesRoot, 'wework-core-plugins')
-await mkdir(corePluginsRoot, { recursive: true, mode: 0o700 })
-for (const directory of CORE_PLUGIN_DIRECTORIES) {
-  await cp(
-    corePluginSource(weworkRoot, directory),
-    join(corePluginsRoot, corePluginTarget(directory)),
-    {
-      recursive: true,
-      filter: source =>
-        !source.endsWith('.test.mjs') &&
-        !(
-          directory === 'app-wework' &&
-          source === join(corePluginSource(weworkRoot, directory), 'web')
-        ),
+await withTemporaryBuildDirectory({
+  prefix: 'wework-package-web-',
+  builds: [
+    () =>
+      configuredExecutorPath
+        ? waitForConfiguredExecutor(
+            resolve(configuredExecutorPath),
+            process.env.WEWORK_EXECUTOR_WAIT_SECONDS
+          )
+        : buildExecutor(executorProfile, packageTargets.cargoTarget, executorTargetDirectory),
+    () => run(pnpmCommand, ['prepare:codex', '--materialize'], weworkRoot, packageEnvironment),
+    () => run(pnpmCommand, ['prepare:dws'], weworkRoot, packageEnvironment),
+    () =>
+      run(
+        pnpmCommand,
+        ['prepare:harness-runtime', '--materialize'],
+        weworkRoot,
+        packageEnvironment
+      ),
+    output => buildDshApp(output),
+  ],
+  consume: async ([executorPath], appWebRoot) => {
+    await rm(resourcesRoot, { recursive: true, force: true })
+    await mkdir(join(resourcesRoot, 'bin'), { recursive: true, mode: 0o700 })
+    const runtimeCatalog = JSON.parse(
+      await readFile(join(harnessRuntimeMaterializedRoot, 'runtimes.json'), 'utf8')
+    )
+    const packagedCatalog = packagedHarnessRuntimeCatalog(runtimeCatalog)
+    const packagedRuntimes = packagedCatalog.runtimes
+    const harnessResources = join(resourcesRoot, 'harness-runtime')
+    await mkdir(harnessResources, { recursive: true, mode: 0o700 })
+    for (const assetName of new Set(packagedRuntimes.map(runtime => runtime.assetName))) {
+      await cp(join(harnessRuntimeAssetDirectory, assetName), join(harnessResources, assetName))
     }
-  )
-}
-await cp(appWebRoot, join(corePluginsRoot, 'wework-app', 'web'), { recursive: true })
-await rm(appWebRoot, { recursive: true, force: true })
-if (INTERNAL_CORE_PLUGINS.length > 0) {
-  await cp(INTERNAL_CORE_PLUGIN_MANIFEST, join(corePluginsRoot, 'internal-plugins.json'))
-}
-const weworkAppStaticRoot = join(resourcesRoot, 'wework-app-static')
-await extractWeworkAppStaticResources(corePluginsRoot, weworkAppStaticRoot)
-const codexTarget = packageTargets.codexTarget
-const codexSource = join(sharedResourcesRoot, 'binaries', 'codex', codexTarget)
-const codexResources = join(resourcesRoot, 'codex')
-await cp(codexSource, codexResources, { recursive: true, dereference: true })
-await cp(join(sharedResourcesRoot, 'binaries', 'codex', 'legal'), join(codexResources, 'legal'), {
-  recursive: true,
-})
-const executorName = targetExecutableName(packageTargets.cargoTarget, 'wegent-executor')
-const packagedExecutor = join(resourcesRoot, 'bin', executorName)
-await cp(executorPath, packagedExecutor)
-if (process.platform !== 'win32') await chmod(packagedExecutor, 0o755)
-const executorSha256 = await hashComponentPath(packagedExecutor)
-const dwsName = targetExecutableName(packageTargets.dwsTarget, 'dws')
-const packagedDws = join(resourcesRoot, 'bin', dwsName)
-const dwsSourceName = targetExecutableName(
-  packageTargets.dwsTarget,
-  `dws-${packageTargets.dwsTarget}`
-)
-await cp(join(sharedResourcesRoot, 'binaries', dwsSourceName), packagedDws)
-if (process.platform !== 'win32') await chmod(packagedDws, 0o755)
-const electronPackage = JSON.parse(await readFile(join(electronRoot, 'package.json'), 'utf8'))
-const weworkPackage = JSON.parse(await readFile(join(weworkRoot, 'package.json'), 'utf8'))
-const sourceSha =
-  process.env.WEWORK_SOURCE_SHA?.trim() ||
-  process.env.GITHUB_SHA?.trim() ||
-  (await capture('git', ['rev-parse', 'HEAD'], repositoryRoot)).trim()
-if (!/^[0-9a-f]{40,64}$/.test(sourceSha)) {
-  throw new Error(`Invalid Wework source SHA: ${sourceSha}`)
-}
-const weworkRuntimeVersion = `wework-${sourceSha.slice(0, 12)}`
-const codexRuntime = JSON.parse(
-  await readFile(join(codexResources, 'WEGENT_CODEX_BINARY.json'), 'utf8')
-)
-await writeFile(
-  join(resourcesRoot, 'components.json'),
-  `${JSON.stringify(
-    {
-      schemaVersion: 1,
-      appVersion: electronPackage.version,
-      sourceSha,
-      channel: process.env.VITE_WEWORK_RELEASE_CHANNEL?.trim() || 'development',
-      components: {
-        electron: { version: electronPackage.devDependencies.electron },
-        coreDsh: {
-          version: packagedRuntimes.find(runtime => runtime.role === 'core')?.dshVersion,
-          path: 'harness-runtime',
-          sha256: await hashComponentPath(harnessResources),
+    await writeFile(
+      join(harnessResources, 'runtimes.json'),
+      `${JSON.stringify(packagedCatalog, null, 2)}\n`,
+      { mode: 0o600 }
+    )
+    await materializeBundledPluginResources(weworkRoot, join(resourcesRoot, 'bundled-plugins'))
+    const corePluginsRoot = join(resourcesRoot, 'wework-core-plugins')
+    await mkdir(corePluginsRoot, { recursive: true, mode: 0o700 })
+    for (const directory of CORE_PLUGIN_DIRECTORIES) {
+      await cp(
+        corePluginSource(weworkRoot, directory),
+        join(corePluginsRoot, corePluginTarget(directory)),
+        {
+          recursive: true,
+          filter: source =>
+            !source.endsWith('.test.mjs') &&
+            !(
+              directory === 'app-wework' &&
+              source === join(corePluginSource(weworkRoot, directory), 'web')
+            ),
+        }
+      )
+    }
+    await cp(appWebRoot, join(corePluginsRoot, 'wework-app', 'web'), { recursive: true })
+    if (INTERNAL_CORE_PLUGINS.length > 0) {
+      await cp(INTERNAL_CORE_PLUGIN_MANIFEST, join(corePluginsRoot, 'internal-plugins.json'))
+    }
+    const weworkAppStaticRoot = join(resourcesRoot, 'wework-app-static')
+    await extractWeworkAppStaticResources(corePluginsRoot, weworkAppStaticRoot)
+    const codexTarget = packageTargets.codexTarget
+    const codexSource = join(sharedResourcesRoot, 'binaries', 'codex', codexTarget)
+    const codexResources = join(resourcesRoot, 'codex')
+    await cp(codexSource, codexResources, { recursive: true, dereference: true })
+    await cp(
+      join(sharedResourcesRoot, 'binaries', 'codex', 'legal'),
+      join(codexResources, 'legal'),
+      {
+        recursive: true,
+      }
+    )
+    const executorName = targetExecutableName(packageTargets.cargoTarget, 'wegent-executor')
+    const packagedExecutor = join(resourcesRoot, 'bin', executorName)
+    await cp(executorPath, packagedExecutor)
+    if (process.platform !== 'win32') await chmod(packagedExecutor, 0o755)
+    const executorSha256 = await hashComponentPath(packagedExecutor)
+    const dwsName = targetExecutableName(packageTargets.dwsTarget, 'dws')
+    const packagedDws = join(resourcesRoot, 'bin', dwsName)
+    const dwsSourceName = targetExecutableName(
+      packageTargets.dwsTarget,
+      `dws-${packageTargets.dwsTarget}`
+    )
+    await cp(join(sharedResourcesRoot, 'binaries', dwsSourceName), packagedDws)
+    if (process.platform !== 'win32') await chmod(packagedDws, 0o755)
+    const electronPackage = JSON.parse(await readFile(join(electronRoot, 'package.json'), 'utf8'))
+    const weworkPackage = JSON.parse(await readFile(join(weworkRoot, 'package.json'), 'utf8'))
+    const sourceSha =
+      process.env.WEWORK_SOURCE_SHA?.trim() ||
+      process.env.GITHUB_SHA?.trim() ||
+      (await capture('git', ['rev-parse', 'HEAD'], repositoryRoot)).trim()
+    if (!/^[0-9a-f]{40,64}$/.test(sourceSha)) {
+      throw new Error(`Invalid Wework source SHA: ${sourceSha}`)
+    }
+    const weworkRuntimeVersion = `wework-${sourceSha.slice(0, 12)}`
+    const codexRuntime = JSON.parse(
+      await readFile(join(codexResources, 'WEGENT_CODEX_BINARY.json'), 'utf8')
+    )
+    await writeFile(
+      join(resourcesRoot, 'components.json'),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          appVersion: electronPackage.version,
+          sourceSha,
+          channel: process.env.VITE_WEWORK_RELEASE_CHANNEL?.trim() || 'development',
+          components: {
+            electron: { version: electronPackage.devDependencies.electron },
+            coreDsh: {
+              version: packagedRuntimes.find(runtime => runtime.role === 'core')?.dshVersion,
+              path: 'harness-runtime',
+              sha256: await hashComponentPath(harnessResources),
+            },
+            weworkCorePlugins: {
+              version: weworkRuntimeVersion,
+              path: 'wework-core-plugins',
+              sha256: await hashComponentPath(corePluginsRoot),
+            },
+            weworkAppStatic: {
+              version: weworkRuntimeVersion,
+              path: 'wework-app-static',
+              sha256: await hashComponentPath(weworkAppStaticRoot),
+            },
+            bundledPlugins: {
+              version: weworkRuntimeVersion,
+              path: 'bundled-plugins',
+              sha256: await hashComponentPath(join(resourcesRoot, 'bundled-plugins')),
+            },
+            executor: {
+              version: weworkRuntimeVersion,
+              path: `bin/${executorName}`,
+              sha256: executorSha256,
+            },
+            codex: {
+              version: codexRuntime.codexVersion,
+              path: 'codex',
+              sha256: await hashComponentPath(codexResources),
+            },
+            dws: {
+              version: weworkPackage.devDependencies['dingtalk-workspace-cli'],
+              path: `bin/${dwsName}`,
+              sha256: await hashComponentPath(packagedDws),
+            },
+          },
         },
-        weworkCorePlugins: {
-          version: weworkRuntimeVersion,
-          path: 'wework-core-plugins',
-          sha256: await hashComponentPath(corePluginsRoot),
-        },
-        weworkAppStatic: {
-          version: weworkRuntimeVersion,
-          path: 'wework-app-static',
-          sha256: await hashComponentPath(weworkAppStaticRoot),
-        },
-        bundledPlugins: {
-          version: weworkRuntimeVersion,
-          path: 'bundled-plugins',
-          sha256: await hashComponentPath(join(resourcesRoot, 'bundled-plugins')),
-        },
-        executor: {
-          version: weworkRuntimeVersion,
-          path: `bin/${executorName}`,
-          sha256: executorSha256,
-        },
-        codex: {
-          version: codexRuntime.codexVersion,
-          path: 'codex',
-          sha256: await hashComponentPath(codexResources),
-        },
-        dws: {
-          version: weworkPackage.devDependencies['dingtalk-workspace-cli'],
-          path: `bin/${dwsName}`,
-          sha256: await hashComponentPath(packagedDws),
-        },
-      },
-    },
-    null,
-    2
-  )}\n`,
-  { mode: 0o600 }
-)
+        null,
+        2
+      )}\n`,
+      { mode: 0o600 }
+    )
 
-console.log(`Electron package resources: ${resourcesRoot}`)
+    console.log(`Electron package resources: ${resourcesRoot}`)
+  },
+})
 
 function resolveExecutorProfile() {
   const configured = process.env.WEWORK_EXECUTOR_PROFILE?.trim() || 'release'
@@ -198,9 +212,8 @@ function resolveExecutorProfile() {
   throw new Error(`Unsupported Wework executor profile: ${configured}`)
 }
 
-async function buildDshApp() {
+async function buildDshApp(output) {
   // Package builds must not share generated files with a live development watcher.
-  const output = await mkdtemp(join(tmpdir(), 'wework-package-web-'))
   await run(pnpmCommand, ['run', 'build:dsh-app', '--outDir', output], weworkRoot)
   const manifestPath = join(output, 'flyfish-viewer-assets.json')
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))

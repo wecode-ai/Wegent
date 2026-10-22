@@ -15,9 +15,12 @@ export async function watchDevelopmentBuild({
   let pending = false
   let timer
   let running
-  const excluded = filename =>
+  const excluded = (filename, directory) =>
     ignored.some(root => filename === root || filename.startsWith(`${root}${path.sep}`)) ||
-    filename.split(path.sep).some(part => ['node_modules', '.git', 'dist'].includes(part))
+    path
+      .relative(directory, filename)
+      .split(path.sep)
+      .some(part => ['node_modules', '.git', 'dist'].includes(part))
   const drain = async () => {
     do {
       pending = false
@@ -46,7 +49,7 @@ export async function watchDevelopmentBuild({
     const watcher = watch(directory, { recursive }, (_event, filename) => {
       if (!filename) return schedule()
       const resolved = path.resolve(directory, String(filename))
-      if (!excluded(resolved) && accept(resolved)) schedule()
+      if (!excluded(resolved, directory) && accept(resolved)) schedule()
     })
     watcher.on('error', onError)
     watchers.push(watcher)

@@ -151,6 +151,7 @@ export function createDesktopScenario({
       assert.equal(saved.model.model_id, model.model_id)
 
       await control.command('click', `${CONTENT} [data-testid="collaboration-primary-stand-in"]`)
+      await control.command('waitFor', '[data-testid="stand-in-advanced-open"]')
       await control.command('click', '[data-testid="stand-in-advanced-open"]')
       await control.command('waitFor', '[data-testid="project-work-button"]', {
         text: SOURCE,

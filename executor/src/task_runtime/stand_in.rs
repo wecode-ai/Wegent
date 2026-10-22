@@ -1,6 +1,6 @@
 //! Project-addressed views over the personal stand-in; no project-owned settings.
 use super::personal_stand_in::{
-    empty_role, project_role, read_personal, role_project_matches, validate_role, write_personal,
+    empty_role, project_role, read_personal, validate_role, write_personal,
 };
 use super::*;
 
@@ -134,48 +134,6 @@ impl LocalTaskStore {
             &kind,
             personal["autoSelect"] == true,
         ))
-    }
-
-    pub fn enabled_stand_in_settings(&self) -> Result<Vec<Value>, TaskRuntimeError> {
-        Ok(self
-            .project_stand_in_views()?
-            .into_iter()
-            .filter(|role| role["enabled"] == true)
-            .collect())
-    }
-
-    pub fn user_stand_in_settings(&self, user_id: i64) -> Result<Vec<Value>, TaskRuntimeError> {
-        Ok(self
-            .project_stand_in_views()?
-            .into_iter()
-            .filter(|role| role["userId"] == user_id)
-            .collect())
-    }
-
-    fn project_stand_in_views(&self) -> Result<Vec<Value>, TaskRuntimeError> {
-        let mut result = Vec::new();
-        for personal in self.all_personal_stand_ins()? {
-            for role in personal["roles"].as_array().into_iter().flatten() {
-                for project in role["collaboration"]["projects"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                {
-                    let id = project["id"].as_str().unwrap_or_default();
-                    let kind = project["store"].as_str().unwrap_or_default();
-                    if role_project_matches(role, id, kind) {
-                        result.push(project_role(
-                            role,
-                            personal["userId"].as_i64().unwrap(),
-                            id,
-                            kind,
-                            personal["autoSelect"] == true,
-                        ));
-                    }
-                }
-            }
-        }
-        Ok(result)
     }
 }
 

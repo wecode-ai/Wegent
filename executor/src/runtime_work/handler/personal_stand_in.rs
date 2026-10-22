@@ -110,6 +110,26 @@ impl RuntimeWorkRpcHandler {
         Ok(configs)
     }
 
+    pub(super) async fn select_polled_personal_role(
+        &self,
+        configs: &[Value],
+        issue: &Value,
+    ) -> Option<Value> {
+        match self.select_personal_role(configs, issue).await {
+            Ok(role) => role,
+            Err(error) => {
+                log_executor_event(
+                    "stand-in role selection failed",
+                    &[
+                        ("issue_id", issue["id"].to_string()),
+                        ("error", error.message),
+                    ],
+                );
+                None
+            }
+        }
+    }
+
     pub(super) async fn select_personal_role(
         &self,
         configs: &[Value],
