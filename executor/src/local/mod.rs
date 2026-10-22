@@ -12,6 +12,7 @@ pub mod environment_prepare;
 mod event_stream;
 pub mod git_commands;
 pub mod harnesses;
+mod linked_change_requests;
 pub mod local_skills;
 pub mod native_git;
 pub(crate) mod personal_marketplace_lock;
