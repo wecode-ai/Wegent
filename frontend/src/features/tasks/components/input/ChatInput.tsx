@@ -862,6 +862,7 @@ export default function ChatInput({
                     onCompositionEnd={handleCompositionEnd}
                     onFocus={handleFocus}
                     data-testid="message-input"
+                    data-team-id={team?.id}
                     data-roleid="message-input"
                     className={`w-full ${
                       compactSpacing ? 'pt-0.5 pb-1' : 'pt-1 pb-2'

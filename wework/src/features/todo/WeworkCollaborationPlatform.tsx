@@ -1,4 +1,9 @@
+import { useStandInProjects } from './useStandInProjects'
+import { StandInIcon } from './StandInIcon'
+import { bindProjectStandInApi } from '@/api/standIn'
 import { WorkspaceRunnerRegistrationDialog } from '@/features/collaboration/WorkspaceRunnerRegistrationDialog'
+import { StandInSettingsPage } from './StandInSettingsPage'
+import { StandInPopover } from './StandInPopover'
 import { createLocalWorkspaceApi, LOCAL_WORKSPACE_ID } from './localWorkspaceApi'
 import { createWeworkPlatformApi, withoutDefaultWorkItemProject } from './weworkPlatformApi'
 // eslint-disable-next-line react-refresh/only-export-components
@@ -6,6 +11,7 @@ export { createLocalWorkspaceApi, createWeworkPlatformApi }
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -461,8 +467,40 @@ export function WeworkSharedProject({
     }),
     [api, hasFullWorkspaceAccess, project.id, project.project_store, workspace.id]
   )
+  const standInWorkspaceApi = useMemo(
+    () => ({
+      ...scopedApi,
+      standIn:
+        services.standInApi && services.getLocalRuntimeSidebarIdentity
+          ? bindProjectStandInApi(
+              services.standInApi,
+              Number(userId),
+              project.project_store === 'local' ? 'local' : 'cloud',
+              services.getLocalRuntimeSidebarIdentity
+            )
+          : scopedApi.standIn,
+    }),
+    [
+      scopedApi,
+      services.standInApi,
+      services.getLocalRuntimeSidebarIdentity,
+      userId,
+      project.project_store,
+    ]
+  )
   const projectHost = useMemo<CollaborationHostAdapter>(
     () => ({
+      renderProjectHeaderAction: currentProject => (
+        <StandInPopover
+          key={currentProject.id}
+          api={standInWorkspaceApi}
+          project={currentProject}
+          devices={devices}
+          readLocalIdentity={services.getLocalRuntimeSidebarIdentity}
+          services={services}
+          userId={Number(userId)}
+        />
+      ),
       capabilities: {
         automation: true,
         dingtalkAitable: true,
@@ -513,6 +551,10 @@ export function WeworkSharedProject({
     }),
     [
       focusedItemId,
+      devices,
+      standInWorkspaceApi,
+      services,
+      userId,
       detailServices?.modelApi,
       location.issueId,
       location.projectSettingsSection,
@@ -522,10 +564,6 @@ export function WeworkSharedProject({
       notify,
       project.id,
       project.project_store,
-      services.agentResourceApi,
-      services.deviceApi,
-      services.localProjectChatAgentApi,
-      services.pluginApi,
       setLocation,
       workspace.id,
     ]
@@ -1000,6 +1038,7 @@ export function WeworkSharedProject({
             allIssues,
             assignments,
             taskBindings,
+            onRead,
             onChange,
             onClose,
             onCreateTask,
@@ -1095,12 +1134,14 @@ export function WeworkSharedProject({
                     taskComposer?.issue.id === issue.id ? () => setTaskComposer(null) : closeDrawers
                   }
                   onUpdated={updated => onChange(updated as unknown as CollaborationIssue)}
+                  onRead={updated => onRead(updated as unknown as CollaborationIssue)}
                   onClose={closeDrawers}
                 />
               )}
             </IssueConversationDrawers>
           )}
           renderBoardIssueCard={({
+            column,
             display,
             focused,
             issue,
@@ -1140,6 +1181,7 @@ export function WeworkSharedProject({
             return (
               <div className="w-full" data-testid={collaborationTestIds.issue(issue.id)}>
                 <CloudTodoBoardCard
+                  columnKey={column.key}
                   item={
                     {
                       ...issue,
@@ -1175,7 +1217,8 @@ export function WeworkSharedProject({
 }
 
 export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformProps) {
-  const { i18n } = useTranslation('common')
+  const { i18n, t } = useTranslation('common')
+  const standInProjects = useStandInProjects(props.services, props.devices, Number(props.user.id))
   const cloudConnection = useOptionalCloudConnection()
   const [cloudLoginOpen, setCloudLoginOpen] = useState(false)
   const api = props.services.sharedWorkspaceApi
@@ -1250,10 +1293,33 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
       locale,
     ]
   )
-  const platformApi = useMemo(
-    () => createWeworkPlatformApi(api, localProjectApi),
-    [api, localProjectApi]
-  )
+  const platformApi = useMemo(() => {
+    const platform = createWeworkPlatformApi(api, localProjectApi)
+    if (!platform || !props.services.standInApi || !props.services.getLocalRuntimeSidebarIdentity)
+      return platform
+    const standIn = async (projectId: string) => {
+      const project = await platform.projects.get(projectId)
+      return bindProjectStandInApi(
+        props.services.standInApi!,
+        Number(props.user.id),
+        project.project_store === 'local' ? 'local' : 'cloud',
+        props.services.getLocalRuntimeSidebarIdentity!
+      )
+    }
+    return {
+      ...platform,
+      standIn: {
+        get: async (projectId: string, deviceId?: string, id?: string) =>
+          (await standIn(projectId)).get(projectId, deviceId, id),
+        save: async (
+          projectId: string,
+          settings: import('@wegent/collaboration').WorkspaceStandInSettings
+        ) => (await standIn(projectId)).save(projectId, settings),
+        run: async (projectId: string, issueId: string, deviceId: string, id?: string) =>
+          (await standIn(projectId)).run!(projectId, issueId, deviceId, id),
+      },
+    }
+  }, [api, localProjectApi, props.services, props.user.id])
   const navigationApis = useMemo(
     () =>
       [
@@ -1276,6 +1342,23 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
   const pendingNavigationProjectIdRef = useRef<string | null | undefined>(undefined)
   const navigationRequestRevisionRef = useRef(0)
   const resolvedWorkspaceProjectRef = useRef<string | null>(null)
+
+  // An external route supersedes an internal project's pending lookup, even
+  // when it only selects another Issue or comment in the same project.
+  useLayoutEffect(() => {
+    navigationRequestRevisionRef.current += 1
+    pendingNavigationProjectIdRef.current = undefined
+    return () => {
+      navigationRequestRevisionRef.current += 1
+    }
+  }, [
+    activeProject?.projectId,
+    activeProject?.projectStore,
+    platformApi,
+    props.focusedCommentId,
+    props.focusedCommentRequestKey,
+    props.focusedItemId,
+  ])
 
   useEffect(() => {
     const activeProjectId = activeProject ? String(activeProject.projectId) : null
@@ -1349,6 +1432,8 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
     location.projectId,
     navigationSyncRevision,
     platformApi,
+    props.focusedCommentId,
+    props.focusedCommentRequestKey,
     props.focusedItemId,
   ])
 
@@ -1397,6 +1482,28 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
         locale={locale}
         onReady={handleReady}
         host={{
+          renderStandInPage: ({ projects }) => (
+            <StandInSettingsPage
+              api={platformApi}
+              projects={projects}
+              services={props.services}
+              devices={props.devices ?? []}
+              userId={Number(props.user.id)}
+            />
+          ),
+          renderProjectSidebarBadge: project =>
+            standInProjects.has(
+              `${project.project_store === 'local' ? 'local' : 'cloud'}:${project.id}`
+            ) ? (
+              <span
+                className="collaboration-project-sidebar-badge flex shrink-0 text-text-secondary"
+                title={t('standIn.project_enabled')}
+                aria-label={t('standIn.project_enabled')}
+                data-testid={`stand-in-project-${project.id}`}
+              >
+                <StandInIcon enabled />
+              </span>
+            ) : null,
           currentUser: {
             id: Number(props.user.id),
             name: collaborationUserName,
@@ -1405,7 +1512,15 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
             authenticated: cloudConnection.isConnected,
             requestLogin: () => setCloudLoginOpen(true),
           },
-          renderIssueComposer: props => <WeworkIssueHomeComposer {...props} />,
+          renderIssueComposer: composerProps => (
+            <WeworkIssueHomeComposer
+              {...composerProps}
+              api={platformApi}
+              userId={Number(props.user.id)}
+              services={props.services}
+              devices={props.devices ?? []}
+            />
+          ),
           loadProjectCollaborationGroupGenerationModels: async () => {
             const response = await props.services.modelApi.listModels()
             const models = response.data.filter(

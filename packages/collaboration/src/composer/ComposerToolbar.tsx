@@ -60,6 +60,8 @@ export interface ComposerToolbarProps {
   onSubmit: (options?: ComposerSubmitOptions) => void
   sendButtonTestId?: string
   sendButtonLabel?: string
+  showSubmitButton?: boolean
+  showAttachmentActions?: boolean
   leadingContext?: ReactNode
   sendKey?: 'enter' | 'cmd_enter'
   followUpBehavior?: ComposerFollowUpBehavior
@@ -105,6 +107,8 @@ export function ComposerToolbar({
   onSubmit,
   sendButtonTestId = 'send-message-button',
   sendButtonLabel,
+  showSubmitButton = true,
+  showAttachmentActions = true,
   leadingContext,
   sendKey = 'enter',
   followUpBehavior = 'queue',
@@ -135,7 +139,7 @@ export function ComposerToolbar({
     if (!toolbar || typeof ResizeObserver === 'undefined') return
     const updateCompact = (width: number) => setCompact(width < COMPACT_TOOLBAR_WIDTH)
     updateCompact(toolbar.getBoundingClientRect().width)
-    const observer = new ResizeObserver(entries => {
+    const observer = new ResizeObserver((entries) => {
       const entry = entries[0]
       if (entry) updateCompact(entry.contentRect.width)
     })
@@ -161,9 +165,10 @@ export function ComposerToolbar({
           translate={t}
           disabled={disabled}
           onFileSelect={onFileSelect}
-          onDraw={onDraw}
+          onDraw={showAttachmentActions ? onDraw : undefined}
+          showAttachmentActions={showAttachmentActions}
           onSetPlanMode={showExecutionTools && !planModeActive ? onSetPlanMode : undefined}
-          onSetGoal={showExecutionTools ? onSetGoal : undefined}
+          onSetGoal={showExecutionTools || !showAttachmentActions ? onSetGoal : undefined}
           onConfigureSupervisor={showExecutionTools ? onConfigureSupervisor : undefined}
           supervisorEnabled={showExecutionTools && supervisorEnabled}
           supervisorPending={showExecutionTools && supervisorPending}
@@ -197,7 +202,7 @@ export function ComposerToolbar({
               value={runtimePermissionMode(selectedModelOptions)}
               disabled={disabled}
               iconOnly
-              onChange={mode => onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)}
+              onChange={(mode) => onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)}
             />
             {contextUsageIndicator}
             {modelSelectorOverride ??
@@ -219,109 +224,114 @@ export function ComposerToolbar({
           </>
         ) : null}
         {workspaceMenu}
-        {isStreaming && !canSend ? (
-          <Tooltip
-            label={t('workbench.pause_response', '暂停回复')}
-            align="end"
-            testId="composer-pause-tooltip"
-          >
-            <button
-              type="button"
-              data-composer-primary-action="true"
-              data-testid="pause-response-button"
-              onClick={onPause}
-              disabled={disabled || !onPause}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-text-primary p-0 text-background hover:bg-text-primary/90"
-              aria-label={t('workbench.pause_response', '暂停回复')}
+        {showSubmitButton &&
+          (isStreaming && !canSend ? (
+            <Tooltip
+              label={t('workbench.pause_response', '暂停回复')}
+              align="end"
+              testId="composer-pause-tooltip"
             >
-              <span className="h-3.5 w-3.5 rounded-sm bg-current" aria-hidden="true" />
-            </button>
-          </Tooltip>
-        ) : isStreaming && canSend ? (
-          <div className="flex shrink-0 items-center rounded-full bg-text-primary text-background">
-            <Tooltip label={primaryBusyLabel} align="end" testId="composer-send-after-turn-tooltip">
+              <button
+                type="button"
+                data-composer-primary-action="true"
+                data-testid="pause-response-button"
+                onClick={onPause}
+                disabled={disabled || !onPause}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-text-primary p-0 text-background hover:bg-text-primary/90"
+                aria-label={t('workbench.pause_response', '暂停回复')}
+              >
+                <span className="h-3.5 w-3.5 rounded-sm bg-current" aria-hidden="true" />
+              </button>
+            </Tooltip>
+          ) : isStreaming && canSend ? (
+            <div className="flex shrink-0 items-center rounded-full bg-text-primary text-background">
+              <Tooltip
+                label={primaryBusyLabel}
+                align="end"
+                testId="composer-send-after-turn-tooltip"
+              >
+                <button
+                  type="submit"
+                  data-composer-primary-action="true"
+                  data-testid={sendButtonTestId}
+                  onMouseDown={(event) => event.preventDefault()}
+                  className="flex h-8 w-8 items-center justify-center rounded-l-full hover:bg-text-primary/90"
+                  aria-label={primaryBusyLabel}
+                >
+                  <ArrowUp className="h-4 w-4" />
+                </button>
+              </Tooltip>
+              <ActionMenu
+                ariaLabel={t('workbench.choose_send_mode', '选择发送方式')}
+                testId="send-mode-menu-button"
+                icon={ChevronDown}
+                triggerClassName="flex h-8 w-7 items-center justify-center rounded-r-full border-l border-background/20 hover:bg-text-primary/90"
+                items={[
+                  {
+                    label: t('workbench.send_after_turn', '当前回复结束后发送'),
+                    icon: Clock3,
+                    testId: 'send-after-turn-option',
+                    onSelect: () => onSubmit(),
+                    shortcut: followUpBehavior === 'queue' ? primarySendShortcut : undefined,
+                  },
+                  {
+                    label:
+                      modelChangePending && activeModelLabel
+                        ? t(
+                            'workbench.guide_current_turn_with_model',
+                            'Guide current response · {{model}}',
+                            {
+                              model: activeModelLabel,
+                            }
+                          )
+                        : t('workbench.guide_current_turn', '引导当前回复'),
+                    icon: CornerDownRight,
+                    testId: 'guide-current-turn-option',
+                    onSelect: () => onSubmit({ guideWhenBusy: true }),
+                    shortcut: followUpBehavior === 'guide' ? primarySendShortcut : undefined,
+                  },
+                  {
+                    label:
+                      modelChangePending && selectedModelLabel
+                        ? t(
+                            'workbench.interrupt_and_send_with_model',
+                            'Interrupt and use {{model}}',
+                            {
+                              model: selectedModelLabel,
+                            }
+                          )
+                        : t('workbench.interrupt_and_send', '打断并立即发送'),
+                    icon: Zap,
+                    testId: 'interrupt-and-send-option',
+                    onSelect: () => onSubmit({ interruptWhenBusy: true }),
+                    shortcut: 'Command+Shift+Enter',
+                  },
+                ]}
+              />
+            </div>
+          ) : (
+            <Tooltip
+              label={sendButtonLabel ?? t('workbench.send_message', '发送消息')}
+              align="end"
+              testId="composer-send-tooltip"
+            >
               <button
                 type="submit"
                 data-composer-primary-action="true"
                 data-testid={sendButtonTestId}
-                onMouseDown={event => event.preventDefault()}
-                className="flex h-8 w-8 items-center justify-center rounded-l-full hover:bg-text-primary/90"
-                aria-label={primaryBusyLabel}
+                disabled={!canSend}
+                onMouseDown={(event) => event.preventDefault()}
+                className={cn(
+                  'flex h-8 shrink-0 items-center justify-center gap-1.5 bg-text-primary text-background disabled:cursor-not-allowed disabled:bg-text-muted/45',
+                  sendButtonLabel ? 'rounded-lg px-3 text-sm font-medium' : 'w-8 rounded-full p-0'
+                )}
+                aria-label={sendButtonLabel ?? t('workbench.send_message', '发送消息')}
               >
+                {sendButtonLabel}
                 <ArrowUp className="h-4 w-4" />
               </button>
             </Tooltip>
-            <ActionMenu
-              ariaLabel={t('workbench.choose_send_mode', '选择发送方式')}
-              testId="send-mode-menu-button"
-              icon={ChevronDown}
-              triggerClassName="flex h-8 w-7 items-center justify-center rounded-r-full border-l border-background/20 hover:bg-text-primary/90"
-              items={[
-                {
-                  label: t('workbench.send_after_turn', '当前回复结束后发送'),
-                  icon: Clock3,
-                  testId: 'send-after-turn-option',
-                  onSelect: () => onSubmit(),
-                  shortcut: followUpBehavior === 'queue' ? primarySendShortcut : undefined,
-                },
-                {
-                  label:
-                    modelChangePending && activeModelLabel
-                      ? t(
-                          'workbench.guide_current_turn_with_model',
-                          'Guide current response · {{model}}',
-                          {
-                            model: activeModelLabel,
-                          }
-                        )
-                      : t('workbench.guide_current_turn', '引导当前回复'),
-                  icon: CornerDownRight,
-                  testId: 'guide-current-turn-option',
-                  onSelect: () => onSubmit({ guideWhenBusy: true }),
-                  shortcut: followUpBehavior === 'guide' ? primarySendShortcut : undefined,
-                },
-                {
-                  label:
-                    modelChangePending && selectedModelLabel
-                      ? t(
-                          'workbench.interrupt_and_send_with_model',
-                          'Interrupt and use {{model}}',
-                          {
-                            model: selectedModelLabel,
-                          }
-                        )
-                      : t('workbench.interrupt_and_send', '打断并立即发送'),
-                  icon: Zap,
-                  testId: 'interrupt-and-send-option',
-                  onSelect: () => onSubmit({ interruptWhenBusy: true }),
-                  shortcut: 'Command+Shift+Enter',
-                },
-              ]}
-            />
-          </div>
-        ) : (
-          <Tooltip
-            label={sendButtonLabel ?? t('workbench.send_message', '发送消息')}
-            align="end"
-            testId="composer-send-tooltip"
-          >
-            <button
-              type="submit"
-              data-composer-primary-action="true"
-              data-testid={sendButtonTestId}
-              disabled={!canSend}
-              onMouseDown={event => event.preventDefault()}
-              className={cn(
-                'flex h-8 shrink-0 items-center justify-center gap-1.5 bg-text-primary text-background disabled:cursor-not-allowed disabled:bg-text-muted/45',
-                sendButtonLabel ? 'rounded-lg px-3 text-sm font-medium' : 'w-8 rounded-full p-0'
-              )}
-              aria-label={sendButtonLabel ?? t('workbench.send_message', '发送消息')}
-            >
-              {sendButtonLabel}
-              <ArrowUp className="h-4 w-4" />
-            </button>
-          </Tooltip>
-        )}
+          ))}
       </div>
     </div>
   )

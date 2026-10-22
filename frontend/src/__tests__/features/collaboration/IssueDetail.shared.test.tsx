@@ -209,6 +209,7 @@ describe('shared IssueDetail', () => {
         messages={collaborationMessages['zh-CN']}
         onClose={jest.fn()}
         onChange={jest.fn()}
+        onRead={jest.fn()}
         onCommentsChange={jest.fn()}
         onConflict={jest.fn()}
         onError={jest.fn()}
@@ -638,8 +639,9 @@ describe('shared IssueDetail', () => {
     await waitFor(() => expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument())
     fireEvent.click(screen.getByTestId('cloud-todo-detail-assignee'))
     fireEvent.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:5'))
-    fireEvent.click(screen.getByTestId('wework-assignment-notify-confirm'))
-    fireEvent.click(screen.getByTestId('cloud-todo-save'))
+    expect(screen.queryByTestId('wework-assignment-notify-confirm')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-save')).toHaveTextContent('保存并通知')
+    await userEvent.click(screen.getByTestId('cloud-todo-save'))
     await waitFor(() =>
       expect(assign).toHaveBeenCalledWith(project.id, issue.id, {
         version: 2,
@@ -653,25 +655,37 @@ describe('shared IssueDetail', () => {
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ assignee_user_id: 5 }))
   })
 
-  it('allows assignment without granting permission to edit Issue content', async () => {
-    const assign = jest.fn().mockResolvedValue({ ...issue, assignee_user_id: 5, version: 2 })
-    const update = jest.fn()
-    const api = createApi({ issues: { assign, update } })
-    renderDetail(api, { issue: { ...issue, can_edit: false }, members: [member] })
-    fireEvent.click(screen.getByTestId('cloud-todo-detail-assignee'))
-    fireEvent.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:5'))
-    fireEvent.click(screen.getByTestId('wework-assignment-notify-confirm'))
-    fireEvent.click(screen.getByTestId('cloud-todo-save'))
-    await waitFor(() =>
-      expect(assign).toHaveBeenCalledWith(project.id, issue.id, {
-        version: 1,
-        assigneeType: 'user',
-        assigneeId: '5',
-        notifyAssignee: true,
-      })
-    )
-    expect(update).not.toHaveBeenCalled()
-  })
+  it.each([true, false])(
+    'allows assignment with notifyAssignee=%s without granting permission to edit Issue content',
+    async notifyAssignee => {
+      const assign = jest.fn().mockResolvedValue({ ...issue, assignee_user_id: 5, version: 2 })
+      const update = jest.fn()
+      const api = createApi({ issues: { assign, update } })
+      renderDetail(api, { issue: { ...issue, can_edit: false }, members: [member] })
+      fireEvent.click(screen.getByTestId('cloud-todo-detail-assignee'))
+      fireEvent.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:5'))
+      expect(screen.queryByTestId('wework-assignment-notify-confirm')).not.toBeInTheDocument()
+      expect(screen.getByTestId('cloud-todo-save')).toHaveTextContent('保存并通知')
+      if (notifyAssignee) {
+        await userEvent.click(screen.getByTestId('cloud-todo-save'))
+      } else {
+        await userEvent.click(screen.getByTestId('cloud-todo-save-options'))
+        expect(screen.getByTestId('cloud-todo-save-without-notification')).toHaveTextContent(
+          '仅保存不通知'
+        )
+        await userEvent.click(screen.getByTestId('cloud-todo-save-without-notification'))
+      }
+      await waitFor(() =>
+        expect(assign).toHaveBeenCalledWith(project.id, issue.id, {
+          version: 1,
+          assigneeType: 'user',
+          assigneeId: '5',
+          notifyAssignee,
+        })
+      )
+      expect(update).not.toHaveBeenCalled()
+    }
+  )
 
   it('keeps an uploaded attachment when an older list request resolves afterward', async () => {
     let resolveAttachments: (attachments: []) => void = () => undefined

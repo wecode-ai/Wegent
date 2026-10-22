@@ -41,10 +41,12 @@ export function IssueAssignmentHistoryList({
 }) {
   return entries.map((entry, index) => {
     const byName = memberName(entry.by_user_id);
-    const toName =
-      entry.to_type === "agent" ||
-      entry.to_type === "team" ||
-      entry.to_type === "group"
+    const isUnassign = entry.action === "unassign";
+    const toName = isUnassign
+      ? labels.unassigned
+      : entry.to_type === "agent" ||
+          entry.to_type === "team" ||
+          entry.to_type === "group"
         ? (entry.to_name ??
           (entry.to_type === "team"
             ? labels.team
@@ -58,7 +60,9 @@ export function IssueAssignmentHistoryList({
           <span className="truncate font-medium">
             {byName ?? `#${entry.by_user_id}`}
           </span>
-          <ArrowRight className="h-3 w-3 shrink-0 text-text-muted" />
+          {!isUnassign && (
+            <ArrowRight className="h-3 w-3 shrink-0 text-text-muted" />
+          )}
           <span className="truncate">{toName ?? labels.unassigned}</span>
         </div>
         <p className="mt-0.5 text-xs text-text-muted">

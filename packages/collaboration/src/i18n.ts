@@ -7,6 +7,7 @@ import { queueMessages } from "./conversation/queueMessages";
 import { projectWorkMessages } from "./controls/projectWorkMessages";
 import { conversationMessages } from "./conversation/messages";
 import { boardCardMessages } from "./issue-card/messages";
+import { boardSortMessages } from "./project-board/messages";
 import { composerMessages } from "./controls/messages";
 import { modelMessages } from "./controls/modelMessages";
 import { markdownMessages } from "./markdown/MarkdownServices";
@@ -259,8 +260,10 @@ const sharedMessages: Record<
   "zh-CN": {
     "todo.permission_owner": "所有者",
     "todo.project_members_intro": "管理项目访问权限与成员职责。",
-    "todo.project_membership_inherit_hint": "空间成员自动获得项目访问权限，空间管理员始终可管理项目。",
-    "todo.project_membership_restricted_hint": "仅空间管理员自动加入，其他成员需直接邀请。",
+    "todo.project_membership_inherit_hint":
+      "空间成员自动获得项目访问权限，空间管理员始终可管理项目。",
+    "todo.project_membership_restricted_hint":
+      "仅空间管理员自动加入，其他成员需直接邀请。",
     "todo.project_membership_restricted_short": "仅邀请成员",
     "todo.project_member_access": "角色与来源",
     "todo.project_member_inherited_named": "继承自 {{space}}",
@@ -269,8 +272,10 @@ const sharedMessages: Record<
     "todo.project_member_owner": "本地项目所有者",
     "todo.project_members_loading": "正在加载成员…",
     "todo.project_members_empty": "暂无项目成员",
-    "todo.project_member_inherited_hint": "继承角色由空间管理，项目内不能修改或移除。",
-    "todo.project_member_capability_hint": "职责与能力在离开输入框后自动保存，帮助 AI 选择合适的负责人。",
+    "todo.project_member_inherited_hint":
+      "继承角色由空间管理，项目内不能修改或移除。",
+    "todo.project_member_capability_hint":
+      "职责与能力在离开输入框后自动保存，帮助 AI 选择合适的负责人。",
     "todo.permission_admin": "管理员",
     "todo.permission_member": "成员",
     "todo.permission_viewer": "只读成员",
@@ -285,7 +290,32 @@ const sharedMessages: Record<
     "todo.agent_private_share_required": "原私有绑定需要明确共享后启用",
     "todo.add_project_agent_description":
       "添加后会共享到父空间并向项目成员开放使用。原定义和私人凭据仍按原权限管理。",
+    "todo.agent_picker_search": "搜索智能体",
+    "todo.add_project_agent": "添加智能体",
+    "todo.create_agent": "新建智能体",
+    "todo.add_to_project": "加入项目",
+    "todo.add_to_workspace": "加入空间",
+    "todo.agent_picker_list": "选择一个智能体",
+    "todo.agent_picker_loading": "正在加载智能体…",
+    "todo.agent_picker_load_failed": "无法加载智能体",
+    "todo.agent_picker_shared": "空间共享",
+    "todo.agent_picker_personal": "我的智能体",
+    "todo.agent_picker_added": "已添加",
+    "todo.agent_picker_no_match": "没有匹配的智能体",
+    "todo.agent_picker_empty": "还没有可添加的智能体",
+    "todo.agent_picker_try_search": "试试其他名称，或清除搜索。",
+    "todo.agent_picker_create_hint": "新建一个智能体，让它协助处理任务。",
+    "todo.agent_picker_share_hint": "请让空间管理员共享智能体后再添加。",
+    "todo.agent_picker_clear_search": "清除搜索",
+    "todo.agent_picker_selected": "已选择：{{name}}",
+    "todo.agent_picker_select_hint": "选择智能体后即可添加",
+    "todo.agent_picker_adding": "添加中…",
+    "todo.agent_picker_description": "选择一个智能体，加入后即可分配项目任务。",
+    "todo.agent_picker_workspace_description": "选择一个智能体，供空间内项目复用。",
+    "todo.agent_picker_workspace_share": "添加后空间内项目可复用此智能体。原定义和私人凭据仍按原权限管理。",
     "common.actions": "操作",
+    "standIn.start_failed": "任务已创建，替身未能启动：",
+    "standIn.retry": "重试处理",
     "issue_creation.owner": "负责人",
     "issue_creation.user": "成员",
     "issue_creation.agent": "智能体",
@@ -301,6 +331,7 @@ const sharedMessages: Record<
     "common.delete": "删除",
     "common.remove": "移除",
     "common.retry": "重试",
+    "common.loading": "正在加载…",
     "common.save": "保存",
     "todo.codex_environment_hint":
       "任务会在所选执行环境的独立工作目录中运行，并关联当前协作项目。",
@@ -432,6 +463,9 @@ const sharedMessages: Record<
     "todo.access_token": "访问令牌",
     "todo.saved": "已保存",
     "todo.save_assignment": "保存分配",
+    "todo.save_and_notify": "保存并通知",
+    "todo.save_without_notification": "仅保存不通知",
+    "todo.save_options": "保存选项",
     "todo.token_required": "需要配置令牌",
     "todo.board_layout": "看板布局",
     "todo.board_layout_description": "配置项目状态和任务卡片显示内容。",
@@ -466,6 +500,7 @@ const sharedMessages: Record<
     "todo.delete_tag_confirm": "删除标签“{{tag}}”{{suffix}}？",
     "todo.delete_tag_usage_suffix": "，并从 {{count}} 个任务上移除",
     "todo.load_project_failed": "加载项目失败",
+    "todo.load_tag_catalog_failed": "加载标签目录失败",
     "todo.update_visibility_failed": "更新项目权限失败",
     "todo.save_card_display_failed": "保存卡片显示设置失败",
     "todo.save_statuses_failed": "保存状态设置失败",
@@ -514,6 +549,7 @@ const sharedMessages: Record<
     "todo.members": "成员",
     "todo.agents": "机器人",
     "todo.agent_teams": "Wegent 智能体",
+    "todo.workspace_agents": "空间智能体",
     "todo.parent_issue": "父任务",
     "todo.top_level_issue": "顶层任务",
     "todo.no_parent_issue": "无父任务",
@@ -623,10 +659,6 @@ const sharedMessages: Record<
     "todo.draft_saved": "草稿已保存",
     "todo.create_shortcut_hint": "ESC 关闭 · ⌘↵ 创建{{draft}}",
     "todo.save_shortcut_hint": "ESC 关闭 · ⌘↵ 保存",
-    "notifications.ask_title": "是否通知负责人",
-    "notifications.ask_body": "可以选择是否向负责人发送通知。",
-    "notifications.without_notification": "不通知",
-    "notifications.with_notification": "通知",
     "todo.assignment_chain_trigger": "查看指派详情",
     "todo.assignment_chain_collapse": "收起指派详情",
     "todo.assignment_chain_title": "指派详情",
@@ -721,9 +753,12 @@ const sharedMessages: Record<
   },
   en: {
     "todo.permission_owner": "Owner",
-    "todo.project_members_intro": "Manage project access and member responsibilities.",
-    "todo.project_membership_inherit_hint": "Space members inherit project access. Space administrators always manage this project.",
-    "todo.project_membership_restricted_hint": "Only space administrators inherit access. Invite other members directly.",
+    "todo.project_members_intro":
+      "Manage project access and member responsibilities.",
+    "todo.project_membership_inherit_hint":
+      "Space members inherit project access. Space administrators always manage this project.",
+    "todo.project_membership_restricted_hint":
+      "Only space administrators inherit access. Invite other members directly.",
     "todo.project_membership_restricted_short": "Invite only",
     "todo.project_member_access": "Role and source",
     "todo.project_member_inherited_named": "Inherited from {{space}}",
@@ -732,8 +767,10 @@ const sharedMessages: Record<
     "todo.project_member_owner": "Local project owner",
     "todo.project_members_loading": "Loading members…",
     "todo.project_members_empty": "No project members yet",
-    "todo.project_member_inherited_hint": "Inherited roles are managed in the space and cannot be changed or removed here.",
-    "todo.project_member_capability_hint": "Responsibilities save when you leave the field and help AI choose the right assignee.",
+    "todo.project_member_inherited_hint":
+      "Inherited roles are managed in the space and cannot be changed or removed here.",
+    "todo.project_member_capability_hint":
+      "Responsibilities save when you leave the field and help AI choose the right assignee.",
     "todo.permission_admin": "Administrator",
     "todo.permission_member": "Member",
     "todo.permission_viewer": "Viewer",
@@ -751,7 +788,32 @@ const sharedMessages: Record<
       "This private binding requires explicit sharing before enabling",
     "todo.add_project_agent_description":
       "Adding an Agent shares it with the parent space for project use. Definitions and private credentials retain their own permissions.",
+    "todo.agent_picker_search": "Search agents",
+    "todo.add_project_agent": "Add agent",
+    "todo.create_agent": "Create agent",
+    "todo.add_to_project": "Add to project",
+    "todo.add_to_workspace": "Add to space",
+    "todo.agent_picker_list": "Choose an agent",
+    "todo.agent_picker_loading": "Loading agents…",
+    "todo.agent_picker_load_failed": "Unable to load agents",
+    "todo.agent_picker_shared": "Shared with space",
+    "todo.agent_picker_personal": "My agents",
+    "todo.agent_picker_added": "Already added",
+    "todo.agent_picker_no_match": "No matching agents",
+    "todo.agent_picker_empty": "No agents available to add",
+    "todo.agent_picker_try_search": "Try another name or clear your search.",
+    "todo.agent_picker_create_hint": "Create an agent to help with tasks.",
+    "todo.agent_picker_share_hint": "Ask a space administrator to share an agent first.",
+    "todo.agent_picker_clear_search": "Clear search",
+    "todo.agent_picker_selected": "Selected: {{name}}",
+    "todo.agent_picker_select_hint": "Select an agent to continue",
+    "todo.agent_picker_adding": "Adding…",
+    "todo.agent_picker_description": "Choose an agent to assign project tasks to.",
+    "todo.agent_picker_workspace_description": "Choose an agent for projects in this space to reuse.",
+    "todo.agent_picker_workspace_share": "Projects in this space can reuse this agent. Definitions and private credentials retain their own permissions.",
     "common.actions": "Actions",
+    "standIn.start_failed": "Issue created. Stand-in could not start:",
+    "standIn.retry": "Retry",
     "issue_creation.owner": "Assignee",
     "issue_creation.user": "People",
     "issue_creation.agent": "Agents",
@@ -767,6 +829,7 @@ const sharedMessages: Record<
     "common.delete": "Delete",
     "common.remove": "Remove",
     "common.retry": "Retry",
+    "common.loading": "Loading…",
     "common.save": "Save",
     "todo.codex_environment_hint":
       "Tasks run in their own working directories on the selected execution environment and remain linked to this collaboration project.",
@@ -904,6 +967,9 @@ const sharedMessages: Record<
     "todo.access_token": "Access token",
     "todo.saved": "Saved",
     "todo.save_assignment": "Save assignment",
+    "todo.save_and_notify": "Save and notify",
+    "todo.save_without_notification": "Save without notifying",
+    "todo.save_options": "Save options",
     "todo.token_required": "A token is required",
     "todo.board_layout": "Board layout",
     "todo.board_layout_description":
@@ -940,6 +1006,7 @@ const sharedMessages: Record<
     "todo.delete_tag_confirm": "Delete tag “{{tag}}”{{suffix}}?",
     "todo.delete_tag_usage_suffix": " and remove it from {{count}} issues",
     "todo.load_project_failed": "Failed to load project",
+    "todo.load_tag_catalog_failed": "Failed to load tag catalog",
     "todo.update_visibility_failed": "Failed to update project visibility",
     "todo.save_card_display_failed": "Failed to save card display settings",
     "todo.save_statuses_failed": "Failed to save status settings",
@@ -989,6 +1056,7 @@ const sharedMessages: Record<
     "todo.members": "Members",
     "todo.agents": "Bots",
     "todo.agent_teams": "Wegent agents",
+    "todo.workspace_agents": "Workspace agents",
     "todo.parent_issue": "Parent issue",
     "todo.top_level_issue": "Top-level issue",
     "todo.no_parent_issue": "No parent issue",
@@ -1102,11 +1170,6 @@ const sharedMessages: Record<
     "todo.draft_saved": "Draft saved",
     "todo.create_shortcut_hint": "ESC close · ⌘↵ create{{draft}}",
     "todo.save_shortcut_hint": "ESC close · ⌘↵ save",
-    "notifications.ask_title": "Notify the assignee?",
-    "notifications.ask_body":
-      "Choose whether to send the assignee a notification.",
-    "notifications.without_notification": "Do not notify",
-    "notifications.with_notification": "Notify",
     "todo.assignment_chain_trigger": "View assignment details",
     "todo.assignment_chain_collapse": "Hide assignment details",
     "todo.assignment_chain_title": "Assignment details",
@@ -1234,6 +1297,7 @@ export function createCollaborationTranslator(
       composerMessages[locale][key] ??
       modelMessages[locale][key] ??
       boardCardMessages[locale][key] ??
+      boardSortMessages[locale][key] ??
       markdownMessages[locale][key as keyof typeof markdownMessages.en] ??
       runtimeProfileMessages[locale][key] ??
       executionEnvironmentMessages[locale][key] ??

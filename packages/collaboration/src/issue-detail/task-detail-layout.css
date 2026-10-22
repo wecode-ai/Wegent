@@ -1090,7 +1090,7 @@
   margin-left: auto;
 }
 
-.task-detail-workspace-description .task-detail-desc-actions button {
+.task-detail-workspace-description .task-detail-desc-actions > button {
   min-height: 28px;
   border-radius: 8px;
   padding: 0 10px;
@@ -1101,31 +1101,33 @@
 
 .task-detail-workspace-description
   .task-detail-desc-actions
-  button:hover:not(:disabled) {
+  > button:hover:not(:disabled) {
   background: rgb(var(--color-bg-muted));
   color: rgb(var(--color-text-primary));
 }
 
-.task-detail-workspace-description .task-detail-desc-actions button:last-child {
+.task-detail-workspace-description
+  .task-detail-desc-actions
+  > button:last-child {
   color: rgb(var(--color-bg-base));
   background: rgb(var(--color-text-primary));
 }
 
 .task-detail-workspace-description
   .task-detail-desc-actions
-  button:last-child:hover:not(:disabled) {
+  > button:last-child:hover:not(:disabled) {
   color: rgb(var(--color-bg-base));
   background: rgb(var(--color-text-primary));
   opacity: 0.9;
 }
 
-.task-detail-workspace-description .task-detail-desc-actions button:disabled {
+.task-detail-workspace-description .task-detail-desc-actions > button:disabled {
   cursor: default;
   opacity: 0.45;
 }
 
 @media (max-width: 767px) {
-  .task-detail-workspace-description .task-detail-desc-actions button {
+  .task-detail-workspace-description .task-detail-desc-actions > button {
     min-height: 44px;
   }
 }

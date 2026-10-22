@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 
+RecentTeamMode = Literal["chat", "code", "knowledge", "task", "video", "image"]
+
 
 @dataclass(frozen=True)
 class WorkspaceRefLookup:
@@ -321,6 +323,7 @@ class TaskStore(Protocol):
         *,
         user_id: int,
         limit: int,
+        mode: RecentTeamMode | None = None,
     ) -> list[RecentTaskTeamRef]: ...
 
     def list_recent_owner_only_used_tasks(

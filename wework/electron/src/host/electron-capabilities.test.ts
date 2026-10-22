@@ -319,7 +319,8 @@ function createIsolatedClipboardRouter(
   focused = true,
   popoutHost?: Partial<ElectronE2EHost>,
   smartApps?: { createDirectory: (input: Record<string, string>) => Promise<unknown> },
-  services?: Partial<ElectronDesktopServices>
+  services?: Partial<ElectronDesktopServices>,
+  storedPreferences: Record<string, unknown> = { workbenchMode: 'developer' }
 ) {
   const notificationNavigation = { openRuntimeTask: vi.fn(), openScheme: vi.fn() }
   const targetWindow = {
@@ -336,7 +337,7 @@ function createIsolatedClipboardRouter(
       updatedAt: '2026-09-12T00:00:00.000Z',
     }),
     () => (smartApps ?? null) as never,
-    {} as never,
+    { read: vi.fn().mockResolvedValue(storedPreferences) } as never,
     {} as never,
     {} as never,
     {} as never,
@@ -367,7 +368,88 @@ function createIsolatedClipboardRouter(
   return { router, targetWindow, notificationNavigation }
 }
 
+describe('Process explorer capabilities', () => {
+  test('stays read-only', () => {
+    expect(HOST_CAPABILITIES).not.toContain('diagnostics.endProcess')
+  })
+})
+
 describe('Core DSH runtime capabilities', () => {
+  test('commits a mode before scheduling its restart outside the renderer lifetime', async () => {
+    const stored = { workbenchMode: 'developer' }
+    const updatePreferences = vi.fn(async patch => Object.assign(stored, patch))
+    const scheduleCoreDshRestart = vi.fn()
+    const completions: Array<() => void | Promise<void>> = []
+    const { router } = createIsolatedClipboardRouter(
+      true,
+      { scheduleCoreDshRestart },
+      undefined,
+      { updatePreferences },
+      stored
+    )
+
+    await expect(
+      router.invoke(
+        WEWORK_APP_PRINCIPAL,
+        'runtime.changeWorkbenchMode',
+        { mode: 'focus' },
+        { onResponseSent: completion => completions.push(completion) }
+      )
+    ).resolves.toEqual({ workbenchMode: 'focus' })
+
+    expect(stored.workbenchMode).toBe('focus')
+    expect(scheduleCoreDshRestart).not.toHaveBeenCalled()
+    expect(completions).toHaveLength(1)
+    await completions[0]()
+    expect(scheduleCoreDshRestart).toHaveBeenCalledOnce()
+    expect(updatePreferences).toHaveBeenCalledExactlyOnceWith({ workbenchMode: 'focus' })
+    expect(stored.workbenchMode).toBe('focus')
+  })
+
+  test('does not restart an unchanged persisted mode', async () => {
+    const scheduleCoreDshRestart = vi.fn()
+    const updatePreferences = vi.fn().mockResolvedValue({ workbenchMode: 'developer' })
+    const { router } = createIsolatedClipboardRouter(true, { scheduleCoreDshRestart }, undefined, {
+      updatePreferences,
+    })
+
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'runtime.changeWorkbenchMode', { mode: 'developer' })
+
+    expect(scheduleCoreDshRestart).not.toHaveBeenCalled()
+  })
+
+  test('does not schedule a mode restart when persistence fails', async () => {
+    const completions = vi.fn()
+    const updatePreferences = vi.fn().mockRejectedValue(new Error('disk unavailable'))
+    const { router } = createIsolatedClipboardRouter(true, undefined, undefined, {
+      updatePreferences,
+    })
+
+    await expect(
+      router.invoke(
+        WEWORK_APP_PRINCIPAL,
+        'runtime.changeWorkbenchMode',
+        { mode: 'focus' },
+        { onResponseSent: completions }
+      )
+    ).rejects.toThrow('disk unavailable')
+
+    expect(completions).not.toHaveBeenCalled()
+  })
+
+  test('rejects unsupported modes before writing preferences', async () => {
+    const updatePreferences = vi.fn()
+    const { router } = createIsolatedClipboardRouter(true, undefined, undefined, {
+      updatePreferences,
+    })
+
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'runtime.changeWorkbenchMode', { mode: 'unknown' })
+    ).rejects.toThrow()
+
+    expect(updatePreferences).not.toHaveBeenCalled()
+  })
+
   test('publishes persisted preferences to every subscribed window', async () => {
     const updated = { fixedWorkspaceTabs: [{ id: 'task-1', kind: 'task' }] }
     const publish = vi.fn()

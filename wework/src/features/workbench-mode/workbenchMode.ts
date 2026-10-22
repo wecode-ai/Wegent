@@ -1,6 +1,7 @@
-import { restartCoreDsh } from '@/features/dsh-plugins/coreDshPlugins'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import {
-  updateAppPreferences,
+  emitAppPreferencesChanged,
+  mergeAppPreferences,
   type AppPreferences,
   type WorkbenchMode,
 } from '@/desktop/appPreferences'
@@ -11,39 +12,12 @@ export const MODE_MANAGED_HOME_PLUGINS = new Set([
   '@wegent/dsh-ui-home-developer',
 ])
 
-interface WorkbenchModeDependencies {
-  restartPlugins: () => Promise<void>
-  updatePreferences: (patch: { workbenchMode: WorkbenchMode }) => Promise<AppPreferences>
-}
-
-const defaultDependencies: WorkbenchModeDependencies = {
-  restartPlugins: restartCoreDsh,
-  updatePreferences: updateAppPreferences,
-}
-
-export async function changeWorkbenchMode(
-  currentMode: WorkbenchMode,
-  nextMode: WorkbenchMode,
-  dependencies: WorkbenchModeDependencies = defaultDependencies
-): Promise<AppPreferences> {
-  if (currentMode === nextMode) {
-    return dependencies.updatePreferences({ workbenchMode: nextMode })
-  }
-
-  const preferences = await dependencies.updatePreferences({ workbenchMode: nextMode })
-  try {
-    await dependencies.restartPlugins()
-    return preferences
-  } catch (error) {
-    try {
-      await dependencies.updatePreferences({ workbenchMode: currentMode })
-    } catch (rollbackError) {
-      throw new AggregateError(
-        [error, rollbackError],
-        'Failed to restart the plugin runtime and restore the previous workbench mode',
-        { cause: rollbackError }
-      )
-    }
-    throw error
-  }
+export async function changeWorkbenchMode(mode: WorkbenchMode): Promise<AppPreferences> {
+  // The host owns persistence and restart scheduling. A renderer reload must
+  // never roll back a mode whose restart was already accepted by the host.
+  const preferences = mergeAppPreferences(
+    await invokeDesktopHost('runtime.changeWorkbenchMode', { mode })
+  )
+  emitAppPreferencesChanged(preferences)
+  return preferences
 }

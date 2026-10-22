@@ -181,6 +181,10 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       assert.equal(Number(await control.command('getElementCount', PENDING)), 0)
       assert.equal(predictionRequests, 1, 'Reload regenerated an accepted suggestion')
       await control.command('fill', INPUT, { value: EDITED })
+      await control.command(
+        'waitFor',
+        `${ACTIVE} [data-testid="send-message-button"]:not([disabled])`
+      )
       await capture('reply-06-edited-draft.png')
       await control.command('nativePress', INPUT, { key: 'Enter' })
       await control.command('waitFor', `${ACTIVE} [data-testid="message-assistant"]`, {

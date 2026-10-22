@@ -1,3 +1,4 @@
+import { createStandInExecutorApi } from '@/api/standIn'
 import {
   createRemoteProjectDevicePluginApi,
   type ProjectDevicePluginApi,
@@ -74,7 +75,6 @@ export function createBackendWorkbenchServices(
     redirectOnUnauthorized: options.redirectOnUnauthorized,
   })
   const deviceApi = createDeviceApi(client)
-  const agentResourceApi = createAgentResourceApi(client)
   const projectApi = createProjectApi(client)
   const runtimeWorkApi = createRuntimeWorkApi(client)
   const taskApi = createTaskApi(client)
@@ -119,6 +119,9 @@ export function createBackendWorkbenchServices(
       clientOrigin: 'wework',
     })
   const projectDevicePluginApis = new Map<string, ProjectDevicePluginApi>()
+  const agentResourceApi = createAgentResourceApi(client, deviceId =>
+    composerRuntimeIpc.request('runtime.runner.catalog', {}, deviceId)
+  )
   let knownDevices: DeviceInfo[] | null = null
   let discoveryRevision = 0
   let lastDiscoveryRevision = 0
@@ -207,6 +210,9 @@ export function createBackendWorkbenchServices(
     },
     imSessionApi: createImSessionApi(client),
     runtimeWorkApi,
+    standInApi: createStandInExecutorApi((method, payload, deviceId) =>
+      composerRuntimeIpc.request(method, payload, deviceId)
+    ),
     composerCatalogApi: createRuntimeComposerApi(composerRuntimeIpc, deviceId =>
       cloudPluginApi.listInstalledPlugins(deviceId).then(response => response.items)
     ),

@@ -425,8 +425,8 @@ export function createHybridWorkbenchServices(
   let nextCloudDevicesRevision = 1
   let unscopedCloudDevicesRequest: Promise<DeviceInfo[]> | null = null
   const cloudDevicesRequestsBySignal = new WeakMap<AbortSignal, Promise<DeviceInfo[]>>()
-  const cloudModels = createCloudModelCatalog(async signal => {
-    const response = await cloudServices.modelApi.listModels({ signal })
+  const cloudModels = createCloudModelCatalog(async (signal, forceRefresh) => {
+    const response = await cloudServices.modelApi.listModels({ signal, forceRefresh })
     console.info('[Wework] Cloud model catalog loaded', {
       count: response.data.length,
       models: response.data.map(modelIdentityForLog),
@@ -986,6 +986,14 @@ export function createHybridWorkbenchServices(
         ReturnType<WorkbenchServices['deviceApi']['listDevices']>
       >
     },
+  }
+
+  const standInApiForDevice = async (deviceId: string) => {
+    const identity = await getLocalRuntimeSidebarIdentity()
+    const api =
+      deviceId === identity?.deviceId ? localServices.standInApi : cloudServices.standInApi
+    if (!api) throw new Error('Executor settings are unavailable')
+    return api
   }
 
   const hybridRuntimeWorkApi: NonNullable<WorkbenchServices['runtimeWorkApi']> = {
@@ -1633,7 +1641,18 @@ export function createHybridWorkbenchServices(
         : undefined,
     },
     pluginApi: projectPluginApi,
-    agentResourceApi: cloudServices.agentResourceApi,
+    agentResourceApi: cloudServices.agentResourceApi
+      ? {
+          ...cloudServices.agentResourceApi,
+          listNativeModels: (environment, projectId) =>
+            isLocalDeviceId(environment.device_key)
+              ? localProjectServices.localProjectChatAgentApi!.listNativeModels(
+                  environment,
+                  projectId
+                )
+              : cloudServices.agentResourceApi!.listNativeModels(environment, projectId),
+        }
+      : undefined,
     teamApi: {
       // Wegent Teams are exposed only for explicitly selected Wegent execution.
       listTeams: cloudServices.teamApi.listTeams,
@@ -1662,6 +1681,44 @@ export function createHybridWorkbenchServices(
     },
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
+    standInApi: {
+      async readTask(deviceId, taskId) {
+        return (await standInApiForDevice(deviceId)).readTask(deviceId, taskId)
+      },
+      async catalog(deviceId) {
+        return (await standInApiForDevice(deviceId)).catalog(deviceId)
+      },
+      async run(projectId, issueId, userId, projectStore, deviceId, standInId) {
+        return (await standInApiForDevice(deviceId)).run(
+          projectId,
+          issueId,
+          userId,
+          projectStore,
+          deviceId,
+          standInId
+        )
+      },
+      async list(userId, deviceId, includeDisabled) {
+        return (await standInApiForDevice(deviceId)).list(userId, deviceId, includeDisabled)
+      },
+      async get(projectId, userId, projectStore, deviceId, standInId) {
+        return (await standInApiForDevice(deviceId)).get(
+          projectId,
+          userId,
+          projectStore,
+          deviceId,
+          standInId
+        )
+      },
+      async save(projectId, userId, projectStore, settings) {
+        return (await standInApiForDevice(settings.executionDeviceId)).save(
+          projectId,
+          userId,
+          projectStore,
+          settings
+        )
+      },
+    },
     projectDevicePluginApi,
     automationApi,
     attachmentApi: {

@@ -11,80 +11,49 @@ jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }))
 
+const dialogProps = {
+  busy: false,
+  closeLabel: '关闭',
+  description: '选择一个智能体，加入后即可分配项目任务。',
+  onClose: jest.fn(),
+  testIds: { backdrop: 'agent-backdrop', close: 'agent-close', dialog: 'agent-dialog' },
+  title: '添加智能体',
+  children: <input aria-label="搜索智能体" type="search" />,
+}
+
 describe('webProjectAgentConfigurationHost', () => {
-  it('renders project Agent controls with the existing web design system', () => {
-    const onModeChange = jest.fn()
+  it('presents a compact dialog with purpose copy and focuses search', () => {
+    const onClose = jest.fn()
+    render(webProjectAgentConfigurationHost.renderDialog({ ...dialogProps, onClose }))
 
-    render(
-      webProjectAgentConfigurationHost.renderDialog({
-        busy: false,
-        closeLabel: '关闭',
-        description: '选择已有智能体',
-        onClose: jest.fn(),
-        testIds: {
-          backdrop: 'agent-backdrop',
-          close: 'agent-close',
-          dialog: 'agent-dialog',
-        },
-        title: '添加智能体',
-        children: (
-          <>
-            {webProjectAgentConfigurationHost.renderModePicker({
-              onChange: onModeChange,
-              options: [
-                {
-                  description: '使用已有智能体',
-                  label: '已有智能体',
-                  testId: 'mode-existing',
-                  value: 'existing',
-                },
-                {
-                  description: '使用资源库表单',
-                  label: '新建智能体',
-                  testId: 'mode-create',
-                  value: 'create',
-                },
-              ],
-              value: 'existing',
-            })}
-            {webProjectAgentConfigurationHost.renderSelect({
-              ariaLabel: '选择智能体',
-              onChange: jest.fn(),
-              options: [{ label: '研发团队', value: '12' }],
-              placeholder: '选择智能体',
-              testId: 'agent-select',
-              value: '',
-            })}
-            {webProjectAgentConfigurationHost.renderPrimaryAction({
-              children: '加入项目',
-              disabled: false,
-              onClick: jest.fn(),
-              testId: 'agent-submit',
-            })}
-          </>
-        ),
-      })
+    expect(screen.getByRole('dialog', { name: '添加智能体' })).toHaveAccessibleDescription(
+      dialogProps.description
     )
-
-    expect(screen.getByTestId('agent-backdrop')).toHaveClass('bg-black/80')
+    expect(screen.getByTestId('agent-backdrop')).toHaveClass('bg-black/[0.14]')
     expect(screen.getByTestId('agent-dialog')).toHaveClass(
-      'bg-base',
+      'sm:max-w-[520px]',
+      'sm:rounded-[20px]',
       'gap-0',
       'overflow-hidden',
-      'p-0',
-      'sm:max-w-[520px]'
+      'p-0'
     )
-    expect(screen.getByTestId('mode-existing-card')).toHaveClass(
-      'border',
-      'border-primary',
-      'bg-primary/5',
-      'ring-1'
-    )
-    expect(screen.getByTestId('mode-create-card')).toHaveClass('border-border', 'bg-base')
-    expect(screen.getByTestId('agent-select')).toHaveClass('border-border', 'rounded-lg')
-    expect(screen.getByTestId('agent-submit')).toHaveClass('bg-primary', 'rounded-lg')
+    expect(screen.getByRole('searchbox', { name: '搜索智能体' })).toHaveFocus()
+    fireEvent.click(screen.getByTestId('agent-close'))
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
 
-    fireEvent.click(screen.getByTestId('mode-create'))
-    expect(onModeChange).toHaveBeenCalledWith('create')
+  it('keeps a pending addition open until it settles', () => {
+    const onClose = jest.fn()
+    const { rerender } = render(
+      webProjectAgentConfigurationHost.renderDialog({ ...dialogProps, busy: true, onClose })
+    )
+    expect(screen.getByTestId('agent-close')).toBeDisabled()
+    fireEvent.click(screen.getByTestId('agent-close'))
+    fireEvent.keyDown(screen.getByRole('searchbox'), { key: 'Escape' })
+    expect(onClose).not.toHaveBeenCalled()
+
+    rerender(webProjectAgentConfigurationHost.renderDialog({ ...dialogProps, onClose }))
+    fireEvent.keyDown(screen.getByRole('searchbox'), { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 })
