@@ -15,7 +15,10 @@ class FakeUpdater extends EventEmitter {
   quitAndInstall = vi.fn()
 }
 
-function service(updater: FakeUpdater, overrides: { packaged?: boolean } = {}) {
+function service(
+  updater: FakeUpdater,
+  overrides: { packaged?: boolean; platform?: NodeJS.Platform; arch?: string } = {}
+) {
   return new AppUpdateService({
     updater: updater as unknown as AppUpdater,
     currentVersion: () => '0.2.6',
@@ -23,6 +26,8 @@ function service(updater: FakeUpdater, overrides: { packaged?: boolean } = {}) {
     prepareUpdate: vi.fn().mockResolvedValue(undefined),
     prepareInstall: vi.fn().mockResolvedValue(undefined),
     updateBaseUrl: 'https://example.com/wework-updater/',
+    platform: overrides.platform,
+    arch: overrides.arch,
   })
 }
 
@@ -107,6 +112,34 @@ describe('AppUpdateService', () => {
     expect(prepareInstall).toHaveBeenCalledTimes(1)
     expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true)
   })
+
+  test.each([
+    ['win32', 'arm64', 'stable', 'latest-arm64'],
+    ['win32', 'arm64', 'beta', 'beta-arm64'],
+    ['win32', 'x64', 'stable', 'latest'],
+    ['darwin', 'arm64', 'stable', 'latest'],
+  ] as const)(
+    'selects the %s/%s manifest channel for %s updates',
+    async (platform, arch, channel, expectedChannel) => {
+      const updater = new FakeUpdater()
+      updater.checkForUpdates.mockResolvedValue({
+        updateInfo: {
+          version: '0.2.6',
+          files: [],
+          path: '',
+          sha512: '',
+          releaseDate: '2026-08-25T00:00:00Z',
+        },
+        cancellationToken: {} as never,
+        downloadPromise: null,
+        isUpdateAvailable: false,
+      })
+
+      await service(updater, { platform, arch }).check(channel)
+
+      expect(updater.channel).toBe(expectedChannel)
+    }
+  )
 
   test('rejects install actions before the pending update finishes downloading', async () => {
     const updater = new FakeUpdater()

@@ -199,6 +199,12 @@ jobs:
             arch: x64
             cargo_target: x86_64-pc-windows-msvc
             codex_target: x86_64-pc-windows-msvc
+          - name: Windows arm64
+            runner: windows-11-arm
+            platform: windows
+            arch: arm64
+            cargo_target: aarch64-pc-windows-msvc
+            codex_target: aarch64-pc-windows-msvc
           - name: Linux x64
             runner: ubuntu-latest
             platform: linux
@@ -326,6 +332,10 @@ jobs:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           CARGO_BUILD_TARGET: ${{ matrix.cargo_target }}
+          # 7-Zip applies the ARM64 BCJ filter to ARM64 binaries, which the NSIS
+          # nsis7z plugin cannot decode, silently dropping every exe and dll at
+          # install time. Windows arm64 must use the universally supported BCJ filter.
+          ELECTRON_BUILDER_7Z_FILTER: ${{ matrix.platform == 'windows' && matrix.arch == 'arm64' && 'BCJ' || '' }}
           VITE_WEGENT_BACKEND_URL: https://your.wegent-backend.address
           VITE_WEWORK_POSTHOG_HOST: ${{ secrets.WEWORK_POSTHOG_HOST }}
           VITE_WEWORK_POSTHOG_KEY: ${{ secrets.WEWORK_POSTHOG_KEY }}
@@ -393,6 +403,13 @@ jobs:
             "${{ matrix.arch }}" \
             "${{ needs.prepare-release.outputs.version }}" \
             "$RUNNER_TEMP/wework-release-assets"
+
+      - name: Verify Windows arm64 installer archive
+        if: matrix.platform == 'windows' && matrix.arch == 'arm64'
+        shell: bash
+        run: |
+          node wework/scripts/verify-windows-installer-archive.mjs \
+            "${{ runner.temp }}/wework-release-assets"
 
       - name: Verify componentized macOS update package
         if: matrix.platform == 'macos' && needs.prepare-release.outputs.componentized_host_update == 'true'
@@ -577,6 +594,7 @@ jobs:
                 gh release upload wework-updater \
                   "release-manifests/components-${channel}-macos-arm64.json" \
                   "release-manifests/components-${channel}-macos-x64.json" \
+                  "release-manifests/components-${channel}-windows-arm64.json" \
                   "release-manifests/components-${channel}-windows-x64.json" \
                   "release-manifests/components-${channel}-linux-x64.json" \
                   --clobber
@@ -604,12 +622,14 @@ jobs:
             gh release upload wework-updater \
               "release-manifests/components-${channel}-macos-arm64.json" \
               "release-manifests/components-${channel}-macos-x64.json" \
+              "release-manifests/components-${channel}-windows-arm64.json" \
               "release-manifests/components-${channel}-windows-x64.json" \
               "release-manifests/components-${channel}-linux-x64.json" \
               --clobber
             gh release upload wework-updater \
               "release-manifests/${electron_channel}.yml" \
               "release-manifests/${electron_channel}-mac.yml" \
+              "release-manifests/${electron_channel}-arm64.yml" \
               --clobber
           }
 

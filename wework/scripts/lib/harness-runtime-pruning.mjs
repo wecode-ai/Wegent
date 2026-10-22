@@ -6,6 +6,7 @@ const TARGET_NATIVE_ARTIFACTS = {
   'linux-x64': { nodePty: 'linux-x64', reflink: null },
   'macos-arm64': { nodePty: 'darwin-arm64', reflink: 'reflink-darwin-arm64' },
   'macos-x64': { nodePty: 'darwin-x64', reflink: 'reflink-darwin-x64' },
+  'windows-arm64': { nodePty: 'win32-arm64', reflink: 'reflink-win32-arm64-msvc' },
   'windows-x64': { nodePty: 'win32-x64', reflink: 'reflink-win32-x64-msvc' },
 }
 

@@ -25,12 +25,14 @@ test('generates Electron and component rolling manifests from one release', asyn
     `WeWork_${version}_macos_arm64.zip`,
     `WeWork_${version}_macos_x64.zip`,
     `WeWork_${version}_windows_x64-setup.exe`,
+    `WeWork_${version}_windows_arm64-setup.exe`,
   ]) {
     await writeFile(resolve(assets, name), name)
   }
   for (const [platform, arch] of [
     ['macos', 'arm64'],
     ['macos', 'x64'],
+    ['windows', 'arm64'],
     ['windows', 'x64'],
     ['linux', 'x64'],
   ]) {
@@ -83,6 +85,9 @@ test('generates Electron and component rolling manifests from one release', asyn
   expect(await readFile(resolve(output, 'beta.yml'), 'utf8')).toContain(
     `WeWork_${version}_windows_x64-setup.exe`
   )
+  expect(await readFile(resolve(output, 'latest-arm64.yml'), 'utf8')).toContain(
+    `WeWork_${version}_windows_arm64-setup.exe`
+  )
   const components = JSON.parse(
     await readFile(resolve(output, 'components-stable-macos-arm64.json'), 'utf8')
   )
@@ -112,12 +117,14 @@ test('prefers slim Host update artifacts while retaining version release URLs', 
     `WeWorkHostUpdate_${version}_macos_arm64.zip`,
     `WeWorkHostUpdate_${version}_macos_x64.zip`,
     `WeWorkHostUpdate_${version}_windows_x64-setup.exe`,
+    `WeWorkHostUpdate_${version}_windows_arm64-setup.exe`,
   ]) {
     await writeFile(resolve(assets, name), name)
   }
   for (const [platform, arch] of [
     ['macos', 'arm64'],
     ['macos', 'x64'],
+    ['windows', 'arm64'],
     ['windows', 'x64'],
   ]) {
     await writeFile(
@@ -147,6 +154,9 @@ test('prefers slim Host update artifacts while retaining version release URLs', 
   )
   expect(await readFile(resolve(output, 'beta.yml'), 'utf8')).toContain(
     `WeWorkHostUpdate_${version}_windows_x64-setup.exe`
+  )
+  expect(await readFile(resolve(output, 'beta-arm64.yml'), 'utf8')).toContain(
+    `WeWorkHostUpdate_${version}_windows_arm64-setup.exe`
   )
 })
 

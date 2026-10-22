@@ -52,6 +52,7 @@ await mkdir(output, { recursive: true })
 const macArm = await updateAsset(`macos_arm64.zip`)
 const macX64 = await updateAsset(`macos_x64.zip`)
 const windows = await updateAsset(`windows_x64-setup.exe`)
+const windowsArm64 = await updateAsset(`windows_arm64-setup.exe`)
 const electronChannels = channel === 'stable' ? ['latest', 'beta'] : ['beta']
 
 for (const targetChannel of electronChannels) {
@@ -65,11 +66,17 @@ for (const targetChannel of electronChannels) {
     electronManifest(version, releaseDate, notes, [windows]),
     'utf8'
   )
+  await writeFile(
+    resolve(output, `${targetChannel}-arm64.yml`),
+    electronManifest(version, releaseDate, notes, [windowsArm64]),
+    'utf8'
+  )
 }
 
 for (const [platform, architecture] of [
   ['macos', 'arm64'],
   ['macos', 'x64'],
+  ['windows', 'arm64'],
   ['windows', 'x64'],
   ['linux', 'x64'],
 ]) {

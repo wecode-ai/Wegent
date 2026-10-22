@@ -57,8 +57,10 @@ export function expectedChannelAssetNames(channel) {
   return [
     `${electronChannel}.yml`,
     `${electronChannel}-mac.yml`,
+    `${electronChannel}-arm64.yml`,
     `components-${channel}-macos-arm64.json`,
     `components-${channel}-macos-x64.json`,
+    `components-${channel}-windows-arm64.json`,
     `components-${channel}-windows-x64.json`,
     `components-${channel}-linux-x64.json`,
   ]
