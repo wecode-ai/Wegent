@@ -275,6 +275,13 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       await control.command('waitFor', '[data-testid="archived-conversations-settings-page"]')
       assert.equal(await control.command('getLocalStorageItem', 'body', { value: cacheKey }), '')
       assert.equal(Number(await control.command('getElementCount', deleteButton)), 0)
+      await control.command('navigate', 'body', { value: '/settings/general' })
+      await control.command('waitFor', '[data-testid="reply-prediction-settings"]')
+      await control.command('scrollIntoView', '[data-testid="reply-prediction-settings"]')
+      await control.command(
+        'waitFor',
+        '[data-testid="reply-prediction-enabled"][aria-checked="false"]'
+      )
     },
     diagnostics() {
       return { normalRequests, predictionRequests }
