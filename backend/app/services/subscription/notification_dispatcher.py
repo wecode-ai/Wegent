@@ -47,23 +47,48 @@ ATTACHMENT_URL_PATTERN = r"/api/attachments/(\d+)/download"
 _DINGTALK_MENTION_NAME_CACHE: Dict[str, str] = {}
 
 
+async def _lookup_employee_email(staff_id: str) -> str:
+    """Resolve an employee email through the optional enterprise ERP integration."""
+    try:
+        from dingtalk.services.dingtalk_service import dingtalk_service
+    except ImportError:
+        return ""
+    return await dingtalk_service.get_employee_email(staff_id) or ""
+
+
+def _get_dingtalk_user_info_url() -> str:
+    """Return the optional enterprise user-info endpoint."""
+    from app.core.config import settings
+
+    return getattr(settings, "DINGTALK_USER_INFO_URL", "")
+
+
 async def _lookup_dingtalk_mention_name(db: Session, user_id: str) -> str:
     """Resolve a DingTalk staff ID to the user's display name."""
-    from app.core.config import settings
+    from app.core.cache import cache_manager
     from app.models.user import User
+
+    cache_key = f"dingtalk:mention_name:{user_id}"
+    cached_name = await cache_manager.get(cache_key)
+    if cached_name:
+        return cached_name
 
     user = (
         db.query(User).filter(User.user_name == user_id, User.is_active == True).first()
     )
-    if not user or not user.email or not settings.DINGTALK_USER_INFO_URL:
+    email = user.email if user else ""
+    if not email:
+        email = await _lookup_employee_email(user_id)
+    user_info_url = _get_dingtalk_user_info_url()
+    if not email or not user_info_url:
         return ""
 
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.post(
-                settings.DINGTALK_USER_INFO_URL,
+                user_info_url,
                 headers={"Content-Type": "application/json"},
-                json={"emails": [user.email]},
+                json={"emails": [email]},
             )
             response.raise_for_status()
             users = response.json()
@@ -78,7 +103,10 @@ async def _lookup_dingtalk_mention_name(db: Session, user_id: str) -> str:
 
     if not users:
         return ""
-    return str(users[0].get("NAME") or "").strip()
+    name = str(users[0].get("NAME") or "").strip()
+    if name:
+        await cache_manager.set(cache_key, name, expire=86400)
+    return name
 
 
 async def _resolve_dingtalk_mention_user_ids(
