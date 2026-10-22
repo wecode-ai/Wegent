@@ -46,14 +46,25 @@ runs:
       if: steps.install.outcome == 'success'
       shell: bash
       run: |
+        export SCCACHE_BASEDIRS="$GITHUB_WORKSPACE"
+        export SCCACHE_GHA_ENABLED=true
+        export SCCACHE_GHA_VERSION="wegent-sccache-v1-$RUNNER_OS-$RUNNER_ARCH"
+        if [[ "${{ inputs.save-cache }}" != "true" && "$GITHUB_REF" != "refs/heads/main" ]]; then
+          export SCCACHE_GHA_RW_MODE=READ_ONLY
+        fi
+
+        if ! sccache --start-server; then
+          echo "::warning::sccache is unavailable; continuing without Rust compiler caching"
+          exit 0
+        fi
+
         {
           echo "CARGO_INCREMENTAL=0"
           echo "RUSTC_WRAPPER=sccache"
           echo "SCCACHE_BASEDIRS=$GITHUB_WORKSPACE"
           echo "SCCACHE_GHA_ENABLED=true"
           echo "SCCACHE_GHA_VERSION=wegent-sccache-v1-$RUNNER_OS-$RUNNER_ARCH"
+          if [[ -n "${SCCACHE_GHA_RW_MODE:-}" ]]; then
+            echo "SCCACHE_GHA_RW_MODE=$SCCACHE_GHA_RW_MODE"
+          fi
         } >> "$GITHUB_ENV"
-
-        if [[ "${{ inputs.save-cache }}" != "true" && "$GITHUB_REF" != "refs/heads/main" ]]; then
-          echo "SCCACHE_GHA_RW_MODE=READ_ONLY" >> "$GITHUB_ENV"
-        fi
