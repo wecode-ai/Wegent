@@ -643,6 +643,8 @@ async function verifyRuntimeTaskOrderAndUnreadVisibility({
   })
   await waitForRuntimeTaskOrder(control, reloadedSortableListSelector, reorderedTaskRows)
 
+  await verifyNewChatBeforeManualOrder({ composerSelector, control, reorderedTaskRows })
+
   const unreadBefore = JSON.parse(
     await control.command('getWorkbenchDebugSnapshot', 'body')
   ).workbench
@@ -684,6 +686,34 @@ async function verifyRuntimeTaskOrderAndUnreadVisibility({
       snapshot.workbench?.visibleUnreadTaskCount === unreadBefore.visibleUnreadTaskCount,
     'A stale lifecycle task increased the visible unread task count'
   )
+}
+
+async function verifyNewChatBeforeManualOrder({ composerSelector, control, reorderedTaskRows }) {
+  const newTaskRowTestId = await createCheckpointTaskFixture(
+    control,
+    composerSelector,
+    '[data-testid="runtime-chat-section-new-chat-button"]'
+  )
+  const expectedRows = [newTaskRowTestId, ...reorderedTaskRows]
+  const listSelector = await findRuntimeTaskSortableListSelector(control, expectedRows)
+  await waitForRuntimeTaskOrder(control, listSelector, expectedRows)
+  await assertRuntimeTaskOrderRemainsStable(control, listSelector, expectedRows)
+
+  const readyCountBeforeReload = control.readyCount
+  await control.command('reloadMainWindow', 'body')
+  await withTimeout(
+    control.awaitReadyAfter(readyCountBeforeReload),
+    WORKBENCH_READY_TIMEOUT_MS,
+    'The new-chat order reload did not reconnect to the desktop controller'
+  )
+  for (const taskRowTestId of expectedRows) {
+    await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+  }
+  const reloadedListSelector = await findRuntimeTaskSortableListSelector(control, expectedRows)
+  await waitForRuntimeTaskOrder(control, reloadedListSelector, expectedRows)
+  await assertRuntimeTaskOrderRemainsStable(control, reloadedListSelector, expectedRows)
 }
 
 async function verifyBackgroundCompletionRestore({

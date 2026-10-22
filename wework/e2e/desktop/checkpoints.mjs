@@ -14,6 +14,7 @@ export const DESKTOP_CHECKPOINTS = [
   'collaboration-worktree-policy',
   'collaboration-group-onboarding',
   'collaboration-local-agent-dispatch',
+  'stand-in-personal-task',
   'stand-in',
   'stand-in-cloud',
   'stand-in-permissions',
@@ -133,6 +134,7 @@ export const DESKTOP_CHECKPOINTS = [
   'streaming-message-order',
   'streaming-subagents',
 
+  'collaboration-issue-badges',
   'change-request-status',
   'git-commit-generation',
   'claude-runtime',

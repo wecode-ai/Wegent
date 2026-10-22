@@ -1737,11 +1737,19 @@ impl RuntimeWorkRpcHandler {
         link: &RuntimeTaskLink,
         thread_id: &str,
     ) -> Result<String, String> {
+        let mut request = runtime_event_request_from_link(link);
+        self.apply_backend_connection(&mut request);
         let mut params = Map::new();
         params.insert("threadId".to_owned(), Value::String(thread_id.to_owned()));
         params.insert(
             "approvalPolicy".to_owned(),
-            codex_runtime_approval_policy(&runtime_event_request_from_link(link)),
+            codex_runtime_approval_policy(&request),
+        );
+        // A history read can cold-resume a thread before its next turn. Codex
+        // preserves that loaded thread's shell policy on subsequent resumes.
+        params.insert(
+            "config".to_owned(),
+            Value::Object(crate::agents::task_identity_thread_config(&request)),
         );
         params.insert("excludeTurns".to_owned(), Value::Bool(true));
         if !link.workspace_path.trim().is_empty() {

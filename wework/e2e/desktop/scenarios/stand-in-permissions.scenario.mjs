@@ -171,21 +171,36 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         })
       }
 
+      const executionProbe = await request(
+        cloud.authToken,
+        `/v1/cloud-projects/${project.id}/loop-items`,
+        'POST',
+        { title: 'Personal task execute permission', assignee_user_id: user.id },
+        201
+      )
       await setRole('Viewer')
       await assertRole('Viewer')
       const disabled = await rpc(control, 'runtime.stand_in.get', settingsParams())
+      const saved = await rpc(control, 'runtime.stand_in.save', {
+        ...settingsParams(),
+        settings: { ...disabled, enabled: true },
+      })
+      assert.equal(saved.enabled, true, 'Personal configuration saves do not execute an Issue')
       await assert.rejects(
-        rpc(control, 'runtime.stand_in.save', {
+        rpc(control, 'runtime.stand_in.run', {
           ...settingsParams(),
-          settings: { ...disabled, enabled: true },
+          issueId: executionProbe.id,
         }),
-        /Project execution permission is required/
+        /403/
       )
-      assert.equal((await rpc(control, 'runtime.stand_in.get', settingsParams())).enabled, false)
+      await rpc(control, 'runtime.stand_in.save', {
+        ...settingsParams(),
+        settings: { ...saved, enabled: false },
+      })
       await reloadMainWindow(control, 'Viewer permissions did not refresh')
       await openProject(control)
       await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
-      await control.command('waitFor', '[data-testid="stand-in-auto"][disabled]')
+      await control.command('waitFor', '[data-testid="stand-in-auto"]:not([disabled])')
       await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
 
       // Restricted projects stop ordinary inheritance, and restoring it restores access.

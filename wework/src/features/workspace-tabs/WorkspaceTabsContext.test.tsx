@@ -418,6 +418,38 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(sessionStorage.getItem('wework.settingsReturnPath')).toBe('/cloud-work')
   })
 
+  test('keeps the workspace tab route and kind while settings replaces its surface', () => {
+    window.history.replaceState({}, '', '/todo?projectId=project-1')
+    render(<RoutingHarness />)
+    const tabId = screen.getByTestId('active-tab-id').textContent
+
+    act(() => navigateTo('/settings/connections'))
+
+    expect(screen.getByTestId('active-tab-id').textContent).toBe(tabId)
+    expect(screen.getByTestId('active-tab-kind')).toHaveTextContent('board')
+    expect(screen.getByTestId('active-tab-route').textContent).toBe('/todo?projectId=project-1')
+  })
+
+  test.each([false, true])(
+    'restores a workspace route after loading settings (restore session tabs: %s)',
+    restoreSessionTabs => {
+      window.history.replaceState({}, '', '/settings')
+      let context!: WorkspaceTabsContextValue
+      render(
+        <RoutingHarness
+          restoreSessionTabs={restoreSessionTabs}
+          onContextValue={value => {
+            context = value
+          }}
+        />
+      )
+
+      expect(screen.getByTestId('active-tab-route').textContent).toBe('/')
+      act(() => context.selectTab(context.activeTabId))
+      expect(window.location.pathname).toBe('/')
+    }
+  )
+
   test('does not replace the return route with a settings route', () => {
     sessionStorage.setItem('wework.settingsReturnPath', '/cloud-work')
     window.history.replaceState({}, '', '/settings')
@@ -428,6 +460,34 @@ describe('WorkspaceTabsProvider routing', () => {
 
     expect(sessionStorage.getItem('wework.settingsReturnPath')).toBe('/cloud-work')
   })
+
+  test.each(['/settings', '/settings/connections?addDevice=1'])(
+    'ignores an invalid persisted settings tab (%s) while retaining a workspace tab',
+    contentRoute => {
+      localStorage.setItem(
+        'wework.workspaceTabs.v3:context-test',
+        JSON.stringify({
+          activeTabId: 'invalid-settings',
+          tabs: [
+            { id: 'invalid-settings', kind: 'task', title: '任务', contentRoute },
+            {
+              id: 'kept-board',
+              kind: 'board',
+              title: '协作',
+              contentRoute: '/todo?projectId=kept',
+            },
+          ],
+        })
+      )
+      window.history.replaceState({}, '', '/settings')
+
+      render(<RoutingHarness />)
+
+      expect(screen.getByTestId('tab-ids')).not.toHaveTextContent('invalid-settings')
+      expect(screen.getByTestId('active-tab-id')).toHaveTextContent('kept-board')
+      expect(screen.getByTestId('active-tab-route').textContent).toBe('/todo?projectId=kept')
+    }
+  )
 
   test('notifies resource owners when a workspace tab closes', () => {
     const onTabsClosed = vi.fn()

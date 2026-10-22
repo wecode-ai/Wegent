@@ -20,6 +20,8 @@ Hover over a message table to copy its Markdown or expand it; press `Esc` to clo
 
 ## Add a conversation to a project-space board
 
+Runtime task and private conversation titles are independent of the bound Issue title. Runs started from tasks, Issue details, or Collaboration never overwrite an existing Issue title when the conversation title changes. Edit the title in Issue details to rename the Issue.
+
 After enabling Experimental features, open the composer's **+** menu and select **Project space**. Selecting a space opens the **Add to "Project space name"** dialog even before a new task sends its first message. Choose **Create board task** or **Link an existing board task**. Confirmation saves the choice; the first message creates the card or links the selected Issue. Cancelling keeps the previous selection. Select the current space again to change the association choice or target Issue.
 
 The selected destination appears as **Add to board · Project space name** below the composer so you can confirm it before sending. A project space inherited from the local-project automatic-join setting appears through the same control and creates a new board task after the first message by default.

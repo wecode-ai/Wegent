@@ -51,6 +51,24 @@ function fixture(initial: Partial<WorkspaceStandInSettings> = {}) {
 }
 
 describe('StandInPopover', () => {
+  it('saves personal settings regardless of the project role or resource catalogs', async () => {
+    const { props, save } = fixture({ agentId: 'missing-agent', version: 1 })
+    props.project.access_role = 'Viewer'
+    props.api.agents.list = vi.fn(async () => {
+      throw new Error('Catalog unavailable')
+    })
+    const user = userEvent.setup()
+    render(<StandInPopover {...props} />)
+    await user.click(screen.getByTestId('stand-in-open'))
+    await screen.findByTestId('stand-in-prompt')
+    await user.click(screen.getByTestId('stand-in-save'))
+    await waitFor(() => expect(save).toHaveBeenCalledOnce())
+    expect(save).toHaveBeenCalledWith(
+      'project',
+      expect.objectContaining({ agentId: 'missing-agent' })
+    )
+  })
+
   it('shows an Agent created outside the cached client when opened', async () => {
     const { props } = fixture()
     let records: Array<{ id: string; name: string; runtime: string; status: string }> = []
@@ -70,7 +88,7 @@ describe('StandInPopover', () => {
     expect(request).toHaveBeenCalledTimes(2)
   })
 
-  it('waits for configuration validation before enabling a saved stand-in', async () => {
+  it('enables a saved stand-in without waiting for model readiness', async () => {
     const model = { runtime: 'codex' as const, provider: 'local', model_id: 'default' }
     const { props, save } = fixture({ executionDeviceId: 'current', version: 2, model })
     let finishCatalog!: (catalog: { models: (typeof model)[] }) => void
@@ -85,7 +103,7 @@ describe('StandInPopover', () => {
     render(<StandInPopover {...props} services={services} />)
     await user.click(screen.getByTestId('stand-in-open'))
     await screen.findByTestId('stand-in-prompt')
-    expect(screen.getByTestId('stand-in-auto')).toBeDisabled()
+    expect(screen.getByTestId('stand-in-auto')).toBeEnabled()
     await act(async () => finishCatalog({ models: [model] }))
     await waitFor(() => expect(screen.getByTestId('stand-in-auto')).toBeEnabled())
     await user.click(screen.getByTestId('stand-in-auto'))
@@ -107,7 +125,7 @@ describe('StandInPopover', () => {
     render(<StandInPopover {...props} services={services} />)
     await user.click(screen.getByTestId('stand-in-open'))
     await user.type(await screen.findByTestId('stand-in-prompt'), 'Manual settings')
-    expect(screen.getByTestId('stand-in-save')).toBeDisabled()
+    expect(screen.getByTestId('stand-in-save')).toBeEnabled()
     await act(async () =>
       finishCatalog({
         models: [{ runtime: 'codex', provider: 'local', model_id: 'default', is_default: true }],

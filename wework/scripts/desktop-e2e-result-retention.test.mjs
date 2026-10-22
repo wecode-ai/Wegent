@@ -55,6 +55,18 @@ function gitBash() {
 }
 
 describe('desktop E2E result retention', () => {
+  test('retains Rust gateway logs after checkpoint cleanup', async () => {
+    const resultDirectory = join(await temporaryRoot(), '2026-09-02T00-00-00-000Z-124')
+    const logsDirectory = join(resultDirectory, 'backend-rs-logs')
+    await mkdir(logsDirectory, { recursive: true })
+    const logPath = join(logsDirectory, 'error.log')
+    await writeFile(logPath, 'gateway startup diagnostics\n')
+
+    await compactDesktopE2EResult(resultDirectory)
+
+    await expectExists(logPath)
+  })
+
   test('resolves the configured or default result root', () => {
     expect(resolveDesktopE2EResultRoot('/repo/wework', {})).toBe(
       join(resolve('/repo/wework'), 'test-results', 'desktop-e2e')
@@ -64,6 +76,26 @@ describe('desktop E2E result retention', () => {
         WEWORK_E2E_RESULT_ROOT: '/tmp/custom-results',
       })
     ).toBe(resolve('/tmp/custom-results'))
+  })
+
+  test('preserves Rust gateway logs through runner and CI cleanup', async () => {
+    const resultRoot = await temporaryRoot()
+    const resultDirectory = join(resultRoot, '2026-09-02T00-00-00-000Z-123')
+    const logDirectory = join(resultDirectory, 'backend-rs-logs')
+    await mkdir(logDirectory, { recursive: true })
+    const logPath = join(logDirectory, 'access.log')
+    await writeFile(logPath, 'POST /api/plugins/installed/auto-update-batch\n')
+
+    await compactDesktopE2EResult(resultDirectory)
+    await execFileAsync(gitBash(), [
+      resolve(
+        import.meta.dirname,
+        '../../.github/scripts/prune-wework-desktop-e2e-diagnostics.sh'
+      ).replaceAll('\\', '/'),
+      resultRoot.replaceAll('\\', '/'),
+    ])
+
+    await expectExists(logPath)
   })
 
   test('removes rebuildable runtime payloads while preserving diagnostic evidence', async () => {
