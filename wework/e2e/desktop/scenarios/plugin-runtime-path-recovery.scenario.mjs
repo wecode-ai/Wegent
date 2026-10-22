@@ -501,6 +501,20 @@ export async function createDesktopScenario({
         const tool = selectShellToolCommand(body, activeCall.command, workspacePath)
         events = functionCall(activeCall.id, tool.name, tool.arguments)
       } else {
+        // Temporary diagnostics: record why a request missed the fixture branches.
+        const diagnostic = {
+          at: new Date().toISOString(),
+          activeCallId: activeCall?.id ?? null,
+          toolNames: Array.isArray(body.tools) ? body.tools.map(tool => tool?.name) : null,
+          promptIncluded: activeCall
+            ? JSON.stringify(body.input ?? '').includes(activeCall.prompt)
+            : null,
+          inputPreview: JSON.stringify(body.input ?? '').slice(0, 600),
+        }
+        await writeFile(
+          join(resultDir, `model-fallback-${Date.now()}.json`),
+          JSON.stringify(diagnostic, null, 2)
+        )
         events = [assistantMessage('Plugin recovery fixture ready')]
       }
       response.writeHead(200, { 'Content-Type': 'text/event-stream' })
