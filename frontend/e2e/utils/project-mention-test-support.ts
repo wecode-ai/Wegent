@@ -335,7 +335,7 @@ export const test = base.extend<MentionOptions & { mentions: MentionFixture }>({
           provider.requests.length,
           'The real backend must call the provider HTTP mock'
         ).toBeGreaterThan(0)
-        expect(provider.requests.every(request => request.status === 200)).toBe(true)
+        expect(provider.requests.filter(request => request.status !== 200)).toEqual([])
       }
     } finally {
       clients.forEach(client => client.dispose())

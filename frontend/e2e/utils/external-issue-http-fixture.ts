@@ -21,35 +21,37 @@ export async function createExternalIssueHttpFixture(
   const requests: { method: string | undefined; path: string; status: number }[] = []
   let assigneeId: number | undefined
   const server = createServer((request, response) => {
+    const url = new URL(request.url || '/', 'http://fixture')
+    const isDetail = request.url === path
+    const isList = url.pathname === path.slice(0, -2)
     const authenticated =
       provider === 'github'
         ? request.headers.authorization === `Bearer ${token}`
         : request.headers['private-token'] === token
     const status = !authenticated
       ? 401
-      : request.method === 'GET' && request.url === path
+      : request.method === 'GET' && (isDetail || isList)
         ? 200
         : 404
     requests.push({ method: request.method, path: request.url || '', status })
     response.writeHead(status, { 'content-type': 'application/json' })
+    const issue = {
+      ...(provider === 'github' ? { number: 1 } : { iid: 1 }),
+      title: 'External confidential Issue',
+      ...(provider === 'github'
+        ? { body: 'Provider-owned Issue description' }
+        : { description: 'Provider-owned Issue description' }),
+      state: provider === 'github' ? 'open' : 'opened',
+      labels: [...labels, ...(assigneeId ? [`wegent:assignee:user:${assigneeId}`] : [])].map(
+        label => (provider === 'github' ? { name: label } : label)
+      ),
+      created_at: '2026-10-01T00:00:00Z',
+      updated_at: '2026-10-01T00:00:00Z',
+    }
+    const issues = Number(url.searchParams.get('page') || '1') === 1 ? [issue] : []
     response.end(
       JSON.stringify(
-        status === 200
-          ? {
-              ...(provider === 'github' ? { number: 1 } : { iid: 1 }),
-              title: 'External confidential Issue',
-              ...(provider === 'github'
-                ? { body: 'Provider-owned Issue description' }
-                : { description: 'Provider-owned Issue description' }),
-              state: provider === 'github' ? 'open' : 'opened',
-              labels: [
-                ...labels,
-                ...(assigneeId ? [`wegent:assignee:user:${assigneeId}`] : []),
-              ].map(label => (provider === 'github' ? { name: label } : label)),
-              created_at: '2026-10-01T00:00:00Z',
-              updated_at: '2026-10-01T00:00:00Z',
-            }
-          : { message: 'Unexpected provider request' }
+        status === 200 ? (isList ? issues : issue) : { message: 'Unexpected provider request' }
       )
     )
   })

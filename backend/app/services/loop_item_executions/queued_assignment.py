@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.models.delivery import LoopItem, ProjectChatAgent
 from app.models.loop_item_execution import LoopItemExecution
 from app.services.collaboration_revocation import execution_authorized
+from app.services.device.runtime_route import normalize_execution_device_id
 from app.services.loop_item_executions.assignment import prepare_assignment
 from app.services.loop_item_executions.notification import notify_execution_lifecycle
 
@@ -99,7 +100,15 @@ def _prepare_one(
     row.executor_owner_user_id = plan["owner_user_id"]
     row.team_id = plan["team_id"]
     row.execution_environment = plan["environment"]
-    row.execution_device_id = plan["execution_device_id"] or ""
+    device_id = plan["execution_device_id"]
+    if device_id:
+        device_id = (
+            normalize_execution_device_id(
+                db, user_id=plan["owner_user_id"], submitted_device_id=device_id
+            )
+            or device_id
+        )
+    row.execution_device_id = device_id or ""
     row.execution_payload = service._serialize_execution_intent(
         runtime_selection=plan["runtime_selection"],
         origin_context=plan["automation_context"],
