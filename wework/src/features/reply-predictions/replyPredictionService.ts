@@ -22,10 +22,17 @@ export interface ReplyPredictionResult {
 }
 
 export function replyPredictionKey(source: ReplyPredictionSource) {
-  return `${source.scope}\u0000${JSON.stringify([
-    source.latestTurnId || source.revision,
-    source.modelSelection,
-  ])}`
+  return `${source.scope}\u0000${JSON.stringify(
+    [source.latestTurnId || source.revision, source.modelSelection],
+    (_key, value: unknown) =>
+      value && typeof value === 'object' && !Array.isArray(value)
+        ? Object.fromEntries(
+            Object.keys(value)
+              .sort()
+              .map(key => [key, (value as Record<string, unknown>)[key]])
+          )
+        : value
+  )}`
 }
 
 type PredictionApi = NonNullable<WorkbenchServices['replyPredictionApi']>

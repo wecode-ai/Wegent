@@ -1171,6 +1171,7 @@ export function CollaborationApp({
               project={project}
               allIssues={issues}
               environmentNotice={environmentNotice}
+              environmentReadiness={environmentReadiness.kind}
               messages={messages}
               translate={translate}
               onClose={() => setCreateIssueOpen(false)}

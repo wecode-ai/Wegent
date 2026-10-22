@@ -6,6 +6,7 @@ import { RuntimeTaskMachine } from '@/features/workbench/runtimeTaskLifecycle/Ru
 import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import { runtimeItem } from './standInNotifications.fixtures'
 import { useUnlistedStandInTasks } from './useUnlistedStandInTasks'
+import { standInState } from './standInNotifications'
 
 const readTask = vi.fn()
 const getRuntimeTranscript = vi.fn()
@@ -41,6 +42,15 @@ beforeEach(() => {
 })
 afterEach(() => vi.useRealTimers())
 describe('unlisted stand-in task discovery', () => {
+  it('projects current completion while independently loaded metadata is still running', async () => {
+    const current = snapshot(true)
+    const hook = renderHook(() => useUnlistedStandInTasks([], current, reader, runtimeApi))
+    await waitFor(() => expect(hook.result.current).toHaveLength(1))
+    expect(standInState(runtimeItem).status).toBe('running')
+    expect(hook.result.current[0].lifecycle).toBe(current.tasks.get(runtimeItem.key))
+    expect(standInState(hook.result.current[0]).status).toBe('completed')
+  })
+
   it('recovers a rejected read without needing another lifecycle update', async () => {
     vi.useFakeTimers()
     readTask.mockRejectedValueOnce(new Error('Network unavailable'))
