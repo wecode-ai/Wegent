@@ -3980,9 +3980,13 @@ class DesktopE2EServer {
     if (this.scenario === 'mcp_elicitation') {
       this.recordScenarioRequest('mcp_elicitation', modelRequest)
       const requestNumber = this.scenarioRequests.get('mcp_elicitation').length
+      assert.ok(requestNumber <= 6, `Unexpected MCP elicitation request ${requestNumber}`)
+      const round = Math.ceil(requestNumber / 3)
+      const stage = ((requestNumber - 1) % 3) + 1
+      const callId = `${MCP_ELICITATION_CALL_ID}-${round}`
       const requestText = JSON.stringify(body)
 
-      if (requestNumber === 1) {
+      if (stage === 1) {
         assert.ok(
           requestText.includes(MCP_ELICITATION_PROMPT),
           'The real Codex request did not contain the MCP elicitation prompt'
@@ -3990,30 +3994,24 @@ class DesktopE2EServer {
         const search = selectToolSearch(body, MCP_ELICITATION_TOOL_NAME)
         this.writeSse(response, [
           responseCreated(responseId),
-          ...toolSearchResponseEvents(MCP_ELICITATION_SEARCH_ID, search),
+          ...toolSearchResponseEvents(`${MCP_ELICITATION_SEARCH_ID}-${round}`, search),
           responseCompleted(responseId),
         ])
         return
       }
 
-      if (requestNumber === 2) {
+      if (stage === 2) {
         const tool = selectMcpTool(body, MCP_ELICITATION_NAMESPACE, MCP_ELICITATION_TOOL_NAME, {})
         this.writeSse(response, [
           responseCreated(responseId),
-          ...namespacedFunctionCall(
-            MCP_ELICITATION_CALL_ID,
-            tool.namespace,
-            tool.name,
-            tool.arguments
-          ),
+          ...namespacedFunctionCall(callId, tool.namespace, tool.name, tool.arguments),
           responseCompleted(responseId),
         ])
         return
       }
 
-      assert.equal(requestNumber, 3, `Unexpected MCP elicitation request ${requestNumber}`)
       assert.ok(
-        requestContainsToolOutput(body, MCP_ELICITATION_CALL_ID),
+        requestContainsToolOutput(body, callId),
         'The MCP elicitation tool output did not return to the real model request'
       )
       assert.ok(
@@ -4022,7 +4020,7 @@ class DesktopE2EServer {
       )
       this.writeSse(response, [
         responseCreated(responseId),
-        assistantMessage(MCP_ELICITATION_COMPLETION_TEXT),
+        assistantMessage(`${MCP_ELICITATION_COMPLETION_TEXT}:${round}`),
         responseCompleted(responseId),
       ])
       return

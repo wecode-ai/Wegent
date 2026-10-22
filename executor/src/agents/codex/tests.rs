@@ -881,7 +881,7 @@ async fn mcp_shared_unsupported_elicitation_does_not_wait_for_invisible_input() 
     .unwrap()
     .unwrap()
     .unwrap();
-    assert_eq!(result["action"], "decline");
+    assert_eq!(result.result["action"], "decline");
 }
 
 #[tokio::test]
@@ -905,7 +905,8 @@ async fn mcp_shared_url_elicitation_routes_consent_without_auto_approval() {
             .await
             .unwrap()
             .unwrap()
-            .unwrap(),
+            .unwrap()
+            .map(|outcome| outcome.result),
         Some(json!({"action": "cancel"}))
     );
 }

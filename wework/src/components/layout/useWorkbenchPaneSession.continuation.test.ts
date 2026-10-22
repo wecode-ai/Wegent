@@ -23,6 +23,7 @@ import {
   RuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
 import { useWorkbenchPaneSession } from './useWorkbenchPaneSession'
+import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 
 const mocks = vi.hoisted(() => ({
   context: {} as Record<string, unknown>,
@@ -126,6 +127,66 @@ function expectDraftPreserved(session: ReturnType<typeof useWorkbenchPaneSession
 }
 
 describe('pane continuation without composer submission', () => {
+  test('keeps a new turn interactive when the runtime reuses a previously answered request ID', async () => {
+    const { result } = await renderSession()
+    const formTurn = (id: string): RuntimeConversationTurn => ({
+      id,
+      status: 'streaming',
+      items: [
+        {
+          id: 'request-user-input-0',
+          type: 'block',
+          block: {
+            id: 'request-user-input-0',
+            subtaskId: id,
+            type: 'tool',
+            toolName: 'request_user_input',
+            status: 'pending',
+            createdAt: 1,
+            renderPayload: {
+              kind: 'request_user_input',
+              requestId: 0,
+              itemId: 'mcp_server_elicitation',
+              interactionScope: id,
+              questions: [{ id: 'action', question: 'Publish?' }],
+            },
+          },
+        },
+      ],
+    })
+    const previous = formTurn('previous-turn')
+    const response = {
+      requestId: 0,
+      itemId: 'mcp_server_elicitation',
+      interactionScope: previous.id!,
+      answers: { action: { answers: ['Publish'] } },
+    }
+    act(() => reconcileRuntimeConversationSnapshot(address, [previous]))
+    await act(async () => {
+      expect(await result.current.sendRequestUserInputResponse(response)).toBe(true)
+    })
+    expect(mocks.send).toHaveBeenCalledWith(
+      expect.objectContaining({ requestUserInputResponse: response })
+    )
+
+    act(() => {
+      reconcileRuntimeConversationSnapshot(address, [
+        { ...previous, status: 'done' },
+        formTurn('current-turn'),
+      ])
+    })
+    await act(async () => {
+      await result.current.sendRequestUserInputResponse(response)
+    })
+
+    const pending = pendingRequestUserInputPayload(
+      result.current.messages,
+      result.current.answeredRequestUserInputIds
+    )
+    expect(pending).toMatchObject({ requestId: 0, interactionScope: 'current-turn' })
+    expect(pending).not.toHaveProperty('response')
+  })
+
   test.each([true, false])(
     'retains a form while terminal history arrives before its response acknowledgment (accepted=%s)',
     async accepted => {

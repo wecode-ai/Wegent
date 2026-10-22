@@ -16,8 +16,15 @@ import type {
   RequestUserInputOption,
 } from "@wegent/chat-core/runtime";
 export type { RequestUserInputPayload } from "@wegent/chat-core/runtime";
-import { hasImplementationPlanText } from "@wegent/chat-core/runtime-user-input";
+import {
+  hasImplementationPlanText,
+  hasRequestUserInputResponse,
+} from "@wegent/chat-core/runtime-user-input";
 import { McpUrlAuthorizationCard } from "./McpUrlAuthorizationCard";
+import {
+  requestUserInputExpired,
+  useRequestUserInputDeadline,
+} from "./useRequestUserInputDeadline";
 
 interface RequestUserInputCardProps {
   payload: RequestUserInputPayload;
@@ -31,10 +38,27 @@ interface RequestUserInputCardProps {
 }
 
 export function RequestUserInputCard(props: RequestUserInputCardProps) {
-  if (props.payload.interactionKind === "mcp_url") {
-    return <McpUrlAuthorizationCard {...props} />;
+  const { expired, remainingTime } = useRequestUserInputDeadline(props.payload);
+  if (
+    expired ||
+    hasRequestUserInputResponse(props.payload) ||
+    (props.payload.interactionStatus &&
+      props.payload.interactionStatus !== "pending")
+  ) {
+    return (
+      <RequestUserInputSummary
+        payload={
+          expired
+            ? { ...props.payload, interactionStatus: "expired" }
+            : props.payload
+        }
+      />
+    );
   }
-  return <RequestUserInputForm {...props} />;
+  if (props.payload.interactionKind === "mcp_url") {
+    return <McpUrlAuthorizationCard {...props} remainingTime={remainingTime} />;
+  }
+  return <RequestUserInputForm {...props} remainingTime={remainingTime} />;
 }
 
 function RequestUserInputForm({
@@ -43,7 +67,8 @@ function RequestUserInputForm({
   disabled = false,
   onSubmit,
   onIgnore,
-}: RequestUserInputCardProps) {
+  remainingTime,
+}: RequestUserInputCardProps & { remainingTime: string | null }) {
   const { t } = useConversationTranslation();
   const formRef = useRef<HTMLFormElement | null>(null);
   const submitInFlightRef = useRef(false);
@@ -83,6 +108,7 @@ function RequestUserInputForm({
   ): Promise<boolean> => {
     if (
       isDisabled ||
+      requestUserInputExpired(payload) ||
       submitInFlightRef.current ||
       questions.length === 0 ||
       !onSubmit
@@ -100,6 +126,9 @@ function RequestUserInputForm({
       const accepted = await onSubmit({
         requestId: payload.requestId ?? payload.request_id,
         itemId: payload.itemId ?? payload.item_id,
+        ...(payload.interactionScope
+          ? { interactionScope: payload.interactionScope }
+          : {}),
         answers,
       });
       if (accepted !== false) setSubmitted(true);
@@ -205,6 +234,16 @@ function RequestUserInputForm({
           : "rounded-2xl border border-border/70 bg-base shadow-sm",
       )}
     >
+      {remainingTime && (
+        <p
+          data-testid="request-user-input-deadline"
+          role="timer"
+          aria-live="off"
+          className="mb-2 text-sm text-text-muted"
+        >
+          {t("request_user_input.expires_in", { time: remainingTime })}
+        </p>
+      )}
       <div
         data-testid="request-user-input-questions"
         className="scrollbar-soft min-h-0 flex-1 overflow-y-auto pr-1"
@@ -338,6 +377,25 @@ export function RequestUserInputSummary({
         answer,
     };
   });
+
+  const interactionStatus = requestUserInputExpired(payload)
+    ? "expired"
+    : payload.interactionStatus;
+  if (interactionStatus === "expired" || interactionStatus === "cancelled") {
+    return (
+      <div
+        data-testid="request-user-input-summary"
+        className="text-sm text-text-secondary"
+      >
+        <p
+          role="status"
+          data-testid={`request-user-input-${interactionStatus}`}
+        >
+          {t(`request_user_input.${interactionStatus}`)}
+        </p>
+      </div>
+    );
+  }
 
   if (payload.interactionKind === "mcp_url") {
     return (

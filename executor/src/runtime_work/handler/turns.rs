@@ -937,7 +937,7 @@ impl RuntimeWorkRpcHandler {
         request: &ExecutionRequest,
         active_turn: Option<ActiveCodexTurn>,
         event_mapper: &mut CodexNotificationEventMapper,
-        message: Value,
+        mut message: Value,
     ) {
         if !self.is_local_task_execution_accepting_notifications(local_task_id, execution_id) {
             return;
@@ -965,7 +965,9 @@ impl RuntimeWorkRpcHandler {
             }
         }
         self.record_background_terminal_notification(local_task_id, &message);
-        if codex_notification_requires_user_input(&message) {
+        if codex_notification_requires_user_input(&message)
+            && message["method"] != "mcpServer/elicitation/request"
+        {
             self.set_interaction_status(local_task_id, Some(INTERACTION_WAITING_FOR_USER_INPUT));
         } else if matches!(
             message.get("method").and_then(Value::as_str),
@@ -1023,6 +1025,19 @@ impl RuntimeWorkRpcHandler {
         if let Some(active_turn) = active_turn {
             event_mapper.observe_root_thread_id(&active_turn.thread_id);
             self.record_active_codex_transcript_item(local_task_id, &active_turn.turn_id, &message);
+            if !self.normalize_pending_mcp_elicitation(local_task_id, &mut message) {
+                return;
+            }
+        }
+        if message["method"] == super::super::mcp_elicitation::SETTLED_METHOD
+            && !self.has_pending_mcp_elicitation(local_task_id)
+        {
+            self.set_interaction_status(local_task_id, None);
+        }
+        if message["method"] == "mcpServer/elicitation/request"
+            && codex_notification_requires_user_input(&message)
+        {
+            self.set_interaction_status(local_task_id, Some(INTERACTION_WAITING_FOR_USER_INPUT));
         }
         event_mapper.map(
             &self.event_tx,

@@ -308,7 +308,7 @@ async fn overload_recovery_native_reader_continues_only_after_completion() {
     use super::super::{debug_stdout::CodexStdout, json_rpc::JsonRpcConnection};
     use std::process::Stdio;
     let script = format!(
-        r#"printf '%s\n' '{{"id":1,"result":{{}}}}' '{error}' '{completed}'
+        r#"printf '%s\n' '{{"id":1,"result":{{"turn":{{"id":"failed-turn"}}}}}}' '{error}' '{completed}'
 IFS= read -r continuation
 printf '%s\n' "{{\"method\":\"test/continuation\",\"params\":$continuation}}" '{{"id":2,"result":{{}}}}'
 printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"root-thread","turn":{{"id":"recovered-turn"}}}}}}'
@@ -333,6 +333,7 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
     );
     let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
     let (recovery_tx, mut recovery_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (active_tx, mut active_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut state = state();
     let params = continuation_params(json!({
         "threadId": "root-thread", "model": "original-model",
@@ -345,6 +346,9 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
             1,
             &mut state,
             super::super::json_rpc::TurnReadOptions {
+                active_turn_started: Some(Box::new(move |thread_id, turn_id| {
+                    active_tx.send((thread_id, turn_id)).unwrap();
+                })),
                 overload_turn_recovering: Some(Box::new(move |thread_id, turn_id| {
                     recovery_tx.send((thread_id, turn_id)).unwrap();
                 })),
@@ -390,5 +394,14 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
         ("root-thread".to_owned(), "failed-turn".to_owned())
     );
     assert!(recovery_rx.try_recv().is_err());
+    assert_eq!(
+        active_rx.try_recv().unwrap(),
+        ("root-thread".to_owned(), "failed-turn".to_owned())
+    );
+    assert_eq!(
+        active_rx.try_recv().unwrap(),
+        ("root-thread".to_owned(), "recovered-turn".to_owned())
+    );
+    assert!(active_rx.try_recv().is_err());
     assert!(child.wait().await.unwrap().success());
 }

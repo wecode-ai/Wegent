@@ -5,6 +5,59 @@
 use super::command_items::{merge_codex_command_item, merge_codex_turn_items};
 use super::*;
 impl RuntimeWorkRpcHandler {
+    pub(super) fn has_pending_mcp_elicitation(&self, local_task_id: &str) -> bool {
+        self.active_codex_transcript_items
+            .lock()
+            .ok()
+            .and_then(|items| {
+                items.get(local_task_id).map(|active| {
+                    active.items.iter().any(|item| {
+                        item["type"] == "mcpElicitation"
+                            && super::super::mcp_elicitation::block(item, false)["status"]
+                                == "pending"
+                    })
+                })
+            })
+            .unwrap_or(false)
+    }
+
+    /// Replayed requests cannot reopen a settled card or extend its original deadline.
+    pub(super) fn normalize_pending_mcp_elicitation(
+        &self,
+        local_task_id: &str,
+        message: &mut Value,
+    ) -> bool {
+        if message["method"] != "mcpServer/elicitation/request" {
+            return true;
+        }
+        let Some(item) = super::super::mcp_elicitation::item(message) else {
+            return true;
+        };
+        let cached = self
+            .active_codex_transcript_items
+            .lock()
+            .ok()
+            .and_then(|items| {
+                items.get(local_task_id).and_then(|active| {
+                    active
+                        .items
+                        .iter()
+                        .find(|existing| existing["id"] == item["id"])
+                        .cloned()
+                })
+            });
+        let Some(cached) = cached else {
+            return true;
+        };
+        if cached["renderPayload"]["interactionStatus"] != "pending" {
+            return false;
+        }
+        if let Some(deadline) = cached["renderPayload"].get("expiresAtUnixMs") {
+            message["params"]["expiresAtUnixMs"] = deadline.clone();
+        }
+        true
+    }
+
     pub(super) fn begin_active_codex_transcript(
         &self,
         local_task_id: &str,
@@ -40,9 +93,12 @@ impl RuntimeWorkRpcHandler {
         let active = active_items
             .as_mut()
             .and_then(|items| items.remove(local_task_id));
-        let Some(active) = active.filter(|active| !active.items.is_empty()) else {
+        let Some(mut active) = active.filter(|active| !active.items.is_empty()) else {
             return;
         };
+        for item in &mut active.items {
+            super::super::mcp_elicitation::settle_pending(item);
+        }
         let completed_at = now_ms();
         let workspace_path = self
             .local_task_link(local_task_id)
@@ -177,13 +233,16 @@ impl RuntimeWorkRpcHandler {
             );
             return;
         }
-        if !matches!(
-            notification.method.as_str(),
-            "item/started" | "item/completed"
-        ) {
+        let interaction = super::super::mcp_elicitation::item(message);
+        if interaction.is_none()
+            && !matches!(
+                notification.method.as_str(),
+                "item/started" | "item/completed"
+            )
+        {
             return;
         }
-        let mut item = notification_item(notification.params);
+        let mut item = interaction.unwrap_or_else(|| notification_item(notification.params));
         if !item.is_object() {
             return;
         }
@@ -216,7 +275,11 @@ impl RuntimeWorkRpcHandler {
                 .get("createdAt")
                 .or_else(|| existing.get("created_at"))
                 .cloned();
-            *existing = merge_codex_command_item(existing, item);
+            *existing = if existing["type"] == "mcpElicitation" {
+                super::super::mcp_elicitation::merge(existing, item)
+            } else {
+                merge_codex_command_item(existing, item)
+            };
             if existing.get("createdAt").is_none() && existing.get("created_at").is_none() {
                 if let (Some(object), Some(created_at)) = (existing.as_object_mut(), created_at) {
                     object.insert("createdAt".to_owned(), created_at);

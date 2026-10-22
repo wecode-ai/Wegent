@@ -13,6 +13,9 @@ mod runtime_rpc_tests;
 #[path = "local_history_tests.rs"]
 mod local_history_tests;
 
+#[path = "mcp_elicitation_tests.rs"]
+mod mcp_elicitation_tests;
+
 #[path = "execution_timestamp_tests.rs"]
 mod execution_timestamp_tests;
 

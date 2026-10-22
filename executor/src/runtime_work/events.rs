@@ -13,7 +13,6 @@ use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
 
 use crate::{
-    agents::mcp_server_elicitation_request_user_input_params,
     codex_phase::{
         codex_phase_is_final, codex_phase_is_process, codex_phase_name,
         CodexAgentMessagePhaseTracker,
@@ -453,16 +452,31 @@ impl CodexNotificationEventMapper {
                 );
             }
             "mcpServer/elicitation/request" => {
-                if let Some(params) =
-                    mcp_server_elicitation_request_user_input_params(notification.params)
-                {
-                    emit_request_user_input(
+                if let Some(item) = super::mcp_elicitation::item(&message) {
+                    emit_response_event(
                         event_tx,
                         device_id,
+                        "response.block.created",
                         local_task_id,
                         request,
-                        &params,
-                        message.get("id"),
+                        json!({"block": super::mcp_elicitation::block(&item, false)}),
+                    );
+                }
+            }
+            super::mcp_elicitation::SETTLED_METHOD => {
+                if let Some(item) = super::mcp_elicitation::item(&message) {
+                    let block = super::mcp_elicitation::block(&item, false);
+                    emit_response_event(
+                        event_tx,
+                        device_id,
+                        "response.block.updated",
+                        local_task_id,
+                        request,
+                        json!({
+                            "block_id": block["id"], "updates": {
+                                "status": block["status"], "render_payload": block["render_payload"],
+                            }
+                        }),
                     );
                 }
             }
@@ -2008,6 +2022,14 @@ fn emit_request_user_input(
         .unwrap_or_else(|| format!("request-user-input-{item_id}"));
     let mut render_payload = params.clone();
     if let Some(object) = render_payload.as_object_mut() {
+        object
+            .entry("interactionScope".to_owned())
+            .or_insert_with(|| {
+                params
+                    .get("turnId")
+                    .cloned()
+                    .unwrap_or_else(|| json!(request.subtask_id))
+            });
         object.insert(
             "kind".to_owned(),
             Value::String("request_user_input".to_owned()),
@@ -2033,8 +2055,13 @@ fn emit_request_user_input_block(
     local_task_id: &str,
     request: &ExecutionRequest,
     block_id: String,
-    render_payload: Value,
+    mut render_payload: Value,
 ) {
+    if let Some(payload) = render_payload.as_object_mut() {
+        payload
+            .entry("interactionScope".to_owned())
+            .or_insert_with(|| json!(request.subtask_id));
+    }
     emit_response_event(
         event_tx,
         device_id,

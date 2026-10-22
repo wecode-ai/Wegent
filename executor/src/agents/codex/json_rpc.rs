@@ -29,12 +29,28 @@ pub(super) struct JsonRpcConnection {
 }
 
 pub(super) struct TurnReadOptions {
+    pub active_turn_started: Option<super::CodexActiveTurnCallback>,
     pub overload_turn_recovering: Option<super::CodexActiveTurnCallback>,
     pub overload_continuation_params: Value,
     pub notifications: Option<CodexNotificationSender>,
     pub request_user_input_answers: Option<CodexRequestUserInputReceiver>,
     pub auto_approve_mcp_tool_calls: bool,
     pub defer_interactive_forms: bool,
+}
+
+fn notify_active_turn(
+    callback: &Option<super::CodexActiveTurnCallback>,
+    active_turn_id: &mut Option<String>,
+    thread_id: &str,
+    observed: Option<String>,
+) {
+    let Some(turn_id) = observed.filter(|turn_id| active_turn_id.as_ref() != Some(turn_id)) else {
+        return;
+    };
+    if let Some(callback) = callback.as_ref() {
+        callback(thread_id.to_owned(), turn_id.clone());
+    }
+    *active_turn_id = Some(turn_id);
 }
 
 impl JsonRpcConnection {
@@ -118,6 +134,7 @@ impl JsonRpcConnection {
         options: TurnReadOptions,
     ) -> Result<ExecutionOutcome, String> {
         let TurnReadOptions {
+            active_turn_started,
             overload_turn_recovering,
             overload_continuation_params,
             notifications,
@@ -126,12 +143,17 @@ impl JsonRpcConnection {
             defer_interactive_forms,
         } = options;
         let mut saw_turn_response = false;
+        let mut active_turn_id = None;
+        let thread_id = overload_continuation_params["threadId"]
+            .as_str()
+            .unwrap_or("")
+            .to_owned();
         let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
         let mut startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
         let mut waiting_for_initial_progress = true;
         let mut overload_recovery = super::overload_recovery::OverloadRecovery::default();
         loop {
-            let message = if waiting_for_initial_progress {
+            let mut message = if waiting_for_initial_progress {
                 match timeout_at(startup_deadline, self.read_message()).await {
                     Ok(result) => result?,
                     Err(_) => {
@@ -144,10 +166,25 @@ impl JsonRpcConnection {
                 self.read_message().await?
             };
             if response_id(&message) == Some(turn_request_id) {
-                response_result(message)?;
+                let response = response_result(message)?;
+                notify_active_turn(
+                    &active_turn_started,
+                    &mut active_turn_id,
+                    &thread_id,
+                    super::turn_start_response_id(&response),
+                );
                 saw_turn_response = true;
                 continue;
             }
+            let observed =
+                super::observed_active_turn_id(active_turn_id.as_deref(), None, &message, state)
+                    .map(|(turn_id, _)| turn_id);
+            notify_active_turn(
+                &active_turn_started,
+                &mut active_turn_id,
+                &thread_id,
+                observed,
+            );
             if waiting_for_initial_progress
                 && codex_notification_has_initial_progress(&message, state)
             {
@@ -192,6 +229,7 @@ impl JsonRpcConnection {
                     continue;
                 }
             }
+            super::elicitation::prepare(&mut message);
             let auto_approve_mcp_tool_call =
                 auto_approve_mcp_tool_calls && is_mcp_tool_call_approval_request(&message);
             if !auto_approve_mcp_tool_call {
@@ -237,6 +275,7 @@ impl JsonRpcConnection {
                     &message,
                     &mut request_user_input_answers,
                     auto_approve_mcp_tool_calls,
+                    notifications.as_ref(),
                 )
                 .await?;
                 continue;
@@ -343,6 +382,7 @@ impl JsonRpcConnection {
         message: &Value,
         request_user_input_answers: &mut Option<CodexRequestUserInputReceiver>,
         auto_approve_mcp_tool_calls: bool,
+        notifications: Option<&CodexNotificationSender>,
     ) -> Result<(), String> {
         let request_id = json_rpc_request_id(message)
             .ok_or_else(|| "mcpServer/elicitation/request is missing JSON-RPC id".to_owned())?;
@@ -352,9 +392,12 @@ impl JsonRpcConnection {
             auto_approve_mcp_tool_calls,
         )
         .await?;
+        if let Some(sender) = notifications {
+            let _ = sender.send(super::elicitation::settled(message, result.status));
+        }
         self.write_message(json!({
             "id": request_id,
-            "result": result,
+            "result": result.result,
         }))
         .await
     }

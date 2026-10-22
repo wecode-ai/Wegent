@@ -2167,6 +2167,9 @@ pub async fn run_codex_app_server_turn_with_cancel(
         request_user_input_answers,
         defer_interactive_forms,
         overload_turn_recovering,
+        thread_started,
+        active_turn_started,
+        active_turn_finished,
         ..
     } = options;
     let prepared = prepare_codex_execution_request(request, cancellation.as_mut()).await?;
@@ -2263,6 +2266,9 @@ pub async fn run_codex_app_server_turn_with_cancel(
         };
         state.set_root_thread_id(thread_id.clone());
         bind_local_proxy_thread(&launch_config, &thread_id)?;
+        if let Some(callback) = thread_started {
+            callback(thread_id.clone());
+        }
         notify_thread_started(notifications.as_ref(), &thread_id);
         if thread_plan.fork_requested && request.ephemeral {
             with_rpc_timeout(
@@ -2309,6 +2315,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
             turn_request_id,
             &mut state,
             json_rpc::TurnReadOptions {
+                active_turn_started,
                 overload_turn_recovering,
                 overload_continuation_params: overload_recovery::continuation_params(
                     turn_start_params(&thread_id, request, &launch_config, Vec::new()),
@@ -2353,6 +2360,9 @@ pub async fn run_codex_app_server_turn_with_cancel(
     }
     .await;
 
+    if let Some(callback) = active_turn_finished.as_ref() {
+        callback();
+    }
     terminate_codex_app_server_child(&mut process.child).await;
     if let Err(error) = &result {
         let mut failed_fields = fields.clone();
@@ -2501,7 +2511,7 @@ async fn read_shared_turn_notifications(
             last_outcome.clone(),
             executor_shutdown_requested,
         )?;
-        let message = match notification {
+        let mut message = match notification {
             SharedNotification::Message(message) => message,
             SharedNotification::Lagged(skipped) => {
                 log_executor_event(
@@ -2668,6 +2678,7 @@ async fn read_shared_turn_notifications(
                 }
             }
         }
+        elicitation::prepare(&mut message);
         let auto_approve_mcp_tool_call =
             options.auto_approve_mcp_tool_calls && is_mcp_tool_call_approval_request(&message);
         if !auto_approve_mcp_tool_call {
@@ -2716,6 +2727,10 @@ async fn read_shared_turn_notifications(
                 request_user_input_answers.clone(),
                 response_error_tx.clone(),
                 options.auto_approve_mcp_tool_calls,
+                options
+                    .notifications
+                    .as_ref()
+                    .map(|sender| sender.downgrade()),
             )?;
             continue;
         }
@@ -3184,6 +3199,7 @@ fn spawn_shared_mcp_server_elicitation_response(
     request_user_input_answers: Option<Arc<InteractionAnswerRouter>>,
     response_error_tx: mpsc::UnboundedSender<String>,
     auto_approve_mcp_tool_calls: bool,
+    notifications: Option<mpsc::WeakUnboundedSender<Value>>,
 ) -> Result<(), String> {
     let request_id = json_rpc_request_id(message)
         .ok_or_else(|| "mcpServer/elicitation/request is missing JSON-RPC id".to_owned())?;
@@ -3201,7 +3217,10 @@ fn spawn_shared_mcp_server_elicitation_response(
             )
             .await?
             {
-                client.send_response(request_id, result).await?;
+                if let Some(sender) = notifications.as_ref().and_then(|sender| sender.upgrade()) {
+                    let _ = sender.send(elicitation::settled(&message, result.status));
+                }
+                client.send_response(request_id, result.result).await?;
             }
             Ok::<(), String>(())
         }
@@ -3517,6 +3536,8 @@ mod json_rpc;
 #[path = "codex/mcp_form.rs"]
 mod mcp_form;
 
+#[path = "codex/elicitation.rs"]
+mod elicitation;
 #[path = "codex/url_elicitation.rs"]
 mod url_elicitation;
 
@@ -6461,26 +6482,32 @@ async fn receive_mcp_server_elicitation_response(
     message: &Value,
     request_user_input_answers: Option<&mut CodexRequestUserInputReceiver>,
     auto_approve_mcp_tool_calls: bool,
-) -> Result<Value, String> {
+) -> Result<url_elicitation::ElicitationResult, String> {
     if auto_approve_mcp_tool_calls && is_mcp_tool_call_approval(message_params(message)) {
-        return mcp_server_tool_call_approval_response(message);
+        return mcp_server_tool_call_approval_response(message)
+            .map(url_elicitation::ElicitationResult::from_result);
     }
     if mcp_server_elicitation_request_user_input_params(message_params(message)).is_none() {
-        return mcp_server_elicitation_response(message, None);
+        return mcp_server_elicitation_response(message, None)
+            .map(url_elicitation::ElicitationResult::from_result);
     }
     let Some(receiver) = request_user_input_answers else {
-        return mcp_server_elicitation_response(message, None);
+        return mcp_server_elicitation_response(message, None)
+            .map(url_elicitation::ElicitationResult::from_result);
     };
-    let response = if message_params(message).get("mode").and_then(Value::as_str) == Some("url") {
-        match timeout(Duration::from_secs(600), receiver.recv()).await {
-            Ok(response) => response,
-            Err(_) => return Ok(json!({"action": "cancel"})),
+    let response = match timeout(elicitation::remaining(message), receiver.recv()).await {
+        Ok(response) => response,
+        Err(_) => {
+            elicitation::log_event("codex mcp elicitation timed out", message);
+            return Ok(url_elicitation::ElicitationResult {
+                result: json!({"action": "cancel"}),
+                status: "expired",
+            });
         }
-    } else {
-        receiver.recv().await
     }
     .ok_or_else(|| "mcp elicitation response channel closed".to_owned())?;
     mcp_server_elicitation_response(message, Some(&response))
+        .map(url_elicitation::ElicitationResult::from_result)
 }
 
 fn mcp_server_tool_call_approval_response(message: &Value) -> Result<Value, String> {
@@ -6512,16 +6539,6 @@ fn mcp_server_elicitation_response(
 ) -> Result<Value, String> {
     let params = message_params(message);
     let mode = params.get("mode").and_then(Value::as_str).unwrap_or("");
-    log_executor_event(
-        "codex mcp elicitation request",
-        &[
-            ("request_id", json_scalar_field(message, "id")),
-            ("thread_id", json_string_field(params, "threadId")),
-            ("turn_id", json_string_field(params, "turnId")),
-            ("server_name", json_string_field(params, "serverName")),
-            ("mode", mode.to_owned()),
-        ],
-    );
     if !matches!(mode, "form" | "openai/form" | "url") {
         log_executor_event(
             "codex mcp elicitation declined",
@@ -6564,7 +6581,10 @@ fn mcp_server_elicitation_response(
 pub(crate) fn mcp_server_elicitation_request_user_input_params(params: &Value) -> Option<Value> {
     let mode = params.get("mode").and_then(Value::as_str)?;
     if mode == "url" {
-        return url_elicitation::request_params(params);
+        return url_elicitation::request_params(params).map(|mut payload| {
+            elicitation::copy_lifecycle(params, &mut payload);
+            payload
+        });
     }
     if !matches!(mode, "form" | "openai/form") {
         return None;
@@ -6608,12 +6628,15 @@ pub(crate) fn mcp_server_elicitation_request_user_input_params(params: &Value) -
         }
     }
 
-    Some(json!({
+    let mut payload = json!({
         "itemId": "mcp_server_elicitation",
+        "interactionKind": "mcp_form",
         "serverName": params.get("serverName").cloned().unwrap_or(Value::Null),
         "message": params.get("message").cloned().unwrap_or(Value::Null),
         "questions": questions,
-    }))
+    });
+    elicitation::copy_lifecycle(params, &mut payload);
+    Some(payload)
 }
 
 fn mcp_elicitation_persist_modes(meta: Option<&serde_json::Map<String, Value>>) -> Vec<&str> {

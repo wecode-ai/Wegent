@@ -76,6 +76,34 @@ for (const verifyAccept of [false, true]) {
         verifyAccept ? 3 : 2,
         'Fixture recorded duplicate consent'
       )
+      send({ id: 4, method: 'tools/call', params: { name: tool, arguments: {} } })
+      const repeatedUrl = await receive()
+      assert.equal(repeatedUrl.id, first.id, 'The regression fixture must reuse its URL request ID')
+      send({ id: repeatedUrl.id, result: { action: 'cancel' } })
+      let repeatedForm = await receive()
+      if (verifyAccept) {
+        send({ id: repeatedForm.id, result: { action: 'accept' } })
+        repeatedForm = await receive()
+      }
+      assert.equal(
+        repeatedForm.id,
+        next.id,
+        'The regression fixture must reuse its form request ID'
+      )
+      assert.equal(
+        (await records()).filter(record => record.event === 'elicitation_result').length,
+        1,
+        'The old answer must not settle a repeated form'
+      )
+      send({ id: repeatedForm.id, result: { action: 'accept', content: { audience: 'owner' } } })
+      const repeatedComplete = await receive()
+      assert.equal(repeatedComplete.id, 4)
+      assert.equal(repeatedComplete.result.isError, false)
+      assert.equal(
+        (await records()).filter(record => record.event === 'elicitation_result').length,
+        2,
+        'The repeated form did not record exactly one new answer'
+      )
     }
   )
 }
