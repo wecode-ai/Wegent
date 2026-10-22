@@ -30,6 +30,7 @@ from app.schemas.external_wiki import (
     WikiBoundDocument,
     WikiBranchesResponse,
     WikiBranchSummary,
+    WikiConnectionsResponse,
     WikiConnectionSummary,
     WikiConnectionTestRequest,
     WikiConnectionTestResponse,
@@ -217,6 +218,21 @@ def _connection_references(
         for document in documents
         if wiki_document_uses_connection(document, connection_id)
     ]
+
+
+@router.get("/wiki/connections", response_model=WikiConnectionsResponse)
+async def list_wiki_connections(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    options = _available_connectors()
+    return WikiConnectionsResponse(
+        connections=[
+            _connection_summary(item)
+            for item in WikiConnectionService.list_connections(db, current_user)
+        ],
+        available_connectors=options,
+    )
 
 
 @router.post("/wiki/connections", response_model=WikiConnectionSummary)
