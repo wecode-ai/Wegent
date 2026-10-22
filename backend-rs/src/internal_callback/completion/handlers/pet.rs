@@ -102,6 +102,8 @@ pub(crate) async fn handle_task_completed_for_pet<M: Mysql, R: Redis>(
     let mysql = ctx
         .mysql
         .route(crate::task_routing::ByTaskId(pet_id as u64));
+    // A single statement runs on the pooled connection's autocommit; no
+    // explicit transaction or COMMIT is needed.
     if let Err(error) = mysql.execute(sql, (payload, updated_at, pet_id)).await {
         tracing::warn!(%error, "pet experience update failed");
         return;
@@ -110,10 +112,6 @@ pub(crate) async fn handle_task_completed_for_pet<M: Mysql, R: Redis>(
     // `db.commit()` then `db.refresh(pet)`, whose ORM primary-key load re-reads
     // the row the frame's values were computed from. The refreshed document only
     // reaches the handler's logging, so the frame below keeps the values above.
-    if let Err(error) = mysql.execute("COMMIT", ()).await {
-        tracing::warn!(%error, "pet experience commit failed");
-        return;
-    }
     let _refreshed: Option<MysqlRow> = mysql
         .fetch_optional(sql::kind_refresh_by_id(), (pet_id,))
         .await

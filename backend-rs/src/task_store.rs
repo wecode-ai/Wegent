@@ -45,7 +45,15 @@ pub enum ContextPolicy {
 
 pub use crate::task_store_create::*;
 pub use crate::task_store_edit::*;
-pub use crate::task_store_project_count::{TaskStoreProjectCount, count_active_project_tasks_read};
+pub use crate::task_store_executor_reference::{
+    AssistantExecutor, SubtaskPairInsert, consume_executor_reference,
+    create_subtask_pair_with_executor_reference, latest_assistant_executor_statement,
+    task_for_update_first_statement,
+};
+pub use crate::task_store_project_count::{
+    TaskStoreProjectCount, active_task_status_predicate, count_active_project_tasks_read,
+    count_active_tasks_by_project_read,
+};
 pub use crate::task_store_public_share::TaskStorePublicShare;
 pub use crate::task_store_statements::*;
 pub use crate::task_store_subtask_content::{SubtaskContentField, execute_subtask_content_update};
@@ -73,6 +81,12 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
     async fn get_active_task(&self, task_id: i64) -> MysqlResult<Option<MysqlRow>> {
         self.mysql
             .fetch_optional(active_task_statement(TASKS_TABLE), (task_id,))
+            .await
+    }
+
+    async fn get_regular_active_task(&self, task_id: i64) -> MysqlResult<Option<MysqlRow>> {
+        self.mysql
+            .fetch_optional(regular_active_task_statement(TASKS_TABLE), (task_id,))
             .await
     }
 

@@ -830,10 +830,11 @@ def list_loop_item_comments(
     ]
 
 
-@router.get(
-    "/loop-items/{item_id}/assignments",
-    response_model=IssueAssignmentListResponse,
-)
+# MIGRATION-CANDIDATE(api="GET /api/v1/loop-items/*/assignments"): remove after final confirmation.
+# @router.get(
+#     "/loop-items/{item_id}/assignments",
+#     response_model=IssueAssignmentListResponse,
+# )
 def list_issue_assignments(
     item_id: str,
     db: Session = Depends(get_db),

@@ -19,11 +19,17 @@
 //! carries the labeled projection and `LIMIT 1 FOR UPDATE`, the flush updates
 //! `writer_lease_expires_at` then `updated_at` by primary key, and the refresh
 //! re-reads every mapped column unlabeled by primary key.
-use brz_mysql::{FromMysqlRow, MysqlTransaction as _};
+//!
+//! The row lock has to span the flush, and `brz-mysql` rejects a pool-level
+//! `FOR UPDATE` read, so the lookup and the update share one writer
+//! transaction; the `db.refresh` re-read follows the commit on the shared
+//! pool, exactly where the source issues it.
+use brz_mysql::FromMysqlRow;
 
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
-use crate::wework_transcripts::{internal_error, transcript_error};
+use crate::wework_transcript_lease_transaction::{self as transaction, Completion};
+use crate::wework_transcripts::transcript_error;
 
 /// `EPOCH_TIME` (`app.models.wework_transcript`) rendered as the MySQL datetime
 /// SQLAlchemy writes for `datetime(1970, 1, 1)` (zero sub-second part).
@@ -124,17 +130,48 @@ async fn release_lease_response(
     transcript_id: &str,
     request: &LeaseReleaseRequest,
 ) -> Result<LeaseReleased, FastApiError> {
-    let transcript: Option<LeaseRow> = match state
+    let row_id = transaction::run(
+        &state.mysql,
+        async |transaction| {
+            release_lease_on(transaction, user_id, transcript_id, request)
+                .await
+                .map(Completion::Commit)
+        },
+        FastApiError::unhandled,
+    )
+    .await?;
+
+    // `db.refresh(transcript)`: the source re-reads the committed row after the
+    // session commit (its read-only session-close ROLLBACK is optional
+    // cleanup), but the endpoint renders none of it.
+    state
         .mysql
+        .fetch_optional::<_, _, brz_mysql::MysqlRow>(TRANSCRIPT_REFRESH_QUERY, (row_id,))
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "wework_transcripts database dependency failure");
+            FastApiError::unhandled()
+        })?;
+
+    Ok(LeaseReleased { released: true })
+}
+
+/// The locked release: `get_transcript(for_update=True)`, `_require_lease`,
+/// then `writer_lease_expires_at = EPOCH_TIME; updated_at = utcnow()` inside
+/// the transaction whose commit ends the row lock.
+async fn release_lease_on<T: brz_mysql::MysqlTransaction>(
+    transaction: &mut T,
+    user_id: i32,
+    transcript_id: &str,
+    request: &LeaseReleaseRequest,
+) -> Result<i64, FastApiError> {
+    let transcript: Option<LeaseRow> = transaction
         .fetch_optional(TRANSCRIPT_BY_ID_FOR_UPDATE_QUERY, (user_id, transcript_id))
         .await
-    {
-        Ok(row) => row,
-        Err(error) => {
+        .map_err(|error| {
             tracing::error!(%error, "wework_transcripts database dependency failure");
-            return Err(internal_error());
-        }
-    };
+            FastApiError::unhandled()
+        })?;
     let Some(transcript) = transcript else {
         return Err(transcript_error(
             brz_http_server::StatusCode::NOT_FOUND,
@@ -156,47 +193,18 @@ async fn release_lease_response(
         ));
     }
 
-    // `transcript.writer_lease_expires_at = EPOCH_TIME; transcript.updated_at =
-    // utcnow(); db.commit()`: one flushed update, then the session commit. Both
-    // statements run on the single pooled connection a scoped transaction
-    // pins, so the business UPDATE and its COMMIT share one connection the way
-    // the source's SQLAlchemy session does; a bare pool-level COMMIT can land
-    // on a different connection and cannot end another connection's write.
     let updated_at = utcnow().format("%Y-%m-%d %H:%M:%S%.6f").to_string();
-    if let Err(error) = state
-        .mysql
-        .with_transaction(async |transaction| {
-            transaction
-                .execute(
-                    UPDATE_LEASE_RELEASED_QUERY,
-                    (EPOCH_TIME_SQL, updated_at.as_str(), transcript.id),
-                )
-                .await
-        })
+    transaction
+        .execute(
+            UPDATE_LEASE_RELEASED_QUERY,
+            (EPOCH_TIME_SQL, updated_at.as_str(), transcript.id),
+        )
         .await
-    {
-        tracing::error!(%error, "wework_transcripts database dependency failure");
-        return Err(internal_error());
-    }
-    // The request-scoped SQLAlchemy session closes right after the commit;
-    // the driver rolls the freshly opened idle transaction back.
-    if let Err(error) = state.mysql.execute("ROLLBACK", ()).await {
-        tracing::error!(%error, "wework_transcripts database dependency failure");
-        return Err(internal_error());
-    }
-
-    // `db.refresh(transcript)`: the source re-reads the committed row, but the
-    // endpoint renders none of it.
-    if let Err(error) = state
-        .mysql
-        .fetch_optional::<_, _, brz_mysql::MysqlRow>(TRANSCRIPT_REFRESH_QUERY, (transcript.id,))
-        .await
-    {
-        tracing::error!(%error, "wework_transcripts database dependency failure");
-        return Err(internal_error());
-    }
-
-    Ok(LeaseReleased { released: true })
+        .map_err(|error| {
+            tracing::error!(%error, "wework_transcripts database dependency failure");
+            FastApiError::unhandled()
+        })?;
+    Ok(transcript.id)
 }
 
 /// `wework_transcript_service.utcnow`: the current naive UTC timestamp that
@@ -393,29 +401,39 @@ mod tests {
         assert_eq!(EPOCH_TIME_SQL, "1970-01-01 00:00:00");
     }
 
-    /// The business UPDATE and its COMMIT run on the single connection a
-    /// scoped transaction pins (the source SQLAlchemy session's shape): no
-    /// bare pool-level `execute("COMMIT")` remains, the post-commit session
-    /// close rolls back, and the `db.refresh` re-read follows.
+    /// The locked lookup and the business flush share one writer transaction:
+    /// the pool-level handler never sends `FOR UPDATE` (which `brz-mysql`
+    /// rejects), and the refresh follows the commit.
     #[test]
-    fn update_and_commit_share_one_transaction_connection() {
+    fn lock_and_update_share_the_transaction_worker() {
         let source = include_str!("wework_transcript_lease_release.rs");
         assert!(
             !source.contains("execute(\"COMMIT\", ()"),
             "the scoped transaction commits on return; no bare pool-level COMMIT call"
         );
-        let scoped = source
-            .find("with_transaction")
-            .expect("scoped transaction around the update");
-        let rollback = source[scoped..]
-            .find("execute(\"ROLLBACK\"")
-            .expect("session rollback after the scoped commit")
-            + scoped;
-        let refresh = source[scoped..]
-            .find("TRANSCRIPT_REFRESH_QUERY")
-            .expect("refresh after the rollback")
-            + scoped;
-        assert!(rollback < refresh, "refresh follows the session rollback");
+        let handler = source
+            .split("async fn release_lease_response")
+            .nth(1)
+            .unwrap()
+            .split("async fn release_lease_on")
+            .next()
+            .unwrap();
+        assert!(handler.contains("transaction::run"));
+        assert!(
+            !handler.contains("FOR_UPDATE"),
+            "a pool-level FOR UPDATE read is rejected before reaching MySQL"
+        );
+        assert!(handler.contains("TRANSCRIPT_REFRESH_QUERY"));
+        let worker = source
+            .split("async fn release_lease_on")
+            .nth(1)
+            .unwrap()
+            .split("fn utcnow")
+            .next()
+            .unwrap();
+        assert!(worker.contains("TRANSCRIPT_BY_ID_FOR_UPDATE_QUERY"));
+        assert!(worker.contains("UPDATE_LEASE_RELEASED_QUERY"));
+        assert!(!worker.contains("TRANSCRIPT_REFRESH_QUERY"));
     }
 
     #[test]

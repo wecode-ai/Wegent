@@ -35,7 +35,7 @@ async fn find_external_project_uses_the_labeled_projection() {
     assert_eq!(
         queries[0].sql,
         normalize(&format!(
-            "SELECT {LOOP_ITEMS_COLUMNS} FROM loop_items \
+            "SELECT {WORKSPACE_ID_COLUMN}, {LOOP_ITEMS_COLUMNS} FROM loop_items \
              WHERE loop_items.project_key = ? \
              AND loop_items.resource_type IN ('project') LIMIT 1"
         ))

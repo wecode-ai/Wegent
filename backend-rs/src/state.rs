@@ -18,6 +18,8 @@ use std::sync::Arc;
 /// Application-wide state retained for the process lifetime.
 pub struct AppState {
     pub entity_resolvers: crate::permissions::EntityResolvers,
+    /// Default-resource Task/Workspace storage, selected by the application.
+    pub seed_tasks: Arc<dyn crate::new_user_resources::tasks::TaskResources>,
     pub user_profile: Arc<dyn crate::user_profile::UserViewExtension>,
     /// Current-user `GET /api/users/me` `git_info` resolution. The public
     /// default renders the stored column.
@@ -132,4 +134,10 @@ pub struct AppState {
     /// service (for example to inject `employee_id`) registers its own
     /// implementation before route construction.
     pub token_issuer_extra_claims: Arc<dyn crate::token_issuers::OutboundTokenExtraClaims>,
+    /// `set_external_knowledge_auth_handler`: the external knowledge MCP
+    /// caller resolution. The public default resolves a personal API key; an
+    /// internal deployment registers a handler that also accepts its gateway
+    /// employee header.
+    pub external_knowledge_auth:
+        Arc<dyn crate::mcp::knowledge_external::auth::ExternalKnowledgeAuth>,
 }

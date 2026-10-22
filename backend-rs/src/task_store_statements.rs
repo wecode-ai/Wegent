@@ -918,6 +918,14 @@ pub fn assistant_subtasks_by_task_statement(table: &str) -> String {
     )
 }
 
+/// `subtask_store.update_fields(status=RUNNING)` (`execution/dispatcher.py:347`
+/// → `chat/storage/db.py:199`): the status-only flush. SQLAlchemy's `onupdate`
+/// also refreshes `updated_at`, which is why the recorded statement carries
+/// both columns.
+pub fn update_subtask_running_statement(table: &str) -> String {
+    format!("UPDATE {table} SET status=?, updated_at=? WHERE {table}.id = ?")
+}
+
 /// `subtask_store.update_fields` flush for a terminal subtask update
 /// (`app/services/chat/storage/db.py:199`): the mapped columns that changed,
 /// in SQLAlchemy's mapper order — `executor_namespace`, `executor_name`,

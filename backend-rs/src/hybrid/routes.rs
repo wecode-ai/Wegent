@@ -181,6 +181,10 @@ mod tests {
         collect!(__http_registry_models_unified);
         collect!(__http_registry_remote_workspace_status);
         collect!(__http_registry_remote_workspace_tree);
+        // The LLM proxy route forwards dynamic `x-wegent-upstream-header-*`
+        // headers through a hand-written handler merged into the router, so it
+        // is not discoverable through the macro inventory.
+        registered.insert(("POST".to_owned(), crate::llm_proxy::ROUTE_PATH.to_owned()));
         assert!(selected.is_subset(&registered));
         let custom = Method::from_bytes(b"CUSTOM").unwrap();
         for (method, path) in &selected {
@@ -212,7 +216,8 @@ mod tests {
                 );
             }
         }
-        assert!(!table.matches(&Method::POST, "/api/v1/responses"));
+        // The cancel sibling is still a Python fallback.
+        assert!(!table.matches(&Method::POST, "/api/v1/responses/resp_123/cancel"));
         assert!(!table.matches(&Method::GET, "/api/groups/engineering/members"));
         assert!(!table.matches(&Method::PUT, "/api/groups/engineering/members/batch/roles"));
         assert!(!table.matches(&Method::GET, "/api/tasks/123/unmigrated"));
@@ -266,6 +271,38 @@ mod tests {
             registered,
             "GET /metrics must be registered in the shared group"
         );
+    }
+
+    /// The `GET /api/v1/kinds/skills/unified` cutover must serve only the
+    /// recorded GET method and keep the handler registered.
+    #[test]
+    fn skills_unified_cutover_selects_registered_handler() {
+        const PATH: &str = "/api/v1/kinds/skills/unified";
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
+        let table = load(&path).unwrap();
+        assert!(table.matches(&Method::GET, PATH));
+        for other_method in [
+            Method::POST,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+            Method::HEAD,
+            Method::OPTIONS,
+        ] {
+            assert!(
+                !table.matches(&other_method, PATH),
+                "unmigrated method selected: {other_method} {PATH}"
+            );
+        }
+
+        // `method_bit`: DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT.
+        const GET: u16 = 1 << 1;
+        let registered =
+            brz_http_server::__private::inventory::iter::<crate::__http_registry_http_apis::Entry>
+                .into_iter()
+                .flat_map(|entry| (entry.0.routes)())
+                .any(|route| route.path == PATH && route.methods & GET != 0);
+        assert!(registered, "GET {PATH} must be registered by the router");
     }
 
     /// Registering the content update handler must not select the lower-volume

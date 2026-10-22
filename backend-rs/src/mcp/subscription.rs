@@ -13,19 +13,245 @@
 //! messages, replying `202 Accepted` to notifications and a JSON-RPC result or
 //! error to every request.
 //!
-//! Scope of this batch: the transport framing and the initialization handshake.
-//! The subscription tool surface (`tools/list`, `tools/call`, and the prompt and
-//! resource read methods) is a separate sub-migration; until it lands the
-//! transport answers those methods with the protocol's `Method not found` error.
-//! The recorded `initialize` handshake still advertises the source's declared
-//! capabilities because FastMCP registers its prompt, resource, and tool
-//! handlers for every server.
+//! Scope of this batch: the transport framing, the initialization handshake,
+//! the prompt/resource listings, and `tools/list` for the source's two
+//! subscription tools. Their `tools/call` bodies (preview block rendering,
+//! Redis preview storage, and subscription-task creation) are not migrated, so
+//! the transport answers them with the protocol's `Unknown tool` error instead
+//! of inventing a result. The recorded `initialize` handshake still advertises
+//! the source's declared capabilities because FastMCP registers its prompt,
+//! resource, and tool handlers for every server.
 
 use brz_http_server::{Response, StatusCode};
 use serde_json::{Value, json};
 
 use super::protocol::{self, InboundMessage, MessageError, RpcRequest};
+use super::tools::{self, Literal, Param, ParamKind, Tool};
 use super::transport;
+
+/// The source's `preview_subscription` parameter definitions
+/// (`app/mcp_server/tools/subscription.py`).
+static PREVIEW_PARAMS: &[Param] = &[
+    Param {
+        name: "display_name",
+        kind: ParamKind::Str,
+        description: "Display name for the subscription task",
+        required: true,
+        default: None,
+    },
+    Param {
+        name: "trigger_type",
+        kind: ParamKind::Str,
+        description: "Trigger type: cron, interval, or one_time",
+        required: true,
+        default: None,
+    },
+    Param {
+        name: "prompt_template",
+        kind: ParamKind::Str,
+        description: "Prompt template for execution with variable support",
+        required: true,
+        default: None,
+    },
+    Param {
+        name: "description",
+        kind: ParamKind::Str,
+        description: "Optional description of the subscription task",
+        required: false,
+        default: None,
+    },
+    Param {
+        name: "cron_expression",
+        kind: ParamKind::Str,
+        description: "Cron expression (e.g., '0 9 * * *' for daily at 9am)",
+        required: false,
+        default: None,
+    },
+    Param {
+        name: "interval_value",
+        kind: ParamKind::Int,
+        description: "Interval value (for interval trigger)",
+        required: false,
+        default: None,
+    },
+    Param {
+        name: "interval_unit",
+        kind: ParamKind::Str,
+        description: "Interval unit: minutes, hours, or days",
+        required: false,
+        default: None,
+    },
+    Param {
+        name: "execute_at",
+        kind: ParamKind::Str,
+        description: "Execution time in ISO format (for one_time trigger)",
+        required: false,
+        default: None,
+    },
+    Param {
+        name: "preserve_history",
+        kind: ParamKind::Bool,
+        description: "Whether to preserve conversation history",
+        required: false,
+        default: Some(Literal::Bool(false)),
+    },
+    Param {
+        name: "history_message_count",
+        kind: ParamKind::Int,
+        description: "Number of history messages to preserve (0-50)",
+        required: false,
+        default: Some(Literal::Int(10)),
+    },
+    Param {
+        name: "retry_count",
+        kind: ParamKind::Int,
+        description: "Retry count on failure (0-3)",
+        required: false,
+        default: Some(Literal::Int(1)),
+    },
+    Param {
+        name: "timeout_seconds",
+        kind: ParamKind::Int,
+        description: "Execution timeout in seconds (60-86400)",
+        required: false,
+        default: Some(Literal::Int(600)),
+    },
+    Param {
+        name: "expiration_type",
+        kind: ParamKind::Str,
+        description: "Expiration type: fixed_date or duration_days",
+        required: false,
+        default: None,
+    },
+    Param {
+        name: "expiration_fixed_date",
+        kind: ParamKind::Str,
+        description: "Fixed expiration date in ISO format",
+        required: false,
+        default: None,
+    },
+    Param {
+        name: "expiration_duration_days",
+        kind: ParamKind::Int,
+        description: "Days until expiration (1-3650)",
+        required: false,
+        default: None,
+    },
+];
+
+/// The source's `create_subscription` parameter definitions.
+static CREATE_PARAMS: &[Param] = &[
+    Param {
+        name: "display_name",
+        kind: ParamKind::Str,
+        description: "Display name for the subscription task",
+        required: true,
+        default: None,
+    },
+    Param {
+        name: "trigger_type",
+        kind: ParamKind::Str,
+        description: "Trigger type: cron, interval, or one_time",
+        required: true,
+        default: None,
+    },
+    Param {
+        name: "prompt_template",
+        kind: ParamKind::Str,
+        description: "Prompt template for execution",
+        required: true,
+        default: None,
+    },
+    Param {
+        name: "preview_id",
+        kind: ParamKind::Str,
+        description: "Preview ID from preview_subscription tool (REQUIRED)",
+        required: true,
+        default: None,
+    },
+    Param {
+        name: "description",
+        kind: ParamKind::Str,
+        description: "Optional description of the subscription task",
+        required: false,
+        default: None,
+    },
+    Param {
+        name: "cron_expression",
+        kind: ParamKind::Str,
+        description: "Cron expression (for cron trigger)",
+        required: false,
+        default: None,
+    },
+    Param {
+        name: "interval_value",
+        kind: ParamKind::Int,
+        description: "Interval value (for interval trigger)",
+        required: false,
+        default: None,
+    },
+    Param {
+        name: "interval_unit",
+        kind: ParamKind::Str,
+        description: "Interval unit: minutes, hours, or days",
+        required: false,
+        default: None,
+    },
+    Param {
+        name: "execute_at",
+        kind: ParamKind::Str,
+        description: "Execution time in ISO format (for one_time trigger)",
+        required: false,
+        default: None,
+    },
+    Param {
+        name: "preserve_history",
+        kind: ParamKind::Bool,
+        description: "Whether to preserve conversation history",
+        required: false,
+        default: Some(Literal::Bool(false)),
+    },
+    Param {
+        name: "history_message_count",
+        kind: ParamKind::Int,
+        description: "Number of history messages to preserve (0-50)",
+        required: false,
+        default: Some(Literal::Int(10)),
+    },
+    Param {
+        name: "retry_count",
+        kind: ParamKind::Int,
+        description: "Retry count on failure (0-3)",
+        required: false,
+        default: Some(Literal::Int(1)),
+    },
+    Param {
+        name: "timeout_seconds",
+        kind: ParamKind::Int,
+        description: "Execution timeout in seconds (60-86400)",
+        required: false,
+        default: Some(Literal::Int(600)),
+    },
+];
+
+/// The subscription server's registered tool surface, in decorator
+/// registration order.
+pub(crate) static SUBSCRIPTION_TOOLS: &[Tool] = &[
+    Tool {
+        name: "preview_subscription",
+        description: "Preview a subscription plan WITHOUT creating it. Use this tool FIRST when user wants to schedule recurring/periodic tasks. The frontend will display an interactive preview card with Confirm/Cancel buttons.\n\nWorkflow:\n1. User: 'remind me every morning' / '每天早上9点提醒我喝水'\n2. AI: Call preview_subscription tool to generate preview\n3. System: Displays interactive preview card with Confirm/Cancel buttons\n4. User confirmation (either one):\n   - Clicks 'Confirm' button: Frontend creates automatically, AI does NOTHING more\n   - Sends '确认' message: AI must call create_subscription to create the subscription\n\nCRITICAL: After calling preview_subscription, wait for user confirmation. NEVER auto-create.",
+        params: PREVIEW_PARAMS,
+        defs: &[],
+        generated_docstring: true,
+    },
+    Tool {
+        name: "create_subscription",
+        description: "Create a subscription task AFTER user has confirmed via message. This tool should ONLY be called when user sends a confirmation message (e.g., '确认', '创建') after preview.\n\nWorkflow:\n1. User: 'remind me every morning'\n2. AI: Call preview_subscription tool to generate preview\n3. System: Displays interactive preview card with Confirm/Cancel buttons\n4. User confirmation (either one):\n   - Clicks 'Confirm' button in UI: Frontend creates automatically, AI does NOTHING\n   - Sends '确认' message: AI must call create_subscription to create the subscription\n\nCRITICAL: NEVER auto-call create_subscription after preview. Wait for explicit user confirmation message.",
+        params: CREATE_PARAMS,
+        defs: &[],
+        generated_docstring: true,
+    },
+];
 
 /// `_SUBSCRIPTION_MCP_SPEC.service_name` and the FastMCP server name.
 const SERVER_NAME: &str = "wegent-subscription-mcp";
@@ -140,6 +366,14 @@ fn dispatch(request: &RpcRequest) -> String {
             protocol::success_body(&request.id, &initialize_result(request.params.as_ref()))
         }
         "ping" => protocol::success_body(&request.id, &json!({})),
+        "tools/list" => {
+            protocol::success_body(&request.id, &tools::tool_listing(SUBSCRIPTION_TOOLS))
+        }
+        "tools/call" => protocol::error_body(
+            &request.id,
+            protocol::INVALID_PARAMS,
+            &unknown_tool_message(request.params.as_ref()),
+        ),
         "prompts/list" => protocol::success_body(&request.id, &json!({ "prompts": [] })),
         "resources/list" => protocol::success_body(&request.id, &json!({ "resources": [] })),
         "resources/templates/list" => {
@@ -175,6 +409,19 @@ fn capabilities() -> Value {
         "resources": { "subscribe": false, "listChanged": false },
         "tools": { "listChanged": false },
     })
+}
+
+/// `Server.call_tool`'s `Unknown tool: <name>` error for the tool names this
+/// batch does not execute.
+fn unknown_tool_message(params: Option<&Value>) -> String {
+    match params
+        .and_then(Value::as_object)
+        .and_then(|params| params.get("name"))
+        .and_then(Value::as_str)
+    {
+        Some(name) => format!("Unknown tool: {name}"),
+        None => "Invalid arguments".to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -232,12 +479,38 @@ mod tests {
     }
 
     #[test]
+    fn tools_list_publishes_the_subscription_tool_surface() {
+        let value: Value =
+            serde_json::from_str(&dispatch(&request("tools/list", json!(1), None))).unwrap();
+        let tools = value["result"]["tools"].as_array().expect("tools array");
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[0]["name"], "preview_subscription");
+        assert_eq!(tools[1]["name"], "create_subscription");
+        assert_eq!(
+            tools[0]["inputSchema"]["required"],
+            json!(["display_name", "trigger_type", "prompt_template"])
+        );
+    }
+
+    #[test]
     fn unknown_methods_report_method_not_found() {
         let value: Value =
-            serde_json::from_str(&dispatch(&request("tools/list", json!(7), None))).unwrap();
+            serde_json::from_str(&dispatch(&request("prompts/get", json!(7), None))).unwrap();
         assert_eq!(value["id"], json!(7));
         assert_eq!(value["error"]["code"], json!(-32601));
         assert_eq!(value["error"]["message"], "Method not found");
+    }
+
+    #[test]
+    fn unmigrated_tool_calls_report_unknown_tool() {
+        let params = Some(json!({ "name": "preview_subscription" }));
+        let value: Value =
+            serde_json::from_str(&dispatch(&request("tools/call", json!(3), params))).unwrap();
+        assert_eq!(value["error"]["code"], json!(-32602));
+        assert_eq!(
+            value["error"]["message"],
+            "Unknown tool: preview_subscription"
+        );
     }
 
     fn body_bytes(response: &Response) -> &[u8] {

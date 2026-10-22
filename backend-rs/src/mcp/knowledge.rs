@@ -13,18 +13,25 @@
 //! messages, replying `202 Accepted` to notifications and a JSON-RPC result or
 //! error to every request.
 //!
-//! Scope of this batch: the transport framing and the initialization handshake,
-//! plus the prompt and resource listings (both empty for this server). The
-//! knowledge tool surface (`tools/list`, `tools/call`) and the prompt/resource
-//! read methods are a separate sub-migration; until they land the transport
-//! answers them with the protocol's `Method not found` error. The recorded
-//! `initialize` handshake still advertises the source's `tools` capability
-//! because that is the server's declared feature set.
+//! Scope of this batch: the transport framing, the initialization handshake,
+//! the prompt and resource listings (both empty for this server), and the
+//! knowledge tool surface (`tools/list` and the recorded `tools/call`
+//! behavior over the shared knowledge read pipeline). The prompt/resource
+//! read methods remain unimplemented and answer with the protocol's
+//! `Method not found` error; the recorded `initialize` handshake still
+//! advertises the source's `tools` capability because that is the server's
+//! declared feature set.
+
+use std::sync::Arc;
 
 use brz_http_server::{Response, StatusCode};
 use serde_json::{Value, json};
 
+use crate::state::AppState;
+
+use super::knowledge_tools::{self, KNOWLEDGE_TOOLS};
 use super::protocol::{self, InboundMessage, MessageError, RpcRequest};
+use super::tools;
 use super::transport;
 
 /// `_KNOWLEDGE_MCP_SPEC.service_name` and the FastMCP server name.
@@ -56,70 +63,111 @@ async fn knowledge_sse_get(
 /// `POST /api/mcp/knowledge/sse`: exchange one JSON-RPC message.
 #[brz_http_server::post("/api/mcp/knowledge/sse", access = public)]
 async fn knowledge_sse_post(
+    #[inject(state)] state: &Arc<AppState>,
     #[header("accept")] accept: Option<&str>,
     #[header("content-type")] content_type: Option<&str>,
     #[header("mcp-protocol-version")] protocol_version: Option<&str>,
+    #[header("authorization")] authorization: Option<&str>,
     body: &[u8],
 ) -> Response {
-    // `StreamableHTTPServerTransport._validate_accept_header` with
-    // `is_json_response_enabled=True`: only `application/json` is required.
+    let message = match prepare(accept, content_type, protocol_version, body) {
+        Ok(message) => message,
+        Err(response) => return response,
+    };
+    let request = match message {
+        InboundMessage::Request(request) => request,
+        InboundMessage::NoReply => {
+            return transport::empty_json_response(StatusCode::ACCEPTED);
+        }
+    };
+    // `tools/call` runs the tool body and may touch dependencies, so the
+    // transport awaits it instead of building the reply synchronously.
+    if request.method == "tools/call" {
+        let reply = knowledge_tools::call(state, authorization, request.params.as_ref()).await;
+        return match reply {
+            knowledge_tools::CallReply::Error { code, message } => transport::json_response(
+                StatusCode::OK,
+                protocol::error_body(&request.id, code, &message),
+            ),
+            knowledge_tools::CallReply::Result(result) => transport::json_response(
+                StatusCode::OK,
+                protocol::success_body(&request.id, &result),
+            ),
+        };
+    }
+    transport::json_response(StatusCode::OK, dispatch(&request))
+}
+
+/// The transport-level validation shared by the stateless servers:
+/// `_validate_accept_header` with `is_json_response_enabled=True`,
+/// `_validate_content_type`, JSON-RPC parsing, and
+/// `_validate_protocol_version` for every message except `initialize`.
+#[allow(clippy::result_large_err)]
+fn prepare(
+    accept: Option<&str>,
+    content_type: Option<&str>,
+    protocol_version: Option<&str>,
+    body: &[u8],
+) -> Result<InboundMessage, Response> {
     if !transport::accepts_json(accept) {
-        return transport::json_response(
+        return Err(transport::json_response(
             StatusCode::NOT_ACCEPTABLE,
             protocol::server_error_body(
                 protocol::INVALID_REQUEST,
                 "Not Acceptable: Client must accept application/json",
             ),
-        );
+        ));
     }
     if !transport::is_json_content_type(content_type) {
-        return transport::json_response(
+        return Err(transport::json_response(
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
             protocol::server_error_body(
                 protocol::INVALID_REQUEST,
                 "Unsupported Media Type: Content-Type must be application/json",
             ),
-        );
+        ));
     }
     let message = match protocol::parse(body) {
         Ok(message) => message,
         Err(MessageError::Parse(error)) => {
-            return transport::json_response(
+            return Err(transport::json_response(
                 StatusCode::BAD_REQUEST,
                 protocol::server_error_body(
                     protocol::PARSE_ERROR,
                     &format!("Parse error: {error}"),
                 ),
-            );
+            ));
         }
         Err(MessageError::Invalid(error)) => {
-            return transport::json_response(
+            return Err(transport::json_response(
                 StatusCode::BAD_REQUEST,
                 protocol::server_error_body(
                     protocol::INVALID_PARAMS,
                     &format!("Validation error: {error}"),
                 ),
-            );
+            ));
         }
     };
-    let request = match message {
-        InboundMessage::Request(request) => request,
-        InboundMessage::NoReply => {
-            // Notifications and client responses are validated like any other
-            // non-initialize message, acknowledged with `202`, and processed
-            // without a persistent effect in stateless mode.
-            if !protocol::protocol_version_supported(protocol_version) {
-                return unsupported_protocol_version(protocol_version);
+    match &message {
+        InboundMessage::Request(request) => {
+            // `initialize` derives its protocol version from the request
+            // parameters and skips the header validation; every other request
+            // validates the header.
+            if request.method != "initialize"
+                && !protocol::protocol_version_supported(protocol_version)
+            {
+                return Err(unsupported_protocol_version(protocol_version));
             }
-            return transport::empty_json_response(StatusCode::ACCEPTED);
         }
-    };
-    // `initialize` derives its protocol version from the request parameters and
-    // skips the header validation; every other request validates the header.
-    if request.method != "initialize" && !protocol::protocol_version_supported(protocol_version) {
-        return unsupported_protocol_version(protocol_version);
+        // Notifications and client responses are validated like any other
+        // non-initialize message and acknowledged with `202`.
+        InboundMessage::NoReply => {
+            if !protocol::protocol_version_supported(protocol_version) {
+                return Err(unsupported_protocol_version(protocol_version));
+            }
+        }
     }
-    transport::json_response(StatusCode::OK, dispatch(&request))
+    Ok(message)
 }
 
 /// `StreamableHTTPServerTransport._validate_protocol_version` rejection.
@@ -140,6 +188,7 @@ fn dispatch(request: &RpcRequest) -> String {
             protocol::success_body(&request.id, &initialize_result(request.params.as_ref()))
         }
         "ping" => protocol::success_body(&request.id, &json!({})),
+        "tools/list" => protocol::success_body(&request.id, &tools::tool_listing(KNOWLEDGE_TOOLS)),
         "prompts/list" => protocol::success_body(&request.id, &json!({ "prompts": [] })),
         "resources/list" => protocol::success_body(&request.id, &json!({ "resources": [] })),
         "resources/templates/list" => {
@@ -258,9 +307,24 @@ mod tests {
     }
 
     #[test]
+    fn tools_list_publishes_the_knowledge_tool_surface() {
+        let value: Value =
+            serde_json::from_str(&dispatch(&request("tools/list", json!(2), None))).unwrap();
+        assert_eq!(value["id"], json!(2));
+        let tools = value["result"]["tools"].as_array().expect("tools array");
+        assert_eq!(tools.len(), KNOWLEDGE_TOOLS.len());
+        assert_eq!(tools[0]["name"], "wegent_kb_search_knowledge_base");
+        assert_eq!(tools[0]["description"], KNOWLEDGE_TOOLS[0].docstring());
+        assert_eq!(
+            tools[0]["inputSchema"]["title"],
+            "wegent_kb_search_knowledge_baseArguments"
+        );
+    }
+
+    #[test]
     fn unknown_methods_report_method_not_found() {
         let value: Value =
-            serde_json::from_str(&dispatch(&request("tools/list", json!(7), None))).unwrap();
+            serde_json::from_str(&dispatch(&request("prompts/get", json!(7), None))).unwrap();
         assert_eq!(value["id"], json!(7));
         assert_eq!(value["error"]["code"], json!(-32601));
         assert_eq!(value["error"]["message"], "Method not found");
@@ -300,55 +364,72 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn post_validates_accept_and_content_type() {
+    #[test]
+    fn post_validates_accept_and_content_type() {
         let initialize = br#"{"method":"initialize","params":{"protocolVersion":"2025-11-25"},"jsonrpc":"2.0","id":0}"#;
-        let rejected = knowledge_sse_post(
+        let rejected = prepare(
             Some("text/event-stream"),
             Some("application/json"),
             None,
             initialize,
         )
-        .await;
+        .err()
+        .expect("rejected");
         assert_eq!(rejected.status(), StatusCode::NOT_ACCEPTABLE);
 
-        let unsupported = knowledge_sse_post(
+        let unsupported = prepare(
             Some("application/json"),
             Some("text/plain"),
             None,
             initialize,
         )
-        .await;
+        .err()
+        .expect("rejected");
         assert_eq!(unsupported.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
     }
 
-    #[tokio::test]
-    async fn post_initialize_returns_the_handshake() {
+    #[test]
+    fn post_initialize_returns_the_handshake() {
         let body = br#"{"method":"initialize","params":{"protocolVersion":"2025-11-25"},"jsonrpc":"2.0","id":0}"#;
-        let response = knowledge_sse_post(
+        let message = prepare(
             Some("application/json, text/event-stream"),
             Some("application/json"),
             None,
             body,
         )
-        .await;
-        assert_eq!(response.status(), StatusCode::OK);
-        let value: Value = serde_json::from_slice(body_bytes(&response)).unwrap();
+        .expect("accepted");
+        let InboundMessage::Request(request) = message else {
+            panic!("initialize is a request");
+        };
+        let value: Value = serde_json::from_str(&dispatch(&request)).unwrap();
         assert_eq!(value["id"], json!(0));
         assert_eq!(value["result"]["protocolVersion"], "2025-11-25");
     }
 
-    #[tokio::test]
-    async fn post_notification_is_accepted_with_an_empty_body() {
+    #[test]
+    fn post_notification_is_accepted_without_a_reply() {
         let body = br#"{"method":"notifications/initialized","jsonrpc":"2.0"}"#;
-        let response = knowledge_sse_post(
+        let message = prepare(
             Some("application/json, text/event-stream"),
             Some("application/json"),
             Some("2025-11-25"),
             body,
         )
-        .await;
-        assert_eq!(response.status(), StatusCode::ACCEPTED);
-        assert!(body_bytes(&response).is_empty());
+        .expect("accepted");
+        assert!(matches!(message, InboundMessage::NoReply));
+    }
+
+    #[test]
+    fn post_rejects_an_unsupported_protocol_version() {
+        let body = br#"{"method":"tools/list","jsonrpc":"2.0","id":1}"#;
+        let response = prepare(
+            Some("application/json, text/event-stream"),
+            Some("application/json"),
+            Some("2026-07-28"),
+            body,
+        )
+        .err()
+        .expect("rejected");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }

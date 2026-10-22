@@ -30,6 +30,18 @@ pub struct ChatSessionSetup {
     pub assistant_subtask_id: i64,
     /// The assistant subtask's `message_id` (`message_ids.next_message_id + 1`).
     pub assistant_message_id: i64,
+    /// The assistant subtask row's `executor_name` / `executor_namespace`
+    /// (`TaskRequestBuilder` copies them onto the execution request).
+    pub assistant_executor_name: String,
+    pub assistant_executor_namespace: String,
+    /// The inserted assistant subtask's `created_at` (the task-run-metric
+    /// hook's captured value, read inside the insert's savepoint).
+    pub assistant_created_at: Option<chrono::NaiveDateTime>,
+    /// `task_fork_history_resolver.resolve_for_task`'s subtasks: the task's
+    /// rows from before this request inserted its pair (empty for a new
+    /// task). `ExecutionSessionSetup.existing_subtasks` carries them to the
+    /// memory-context builder and the pipeline-handoff branch.
+    pub existing_subtasks: Vec<brz_mysql::MysqlRow>,
 }
 
 /// `setup_chat_session` inputs after resolution.
@@ -47,6 +59,10 @@ pub struct SetupChatSessionInput<'a> {
     pub crd: TaskCrdInput<'a>,
     pub repository: WorkspaceRepository<'a>,
     pub client_origin: &'a str,
+    /// `create_new_task`'s resolved API source group
+    /// (`get_or_create_task_source_group(task_source="api")`); `0` when the
+    /// request reuses a Task and no group is resolved.
+    pub project_id: i64,
     /// DB datetime strings for the inserted rows.
     pub created_at: &'a str,
     pub updated_at: &'a str,
@@ -140,6 +156,7 @@ pub fn subtask_rows<'a>(
 /// insert the paired subtasks through the task store.
 pub async fn setup_chat_session(
     store: &dyn TaskStore,
+    mysql: &brz_mysql::MysqlService,
     input: &SetupChatSessionInput<'_>,
 ) -> Result<ChatSessionSetup, FastApiError> {
     let pending_name = task_creation::pending_task_name();
@@ -156,7 +173,7 @@ pub async fn setup_chat_session(
         user_id: input.user_id,
         client_origin: input.client_origin,
         is_group_chat: input.crd.is_group_chat,
-        project_id: 0,
+        project_id: input.project_id,
         created_at: input.created_at,
         updated_at: input.updated_at,
         pending_name: &pending_name,
@@ -188,7 +205,15 @@ pub async fn setup_chat_session(
             .map_err(internal)?;
         // A resumed Task skips the task-creation savepoint, so the subtask
         // insert is the session's first nested transaction.
-        return append_subtasks(store, input, continuation.task_id, 0, "sa_savepoint_1").await;
+        return append_subtasks(
+            store,
+            mysql,
+            input,
+            continuation.task_id,
+            0,
+            "sa_savepoint_1",
+        )
+        .await;
     }
 
     let (task_id, workspace_id) = store
@@ -214,18 +239,29 @@ pub async fn setup_chat_session(
         .await
         .map_err(internal)?;
 
-    append_subtasks(store, input, task_id, workspace_id, "sa_savepoint_2").await
+    append_subtasks(store, mysql, input, task_id, workspace_id, "sa_savepoint_2").await
 }
 
-/// `max(subtasks.message_id)` then the paired user/assistant subtask insert for
+/// `max(subtasks.message_id)` then `create_assistant_subtask`'s executor
+/// reference resolution and the paired user/assistant subtask insert for
 /// `task_id`, shared by the new-task and `previous_response_id` paths.
 async fn append_subtasks(
     store: &dyn TaskStore,
+    mysql: &brz_mysql::MysqlService,
     input: &SetupChatSessionInput<'_>,
     task_id: i64,
     workspace_id: i64,
     savepoint: &str,
 ) -> Result<ChatSessionSetup, FastApiError> {
+    // `task_fork_history_resolver.resolve_for_task` (`lifecycle.py:363-370`):
+    // `subtask_store.list_by_task_ordered(task_id, owner_user_id)` reads the
+    // task's subtasks in `message_id, created_at` order before the next
+    // message id is computed. A new task has none.
+    let existing_subtasks = store
+        .list_subtasks_by_task_ordered(task_id, input.user_id)
+        .await
+        .map_err(internal)?
+        .rows;
     let existing_max = store
         .max_subtask_message_id(task_id)
         .await
@@ -242,8 +278,12 @@ async fn append_subtasks(
         input.completed_at,
         ids,
     );
-    let (user_subtask_id, assistant_subtask_id) = store
-        .create_user_and_assistant_subtasks(
+    // `create_assistant_subtask` resolves the executor reference in the same
+    // transaction as the insert; `build_execution_request` later reads the
+    // assistant subtask's executor fields from the inserted row.
+    let inserted = store
+        .create_user_and_assistant_subtasks_with_executor_reference(
+            mysql,
             savepoint,
             &CreateSubtasksRequest {
                 user_subtask,
@@ -256,9 +296,13 @@ async fn append_subtasks(
     Ok(ChatSessionSetup {
         task_id,
         workspace_id,
-        user_subtask_id,
-        assistant_subtask_id,
+        user_subtask_id: inserted.user_subtask_id,
+        assistant_subtask_id: inserted.assistant_subtask_id,
         assistant_message_id: ids.next_message_id + 1,
+        assistant_executor_name: inserted.executor.name,
+        assistant_executor_namespace: inserted.executor.namespace,
+        assistant_created_at: inserted.assistant_created_at,
+        existing_subtasks,
     })
 }
 

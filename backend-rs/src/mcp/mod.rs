@@ -12,8 +12,10 @@
 //! the shared transport framing and the per-server JSON-RPC behavior.
 
 mod knowledge;
-mod knowledge_external;
+pub mod knowledge_external;
+mod knowledge_tools;
 mod protocol;
 mod subscription;
 mod system;
+mod tools;
 mod transport;

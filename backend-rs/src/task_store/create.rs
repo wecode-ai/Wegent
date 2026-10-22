@@ -49,13 +49,15 @@ impl<M: Mysql> TaskStoreCreate for DefaultTaskStore<M> {
         .await
     }
 
-    async fn create_user_and_assistant_subtasks(
+    async fn create_user_and_assistant_subtasks_with_executor_reference(
         &self,
+        mysql: &brz_mysql::MysqlService,
         savepoint: &str,
         request: &crate::task_store_create::CreateSubtasksRequest<'_>,
-    ) -> MysqlResult<(i64, i64)> {
-        crate::task_store_create::create_user_and_assistant_subtasks(
-            &self.mysql,
+    ) -> MysqlResult<crate::task_store_executor_reference::SubtaskPairInsert> {
+        crate::task_store_executor_reference::create_subtask_pair_with_executor_reference(
+            mysql,
+            TASKS_TABLE,
             SUBTASKS_TABLE,
             savepoint,
             false,

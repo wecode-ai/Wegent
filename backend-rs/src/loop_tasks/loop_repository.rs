@@ -8,7 +8,7 @@
 //! `loop_items` table holds project (`resource_type='project'`), task
 //! (`'task'`), and execution/binding (`'execution'`) rows.
 use crate::board_snapshot::repository::ProjectRow as BoardProjectRow;
-use crate::cloud_projects::{LOOP_ITEMS_COLUMNS, ProjectListRow};
+use crate::cloud_projects::{LOOP_ITEMS_COLUMNS, ProjectListRow, WORKSPACE_ID_COLUMN};
 use crate::device_identity::owned_device_identity_ids;
 use crate::sql_support::StatementArg;
 use brz_json::JsonProjection;
@@ -553,7 +553,7 @@ impl<'a, M: Mysql> LoopItemRepository<'a, M> {
             .mysql
             .fetch_optional(
                 &format!(
-                    "SELECT {LOOP_ITEMS_COLUMNS} \nFROM loop_items \n\
+                    "SELECT {WORKSPACE_ID_COLUMN}, {LOOP_ITEMS_COLUMNS} \nFROM loop_items \n\
                      WHERE loop_items.project_key = ? \n\
                      AND loop_items.resource_type IN ('project') \n LIMIT 1",
                 ),
@@ -746,13 +746,13 @@ impl<'a, M: Mysql> LoopItemRepository<'a, M> {
             .fetch_all(
                 &format!(
                     "SELECT {CLOUD_CONTEXT_COLUMNS} \nFROM loop_items \n\
-                     WHERE loop_items.loop_item_id = '{item_id}' \
+                     WHERE loop_items.loop_item_id = ? \
                      AND (loop_items.deleted_at IS NULL OR loop_items.deleted_at IN \
                          ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) \
                      AND loop_items.resource_type IN ('comment') \
                      ORDER BY loop_items.created_at, loop_items.id",
                 ),
-                (),
+                (item_id,),
             )
             .await
     }

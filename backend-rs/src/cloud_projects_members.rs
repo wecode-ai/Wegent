@@ -109,7 +109,7 @@ pub(crate) async fn access_project<M: Mysql>(
     row.map(|row| {
         // The joined aggregate supplies the caller's role priority; read it
         // before the typed project projection consumes the row.
-        let priority: i64 = row.get_required("anon_1_priority")?;
+        let priority: i64 = row.get_required("anon_3_priority")?;
         ProjectListRow::from_mysql_row(row).map(|project| (project, priority))
     })
     .transpose()
@@ -436,7 +436,7 @@ mod tests {
         let sql = project_access_point_statement(6177, 1712605396200092385);
         assert!(sql.contains("resource_members.entity_id = '6177'"));
         assert!(sql.contains("resource_members.resource_id = 1712605396200092385"));
-        assert!(sql.contains("loop_items.created_by_user_id = 6177"));
+        assert!(!sql.contains("loop_items.created_by_user_id = 6177"));
         assert!(sql.contains("loop_items.id = '1712605396200092385'"));
         assert!(sql.contains("AND loop_items.resource_type IN ('project') \n LIMIT 1"));
     }

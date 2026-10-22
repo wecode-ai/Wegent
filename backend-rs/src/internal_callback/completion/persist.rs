@@ -82,6 +82,35 @@ fn subtask_column<T: FromMysqlCol>(row: &MysqlRow, column: &str) -> Option<T> {
     row.get_at::<Option<T>>(index).ok().flatten()
 }
 
+/// `Task.model_dump(mode="json")` (`app/schemas/kind.py:153-168,851-948`)
+/// fills every omitted optional field with its default. The stored create
+/// payload omits them, so the status update has to add them before rendering
+/// the CRD the way the source does.
+fn complete_task_model(payload: &mut Map<String, Value>) {
+    if let Some(Value::Object(metadata)) = payload.get_mut("metadata") {
+        // `ObjectMeta.displayName` / `ObjectMeta.labels`
+        metadata.entry("displayName").or_insert(Value::Null);
+        metadata.entry("labels").or_insert(Value::Null);
+    }
+    if let Some(Value::Object(spec)) = payload.get_mut("spec") {
+        spec.entry("knowledgeBaseRefs").or_insert(Value::Null);
+        spec.entry("knowledgeBaseScopes").or_insert(Value::Null);
+        spec.entry("externalKnowledgeRefs")
+            .or_insert_with(|| Value::Array(Vec::new()));
+        spec.entry("device_id").or_insert(Value::Null);
+        spec.entry("execution").or_insert(Value::Null);
+        spec.entry("fork").or_insert(Value::Null);
+        spec.entry("currentStage").or_insert(Value::Null);
+    }
+    if let Some(Value::Object(status)) = payload.get_mut("status") {
+        // `Status.message` and `TaskStatus.subTasks`/`app`/`archive`.
+        status.entry("message").or_insert(Value::Null);
+        status.entry("subTasks").or_insert(Value::Null);
+        status.entry("app").or_insert(Value::Null);
+        status.entry("archive").or_insert(Value::Null);
+    }
+}
+
 /// Re-render one task CRD document the way `Task.model_dump(mode="json")` does.
 ///
 /// The source validates the stored document into its pydantic models and dumps
@@ -233,6 +262,8 @@ async fn update_subtask_status<M: Mysql, R: Redis>(
     let error = error.unwrap_or_default();
     let sql = sql::update_subtask_terminal(ctx.tables, with_error, with_executor);
 
+    // A single statement runs on its own; the pooled connection uses the
+    // server's autocommit, so no explicit transaction or COMMIT is needed.
     let outcome = match (with_executor, with_error) {
         (true, true) => {
             mysql
@@ -283,12 +314,6 @@ async fn update_subtask_status<M: Mysql, R: Redis>(
     };
     if let Err(failure) = outcome {
         tracing::warn!(%failure, "callback subtask update failed");
-        return None;
-    }
-    // `_db_session` (`app/services/chat/storage/db.py:65-77`) commits when the
-    // subtask update's session block exits, before the task status update runs.
-    if let Err(failure) = mysql.execute("COMMIT", ()).await {
-        tracing::warn!(%failure, "callback subtask update commit failed");
         return None;
     }
     publish_task_run_metrics(ctx, &row, subtask_id, status, metrics_message).await;
@@ -347,6 +372,53 @@ fn subtask_metric_event(
         record_total: false,
         sync_failure: true,
     })
+}
+
+/// `ExecutionDispatcher._update_subtask_to_running`
+/// (`app/services/execution/dispatcher.py:335-355`, called before the mode
+/// branch at `:166`): `db_handler.update_subtask_status(subtask_id, "RUNNING")`
+/// reads the subtask with its contexts, writes the status-only flush, commits
+/// (publishing the after-commit run metrics), then re-derives the Task CRD
+/// status in a second session.
+pub(crate) async fn mark_subtask_running<M: Mysql, R: Redis>(
+    ctx: &Completion<'_, M, R>,
+    subtask_id: i64,
+) {
+    let mysql = ctx
+        .mysql
+        .route(crate::task_routing::ByTaskId(subtask_id as u64));
+    let row: Option<MysqlRow> = mysql
+        .fetch_optional(sql::subtask_by_id(ctx.tables), (subtask_id,))
+        .await
+        .ok()
+        .flatten();
+    let Some(row) = row else {
+        return;
+    };
+    // `SubtaskStore.get_by_id` eager-loads `Subtask.contexts`.
+    let _contexts: Vec<MysqlRow> = mysql
+        .fetch_all(sql::contexts_by_subtask(), (subtask_id,))
+        .await
+        .unwrap_or_default();
+    let task_id = subtask_column::<i64>(&row, "task_id").unwrap_or(0);
+    let now = local_datetime();
+    // A single statement runs on the pooled connection's autocommit; no
+    // explicit transaction or COMMIT is needed.
+    if let Err(failure) = mysql
+        .execute(
+            sql::update_subtask_running(ctx.tables),
+            ("RUNNING", now.as_str(), subtask_id),
+        )
+        .await
+    {
+        tracing::warn!(%failure, "subtask running update failed");
+        return;
+    }
+    // `_before_flush` tracks the status change (`record_total=False`,
+    // `sync_failure=True`) and `_after_commit` publishes it. A RUNNING subtask
+    // carries no error message, so the failure reason is empty.
+    publish_task_run_metrics(ctx, &row, subtask_id, "RUNNING", None).await;
+    update_task_status(ctx, task_id, subtask_id).await;
 }
 
 /// `_update_task_status_sync`: re-derive the task's status from its assistant
@@ -444,20 +516,17 @@ async fn update_task_status<M: Mysql, R: Redis>(
     updated.insert("updatedAt".into(), Value::String(now.clone()));
     payload.insert("status".into(), Value::Object(updated));
 
+    complete_task_model(&mut payload);
     let json_text = python_dumps(&Value::Object(render_task_crd(payload)));
     let row_updated_at = local_datetime();
     let sql = sql::update_task_json_statement(ctx.tables.tasks);
+    // A single statement runs on the pooled connection's autocommit; no
+    // explicit transaction or COMMIT is needed.
     if let Err(failure) = mysql
         .execute(sql, (json_text, row_updated_at, task_id))
         .await
     {
         tracing::warn!(%failure, "callback task update failed");
-        return;
-    }
-    // `_db_session` (`app/services/chat/storage/db.py:65-77`) commits when the
-    // task status update's session block exits.
-    if let Err(failure) = mysql.execute("COMMIT", ()).await {
-        tracing::warn!(%failure, "callback task update commit failed");
     }
 }
 
@@ -686,6 +755,79 @@ mod tests {
              \"metadata\": {\"name\": \"task-1\", \"namespace\": \"default\", \"labels\": {\"source\": \"chat_shell\"}}, \
              \"spec\": {\"title\": \"t\", \"prompt\": \"p\", \"fork\": null}, \
              \"status\": {\"state\": \"Available\", \"status\": \"COMPLETED\", \"progress\": 100}}"
+        );
+    }
+
+    /// `Task.model_dump(mode="json")` fills every omitted optional field, so
+    /// the status update carries the keys the stored create payload lacks
+    /// (`app/schemas/kind.py:153-168,851-948`; recorded `UPDATE tasks` qs1642).
+    #[test]
+    fn task_status_update_dumps_the_full_model_shape() {
+        let mut payload = json!({
+            "status": {
+                "progress": 0, "state": "Available", "status": "RUNNING", "result": null,
+                "errorMessage": "", "createdAt": "2026-10-20T15:01:11.726425",
+                "updatedAt": "2026-10-20T15:01:12.423528", "completedAt": null
+            },
+            "apiVersion": "agent.wecode.io/v1",
+            "spec": {
+                "title": "t", "prompt": "p", "teamRef": {"name": "team", "namespace": "n"},
+                "workspaceRef": {"name": "w", "namespace": "default"}, "is_group_chat": false
+            },
+            "kind": "Task",
+            "metadata": {"labels": {}, "name": "task-1", "namespace": "default"}
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+        complete_task_model(&mut payload);
+        let rendered = Value::Object(render_task_crd(payload));
+        assert_eq!(
+            rendered.pointer("/metadata/displayName"),
+            Some(&Value::Null)
+        );
+        for field in [
+            "knowledgeBaseRefs",
+            "knowledgeBaseScopes",
+            "device_id",
+            "execution",
+            "fork",
+            "currentStage",
+        ] {
+            assert_eq!(
+                rendered.pointer(&format!("/spec/{field}")),
+                Some(&Value::Null),
+                "{field}"
+            );
+        }
+        assert_eq!(
+            rendered.pointer("/spec/externalKnowledgeRefs"),
+            Some(&json!([]))
+        );
+        for field in ["message", "subTasks", "app", "archive"] {
+            assert_eq!(
+                rendered.pointer(&format!("/status/{field}")),
+                Some(&Value::Null),
+                "{field}"
+            );
+        }
+        let status = rendered.get("status").unwrap().as_object().unwrap();
+        assert_eq!(
+            status.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec![
+                "state",
+                "message",
+                "status",
+                "progress",
+                "result",
+                "errorMessage",
+                "createdAt",
+                "updatedAt",
+                "completedAt",
+                "subTasks",
+                "app",
+                "archive",
+            ]
         );
     }
 }

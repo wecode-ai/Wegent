@@ -441,4 +441,32 @@ mod tests {
         assert!(decode_json(b"not json").is_none());
         assert!(decode_json(&[0xff, 0xfe]).is_none());
     }
+
+    /// The cutover and the handler registration must agree. An inactive route
+    /// entry sends `GET /api/im/private-sessions` to the Python fallback, so
+    /// the recorded session list is not served by this handler.
+    #[test]
+    fn selected_route_is_registered_in_the_shared_group() {
+        const PATH: &str = "/api/im/private-sessions";
+        let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
+        let config = crate::hybrid::load_routes_config(&file).unwrap();
+        assert!(
+            config
+                .routes
+                .iter()
+                .any(|rule| rule.path == PATH && rule.methods.iter().any(|method| method == "GET")),
+            "GET {PATH} must be selected for Rust"
+        );
+        let table = crate::RouteTable::compile(config).unwrap();
+        assert!(table.matches(&http::Method::GET, PATH));
+
+        // `method_bit`: DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT.
+        const GET: u16 = 1 << 1;
+        let registered = brz_http_server::__private::inventory::iter::<
+            crate::__http_registry_http_apis::Entry,
+        >()
+        .flat_map(|entry| (entry.0.routes)())
+        .any(|route| route.path == PATH && route.methods & GET != 0);
+        assert!(registered, "GET {PATH} must be registered by the router");
+    }
 }

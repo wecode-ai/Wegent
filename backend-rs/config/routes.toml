@@ -603,9 +603,9 @@ path = "/api/v1/dsh-plugin-storage/units/:unit/load"
 
 # `GET /api/v1/loop-items/{item_id}/assignments` is served by the
 # `loop_tasks::assignments` handler.
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/v1/loop-items/:item_id/assignments"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/loop-items/:item_id/assignments"
 
 # `GET /api/v1/loop-items/{item_id}/comments` is selected from the traffic-E2E
 # recording; the Rust handler is still pending. Keep Python fallback until the
@@ -708,10 +708,10 @@ path = "/api/git/repositories/search" # app/api/endpoints/repository.py:122
 [[routes]]
 methods = ["POST"]
 path = "/api/internal/api-keys/lookup" # app/api/endpoints/internal/api_keys.py:29
-# Deferred: numeric pipeline stages must preserve manual confirmation semantics.
-#[[routes]]
-#methods = ["POST"]
-#path = "/api/internal/callback" # app/api/endpoints/internal/callback.py:103
+# Executor callback events are handled by the migrated Rust callback pipeline.
+[[routes]]
+methods = ["POST"]
+path = "/api/internal/callback" # app/api/endpoints/internal/callback.py:103
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/internal/chat/history/:session_id/subtasks" # app/api/endpoints/internal/chat_storage.py:1140
@@ -1029,3 +1029,8 @@ path = "/api/api/v1/kinds/skills/:skill_id/download"
 # GET /api/knowledge-bases/:knowledge_base_id: private_runtime_ignores_static_cutover_exclusions.
 # DELETE /api/tasks/bulk: no_exact_progress_ledger.
 # GET /api/tasks/:task_id/remote-workspace/file: recent_replay_not_passing.
+
+# Worker-side runtime RPC bridge.
+[[routes]]
+methods = ["POST"]
+path = "/api/internal/robot-queue/emit-runtime-rpc"

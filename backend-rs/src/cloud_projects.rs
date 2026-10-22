@@ -41,7 +41,8 @@ mod collaboration_access;
 mod environment_authorization;
 
 pub(crate) use access::{
-    LOOP_ITEMS_COLUMNS, entity_columns, project_access_point_statement, role_for_priority,
+    LOOP_ITEMS_COLUMNS, WORKSPACE_ID_COLUMN, entity_columns, project_access_point_statement,
+    role_for_priority,
 };
 
 /// `PATCH /api/v1/cloud-projects/{project_id}`: update one cloud project.
@@ -211,7 +212,7 @@ async fn all_user_grant_roles<M: Mysql>(
 /// reduced to one row. Returns the accessible active project row and the
 /// aggregated role priority, or `None` when no permission source grants the
 /// caller access (the source raises `404 "Cloud project not found"`).
-async fn project_access<M: Mysql>(
+pub(crate) async fn project_access<M: Mysql>(
     mysql: &M,
     project_id: i64,
     user_id: i32,
@@ -220,13 +221,25 @@ async fn project_access<M: Mysql>(
     // carries no bind parameters.
     let statement = project_access_point_statement(user_id, project_id);
     let row: Option<MysqlRow> = mysql.fetch_optional(statement, ()).await?;
-    row.map(|row| {
-        // The joined aggregate supplies the caller's role priority; read it
-        // before the typed project projection consumes the row.
-        let priority: i64 = row.get_required("anon_1_priority")?;
-        ProjectListRow::from_mysql_row(row).map(|project| (project, priority))
-    })
-    .transpose()
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    // The joined aggregate supplies the caller's role priority and the leading
+    // scalar subquery the parent workspace id; read both before the typed
+    // project projection consumes the row.
+    let priority: i64 = row.get_required("anon_3_priority")?;
+    let workspace_id: Option<i64> = row.get("anon_1")?;
+    let project = ProjectListRow::from_mysql_row(row)?;
+    // `check` resolves permission provenance after the role query.
+    crate::board_snapshot::repository::record_project_sources(
+        mysql,
+        project_id,
+        user_id,
+        workspace_id,
+        user_id,
+    )
+    .await?;
+    Ok(Some((project, priority)))
 }
 
 /// `workspace_id` query parameter (`Query(default=None)`): the optional parent
@@ -312,7 +325,7 @@ async fn get_cloud_project(
 
 /// `project_id: int` path parameter: FastAPI parses it as an integer and
 /// raises a 422 `int_parsing` validation error for any other text.
-fn parse_project_id(project_id: &str) -> Result<i64, FastApiError> {
+pub(crate) fn parse_project_id(project_id: &str) -> Result<i64, FastApiError> {
     project_id.parse::<i64>().map_err(|_| {
         FastApiError::validation(json!([{
             "type": "int_parsing",
@@ -431,9 +444,10 @@ async fn project_chat_agents(
         .await
         .map_err(internal_error)?;
     let mut visible_agents: Vec<board_snapshot::handler::AgentView> = Vec::new();
-    for agent in agents.iter().filter(|agent| {
-        board_snapshot::handler::agent_visible_to_user(agent, current_user.id, &access.role)
-    }) {
+    for agent in agents
+        .iter()
+        .filter(|agent| board_snapshot::handler::agent_visible_to_user(agent, current_user.id))
+    {
         visible_agents.push(
             board_snapshot::handler::agent_to_view(
                 state,

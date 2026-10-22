@@ -61,6 +61,12 @@ pub trait TaskStore:
     /// is `Task` and it is active.
     async fn get_active_task(&self, task_id: i64) -> MysqlResult<Option<MysqlRow>>;
 
+    /// `task_store.get_regular_active_task`: the task row for `task_id` when
+    /// its kind is `Task`, its namespace is not `system`, and it is the
+    /// regular active state (`TaskKnowledgeBaseService.get_task`, reached by
+    /// both bound-knowledge-base chains).
+    async fn get_regular_active_task(&self, task_id: i64) -> MysqlResult<Option<MysqlRow>>;
+
     /// `task_access_store._get_accessible_task`: the active task row the
     /// access store authorizes a viewer against. Unlike `get_active_task`,
     /// this read is not preceded by the store's legacy owner/migrated-copy

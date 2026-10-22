@@ -92,6 +92,7 @@ pub async fn build() -> Result<AppState> {
 
     Ok(AppState {
         entity_resolvers: crate::permissions::EntityResolvers::public(mysql.clone()),
+        seed_tasks: crate::new_user_resources::default_tasks(mysql.clone()),
         user_profile: Arc::new(crate::user_profile::DefaultUserViewExtension),
         user_git_info: Arc::new(crate::user_profile::StoredGitInfo),
         user_git_info_mask: Arc::new(crate::user_profile::NoGitInfoMasking),
@@ -138,6 +139,7 @@ pub async fn build() -> Result<AppState> {
         // The outbound token issuer's `_collect_extra_claims` seam: the
         // open-source core contributes no extra claims.
         token_issuer_extra_claims: Arc::new(crate::token_issuers::NoExtraClaims),
+        external_knowledge_auth: Arc::new(crate::mcp::knowledge_external::auth::PersonalApiKeyAuth),
         // `create_response`'s background dispatch worker is spawned here so the
         // fire-and-forget executor/chat-shell dispatch is initialization-owned.
         responses_dispatch: Arc::new(crate::responses::dispatch::ResponsesDispatch::spawn()),

@@ -31,16 +31,12 @@ use brz_mysql::Mysql;
 use cbc::Encryptor;
 use cbc::cipher::block_padding::Pkcs7;
 use cbc::cipher::{BlockEncryptMut, KeyIvInit};
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::auth::{AppAuthenticator, UserRow};
 use crate::config::AuthConfig;
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
-
-/// `verify_task_token`'s required `type` claim value.
-const TASK_TOKEN_TYPE: &str = "task_token";
 
 /// The `HTTPException(401)` detail for a rejected task token.
 const INVALID_TOKEN_DETAIL: &str = "Invalid Wegent token";
@@ -64,25 +60,6 @@ pub struct WegentRuntimeTaskUser {
     pub user_id: i64,
     /// `token_info.expire_at` (`payload["exp"]`, `0` when absent).
     pub expire_at: i64,
-}
-
-/// `verify_task_token`'s required/optional claims.
-///
-/// `task_id`, `subtask_id`, `user_id` and `user_name` are read with `[]` in the
-/// source, so a missing one raises `KeyError` and the token is rejected;
-/// `exp` is read with `.get`, so it stays optional and defaults to `0`.
-#[derive(Debug, Deserialize)]
-struct TaskTokenClaims {
-    #[serde(rename = "type")]
-    token_type: Option<String>,
-    #[allow(dead_code, reason = "required claim; its presence is the check")]
-    task_id: i64,
-    #[allow(dead_code, reason = "required claim; its presence is the check")]
-    subtask_id: i64,
-    user_id: i64,
-    #[allow(dead_code, reason = "required claim; its presence is the check")]
-    user_name: String,
-    exp: Option<i64>,
 }
 
 impl Authenticator<WegentRuntimeTaskUser> for AppAuthenticator {
@@ -148,73 +125,18 @@ async fn runtime_user_response(
     Ok(WegentRuntimeUserResponse { user: encrypted })
 }
 
-/// `extract_token_from_header`: the credential of a two-token
-/// `Bearer <token>` header (`str.split()` collapses runs of whitespace and
-/// drops empty tokens), or `None` for any other shape.
-fn extract_token_from_header(authorization: &str) -> Option<&str> {
-    let mut parts = authorization.split_whitespace();
-    let scheme = parts.next()?;
-    let token = parts.next()?;
-    if parts.next().is_some() {
-        return None;
-    }
-    scheme.eq_ignore_ascii_case("bearer").then_some(token)
-}
-
-/// `verify_task_token`: decode the JWT (active key then legacy keys, `exp`
-/// validated with no leeway), require `type=task_token`, and yield the task
-/// identity. Any failure returns `None`, which the caller maps to the 401.
+/// `verify_task_token`: decode and validate the recorded task token through
+/// the shared contract ([`crate::task_token`]). Any failure returns `None`,
+/// which the caller maps to the 401.
 fn verify_task_token(
     config: &AuthConfig,
     authorization: Option<&str>,
 ) -> Option<WegentRuntimeTaskUser> {
-    let token = extract_token_from_header(authorization?)?;
-    let claims = decode_task_token(config, token)?;
-    if claims.token_type.as_deref() != Some(TASK_TOKEN_TYPE) {
-        return None;
-    }
+    let identity = crate::task_token::verify(config, authorization)?;
     Some(WegentRuntimeTaskUser {
-        user_id: claims.user_id,
-        expire_at: claims.exp.unwrap_or(0),
+        user_id: identity.user_id,
+        expire_at: identity.expire_at,
     })
-}
-
-/// Decode a task token with the active key, then each legacy key
-/// (`jwt_compat.decode_pyjwt`).
-fn decode_task_token(config: &AuthConfig, token: &str) -> Option<TaskTokenClaims> {
-    let mut validation = Validation::new(algorithm(config));
-    // python-jose/PyJWT defaults: signature and `exp` when present, no audience,
-    // no required claims, and no leeway.
-    validation.validate_aud = false;
-    validation.validate_exp = true;
-    validation.validate_nbf = true;
-    validation.leeway = 0;
-    validation.required_spec_claims.clear();
-    decoding_keys(config).into_iter().find_map(|key_bytes| {
-        decode::<TaskTokenClaims>(token, &DecodingKey::from_secret(&key_bytes), &validation)
-            .ok()
-            .map(|data| data.claims)
-    })
-}
-
-/// Decode keys derived from the active key and legacy decode-only keys.
-fn decoding_keys(config: &AuthConfig) -> Vec<Vec<u8>> {
-    let mut keys = vec![config.jwt_key.as_bytes().to_vec()];
-    for key in &config.legacy_jwt_keys {
-        if !keys.iter().any(|existing| existing == key.as_bytes()) {
-            keys.push(key.as_bytes().to_vec());
-        }
-    }
-    keys
-}
-
-/// Algorithm from settings (`ALGORITHM`, default `HS256`).
-fn algorithm(config: &AuthConfig) -> Algorithm {
-    match config.algorithm.as_str() {
-        "HS384" => Algorithm::HS384,
-        "HS512" => Algorithm::HS512,
-        _ => Algorithm::HS256,
-    }
 }
 
 /// The active user by id, mirroring the source SQLAlchemy rendering
@@ -313,9 +235,10 @@ fn encrypt_cbc(key: &[u8], iv: &[u8], plain: &str) -> Result<Vec<u8>, CryptoConf
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::task_token::extract_token_from_header;
     use crate::user_profile::UserViewExtension as _;
     use chrono::NaiveDate;
-    use jsonwebtoken::EncodingKey;
+    use jsonwebtoken::{Algorithm, EncodingKey};
 
     fn config() -> AuthConfig {
         AuthConfig {

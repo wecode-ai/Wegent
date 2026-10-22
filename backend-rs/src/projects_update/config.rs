@@ -119,6 +119,23 @@ fn valid_mode(object: &Map<String, Value>) -> Result<Option<String>, FastApiErro
     }
 }
 
+/// `taskSource: Optional[Literal["api", "dingtalk"]]`: the task source of an
+/// automatically created task-group project.
+fn valid_task_source(object: &Map<String, Value>) -> Result<Option<String>, FastApiError> {
+    match object.get("taskSource") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(text)) if matches!(text.as_str(), "api" | "dingtalk") => {
+            Ok(Some(text.clone()))
+        }
+        Some(other) => Err(config_error(
+            &["config", "taskSource"],
+            "literal_error",
+            "Input should be 'api' or 'dingtalk'",
+            other,
+        )),
+    }
+}
+
 /// `execution: Optional[ProjectExecutionConfig]`.
 fn valid_execution(object: &Map<String, Value>) -> Result<Option<ValidExecution>, FastApiError> {
     let Some(value) = object.get("execution") else {
@@ -594,6 +611,7 @@ pub(super) fn validate_project_config(value: &Value) -> Result<StoredProjectConf
         &["config"],
         &[
             "mode",
+            "taskSource",
             "device_id",
             "execution",
             "team",
@@ -603,6 +621,7 @@ pub(super) fn validate_project_config(value: &Value) -> Result<StoredProjectConf
         ],
     )?;
     let mode = valid_mode(object)?;
+    let task_source = valid_task_source(object)?;
     let device_id = field_str(object, &["config"], "device_id")?;
     let mut execution = valid_execution(object)?;
     let team = valid_team(object)?;
@@ -725,6 +744,7 @@ pub(super) fn validate_project_config(value: &Value) -> Result<StoredProjectConf
 
     Ok(StoredProjectConfig {
         mode,
+        task_source,
         device_id,
         execution: execution.map(|execution| super::super::ProjectExecutionConfig {
             target_type: execution.target_type,

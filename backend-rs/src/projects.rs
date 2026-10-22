@@ -43,6 +43,7 @@
 //! `task_store.clear_project_for_owned_tasks` unless the origin is `wework`,
 //! then flushes the soft delete (`is_active = False`) and commits; it responds
 //! `204` with an empty body.
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use brz_http_server::{Response, StatusCode};
@@ -57,7 +58,7 @@ use crate::state::AppState;
 
 /// `projects` columns as rendered by `db.query(Project)` (labeled
 /// `projects_<column>`).
-const PROJECT_COLUMNS: &str = "projects.id AS projects_id, \
+pub(crate) const PROJECT_COLUMNS: &str = "projects.id AS projects_id, \
      projects.user_id AS projects_user_id, projects.name AS projects_name, \
      projects.description AS projects_description, \
      projects.color AS projects_color, \
@@ -118,6 +119,11 @@ impl serde::Serialize for NullableConfig {
 struct StoredProjectConfig {
     #[serde(default)]
     mode: Option<String>,
+    /// `taskSource: Optional[Literal["api", "dingtalk"]]`: the task source of
+    /// an automatically created task-group project (`task_source_group.py`
+    /// stores it in `config`). The response model re-serializes it.
+    #[serde(default, rename = "taskSource")]
+    task_source: Option<String>,
     #[serde(default)]
     device_id: Option<String>,
     #[serde(default)]
@@ -590,11 +596,28 @@ async fn projects_list(
         .await
         .map_err(dependency_error)?;
 
+    // `include_tasks=false` counts each project's active tasks in one grouped
+    // query (`task_store.count_active_tasks_by_project`) instead of listing
+    // them. The source issues it before building the items, and an empty
+    // project list issues no count statement at all.
+    let task_counts = if params.include_tasks {
+        HashMap::new()
+    } else {
+        let owners: Vec<(i64, i64)> = projects
+            .iter()
+            .map(|project| (project.projects_id, project.projects_user_id))
+            .collect();
+        state
+            .task_store
+            .count_active_tasks_by_project(&owners, Some(&params.client_origin))
+            .await
+            .map_err(dependency_error)?
+    };
+
     let mut items = Vec::with_capacity(projects.len());
     for project in &projects {
-        // `include_tasks=false` keeps `tasks` empty. The source endpoint
-        // does not issue a task-count query in this branch, so the count
-        // remains zero as in the recorded implementation.
+        // `include_tasks=true` lists the project's tasks; otherwise only the
+        // grouped count feeds `task_count`.
         let (tasks, task_count) = if params.include_tasks {
             let merged = query_project_tasks(
                 state,
@@ -611,7 +634,11 @@ async fn projects_list(
                 .collect();
             (items, count)
         } else {
-            (Vec::new(), 0)
+            let count = task_counts
+                .get(&project.projects_id)
+                .copied()
+                .unwrap_or_default();
+            (Vec::new(), count)
         };
 
         items.push(ProjectItem {

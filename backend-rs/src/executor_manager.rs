@@ -77,6 +77,10 @@ struct ExecutorRestoreRequest<'a> {
 }
 
 /// The retained executor-manager client and its resolved base URL.
+///
+/// Cloning shares the retained HTTP client; request-scoped code takes a clone
+/// of the startup-owned instance instead of building a new pool.
+#[derive(Clone)]
 pub struct ExecutorManager {
     client: Client,
     base: String,

@@ -20,6 +20,10 @@ use super::socketio::{publish_emit, publish_emit_in_room};
 
 const TASK_STREAMING_ACTIVITY_TOUCH_INTERVAL: Duration = Duration::from_secs(1);
 
+/// `STREAMING_STORAGE_FLUSH_INTERVAL_SECONDS`: the source debounces buffered
+/// stream content and flushes it one second after the first buffered piece.
+const STREAMING_STORAGE_FLUSH_INTERVAL: Duration = Duration::from_secs(1);
+
 const STREAM_BOUNDARY_EVENT_TYPES: [&str; 6] = [
     "tool_start",
     "tool_argument_delta",
@@ -36,21 +40,26 @@ enum StreamContentType {
 }
 
 /// The wrapper that persists stream state before forwarding to Socket.IO.
-pub(crate) struct StatusUpdatingEmitter<'r, R: Redis> {
-    redis: &'r R,
+///
+/// The emitter owns its Redis handle so a response-body stream can retain it
+/// across polls; `RedisService` clones share one pool.
+pub(crate) struct StatusUpdatingEmitter<R: Redis> {
+    redis: R,
     task_id: i64,
     subtask_id: i64,
     buffer: Vec<(StreamContentType, String)>,
+    first_buffered_at: Option<Instant>,
     last_activity_touch: Option<Instant>,
 }
 
-impl<'r, R: Redis> StatusUpdatingEmitter<'r, R> {
-    pub(crate) fn new(redis: &'r R, task_id: i64, subtask_id: i64) -> Self {
+impl<R: Redis> StatusUpdatingEmitter<R> {
+    pub(crate) fn new(redis: R, task_id: i64, subtask_id: i64) -> Self {
         Self {
             redis,
             task_id,
             subtask_id,
             buffer: Vec::new(),
+            first_buffered_at: None,
             last_activity_touch: None,
         }
     }
@@ -58,6 +67,9 @@ impl<'r, R: Redis> StatusUpdatingEmitter<'r, R> {
     fn buffer_content(&mut self, content_type: StreamContentType, content: &str) {
         if content.is_empty() {
             return;
+        }
+        if self.first_buffered_at.is_none() {
+            self.first_buffered_at = Some(Instant::now());
         }
         match self.buffer.last_mut() {
             Some((last_type, buffered)) if *last_type == content_type => {
@@ -67,7 +79,33 @@ impl<'r, R: Redis> StatusUpdatingEmitter<'r, R> {
         }
     }
 
+    /// The instant when `_flush_stream_storage_after_delay` fires.
+    ///
+    /// The source arms one detached `asyncio.sleep(1.0)` task per buffered
+    /// run, so the batch boundary is exactly one second after the first piece
+    /// of that run. Callers must wake at this instant; checking only on an
+    /// unrelated periodic tick stretches the batch and stores different
+    /// `chat:streaming:*` content than the source.
+    pub(crate) fn flush_deadline(&self) -> Option<Instant> {
+        self.first_buffered_at
+            .map(|first| first + STREAMING_STORAGE_FLUSH_INTERVAL)
+    }
+
+    /// `_flush_stream_storage_after_delay`: write the buffered content once the
+    /// source's one-second debounce has elapsed.
+    ///
+    /// The source arms one detached `asyncio.sleep(1.0)` task per buffered run,
+    /// and that task only writes the `chat:streaming:*` batch. Cancellation
+    /// reads belong to the readers instead: `raw_chat_stream` reads
+    /// `is_cancelled` once per consumed event, and `dispatch_sse`'s
+    /// `_wait_for_sse_cancellation` poller reads it once per second. A flush
+    /// tick must therefore not issue its own `GET chat:cancel:*`.
+    pub(crate) async fn flush_due(&mut self) {
+        self.flush_stream_storage().await;
+    }
+
     async fn flush_stream_storage(&mut self) {
+        self.first_buffered_at = None;
         let pending = std::mem::take(&mut self.buffer);
         if pending.is_empty() {
             return;
@@ -75,10 +113,10 @@ impl<'r, R: Redis> StatusUpdatingEmitter<'r, R> {
         for (content_type, content) in pending {
             let result = match content_type {
                 StreamContentType::Text => {
-                    session::add_text_content(self.redis, self.subtask_id, &content).await
+                    session::add_text_content(&self.redis, self.subtask_id, &content).await
                 }
                 StreamContentType::Thinking => {
-                    session::add_thinking_content(self.redis, self.subtask_id, &content).await
+                    session::add_thinking_content(&self.redis, self.subtask_id, &content).await
                 }
             };
             if let Err(error) = result {
@@ -95,7 +133,8 @@ impl<'r, R: Redis> StatusUpdatingEmitter<'r, R> {
         {
             return;
         }
-        if let Err(error) = session::touch_task_streaming_activity(self.redis, self.task_id).await {
+        if let Err(error) = session::touch_task_streaming_activity(&self.redis, self.task_id).await
+        {
             tracing::warn!(%error, "callback streaming activity touch failed");
         }
         self.last_activity_touch = Some(Instant::now());
@@ -103,10 +142,35 @@ impl<'r, R: Redis> StatusUpdatingEmitter<'r, R> {
 
     /// Emit one event: persist stream state, then forward to Socket.IO.
     pub(crate) async fn emit(&mut self, event: &mut ExecutionEvent) -> RedisResult<()> {
+        self.persist(event).await?;
+
+        // A terminal event's frames are emitted by the caller after the task
+        // completion subsystem has run, so its `chat:done` payload carries the
+        // collected result; see `mod.rs`.
+        if !is_terminal(&event.event_type) {
+            self.forward_to_socketio(event).await?;
+        }
+        Ok(())
+    }
+
+    /// Persist one event's stream state without forwarding it to Socket.IO.
+    ///
+    /// The chat-shell SSE dispatch wraps its emitter in
+    /// `StatusUpdatingEmitter` exactly like the callback does, but its wrapped
+    /// `SSEResultEmitter` writes to the caller's stream instead of publishing
+    /// Socket.IO frames. The persistence half is identical.
+    pub(crate) async fn emit_persist_only(
+        &mut self,
+        event: &mut ExecutionEvent,
+    ) -> RedisResult<()> {
+        self.persist(event).await
+    }
+
+    async fn persist(&mut self, event: &mut ExecutionEvent) -> RedisResult<()> {
         match event.event_type.as_str() {
             "start" => {
                 session::set_task_streaming_status(
-                    self.redis,
+                    &self.redis,
                     self.task_id,
                     self.subtask_id,
                     0,
@@ -125,15 +189,7 @@ impl<'r, R: Redis> StatusUpdatingEmitter<'r, R> {
             _ => {}
         }
 
-        self.collect_blocks(event).await?;
-
-        // A terminal event's frames are emitted by the caller after the task
-        // completion subsystem has run, so its `chat:done` payload carries the
-        // collected result; see `mod.rs`.
-        if !is_terminal(&event.event_type) {
-            self.forward_to_socketio(event).await?;
-        }
-        Ok(())
+        self.collect_blocks(event).await
     }
 
     /// Finish the request: flush buffered stream content like `close()`.
@@ -148,7 +204,7 @@ impl<'r, R: Redis> StatusUpdatingEmitter<'r, R> {
                 let tool_protocol = event.data.get("tool_protocol").and_then(Value::as_str);
                 let server_label = event.data.get("server_label").and_then(Value::as_str);
                 session::add_tool_block(
-                    self.redis,
+                    &self.redis,
                     self.subtask_id,
                     event.tool_use_id.as_deref().unwrap_or_default(),
                     event.tool_name.as_deref().unwrap_or_default(),
@@ -160,7 +216,7 @@ impl<'r, R: Redis> StatusUpdatingEmitter<'r, R> {
                 .await?;
                 if event.data.get("argument_status").and_then(Value::as_str) == Some("streaming") {
                     session::update_tool_block_status(
-                        self.redis,
+                        &self.redis,
                         self.subtask_id,
                         event.tool_use_id.as_deref().unwrap_or_default(),
                         Some("generating_arguments"),
@@ -176,7 +232,7 @@ impl<'r, R: Redis> StatusUpdatingEmitter<'r, R> {
             "tool_argument_delta" => {
                 if let Some(tool_use_id) = event.tool_use_id.as_deref() {
                     session::update_tool_block_status(
-                        self.redis,
+                        &self.redis,
                         self.subtask_id,
                         tool_use_id,
                         Some("generating_arguments"),
@@ -192,7 +248,7 @@ impl<'r, R: Redis> StatusUpdatingEmitter<'r, R> {
             "tool_argument_done" => {
                 if let Some(tool_use_id) = event.tool_use_id.as_deref() {
                     session::update_tool_block_status(
-                        self.redis,
+                        &self.redis,
                         self.subtask_id,
                         tool_use_id,
                         Some("pending"),
@@ -214,7 +270,7 @@ impl<'r, R: Redis> StatusUpdatingEmitter<'r, R> {
                     let tool_protocol = event.data.get("tool_protocol").and_then(Value::as_str);
                     let server_label = event.data.get("server_label").and_then(Value::as_str);
                     session::update_tool_block_status(
-                        self.redis,
+                        &self.redis,
                         self.subtask_id,
                         tool_use_id,
                         Some(if failed { "error" } else { "done" }),
@@ -232,14 +288,14 @@ impl<'r, R: Redis> StatusUpdatingEmitter<'r, R> {
                 // forwards to Socket.IO, so its generated id/timestamp appear
                 // in the emitted payload.
                 if let Some(Value::Object(block)) = event.data.get_mut("block") {
-                    session::add_block(self.redis, self.subtask_id, block).await?;
+                    session::add_block(&self.redis, self.subtask_id, block).await?;
                 }
             }
             "block_updated" => {
                 let block_id = event.data.get("block_id").and_then(Value::as_str);
                 let updates = event.data.get("updates").and_then(Value::as_object);
                 if let (Some(block_id), Some(updates)) = (block_id, updates) {
-                    let blocks = session::get_blocks(self.redis, self.subtask_id).await;
+                    let blocks = session::get_blocks(&self.redis, self.subtask_id).await;
                     let existing = blocks
                         .into_iter()
                         .find(|block| block.get("id").and_then(Value::as_str) == Some(block_id));
@@ -261,7 +317,7 @@ impl<'r, R: Redis> StatusUpdatingEmitter<'r, R> {
                             block
                         }
                     };
-                    session::add_block(self.redis, self.subtask_id, &mut block).await?;
+                    session::add_block(&self.redis, self.subtask_id, &mut block).await?;
                 }
             }
             _ => {}
@@ -286,7 +342,7 @@ impl<'r, R: Redis> StatusUpdatingEmitter<'r, R> {
                     "shell_type": shell_type,
                     "message_id": event.message_id,
                 });
-                publish_emit(self.redis, "chat:start", event.task_id, payload).await?;
+                publish_emit(&self.redis, "chat:start", event.task_id, payload).await?;
             }
             "chunk" => {
                 let payload = chunk_payload(
@@ -298,7 +354,7 @@ impl<'r, R: Redis> StatusUpdatingEmitter<'r, R> {
                     event.data.get("block_offset").cloned(),
                     event.result.clone(),
                 );
-                publish_emit(self.redis, "chat:chunk", event.task_id, payload).await?;
+                publish_emit(&self.redis, "chat:chunk", event.task_id, payload).await?;
             }
             "thinking" => {
                 let mut result = Map::new();
@@ -315,7 +371,7 @@ impl<'r, R: Redis> StatusUpdatingEmitter<'r, R> {
                     None,
                     Some(Value::Object(result)),
                 );
-                publish_emit(self.redis, "chat:chunk", event.task_id, payload).await?;
+                publish_emit(&self.redis, "chat:chunk", event.task_id, payload).await?;
             }
             "tool_start" => {
                 let mut block = session::create_tool_block(
@@ -338,7 +394,7 @@ impl<'r, R: Redis> StatusUpdatingEmitter<'r, R> {
                     "subtask_id": event.subtask_id,
                     "block": Value::Object(block),
                 });
-                publish_emit(self.redis, "chat:block_created", event.task_id, payload).await?;
+                publish_emit(&self.redis, "chat:block_created", event.task_id, payload).await?;
             }
             "tool_argument_delta" | "tool_argument_done" => {
                 let status = if event.event_type == "tool_argument_delta" {
@@ -356,7 +412,7 @@ impl<'r, R: Redis> StatusUpdatingEmitter<'r, R> {
                     event.tool_use_id.as_deref().unwrap_or_default(),
                     &updates,
                 );
-                publish_emit(self.redis, "chat:block_updated", event.task_id, payload).await?;
+                publish_emit(&self.redis, "chat:block_updated", event.task_id, payload).await?;
             }
             "tool_result" => {
                 let status = if matches!(
@@ -380,7 +436,7 @@ impl<'r, R: Redis> StatusUpdatingEmitter<'r, R> {
                     event.tool_use_id.as_deref().unwrap_or_default(),
                     &updates,
                 );
-                publish_emit(self.redis, "chat:block_updated", event.task_id, payload).await?;
+                publish_emit(&self.redis, "chat:block_updated", event.task_id, payload).await?;
             }
             "block_created" => {
                 if let Some(block) = event.data.get("block") {
@@ -389,7 +445,7 @@ impl<'r, R: Redis> StatusUpdatingEmitter<'r, R> {
                         "subtask_id": event.subtask_id,
                         "block": block.clone(),
                     });
-                    publish_emit(self.redis, "chat:block_created", event.task_id, payload).await?;
+                    publish_emit(&self.redis, "chat:block_created", event.task_id, payload).await?;
                 }
             }
             "block_updated" => {
@@ -401,7 +457,7 @@ impl<'r, R: Redis> StatusUpdatingEmitter<'r, R> {
                 let updates = event.data.get("updates").and_then(Value::as_object);
                 if let Some(updates) = updates {
                     let payload = block_update_payload(event, block_id, updates);
-                    publish_emit(self.redis, "chat:block_updated", event.task_id, payload).await?;
+                    publish_emit(&self.redis, "chat:block_updated", event.task_id, payload).await?;
                 }
             }
             "status_updated" => {
@@ -423,7 +479,7 @@ impl<'r, R: Redis> StatusUpdatingEmitter<'r, R> {
                     "context_metrics": context_metrics,
                     "context_compaction": context_compaction,
                 });
-                session::save_context_metrics(self.redis, event.subtask_id, &snapshot).await?;
+                session::save_context_metrics(&self.redis, event.subtask_id, &snapshot).await?;
                 let mut payload = Map::new();
                 payload.insert("task_id".into(), json!(event.task_id));
                 payload.insert("subtask_id".into(), json!(event.subtask_id));
@@ -433,7 +489,7 @@ impl<'r, R: Redis> StatusUpdatingEmitter<'r, R> {
                     payload.insert("context_compaction".into(), context_compaction);
                 }
                 publish_emit(
-                    self.redis,
+                    &self.redis,
                     "chat:status_updated",
                     event.task_id,
                     Value::Object(payload),
@@ -612,21 +668,5 @@ pub(crate) fn chunk_payload_for_test(
 }
 
 #[cfg(test)]
-mod done_frame_tests {
-    use super::*;
-    use crate::internal_callback::py_json::python_dumps;
-
-    #[test]
-    fn sanitize_client_payload_drops_only_private_workflow_urls() {
-        let payload = json!({
-            "value": "x",
-            "polling_url": "https://a",
-            "nested": {"task_url": "https://b", "keep": 1},
-            "list": [{"query_url": "https://c"}, "v"],
-        });
-        assert_eq!(
-            python_dumps(&sanitize_client_payload(&payload)),
-            "{\"value\": \"x\", \"nested\": {\"keep\": 1}, \"list\": [{}, \"v\"]}"
-        );
-    }
-}
+#[path = "emitter_tests.rs"]
+mod done_frame_tests;

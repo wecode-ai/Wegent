@@ -14,11 +14,11 @@
 //! (`with_id = true`), while the open-source single-table store leaves the id
 //! to MySQL (`with_id = false`).
 use async_trait::async_trait;
-use brz_mysql::{FromMysqlRow, Mysql, MysqlResult};
+use brz_mysql::{FromMysqlRow, Mysql, MysqlResult, MysqlService};
 
 use crate::task_store_statements::{
-    StatementArg, insert_subtask_statement, insert_task_shell_statement,
-    max_subtask_message_id_statement, update_task_name_and_json_statement,
+    StatementArg, insert_task_shell_statement, max_subtask_message_id_statement,
+    update_task_name_and_json_statement,
 };
 
 /// The task/subtask creation writes of the create path (`SqlAlchemyTaskStore` /
@@ -49,16 +49,26 @@ pub trait TaskStoreCreate: Send + Sync {
         request: &CreateTaskShellRequest<'_>,
     ) -> MysqlResult<(i64, i64)>;
 
-    /// `subtask_store.create_user_and_assistant_subtasks`: insert the paired
-    /// user/assistant subtasks inside one `SAVEPOINT`, returning
-    /// `(user_subtask_id, assistant_subtask_id)`. The savepoint index is the
-    /// session's nested-transaction counter, so a resumed Task that skipped the
-    /// task-creation savepoint uses `sa_savepoint_1`.
-    async fn create_user_and_assistant_subtasks(
+    /// `subtask_store.create_assistant_subtask` and
+    /// `create_user_and_assistant_subtasks`: resolve the task's executor
+    /// reference (the `_take_task_executor_reference` row lock, the label
+    /// consumption, and the fallback assistant read) and insert the paired
+    /// user/assistant subtasks inside one transaction, returning both ids and
+    /// the resolved executor fields.
+    ///
+    /// `mysql` is the application's concrete service: the locking read has to
+    /// run through `Mysql::with_transaction`, whose future is not `Send` through
+    /// a generic store handle. The store supplies its resolved table names and,
+    /// for a sharded deployment, the ids it allocated before the insert. The
+    /// savepoint index is the session's nested-transaction counter, so a
+    /// resumed Task that skipped the task-creation savepoint uses
+    /// `sa_savepoint_1`.
+    async fn create_user_and_assistant_subtasks_with_executor_reference(
         &self,
+        mysql: &MysqlService,
         savepoint: &str,
         request: &CreateSubtasksRequest<'_>,
-    ) -> MysqlResult<(i64, i64)>;
+    ) -> MysqlResult<crate::task_store_executor_reference::SubtaskPairInsert>;
 
     /// `task_store` message-id continuation read: `SELECT max(subtasks
     /// .message_id)` for one task, `None` when it has no subtasks.
@@ -188,14 +198,9 @@ pub struct NewSubtaskRow<'a> {
     pub reply_to_subtask_id: i64,
 }
 
-/// `subtask_store.create_user_subtask` / `create_assistant_subtask`: insert one
-/// `subtasks` row and return its id.
-pub async fn insert_subtask_row<M: Mysql>(
-    mysql: &M,
-    table: &str,
-    with_id: bool,
-    row: &NewSubtaskRow<'_>,
-) -> MysqlResult<i64> {
+/// `insert_subtask_statement`'s bound arguments in column order: the id first
+/// when the store allocated it, every other mapped column after.
+pub fn subtask_insert_arguments(row: &NewSubtaskRow<'_>, with_id: bool) -> Vec<StatementArg> {
     let mut args: Vec<StatementArg> = Vec::with_capacity(21);
     if with_id {
         args.push(StatementArg::Int(row.id));
@@ -220,15 +225,7 @@ pub async fn insert_subtask_row<M: Mysql>(
     args.push(StatementArg::Str(row.sender_type.to_string()));
     args.push(StatementArg::Int(row.sender_user_id));
     args.push(StatementArg::Int(row.reply_to_subtask_id));
-
-    let execution = mysql
-        .execute(insert_subtask_statement(table, with_id), args)
-        .await?;
-    Ok(if with_id {
-        row.id
-    } else {
-        execution.last_insert_id as i64
-    })
+    args
 }
 
 /// One `max_1` scalar row.
@@ -339,31 +336,12 @@ pub struct CreateSubtasksRequest<'a> {
     pub assistant_subtask: NewSubtaskRow<'a>,
 }
 
-/// `create_user_and_assistant_subtasks`: insert the paired user/assistant
-/// subtasks inside `SAVEPOINT {savepoint}` and return `(user_id, assistant_id)`.
-pub async fn create_user_and_assistant_subtasks<M: Mysql>(
-    mysql: &M,
-    table: &str,
-    savepoint: &str,
-    with_id: bool,
-    request: &CreateSubtasksRequest<'_>,
-) -> MysqlResult<(i64, i64)> {
-    mysql.execute(format!("SAVEPOINT {savepoint}"), ()).await?;
-    let user_id = insert_subtask_row(mysql, table, with_id, &request.user_subtask).await?;
-    let assistant_id =
-        insert_subtask_row(mysql, table, with_id, &request.assistant_subtask).await?;
-    mysql
-        .execute(format!("RELEASE SAVEPOINT {savepoint}"), ())
-        .await?;
-    Ok((user_id, assistant_id))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::sql_test_support::KindQueryCapture;
     use crate::task_store_statements::{
-        SUBTASKS_TABLE, TASKS_TABLE, insert_subtask_statement, insert_task_shell_statement,
+        TASKS_TABLE, insert_subtask_statement, insert_task_shell_statement,
         update_task_name_and_json_statement,
     };
 
@@ -464,30 +442,28 @@ mod tests {
         assert_eq!(writes[0].args, 4);
     }
 
-    #[tokio::test]
-    async fn insert_subtask_row_binds_the_recorded_columns() {
-        let mysql = KindQueryCapture::writing();
-        let id = insert_subtask_row(
-            &mysql,
-            "subtasks_0383",
-            true,
-            &subtask_row(897_064_049_841_444),
-        )
-        .await
-        .expect("insert");
-        assert_eq!(id, 897_064_049_841_444);
-        let writes = mysql.writes();
+    #[test]
+    fn insert_subtask_columns_bind_in_the_recorded_order() {
+        let row = subtask_row(897_064_049_841_444);
+        let allocated = subtask_insert_arguments(&row, true);
+        assert_eq!(allocated.len(), 21);
+        assert!(matches!(
+            allocated[0],
+            StatementArg::Int(897_064_049_841_444)
+        ));
+        assert!(matches!(allocated[1], StatementArg::Int(6527)));
+        assert!(matches!(
+            allocated[4],
+            StatementArg::Str(ref title) if title == "User message"
+        ));
         assert_eq!(
-            writes[0].sql,
-            insert_subtask_statement("subtasks_0383", true)
+            insert_subtask_statement("subtasks_0383", true),
+            "INSERT INTO subtasks_0383 (id, user_id, task_id, team_id, title, bot_ids, `role`, executor_namespace, executor_name, executor_deleted_at, prompt, message_id, parent_id, status, progress, result, error_message, created_at, updated_at, completed_at, sender_type, sender_user_id, reply_to_subtask_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now(), now(), ?, ?, ?, ?)"
         );
-        assert_eq!(writes[0].args, 21);
 
-        let base = KindQueryCapture::writing();
-        insert_subtask_row(&base, SUBTASKS_TABLE, false, &subtask_row(0))
-            .await
-            .expect("insert");
-        assert_eq!(base.writes()[0].args, 20);
+        let auto = subtask_insert_arguments(&row, false);
+        assert_eq!(auto.len(), 20, "the autoincrement form binds no id");
+        assert!(matches!(auto[0], StatementArg::Int(6527)));
     }
 
     #[tokio::test]
@@ -546,39 +522,5 @@ mod tests {
         assert!(sqls[1].starts_with("INSERT INTO tasks_0383 (id, user_id"));
         assert!(sqls[2].starts_with("INSERT INTO tasks_0383 (id, user_id"));
         assert_eq!(sqls[3], "RELEASE SAVEPOINT sa_savepoint_1");
-    }
-
-    #[tokio::test]
-    async fn create_subtasks_emits_the_second_savepoint_pair() {
-        let mysql = KindQueryCapture::writing();
-        let request = CreateSubtasksRequest {
-            user_subtask: subtask_row(897_064_049_841_444),
-            assistant_subtask: subtask_row(897_064_049_841_445),
-        };
-        let ids = create_user_and_assistant_subtasks(
-            &mysql,
-            "subtasks_0383",
-            "sa_savepoint_2",
-            true,
-            &request,
-        )
-        .await
-        .expect("create");
-        assert_eq!(ids, (897_064_049_841_444, 897_064_049_841_445));
-
-        let writes = mysql.writes();
-        assert_eq!(writes.len(), 4);
-        assert_eq!(writes[0].sql, "SAVEPOINT sa_savepoint_2");
-        assert!(
-            writes[1]
-                .sql
-                .starts_with("INSERT INTO subtasks_0383 (id, user_id")
-        );
-        assert!(
-            writes[2]
-                .sql
-                .starts_with("INSERT INTO subtasks_0383 (id, user_id")
-        );
-        assert_eq!(writes[3].sql, "RELEASE SAVEPOINT sa_savepoint_2");
     }
 }
