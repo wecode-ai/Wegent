@@ -3,14 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ProjectAgentConfigurationHost } from '@wegent/collaboration'
-import { Bot, Plus } from 'lucide-react'
-
-import {
-  simpleChoiceCardBaseClass,
-  simpleChoiceCardSelectedClass,
-  simpleChoiceCardUnselectedClass,
-} from '@/components/common/simple-choice-card-styles'
-import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
@@ -18,21 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
-import { cn } from '@/lib/utils'
 import { WebAgentResourceForm } from './WebAgentResourceForm'
-
-const modeIcons = {
-  create: Plus,
-  existing: Bot,
-} as const
 
 export const webProjectAgentConfigurationHost: ProjectAgentConfigurationHost = {
   supportsExistingAgentSelection: true,
@@ -48,15 +26,26 @@ export const webProjectAgentConfigurationHost: ProjectAgentConfigurationHost = {
         }}
       >
         <DialogContent
-          className="gap-0 overflow-hidden p-0 sm:max-w-[520px]"
+          className="flex max-h-[90dvh] max-w-[92vw] flex-col gap-0 overflow-hidden rounded-[20px] p-0 sm:max-w-[520px] sm:rounded-[20px]"
           closeButtonProps={{
             'aria-label': closeLabel,
-            className: 'right-5 top-5',
+            className:
+              'right-3 top-3 flex h-11 w-11 items-center justify-center rounded-lg hover:bg-muted md:right-4 md:top-4 md:h-8 md:w-8',
             'data-testid': testIds.close,
             disabled: busy,
           }}
           data-testid={testIds.dialog}
-          overlayProps={{ 'data-testid': testIds.backdrop }}
+          overlayProps={{ 'data-testid': testIds.backdrop, className: 'bg-black/[0.14]' }}
+          onOpenAutoFocus={event => {
+            const search =
+              event.target instanceof HTMLElement
+                ? event.target.querySelector<HTMLInputElement>('input[type="search"]')
+                : null
+            if (search) {
+              event.preventDefault()
+              search.focus()
+            }
+          }}
           preventEscapeClose={busy}
           preventOutsideClick={busy}
         >
@@ -66,77 +55,9 @@ export const webProjectAgentConfigurationHost: ProjectAgentConfigurationHost = {
               {description}
             </DialogDescription>
           </DialogHeader>
-          <div className="px-5 pb-5">{children}</div>
+          <div className="flex min-h-0 flex-col">{children}</div>
         </DialogContent>
       </Dialog>
-    )
-  },
-  renderModePicker({ onChange, options, value }) {
-    return (
-      <RadioGroup
-        className="grid grid-cols-2 gap-2"
-        onValueChange={nextValue => onChange(nextValue as typeof value)}
-        value={value}
-      >
-        {options.map(option => {
-          const Icon = modeIcons[option.value]
-          const selected = option.value === value
-          return (
-            <label
-              className={cn(
-                simpleChoiceCardBaseClass,
-                selected ? simpleChoiceCardSelectedClass : simpleChoiceCardUnselectedClass
-              )}
-              data-testid={`${option.testId}-card`}
-              key={option.value}
-            >
-              <RadioGroupItem
-                aria-label={option.label}
-                data-testid={option.testId}
-                value={option.value}
-              />
-              <span className="min-w-0 flex-1">
-                <span className="flex items-center gap-1.5 text-sm font-medium text-text-primary">
-                  <Icon aria-hidden="true" className="h-4 w-4 text-primary" />
-                  {option.label}
-                </span>
-                <span className="mt-0.5 block text-xs leading-5 text-text-secondary">
-                  {option.description}
-                </span>
-              </span>
-            </label>
-          )
-        })}
-      </RadioGroup>
-    )
-  },
-  renderSelect({ ariaLabel, onChange, options, placeholder, testId, value }) {
-    return (
-      <Select value={value} onValueChange={onChange}>
-        <SelectTrigger aria-label={ariaLabel} data-testid={testId}>
-          <SelectValue placeholder={placeholder} />
-        </SelectTrigger>
-        <SelectContent>
-          {options.map(option => (
-            <SelectItem key={option.value} value={option.value}>
-              {option.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    )
-  },
-  renderPrimaryAction({ children, disabled, onClick, testId }) {
-    return (
-      <Button
-        data-testid={testId}
-        disabled={disabled}
-        onClick={onClick}
-        type="button"
-        variant="primary"
-      >
-        {children}
-      </Button>
     )
   },
 }

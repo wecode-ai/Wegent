@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   cloudRunnerModels,
   runnerModelKey,
+  runnerModelToUnifiedModel,
   type RunnerModelIdentity,
   type WorkspaceProjectAgent,
   type WorkspaceStandInSettings,
@@ -50,14 +51,10 @@ export function useStandInModels(
           source: model.source,
           cloud_model: model.cloud_model,
         })
-        return {
-          name,
-          type: 'runtime' as const,
-          displayName: model.label,
-          modelId: model.model_id,
-          provider: model.provider,
-          runtime: { family: runtime },
-        }
+        return runnerModelToUnifiedModel(
+          model,
+          cloud.status === 'fulfilled' ? cloud.value.data : []
+        )
       })
       const failure = native.status === 'rejected' ? native.reason : null
       const defaultModel = candidates.find(model => model.is_default) ?? candidates[0]
@@ -92,6 +89,7 @@ export function useStandInModels(
     [identity, readyCatalog]
   )
   return {
+    loading: Boolean(services?.standInApi && draft.executionDeviceId && !readyCatalog),
     models: readyCatalog?.models ?? [],
     selectedModel,
     fixed: Boolean(fixedModel),

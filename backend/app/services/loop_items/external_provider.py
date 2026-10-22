@@ -704,6 +704,11 @@ class ExternalLoopItemProvider:
     ) -> dict[str, object]:
         project, number = self._resolve_project(db, item_id)
         access = require_cloud_project_role(db, project.id, user_id, BaseRole.Viewer)
+        if values.position is not None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Manual ordering is not supported by this Issue provider",
+            )
         schedule_fields = {"start_at", "due_at"} & values.model_fields_set
         if any(getattr(values, field) is not None for field in schedule_fields):
             raise HTTPException(

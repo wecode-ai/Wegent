@@ -146,6 +146,16 @@ beforeEach(() => {
 })
 
 describe('notification center', () => {
+  it('does not register an incomplete source before workbench reminders are available', async () => {
+    taskState.reminders = null
+    render(viewWithTask())
+    expect(await screen.findByTestId('wework-notifications-unread')).toHaveTextContent('1')
+    fireEvent.click(screen.getByTestId('wework-notifications-button'))
+    fireEvent.click(screen.getByTestId('wework-notifications-category-tasks'))
+    expect(screen.getByTestId('wework-notifications-task-list')).toHaveTextContent(
+      'notifications.empty_category'
+    )
+  })
   it('marks a general notification read while keeping its content open without navigation', async () => {
     const general = { ...entry, url: null, body: '你好' }
     api.list.mockImplementation((_offset, category) =>

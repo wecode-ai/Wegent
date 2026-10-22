@@ -218,6 +218,7 @@ merge queue 会验证最终进入 `main` 的合并提交，因此合入后不再
 重复运行同一套 Tests、Lint、Platform E2E 和 Wework E2E。保留 `ci:all` 标签后，后续 push 也会运行完整 Windows Core 分片。
 macOS 的 pre-push 检查通过 `caffeinate -is -w` 保持执行期间唤醒，hook 退出时自动释放，避免系统休眠造成测试超时。
 Windows 构建、分片和汇总检查共用同一个运行条件，预期任务被跳过时门禁失败。
+Issue MCP 附件场景在 Linux 和 Windows 均通过共享 `setup-minio-e2e` Action 构建并验证同一固定版本的真实 MinIO；仅 main 写入缓存，场景通过 `WEWORK_E2E_MINIO_BIN` 使用当前平台的可执行文件。
 macOS 内存检查直接调用 Node checkpoint runner，构建缓存命中时无需 pnpm。映射规则位于
 `.github/scripts/classify-wework-desktop-e2e.sh`，新增功能覆盖时
 必须同步登记对应 segment。新增 `DESKTOP_CHECKPOINTS` 检查点时，必须同时把它加入
@@ -275,6 +276,10 @@ pnpm --filter wework e2e:desktop:plugins -- --from-segment skill-mention-renderi
 120 秒。控制命令和等待 helper 都可以通过 `timeoutMs` 为确实较慢的特殊步骤设置
 独立上限；启动、工作台恢复和模型协议矩阵等场景使用各自的专用超时。临时排查慢速
 环境时，可通过 `WEWORK_E2E_STEP_TIMEOUT_MS` 调整普通步骤的全局默认值。
+
+首次模型路由任务与真实 Harness CLI 启动使用工作台启动预算；流式滚动先等待模型请求，再使用原有 10 秒预算校验界面。切换项目后等待执行模式按钮可用；看板卡片移列后先滚动到结果再校验可见性。云端替身复用自适应视图选择 helper，兼容紧凑下拉框。失败工作台快照附带资源请求的连接、发送与响应时序，仅记录路径，不记录查询参数。
+
+进程浏览器的纯数字筛选精确匹配 PID，避免匹配其他进程的启动参数或 PID 子串；文字筛选仍搜索进程名和启动信息。应用菜单检查点保留按主进程 PID 排除无关 helper 的断言。
 
 主桌面流程还覆盖从 Finder 粘贴或拖入普通文件和文件夹：输入框必须显示文件与文件夹路径标签，不得创建附件徽标；发送给 Codex 的请求必须包含对应绝对路径，且不得内联文件内容。该判断以桌面原生传输是否解析出文件路径为准，不能仅因输入框当前标记为远程工作区就提前改走附件上传。顶部快捷发送窗口复用相同规则，只读取图片附件的字节。相关场景均使用普通小文件，本地聚焦排查可分别运行 `node wework/e2e/desktop/run-checkpoints.mjs --pasted-workspace-paths-only` 和 `node wework/e2e/desktop/run-checkpoints.mjs --dropped-workspace-paths-only`。
 
@@ -372,6 +377,11 @@ Executor 在创建 Tokio 运行时之前配置回环地址的 `NO_PROXY`，避�
 Core DSH 使用端口 `0` 直接绑定操作系统分配的端口。Electron 读取 DSH 的实际
 监听地址后再逐项验证 host、Executor、Terminal 和应用入口，不通过提前打开再关闭
 监听器探测端口，避免并行启动时其他服务抢占已探测的端口。
+
+Linux 云端测试的后端、数据库等服务需要在启动前公布端口。共享分配器读取
+`/proc/sys/net/ipv4/ip_local_port_range`，在内核动态端口范围之外选择可绑定的
+非特权端口，并通过端口注册目录隔离并行 checkpoint，避免服务初始化期间被
+Core DSH 等使用端口 `0` 的进程抢占。
 
 GitHub Actions 上传前会再次执行同样的清理，并在 Artifact 路径中排除
 任意深度的 `managed-components`，防止 teardown 失败时把主实例或插件开发子实例的

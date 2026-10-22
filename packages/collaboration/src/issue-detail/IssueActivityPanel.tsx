@@ -49,6 +49,7 @@ export function IssueActivityPanel({
   issue,
   project,
   onTaskUpdated,
+  onTaskRead,
   members,
   agents,
   assignments,
@@ -69,6 +70,7 @@ export function IssueActivityPanel({
   issue: CollaborationIssue
   project?: CollaborationProject
   onTaskUpdated?(issue: CollaborationIssue): void
+  onTaskRead(issue: CollaborationIssue): void
   members: CollaborationMember[]
   agents: CollaborationAgent[]
   assignments: CollaborationAssignment[]
@@ -102,13 +104,13 @@ export function IssueActivityPanel({
       if (!api.issues) return
       try {
         const updated = await api.issues.markRead(issue.id, sequence)
-        onTaskUpdated?.(updated)
+        onTaskRead(updated)
       } catch (cause) {
         onError()
         throw cause
       }
     },
-    [api.issues, issue.id, onError, onTaskUpdated]
+    [api.issues, issue.id, onError, onTaskRead]
   )
   const scroll = useIssueActivityScroll({
     messages: chat.messages,
