@@ -374,6 +374,8 @@ export function WorkbenchProvider({
     runtimeWork: state.runtimeWork,
     lifecycleStore,
     lifecycleSnapshot,
+    standInApi: resolvedServices.standInApi,
+    runtimeApi: resolvedServices.runtimeWorkApi,
   })
   const currentContextUsage = state.currentRuntimeTask
     ? contextUsageByRuntimeTask[runtimeConversationKey(state.currentRuntimeTask)]

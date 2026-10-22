@@ -1,15 +1,34 @@
 import type { UnifiedModel } from './models'
 import {
   type CodexOfficialModel,
+  type CodexModelProviderType,
   codexOfficialModelName,
   CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME,
 } from './codex-official-models'
 const OPENAI_RESPONSES_PROTOCOL = 'openai-responses'
 const RESPONSES_API_FORMAT = 'responses'
 
-function localCodexModelFamily(model: CodexOfficialModel): string {
-  if (model.providerType !== 'provider') return 'codex-official'
-  return `codex-provider:${encodeURIComponent(model.providerId.toLowerCase())}`
+export function localCodexModelSource(model: {
+  providerId: string
+  providerName: string
+  providerType: CodexModelProviderType
+}) {
+  return {
+    provider: 'local',
+    config: {
+      weworkModelKind: model.providerType === 'provider' ? 'codex-provider' : 'codex-official',
+      codexProviderId: model.providerId,
+      codexProviderName: model.providerName,
+      codexProviderType: model.providerType,
+      ui: {
+        family:
+          model.providerType === 'provider'
+            ? `codex-provider:${encodeURIComponent(model.providerId.toLowerCase())}`
+            : 'codex-official',
+        ...(model.providerType === 'provider' ? { familyLabel: model.providerName } : {}),
+      },
+    },
+  } satisfies Pick<UnifiedModel, 'provider' | 'config'>
 }
 
 function codexPickerDisplayName(displayName: string): string {
@@ -39,28 +58,23 @@ export function localCodexModel(
   model: CodexOfficialModel,
   codexAuthConfigured: boolean
 ): UnifiedModel {
-  const modelFamily = localCodexModelFamily(model)
-  const providerFamilyLabel = model.providerType === 'provider' ? model.providerName : undefined
+  const source = localCodexModelSource(model)
   const modelLabel = codexPickerDisplayName(model.displayName)
   return {
     name: codexOfficialModelName(model),
     type: 'runtime',
     displayName: modelLabel,
-    provider: 'local',
+    ...source,
     modelId: model.modelId,
     config: {
       protocol: OPENAI_RESPONSES_PROTOCOL,
       apiFormat: RESPONSES_API_FORMAT,
-      weworkModelKind: model.providerType === 'provider' ? 'codex-provider' : 'codex-official',
+      ...source.config,
       codexAuthConfigured,
       codexOfficialModelId: model.id,
       codexIsDefault: model.isDefault,
-      codexProviderId: model.providerId,
-      codexProviderName: model.providerName,
-      codexProviderType: model.providerType,
       ui: {
-        family: modelFamily,
-        ...(providerFamilyLabel ? { familyLabel: providerFamilyLabel } : {}),
+        ...source.config.ui,
         modelLabel,
         reasoningEfforts: model.supportedReasoningEfforts,
         defaultReasoningEffort: model.defaultReasoningEffort,

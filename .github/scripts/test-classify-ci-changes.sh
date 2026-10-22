@@ -511,14 +511,14 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 
 assert_desktop_case "uninstall transport faults select real cloud recovery" \
   'wework_desktop_e2e=true
-wework_desktop_core_e2e=false
-wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-10","name":"Core / shard 10","segments":"collaboration-board-move-recovery"}]}
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-16","name":"Cloud / shard 16","segments":"plugin-uninstall-lost-response,plugin-uninstall-unknown-result"},{"id":"cloud-19","name":"Cloud / shard 19","segments":"plugin-uninstall-restart-recovery,plugin-uninstall-reinstall-race"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/plugin-uninstall-resilience.scenario.mjs" \
-  "wework/e2e/desktop/modules/plugin-fault-proxy.mjs" \
+  "wework/e2e/desktop/modules/transport-fault-proxy.mjs" \
   "wework/scripts/plugin-fault-proxy.test.mjs"
 
 assert_desktop_case "long plugin list selects its independent cloud checkpoint" \
@@ -598,6 +598,36 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
     "$account_fixture"
 done
 
+for notification_path in \
+  "wework/e2e/desktop/scenarios/stand-in-notifications.scenario.mjs" \
+  "wework/src/features/notifications/NotificationCenter.tsx" \
+  "wework/src/features/notifications/useUnlistedStandInTasks.ts"
+do
+  assert_desktop_case "stand-in notifications select local and cloud regressions: $notification_path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-12","name":"Core / shard 12","segments":"project-assignment-notification,stand-in-notifications"},{"id":"core-18","name":"Core / shard 18","segments":"stand-in-cloud"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+    "$notification_path"
+done
+
+assert_desktop_case "runtime reminder changes retain goal and stand-in notification coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-4","name":"Core / shard 4","segments":"goal-lifecycle"},{"id":"core-12","name":"Core / shard 12","segments":"stand-in-notifications"},{"id":"core-18","name":"Core / shard 18","segments":"stand-in-cloud"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/features/workbench/runtimeTaskReminders.ts"
+
+assert_desktop_case "stand-in inherited permissions scenario is covered by CI" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-18","name":"Core / shard 18","segments":"stand-in-permissions"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/stand-in-permissions.scenario.mjs"
+
 for stand_in_path in \
   "wework/e2e/desktop/scenarios/stand-in-workspace.scenario.mjs" \
   "wework/src/features/todo/StandInComposer.tsx" \
@@ -608,7 +638,7 @@ do
   assert_desktop_case "stand-in workspace changes select all stand-in checkpoints: $stand_in_path" \
     'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-9","name":"Core / shard 9","segments":"stand-in,stand-in-workspace"},{"id":"core-18","name":"Core / shard 18","segments":"stand-in-cloud"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-9","name":"Core / shard 9","segments":"stand-in,stand-in-workspace,stand-in-controls"},{"id":"core-18","name":"Core / shard 18","segments":"stand-in-cloud,stand-in-permissions"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
     "$stand_in_path"
@@ -617,7 +647,7 @@ done
 assert_desktop_case "shared collaboration package selects its desktop checkpoint" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-9","name":"Core / shard 9","segments":"collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,stand-in,stand-in-workspace,collaboration-local-group-coordinate,collaboration-human-round-resume"},{"id":"core-10","name":"Core / shard 10","segments":"collaboration-shared-core,collaboration-issue-archive,collaboration-local-group-cancellation"},{"id":"core-12","name":"Core / shard 12","segments":"project-assignment-notification,collaboration-issue-comment-mention,collaboration-issue-comment-attachments"},{"id":"core-15","name":"Core / shard 15","segments":"collaboration-issue-comment-notification"},{"id":"core-18","name":"Core / shard 18","segments":"collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details,stand-in-cloud"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-9","name":"Core / shard 9","segments":"collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,stand-in,stand-in-workspace,stand-in-controls,collaboration-local-group-coordinate,collaboration-human-round-resume"},{"id":"core-10","name":"Core / shard 10","segments":"collaboration-shared-core,collaboration-issue-archive,collaboration-board-sorting,collaboration-board-move-recovery,collaboration-local-group-cancellation"},{"id":"core-12","name":"Core / shard 12","segments":"project-assignment-notification,collaboration-issue-comment-mention,collaboration-issue-comment-attachments"},{"id":"core-15","name":"Core / shard 15","segments":"collaboration-issue-comment-notification"},{"id":"core-18","name":"Core / shard 18","segments":"collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-permissions"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "packages/collaboration/src/CollaborationApp.tsx"
@@ -633,6 +663,22 @@ for consent_path in \
     exit 1
   fi
 done
+
+assert_desktop_case "Lane sorting scenario is invoked by its core CI shard" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-10","name":"Core / shard 10","segments":"collaboration-board-sorting"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/collaboration-board-sorting.scenario.mjs"
+
+assert_desktop_case "Move recovery scenario is invoked by its core CI shard" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-10","name":"Core / shard 10","segments":"collaboration-board-move-recovery"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/collaboration-board-move-recovery.scenario.mjs"
 
 assert_desktop_case "Issue archive scenario selects its own checkpoint" \
   'wework_desktop_e2e=true
@@ -677,7 +723,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "collaboration execution environment changes select onboarding and lifecycle coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"remote-device-onboarding"},{"id":"core-9","name":"Core / shard 9","segments":"collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,stand-in,stand-in-workspace,collaboration-local-group-coordinate,collaboration-human-round-resume"},{"id":"core-10","name":"Core / shard 10","segments":"collaboration-shared-core,collaboration-issue-archive,collaboration-local-group-cancellation"},{"id":"core-12","name":"Core / shard 12","segments":"project-assignment-notification"},{"id":"core-18","name":"Core / shard 18","segments":"collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details,stand-in-cloud"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"remote-device-onboarding"},{"id":"core-9","name":"Core / shard 9","segments":"collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,stand-in,stand-in-workspace,stand-in-controls,collaboration-local-group-coordinate,collaboration-human-round-resume"},{"id":"core-10","name":"Core / shard 10","segments":"collaboration-shared-core,collaboration-issue-archive,collaboration-local-group-cancellation"},{"id":"core-12","name":"Core / shard 12","segments":"project-assignment-notification"},{"id":"core-18","name":"Core / shard 18","segments":"collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-permissions"}]}
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-16","name":"Cloud / shard 16","segments":"cloud-device-lifecycle"}]}
 wework_desktop_other_e2e=false
@@ -823,15 +869,15 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 
 full_desktop_expected='wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"harness-app-development,harness-app-lifecycle,browser-annotation-design"},{"id":"core-2","name":"Core / shard 2","segments":"supervisor-lifecycle,remote-device-onboarding,core-task-flow"},{"id":"core-3","name":"Core / shard 3","segments":"temporary-chat,local-file-preview,conversation-state,reply-predictions"},{"id":"core-4","name":"Core / shard 4","segments":"goal-lifecycle,goal-state-sync,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,application-menu,dsh-owner-capture"},{"id":"core-5","name":"Core / shard 5","segments":"send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention"},{"id":"core-6","name":"Core / shard 6","segments":"claude-runtime,workspace-tabs,task-attachments"},{"id":"core-7","name":"Core / shard 7","segments":"task-status-sync,task-board-association,task-board-bulk-actions,change-request-status,git-commit-generation,context-compaction"},{"id":"core-8","name":"Core / shard 8","segments":"window-lifecycle,browser-toolbar-actions,browser-annotation-anchors"},{"id":"core-9","name":"Core / shard 9","segments":"project-automation"},{"id":"core-10","name":"Core / shard 10","segments":"resilience"},{"id":"core-11","name":"Core / shard 11","segments":"workspace-attachments,automation-lifecycle,drawing-attachment"},{"id":"core-12","name":"Core / shard 12","segments":"project-assignment-notification,priority-filter"},{"id":"core-13","name":"Core / shard 13","segments":"transcript-sync,background-terminals"},{"id":"core-14","name":"Core / shard 14","segments":"runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import"},{"id":"core-15","name":"Core / shard 15","segments":"local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome"},{"id":"core-16","name":"Core / shard 16","segments":"codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery"},{"id":"core-17","name":"Core / shard 17","segments":"model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy"},{"id":"core-18","name":"Core / shard 18","segments":"collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details,stand-in-cloud"},{"id":"core-19","name":"Core / shard 19","segments":"rendering-extensions,streaming-content,streaming-tools,streaming-timers"},{"id":"core-20","name":"Core / shard 20","segments":"streaming-scroll,streaming-message-order,streaming-subagents"},{"id":"core-21","name":"Core / shard 21","segments":"split-workbench"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"harness-app-development,harness-app-lifecycle,browser-annotation-design"},{"id":"core-2","name":"Core / shard 2","segments":"supervisor-lifecycle,remote-device-onboarding,core-task-flow"},{"id":"core-3","name":"Core / shard 3","segments":"temporary-chat,local-file-preview,conversation-state,reply-predictions"},{"id":"core-4","name":"Core / shard 4","segments":"goal-lifecycle,goal-state-sync,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,application-menu,dsh-owner-capture"},{"id":"core-5","name":"Core / shard 5","segments":"send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention"},{"id":"core-6","name":"Core / shard 6","segments":"claude-runtime,workspace-tabs,task-attachments"},{"id":"core-7","name":"Core / shard 7","segments":"task-status-sync,task-board-association,task-board-bulk-actions,change-request-status,git-commit-generation,context-compaction"},{"id":"core-8","name":"Core / shard 8","segments":"window-lifecycle,browser-toolbar-actions,browser-annotation-anchors"},{"id":"core-9","name":"Core / shard 9","segments":"project-automation"},{"id":"core-10","name":"Core / shard 10","segments":"resilience"},{"id":"core-11","name":"Core / shard 11","segments":"workspace-attachments,automation-lifecycle,drawing-attachment"},{"id":"core-12","name":"Core / shard 12","segments":"project-assignment-notification,priority-filter"},{"id":"core-13","name":"Core / shard 13","segments":"transcript-sync,background-terminals"},{"id":"core-14","name":"Core / shard 14","segments":"runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import"},{"id":"core-15","name":"Core / shard 15","segments":"local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome"},{"id":"core-16","name":"Core / shard 16","segments":"codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery"},{"id":"core-17","name":"Core / shard 17","segments":"model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy"},{"id":"core-18","name":"Core / shard 18","segments":"collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-permissions"},{"id":"core-19","name":"Core / shard 19","segments":"rendering-extensions,streaming-content,streaming-tools,streaming-timers"},{"id":"core-20","name":"Core / shard 20","segments":"streaming-scroll,streaming-message-order,streaming-subagents"},{"id":"core-21","name":"Core / shard 21","segments":"split-workbench"}]}
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"core-task-flow"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"embedded-browser,cloud-project-creation"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"goal-lifecycle,cloud-worktree-archive-restore"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"rendering-extensions"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"project-automation"},{"id":"cloud-6","name":"Cloud / shard 6","segments":"window-lifecycle"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"priority-filter,cloud-worktree-tools"},{"id":"cloud-8","name":"Cloud / shard 8","segments":"resilience,telemetry-consent"},{"id":"cloud-9","name":"Cloud / shard 9","segments":"cloud-worktree-create,automation-lifecycle,browser-multi-tabs"},{"id":"cloud-10","name":"Cloud / shard 10","segments":"workspace-tabs,cloud-worktree-capability"},{"id":"cloud-11","name":"Cloud / shard 11","segments":"supervisor-lifecycle,conversation-state"},{"id":"cloud-12","name":"Cloud / shard 12","segments":"model-routing,cloud-model-recovery,cloud-model-presets,task-model-deletion"},{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-account-auth-password,plugin-account-auth-transfer,plugin-account-auth-oauth"},{"id":"cloud-14","name":"Cloud / shard 14","segments":"cloud-worktree-queued-cancel"},{"id":"cloud-15","name":"Cloud / shard 15","segments":"plugin-auto-update,plugin-workspace-publication,workspace-attachments"},{"id":"cloud-16","name":"Cloud / shard 16","segments":"cloud-device-lifecycle,plugin-uninstall-lost-response,plugin-uninstall-unknown-result"},{"id":"cloud-17","name":"Cloud / shard 17","segments":"plugin-composer-long-list"},{"id":"cloud-18","name":"Cloud / shard 18","segments":"plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github"},{"id":"cloud-19","name":"Cloud / shard 19","segments":"plugin-uninstall-restart-recovery,plugin-uninstall-reinstall-race,plugin-toggle-persistence"}]}
 wework_desktop_other_e2e=true
 wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":""}]}
 wework_desktop_macos_inspector_e2e=true'
-full_desktop_expected="${full_desktop_expected/\"segments\":\"resilience\"/\"segments\":\"resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-task-discovery,collaboration-app-queue-identity,collaboration-issue-archive,collaboration-local-group-cancellation\"}"
-full_desktop_expected="${full_desktop_expected/\"segments\":\"project-automation\"/\"segments\":\"project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,stand-in,stand-in-workspace,collaboration-local-group-coordinate,collaboration-human-round-resume\"}"
-full_desktop_expected="${full_desktop_expected/\"segments\":\"project-assignment-notification,priority-filter\"/\"segments\":\"project-assignment-notification,priority-filter,collaboration-issue-comment-mention,collaboration-issue-comment-attachments\"}"
+full_desktop_expected="${full_desktop_expected/\"segments\":\"resilience\"/\"segments\":\"resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-task-discovery,collaboration-app-queue-identity,collaboration-issue-archive,collaboration-board-sorting,collaboration-board-move-recovery,collaboration-local-group-cancellation\"}"
+full_desktop_expected="${full_desktop_expected/\"segments\":\"project-automation\"/\"segments\":\"project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,stand-in,stand-in-workspace,stand-in-controls,collaboration-local-group-coordinate,collaboration-human-round-resume\"}"
+full_desktop_expected="${full_desktop_expected/\"segments\":\"project-assignment-notification,priority-filter\"/\"segments\":\"project-assignment-notification,priority-filter,collaboration-issue-comment-mention,collaboration-issue-comment-attachments,stand-in-notifications\"}"
 full_desktop_expected="${full_desktop_expected/\"segments\":\"local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome\"/\"segments\":\"local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification,collaboration-issue-mcp-comments,latest-conversation-history\"}"
 full_desktop_expected="${full_desktop_expected/temporary-chat,local-file-preview,conversation-state,reply-predictions/temporary-chat,local-file-preview,conversation-state,reply-predictions,reply-prediction-auth,model-settings,codex-native-catalog}"
 full_desktop_expected="${full_desktop_expected/\"segments\":\"codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery\"/\"segments\":\"codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,model-overload-recovery\"}"
