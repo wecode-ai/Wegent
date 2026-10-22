@@ -449,12 +449,13 @@ export function StandInPopover({
             )}
           </>
         ) : null}
-        <fieldset className="mt-4" disabled={saving || loading || !loaded}>
+        <fieldset className="mt-4">
           <legend className="text-sm font-medium text-text-primary">{t('standIn.auto')}</legend>
           <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-text-primary md:min-h-8">
             <input
               type="checkbox"
               data-testid="stand-in-auto"
+              disabled={saving || loading || !loaded}
               checked={draft.enabled}
               aria-checked={draft.enabled}
               aria-describedby={`${promptId}-auto-description`}

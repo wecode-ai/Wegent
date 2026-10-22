@@ -216,6 +216,7 @@ describe('StandInPopover', () => {
     expect(save).not.toHaveBeenCalled()
     await user.click(screen.getByTestId('stand-in-save'))
     expect(screen.getByTestId('stand-in-auto')).toBeDisabled()
+    expect(screen.getByTestId('stand-in-auto')).toHaveAttribute('disabled')
     expect(screen.getByTestId('stand-in-auto')).toHaveAttribute('aria-checked', 'true')
     const result = { ...save.mock.calls[0][1], version: 3 }
     get.mockResolvedValue(result)
