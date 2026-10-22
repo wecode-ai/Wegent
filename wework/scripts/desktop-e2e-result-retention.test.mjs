@@ -55,6 +55,18 @@ function gitBash() {
 }
 
 describe('desktop E2E result retention', () => {
+  test('retains Rust gateway logs after checkpoint cleanup', async () => {
+    const resultDirectory = join(await temporaryRoot(), '2026-09-02T00-00-00-000Z-124')
+    const logsDirectory = join(resultDirectory, 'backend-rs-logs')
+    await mkdir(logsDirectory, { recursive: true })
+    const logPath = join(logsDirectory, 'error.log')
+    await writeFile(logPath, 'gateway startup diagnostics\n')
+
+    await compactDesktopE2EResult(resultDirectory)
+
+    await expectExists(logPath)
+  })
+
   test('resolves the configured or default result root', () => {
     expect(resolveDesktopE2EResultRoot('/repo/wework', {})).toBe(
       join(resolve('/repo/wework'), 'test-results', 'desktop-e2e')

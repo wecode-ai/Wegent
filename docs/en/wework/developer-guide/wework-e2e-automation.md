@@ -4,6 +4,10 @@ sidebar_position: 34
 
 # E2E Automation
 
+Desktop E2E uses `GPT-5.6 Luna` as the shared default model label, matching the real runtime catalog and selector. Fixtures and post-selection assertions use the same label while retaining model ID and provider checks, so a stale label without the hyphen cannot be mistaken for a selection failure.
+
+Desktop checkpoint cleanup retains `backend-rs-logs/` so CI can upload Rust gateway startup logs. Settings follows the current global route while retaining the original tab's application route, allowing Back to restore the application.
+
 Wework provides a dedicated Playwright E2E entrypoint and a test-only frontend automation bridge for operating the Wework Vite/React frontend in CI. The default entrypoint runs in browser mode, which covers most frontend interactions; the desktop task-flow E2E below covers native-window and task-execution behavior.
 
 Issue MCP attachment coverage uses the shared `setup-minio-e2e` Action on Linux and Windows to build and verify the same pinned real MinIO version. Only main writes caches; scenarios use the platform executable through `WEWORK_E2E_MINIO_BIN`.
