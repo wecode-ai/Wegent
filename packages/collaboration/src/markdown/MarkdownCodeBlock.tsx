@@ -62,7 +62,7 @@ export function MarkdownCodeBlock({
   compact = false,
   isStreaming = false,
 }: MarkdownCodeBlockProps) {
-  const { copyText, onCopy, translate: t } = useMarkdownServices();
+  const { copyText, onCopy, translate: t } = useMarkdownServices()
   const [copied, setCopied] = useState(false);
   const text = String(children).replace(/\n$/, "");
   const language = normalizeLanguage(lang);
@@ -95,7 +95,7 @@ export function MarkdownCodeBlock({
       : null;
 
   const handleCopy = async () => {
-    await copyText(text);
+    await copyText(text)
     onCopy?.();
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1500);

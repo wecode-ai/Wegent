@@ -2,6 +2,9 @@ import type { Root, RootContent } from 'hast'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import { defaultRehypePlugins, type StreamdownProps } from 'streamdown'
 
+// Sanitizers interpret Windows drive letters as URI schemes.
+const WINDOWS_DRIVE_PROTOCOLS = [...'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ']
+
 declare module 'hast' {
   interface ElementData {
     tableMarkdown?: string
@@ -39,26 +42,9 @@ export function createTableMarkdownRehypePlugins(): StreamdownProps['rehypePlugi
         ...defaultSchema,
         protocols: {
           ...defaultSchema.protocols,
-          href: [
-            ...(defaultSchema.protocols?.href ?? []),
-            'tel',
-            'file',
-            'folder',
-            'skill',
-            'plugin',
-            'app',
-            'cloud',
-            'wegent',
-            'wework',
-            'wework-conversation',
-            'wework-issue',
-            'wework-member',
-            'wework-agent',
-            'wework-group',
-            'wegent-sites-project',
-            ...'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ',
-          ],
-          src: [...(defaultSchema.protocols?.src ?? []), 'file'],
+          // Link protocols are validated by transformMarkdownUrl after parsing.
+          href: undefined,
+          src: [...(defaultSchema.protocols?.src ?? []), 'file', ...WINDOWS_DRIVE_PROTOCOLS],
         },
         attributes: {
           ...defaultSchema.attributes,

@@ -67,6 +67,25 @@ export function extractMarkdownLinks(content: string): ExtractedMarkdownLink[] {
 // absolute filesystem paths. Rendering those as plain anchors makes the browser
 // navigate the SPA to a broken `http://localhost/...` URL, so file links are
 // routed to the caller instead.
+const MARKDOWN_LINK_PROTOCOLS = new Set([
+  'http', 'https', 'irc', 'ircs', 'mailto', 'xmpp', 'tel', 'file', 'folder',
+  'skill', 'plugin', 'app', 'cloud', 'wegent', 'wework', 'wework-conversation',
+  'wework-issue', 'wework-member', 'wework-agent', 'wework-group', 'wegent-sites-project',
+])
+const UNSAFE_LINK_PROTOCOL = /^(?:javascript|data|vbscript):/i
+const URL_CONTROL_CHARACTERS = /[\u0000-\u0020\u007f]/g
+
+export function transformMarkdownUrl(url: string, key: string): string | undefined {
+  if (key !== 'href') return url
+  const decodedPath = decodeMarkdownFilePath(url)
+  if (UNSAFE_LINK_PROTOCOL.test(decodedPath.replace(URL_CONTROL_CHARACTERS, ''))) return undefined
+  if (isWindowsDriveAbsolutePath(decodedPath)) return decodedPath
+
+  const protocol = decodedPath.match(/^([a-z][a-z0-9+.-]*):/i)?.[1]
+  if (protocol) return MARKDOWN_LINK_PROTOCOLS.has(protocol.toLowerCase()) ? url : undefined
+  return decodedPath
+}
+
 export function classifyMarkdownLink(href?: string): MarkdownLinkTarget {
   const trimmedHref = href?.trim();
   const value =
@@ -168,7 +187,9 @@ export function resolveDirectMarkdownImageSrc(
 }
 
 export function localMarkdownImagePath(src: string): string | null {
-  return isLocalImagePath(src) ? localPathFromMarkdownImageSrc(src) : null;
+  if (src.startsWith("file://")) return localPathFromMarkdownImageSrc(src);
+  const decodedPath = decodeMarkdownFilePath(src);
+  return isLocalImagePath(decodedPath) ? decodedPath : null;
 }
 
 export function localPathFromMarkdownImageSrc(src: string): string {

@@ -73,46 +73,63 @@ test.each(['wework://tasks/example', 'skill://example', 'app://example'])(
   }
 )
 
-test.each(['javascript:alert%281%29', 'data:text/html,unsafe', 'vbscript:msgbox%281%29'])(
-  'keeps unsafe URL %s out of rendered links',
-  href => {
-    const renderLink = vi.fn()
-    const { container } = render(
-      <AssistantMarkdown content={`[unsafe](${href})`} renderLink={renderLink} />
-    )
+test.each([
+  'javascript:alert%281%29',
+  'data:text/html,unsafe',
+  'vbscript:msgbox%281%29',
+  'java%73cript%3Aalert%281%29',
+  'vbs%63ript%3Amsgbox%281%29',
+])('keeps unsafe URL %s out of rendered links', href => {
+  const renderLink = vi.fn()
+  const { container } = render(
+    <AssistantMarkdown content={`[unsafe](${href})`} renderLink={renderLink} />
+  )
 
-    expect(renderLink).not.toHaveBeenCalled()
-    expect(container.querySelector('[href]')).toBeNull()
-  }
-)
+  expect(renderLink).not.toHaveBeenCalled()
+  expect(container.querySelector('[href]')).toBeNull()
+})
 
-test.each(['/tmp/plot.png', 'file:///tmp/plot.png'])(
-  'reads local image %s without rewriting its URL',
-  async src => {
-    const readLocalFile = vi.fn().mockResolvedValue(new Blob(['image'], { type: 'image/png' }))
-    vi.stubGlobal(
-      'URL',
-      class extends URL {
-        static createObjectURL = vi.fn(() => 'blob:local-preview')
-        static revokeObjectURL = vi.fn()
-      }
-    )
-    const { unmount } = render(
-      <MarkdownServicesProvider value={{ ...browserMarkdownServices, readLocalFile }}>
-        <SharedAssistantMarkdown content={`![plot](${src})`} />
-      </MarkdownServicesProvider>
-    )
-    try {
-      await vi.waitFor(() => {
-        expect(readLocalFile).toHaveBeenCalledExactlyOnceWith('/tmp/plot.png')
-        expect(screen.getByRole('img', { name: 'plot' })).toHaveAttribute(
-          'src',
-          'blob:local-preview'
-        )
-      })
-    } finally {
-      unmount()
-      vi.unstubAllGlobals()
+test.each([
+  ['/tmp/plot.png', '/tmp/plot.png'],
+  ['file:///tmp/plot.png', '/tmp/plot.png'],
+  ['C:/projects/plot.png', 'C:/projects/plot.png'],
+  ['C:\\projects\\plot.png', 'C:\\projects\\plot.png'],
+])('reads local image %s without rewriting its URL', async (src, expectedPath) => {
+  const readLocalFile = vi.fn().mockResolvedValue(new Blob(['image'], { type: 'image/png' }))
+  vi.stubGlobal(
+    'URL',
+    class extends URL {
+      static createObjectURL = vi.fn(() => 'blob:local-preview')
+      static revokeObjectURL = vi.fn()
     }
+  )
+  const { unmount } = render(
+    <MarkdownServicesProvider value={{ ...browserMarkdownServices, readLocalFile }}>
+      <SharedAssistantMarkdown content={`![plot](${src})`} />
+    </MarkdownServicesProvider>
+  )
+  try {
+    await vi.waitFor(() => {
+      expect(readLocalFile).toHaveBeenCalledExactlyOnceWith(expectedPath)
+      expect(screen.getByRole('img', { name: 'plot' })).toHaveAttribute('src', 'blob:local-preview')
+    })
+  } finally {
+    unmount()
+    vi.unstubAllGlobals()
   }
-)
+})
+
+test('strips unsafe raw HTML links and event attributes before rendering', () => {
+  const renderLink = vi.fn()
+  const { container } = render(
+    <AssistantMarkdown
+      content={
+        '<a href="java&#x09;script:alert(1)" onclick="alert(2)">unsafe</a><img src="javascript:alert(3)" onerror="alert(4)">'
+      }
+      renderLink={renderLink}
+    />
+  )
+
+  expect(renderLink).not.toHaveBeenCalled()
+  expect(container.querySelector('[href], [onclick], [onerror], script')).toBeNull()
+})

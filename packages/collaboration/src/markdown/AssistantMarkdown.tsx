@@ -17,6 +17,7 @@ import 'streamdown/styles.css'
 import {
   classifyMarkdownLink,
   isHtmlFilePath,
+  transformMarkdownUrl,
   type MarkdownLinkTarget,
 } from './assistantMarkdownLinks'
 import { AssistantMarkdownImage } from './AssistantMarkdownImage'
@@ -278,7 +279,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
                   controls={false}
                   linkSafety={{ enabled: false }}
                   lineNumbers={false}
-                  urlTransform={(url: string) => url}
+                  urlTransform={transformMarkdownUrl}
                   components={components}
                   rehypePlugins={tableMarkdownRehypePlugins}
                 >
@@ -297,7 +298,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
                 controls={false}
                 linkSafety={{ enabled: false }}
                 lineNumbers={false}
-                urlTransform={(url: string) => url}
+                urlTransform={transformMarkdownUrl}
                 components={components}
                 rehypePlugins={tableMarkdownRehypePlugins}
               >
