@@ -660,6 +660,90 @@ async fn runtime_task_list_applies_manual_order_to_projectless_chats() {
 }
 
 #[tokio::test]
+async fn runtime_task_list_puts_new_chats_before_manual_order() {
+    let _lock = env_lock().await;
+    let home = temp_path("runtime-new-chat-order-home", "dir");
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let executor_home = temp_path("runtime-new-chat-order-executor-home", "dir");
+    let _executor_home =
+        EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let codex_home = temp_path("runtime-new-chat-order-codex-home", "dir");
+    let _codex_home = EnvGuard::set("CODEX_HOME", &codex_home.display().to_string());
+    let _wework_codex_home = EnvGuard::set("WEGENT_CODEX_HOME", &codex_home.display().to_string());
+    let _workspace_root = EnvGuard::set(
+        "WORKSPACE_ROOT",
+        &home.join("workspace").display().to_string(),
+    );
+    write_codex_global_state(
+        &codex_home,
+        json!({
+            "projectless-thread-ids": ["thread-new", "thread-newest", "thread-older", "thread-newer"],
+            "sidebar-project-thread-orders": {
+                "chats": {
+                    "threadIds": ["thread-older", "thread-newer"],
+                    "sortKey": "manual"
+                }
+            }
+        }),
+    );
+    let workspace = home.join("Documents/Codex/2026-10-22/chat");
+    let threads = json!([
+        { "id": "thread-new", "updatedAt": 1780000300000_i64 },
+        { "id": "thread-newer", "updatedAt": 1780000200000_i64 },
+        { "id": "thread-newest", "updatedAt": 1780000400000_i64 },
+        { "id": "thread-older", "updatedAt": 1780000100000_i64 }
+    ])
+    .as_array()
+    .unwrap()
+    .iter()
+    .map(|thread| {
+        json!({
+            "id": thread["id"],
+            "cwd": workspace,
+            "name": thread["id"],
+            "createdAt": 1780000000000_i64,
+            "updatedAt": thread["updatedAt"],
+            "status": "idle",
+            "turns": []
+        })
+    })
+    .collect::<Vec<_>>();
+    let fake_codex = write_fake_codex_with_threads(
+        &temp_path("runtime-new-chat-order-log", "jsonl"),
+        &serde_json::to_string(&threads).unwrap(),
+    );
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    for _ in 0..2 {
+        let listed = handler
+            .handle_runtime_rpc(json!({ "method": "runtime.tasks.list", "payload": {} }))
+            .await
+            .expect("chat task list should succeed");
+        let tasks = listed["workspaces"][0]["tasks"].as_array().unwrap();
+        assert_eq!(listed["workspaces"][0]["workspaceKind"], "chat");
+        assert_eq!(
+            tasks
+                .iter()
+                .map(|task| task["taskId"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec![
+                "thread-newest",
+                "thread-new",
+                "thread-older",
+                "thread-newer"
+            ]
+        );
+        assert_eq!(
+            tasks
+                .iter()
+                .map(|task| task["sidebarOrder"].as_u64())
+                .collect::<Vec<_>>(),
+            vec![None, None, Some(0), Some(1)]
+        );
+    }
+}
+
+#[tokio::test]
 async fn runtime_task_list_applies_manual_order_without_project_state() {
     let _lock = env_lock().await;
     let home = temp_path("runtime-local-order-home", "dir");

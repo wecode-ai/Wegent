@@ -64,6 +64,8 @@ struct LeaseRedis {
     fail: bool,
     stall: bool,
     stall_eval: bool,
+    release_after_contention: bool,
+    stall_after_claim: bool,
 }
 
 impl LeaseRedis {
@@ -86,7 +88,12 @@ impl LeaseRedis {
                     entry.insert(args[2].clone());
                     Value::SimpleString("OK".to_string())
                 }
-                std::collections::hash_map::Entry::Occupied(_) => Value::Nil,
+                std::collections::hash_map::Entry::Occupied(entry) => {
+                    if self.release_after_contention {
+                        entry.remove();
+                    }
+                    Value::Nil
+                }
             },
             "EVAL" => {
                 let matches = owners.get(&args[3]) == Some(&args[4]);
@@ -106,7 +113,12 @@ impl Redis for LeaseRedis {
         if self.stall {
             std::future::pending::<()>().await;
         }
-        self.run(command)
+        let result = self.run(command);
+        let has_owner = !self.owners.lock().unwrap().is_empty();
+        if self.stall_after_claim && has_owner {
+            std::future::pending::<()>().await;
+        }
+        result
     }
 
     async fn eval<S, K, A, T>(&self, script: S, keys: K, arguments: A) -> RedisResult<T>
@@ -315,6 +327,36 @@ async fn acquisition_deadline_also_bounds_an_unresponsive_redis_request() {
     );
     assert!(start.elapsed() < Duration::from_secs(1));
     assert!(redis.commands.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn acquisition_deadline_prevents_another_set_after_the_last_wait() {
+    let redis = LeaseRedis {
+        release_after_contention: true,
+        stall_after_claim: true,
+        ..LeaseRedis::default()
+    };
+    redis
+        .owners
+        .lock()
+        .unwrap()
+        .insert("wegent:plugin-write:23".into(), "fixture".into());
+
+    let result = PluginWriteLease::acquire_token(
+        &redis,
+        23,
+        "expired-attempt".into(),
+        Duration::from_millis(10),
+    )
+    .await;
+
+    let error = result.err().expect("the coordination budget has expired");
+    assert_eq!(
+        http_error(error).detail_message(),
+        Some("plugin_write_busy")
+    );
+    assert!(redis.owners.lock().unwrap().is_empty());
+    assert_eq!(redis.commands.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]
