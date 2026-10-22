@@ -247,3 +247,49 @@ def test_transcript_budget_counts_escaped_characters() -> None:
 
     assert len(rendered) <= 100
     assert omitted == 0
+
+
+def test_transcript_drops_repeated_entries() -> None:
+    rendered, omitted = _bounded_transcript(
+        [
+            ("user", "first question"),
+            ("assistant", "same answer"),
+            ("user", "second question"),
+            ("assistant", "same answer"),
+        ],
+        max_chars=10_000,
+    )
+
+    assert rendered.count("same answer") == 1
+    assert omitted == 0
+
+
+def test_transcript_keeps_only_recent_tool_attempt_notes() -> None:
+    attempts = [("assistant_attempt", f"attempt-{index}") for index in range(25)]
+
+    rendered, omitted = _bounded_transcript(attempts, max_chars=10_000)
+
+    assert "attempt-24" in rendered
+    assert "attempt-0\n" not in rendered
+    assert "attempt-4\n" not in rendered
+    assert "attempt-5\n" in rendered
+    assert omitted == 0
+
+
+def test_transcript_shortens_older_assistant_replies_before_dropping() -> None:
+    old_reply = "A" * 3_000
+    latest_reply = "B" * 500
+
+    rendered, omitted = _bounded_transcript(
+        [
+            ("user", "start"),
+            ("assistant", old_reply),
+            ("user", "continue"),
+            ("assistant", latest_reply),
+        ],
+        max_chars=2_000,
+    )
+
+    assert "characters omitted" in rendered
+    assert omitted == 0
+    assert latest_reply in rendered

@@ -28,6 +28,11 @@ from shared.prompts.constants import (
 MAX_REFERENCE_MESSAGES = 100
 MAX_REFERENCE_CHARS = 100_000
 MAX_TOTAL_REFERENCE_CHARS = 200_000
+# Tool-attempt notes are cheap but numerous; keep the most recent ones only.
+MAX_ATTEMPT_NOTES = 20
+# Older assistant replies are shortened to this size before any entry is
+# dropped, so more of the referenced task's turns survive the budget.
+ASSISTANT_SNIPPET_CHARS = 1_200
 
 
 def resolve_conversation_reference(
@@ -263,11 +268,54 @@ def _bounded_transcript(
     *,
     max_chars: int,
 ) -> tuple[str, int]:
-    """Keep the newest whole transcript entries within a character budget.
+    """Fit a transcript into a character budget, degrading in fixed stages.
 
     Entries are escaped before they are measured, so a transcript full of
     ``&``/``<`` cannot expand past the budget once it reaches the prompt.
+
+    Degradation order, cheapest loss first: drop tool-attempt notes, shorten
+    older assistant replies, then drop whole entries from the oldest end. The
+    newest assistant reply is never shortened, so the referenced task's latest
+    conclusion always reaches the model intact.
     """
+    blocks = _select_transcript_blocks(blocks)
+    omitted = 0
+
+    rendered = _render_transcript(blocks)
+    if len(rendered) <= max_chars:
+        return rendered, omitted
+
+    without_attempts = [
+        (role, content) for role, content in blocks if role != "assistant_attempt"
+    ]
+    if len(without_attempts) != len(blocks):
+        blocks = without_attempts
+        rendered = _render_transcript(blocks)
+        if len(rendered) <= max_chars:
+            return rendered, omitted
+
+    newest_assistant = max(
+        (index for index, (role, _) in enumerate(blocks) if role == "assistant"),
+        default=None,
+    )
+    shortened: list[tuple[str, str]] = []
+    changed = False
+    for index, (role, content) in enumerate(blocks):
+        if (
+            role == "assistant"
+            and index != newest_assistant
+            and len(content) > ASSISTANT_SNIPPET_CHARS
+        ):
+            shortened.append((role, _shorten_assistant_reply(content)))
+            changed = True
+            continue
+        shortened.append((role, content))
+    if changed:
+        blocks = shortened
+        rendered = _render_transcript(blocks)
+        if len(rendered) <= max_chars:
+            return rendered, omitted
+
     kept: list[str] = []
     total_chars = 0
     for role, content in reversed(blocks):
@@ -281,7 +329,51 @@ def _bounded_transcript(
         kept.append(rendered)
         total_chars += len(rendered) + separator_chars
     kept.reverse()
-    return "\n".join(kept), max(0, len(blocks) - len(kept))
+    omitted += max(0, len(blocks) - len(kept))
+    return "\n".join(kept), omitted
+
+
+def _select_transcript_blocks(
+    blocks: list[tuple[str, str]],
+) -> list[tuple[str, str]]:
+    """Drop repeated entries and cap how many tool-attempt notes are kept."""
+    seen: set[tuple[str, str]] = set()
+    deduplicated: list[tuple[str, str]] = []
+    for role, content in reversed(blocks):
+        key = (role, content)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduplicated.append((role, content))
+    deduplicated.reverse()
+
+    attempt_indexes = [
+        index
+        for index, (role, _) in enumerate(deduplicated)
+        if role == "assistant_attempt"
+    ]
+    if len(attempt_indexes) <= MAX_ATTEMPT_NOTES:
+        return deduplicated
+    dropped = set(attempt_indexes[:-MAX_ATTEMPT_NOTES])
+    return [block for index, block in enumerate(deduplicated) if index not in dropped]
+
+
+def _render_transcript(blocks: list[tuple[str, str]]) -> str:
+    return "\n".join(
+        _render_block(role, escape(content, quote=False)) for role, content in blocks
+    )
+
+
+def _shorten_assistant_reply(content: str) -> str:
+    """Keep the head and tail of a long reply so its conclusion survives."""
+    head_chars = ASSISTANT_SNIPPET_CHARS * 3 // 5
+    tail_chars = ASSISTANT_SNIPPET_CHARS - head_chars
+    omitted = len(content) - ASSISTANT_SNIPPET_CHARS
+    return (
+        f"{content[:head_chars].rstrip()}\n"
+        f"[…{omitted} characters omitted…]\n"
+        f"{content[-tail_chars:].lstrip()}"
+    )
 
 
 def _render_block(role: str, content: str) -> str:
