@@ -108,6 +108,39 @@ function fixture(
 }
 
 describe('reply prediction provider', () => {
+  it('preserves pending generation when task refresh reorders model configuration fields', async () => {
+    let resolve!: (value: { suggestion: string }) => void
+    const predict = vi.fn<Predict>(
+      () =>
+        new Promise(done => {
+          resolve = done
+        })
+    )
+    const modelSelection = {
+      modelName: 'gpt-5.6-luna',
+      modelType: 'runtime' as const,
+      options: { speed: 'standard', collaborationMode: 'default', codexProviderId: 'test' },
+    }
+    const { rerender } = render(fixture(predict, { ...source, modelSelection }))
+    expect(screen.getByRole('status')).toBeInTheDocument()
+
+    rerender(
+      fixture(predict, {
+        ...source,
+        modelSelection: {
+          options: { codexProviderId: 'test', collaborationMode: 'default', speed: 'standard' },
+          modelType: 'runtime',
+          modelName: 'gpt-5.6-luna',
+        },
+      })
+    )
+
+    expect(predict).toHaveBeenCalledTimes(1)
+    expect(predict.mock.calls[0][0].signal!.aborted).toBe(false)
+    resolve({ suggestion: '请继续' })
+    await waitFor(() => expect(screen.getByRole('button')).toHaveTextContent('请继续'))
+  })
+
   it.each([
     { workspaceKind: 'chat' },
     { projectSession: { projectId: 'project-1', issueId: 'issue-1' } },

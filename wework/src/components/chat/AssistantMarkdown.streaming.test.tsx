@@ -224,6 +224,36 @@ describe('AssistantMarkdown streaming stability', () => {
     await waitFor(() => expect(scrollContainer).toHaveAttribute('data-syntax-highlighted', 'true'))
   })
 
+  test('preserves an open long code block through fence closure and a windowed tail', async () => {
+    runtimeMock.electron = true
+    const lines = Array.from(
+      { length: 110 },
+      (_, index) => `SELECT ${index + 1}, '${'payload-'.repeat(20)}' FROM records;`
+    )
+    const content = (count: number) =>
+      ['Before code.', '', '```sql', ...lines.slice(0, count)].join('\n')
+    const { rerender } = render(<AssistantMarkdown content={content(55)} isStreaming />)
+    const code = screen.getByTestId('markdown-code-block').querySelector('code')
+    for (const count of [80, 110]) {
+      rerender(<AssistantMarkdown content={content(count)} isStreaming />)
+      await waitFor(() => expect(code).toHaveTextContent(`SELECT ${count},`))
+      expect(screen.getByTestId('markdown-code-block').querySelector('code')).toBe(code)
+    }
+    const completed = [
+      content(110),
+      '```',
+      '',
+      ...Array.from(
+        { length: 24 },
+        (_, index) => `### Section ${index}\n\n${'Windowed content. '.repeat(100)}`
+      ),
+    ].join('\n')
+    rerender(<AssistantMarkdown content={completed} />)
+    await waitFor(() =>
+      expect(screen.getByTestId('markdown-code-block').querySelector('code')).toBe(code)
+    )
+  })
+
   test('keeps long highlighted markdown DOM mounted when streaming completes', async () => {
     const content = `Before code.\n\n${fencedCode(90)}`
     const { container, rerender } = render(<AssistantMarkdown content={content} isStreaming />)

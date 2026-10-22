@@ -125,6 +125,7 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       assert.equal(Number(await control.command('getElementCount', PENDING)), 0)
       await control.command('fill', INPUT, { value: '' })
       await control.command('waitFor', PENDING)
+      assert.equal(predictionRequests, 1, 'Task refresh restarted the pending prediction')
       releasePrediction()
       await control.command('waitFor', GHOST, { text: SUGGESTION, timeoutMs: 30000 })
       assert.equal(Number(await control.command('getElementCount', PENDING)), 0)

@@ -22,9 +22,19 @@ export interface ReplyPredictionResult {
 }
 
 export function replyPredictionKey(source: ReplyPredictionSource) {
+  const selection = source.modelSelection
+  // Runtime snapshots may serialize the same model options in a different order.
   return `${source.scope}\u0000${JSON.stringify([
     source.latestTurnId || source.revision,
-    source.modelSelection,
+    selection
+      ? {
+          modelName: selection.modelName,
+          modelType: selection.modelType,
+          options: Object.fromEntries(
+            Object.entries(selection.options ?? {}).sort(([a], [b]) => a.localeCompare(b))
+          ),
+        }
+      : selection,
   ])}`
 }
 

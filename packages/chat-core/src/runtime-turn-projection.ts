@@ -14,6 +14,7 @@ export function projectRuntimeConversationTurn(
 ): WorkbenchMessage[] {
   const messages: WorkbenchMessage[] = [];
   let assistantItems: RuntimeConversationItem[] = [];
+  let assistantSegmentIndex = 0;
   let followsGuidance = false;
 
   const flushAssistant = (isLast: boolean, splitBefore: boolean) => {
@@ -28,14 +29,13 @@ export function projectRuntimeConversationTurn(
       (item) => item.type === "assistant_text",
     );
     const blocks = processingBlocks(assistantItems);
-    const firstItem = assistantItems[0];
     const createdAt =
       textItems[0]?.createdAt ??
       (blocks[0] ? new Date(blocks[0].createdAt).toISOString() : "");
     messages.push({
-      id: `runtime-view:${turn.id ?? turn.clientUserMessageId ?? "pending"}:${
-        firstItem?.id ?? "assistant"
-      }`,
+      // Provider item IDs can change when canonical history replaces live items.
+      // The rendered row belongs to the turn segment, not its first provider item.
+      id: `runtime-view:${turn.id ?? turn.clientUserMessageId ?? "pending"}:assistant-${assistantSegmentIndex++}`,
       role: "assistant",
       content: textItems.map((item) => item.content).join("\n\n"),
       status: isLast ? turnStatus(turn) : "done",
