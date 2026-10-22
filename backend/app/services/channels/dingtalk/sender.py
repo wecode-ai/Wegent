@@ -18,13 +18,37 @@ API Reference:
 import json
 import logging
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import httpx
 
 from app.schemas.dingtalk_card import AUTO_LAYOUT_PARAM, auto_layout_param
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_mention_entries(
+    values: Optional[Sequence[str]],
+) -> List[Tuple[str, str]]:
+    """Parse ``staffId[:displayName]`` entries in their original order."""
+    entries: List[Tuple[str, str]] = []
+    seen = set()
+    for value in values or []:
+        if not isinstance(value, str):
+            continue
+        raw = value.strip()
+        if not raw:
+            continue
+        user_id, display_name = raw, raw
+        head, separator, tail = raw.partition(":")
+        if separator and head.strip().isdigit():
+            user_id = head.strip()
+            display_name = tail.strip() or user_id
+        if user_id in seen:
+            continue
+        seen.add(user_id)
+        entries.append((user_id, display_name))
+    return entries
 
 
 class DingTalkRobotSender:
@@ -219,6 +243,7 @@ class DingTalkRobotSender:
         status: str = "",
         enable_streaming: bool = False,
         open_space_id: Optional[str] = None,
+        mention_user_ids: Optional[Sequence[str]] = None,
     ) -> Dict[str, Any]:
         """Send AI card notification to user.
 
@@ -236,10 +261,21 @@ class DingTalkRobotSender:
             status: Optional status text (e.g., "执行完成", "执行失败")
             enable_streaming: If True, simulate streaming effect for better UX
             open_space_id: Optional explicit openSpaceId. Defaults to IM_ROBOT.{user_id}
+            mention_user_ids: Optional DingTalk user IDs to mention in group cards
 
         Returns:
             API response dict with outTrackId for tracking
         """
+        resolved_open_space_id = open_space_id or f"dtv1.card//IM_ROBOT.{user_id}"
+        mention_entries = (
+            _parse_mention_entries(mention_user_ids)
+            if "IM_GROUP" in resolved_open_space_id
+            else []
+        )
+        if mention_entries:
+            mention_text = " ".join(f"@{name}" for _, name in mention_entries)
+            content = f"{mention_text}\n\n{content}"
+
         card_param_map = {
             "title": title,
             "content": content,
@@ -255,12 +291,12 @@ class DingTalkRobotSender:
             card_template_id=card_template_id,
             card_param_map=card_param_map,
             open_space_id=open_space_id,
+            mention_user_ids=mention_user_ids,
         )
         if not result.get("success"):
             return result
 
         out_track_id = result["outTrackId"]
-        resolved_open_space_id = open_space_id or f"dtv1.card//IM_ROBOT.{user_id}"
         if enable_streaming:
             # Simulate typing effect
             await self._simulate_streaming(
@@ -289,6 +325,7 @@ class DingTalkRobotSender:
         card_param_map: Dict[str, str],
         open_space_id: Optional[str] = None,
         preview: str = "您收到一条订阅通知",
+        mention_user_ids: Optional[Sequence[str]] = None,
     ) -> Dict[str, Any]:
         """Create and deliver one AI card from an explicit parameter map.
 
@@ -303,6 +340,7 @@ class DingTalkRobotSender:
             card_param_map: Card fields exactly as the template reads them
             open_space_id: Optional explicit openSpaceId. Defaults to IM_ROBOT.{user_id}
             preview: Conversation-list preview shown before the chat is opened
+            mention_user_ids: Optional DingTalk user IDs to mention in group cards
 
         Returns:
             API response dict with outTrackId for tracking
@@ -318,6 +356,7 @@ class DingTalkRobotSender:
             card_param_map=card_param_map,
             open_space_id=resolved_open_space_id,
             preview=preview,
+            mention_user_ids=mention_user_ids,
         )
 
         logger.info(
@@ -405,6 +444,7 @@ class DingTalkRobotSender:
         card_param_map: Dict[str, str],
         open_space_id: str,
         preview: str,
+        mention_user_ids: Optional[Sequence[str]] = None,
     ) -> Dict[str, Any]:
         """The create-and-deliver body for one card instance."""
 
@@ -425,6 +465,9 @@ class DingTalkRobotSender:
                 "spaceType": "IM_GROUP",
                 "robotCode": self.client_id,
             }
+            at_user_ids = dict(_parse_mention_entries(mention_user_ids))
+            if at_user_ids:
+                payload["imGroupOpenDeliverModel"]["atUserIds"] = at_user_ids
         else:
             payload["imRobotOpenSpaceModel"] = {
                 "supportForward": True,
@@ -670,6 +713,7 @@ class AICardSession:
         user_id: str,
         card_template_id: str,
     ):
+        """Bind one streaming card session to its sender and card identity."""
         self._sender = sender
         self._out_track_id = out_track_id
         self._user_id = user_id
