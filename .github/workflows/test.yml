@@ -179,6 +179,21 @@ jobs:
           PLUGIN_AUTH_REDIS_TEST_URL: redis://127.0.0.1:6379/15
         run: uv run pytest integration_checks/test_plugin_account_auth_mysql.py integration_checks/test_plugin_write_races_mysql.py integration_checks/test_plugin_connection_requests_mysql.py integration_checks/test_plugin_policy_bootstrap_mysql.py -n 0
 
+      - name: Verify MCP OAuth refresh and authorization races with InnoDB and Redis
+        working-directory: backend
+        env:
+          MCP_OAUTH_TEST_MYSQL_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/plugin_auth_test
+          MCP_OAUTH_TEST_REDIS_URL: redis://127.0.0.1:6379/15
+        run: uv run pytest integration_checks/test_user_mcp_oauth_mysql.py -n 0 --junitxml=reports/mcp-oauth-mysql.xml
+
+      - name: Upload MCP OAuth concurrency results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-oauth-mysql-results
+          path: backend/reports/mcp-oauth-mysql.xml
+          if-no-files-found: error
+
       - name: Verify namespace grants with MySQL connection collations
         working-directory: backend
         env:
