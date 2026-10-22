@@ -191,7 +191,7 @@ describe('GeneralSettingsPage', () => {
     updateAppPreferencesMock.mockImplementation(patch =>
       Promise.resolve({ ...defaultPreferences, ...patch })
     )
-    changeWorkbenchModeMock.mockImplementation((_currentMode, workbenchMode) =>
+    changeWorkbenchModeMock.mockImplementation(workbenchMode =>
       Promise.resolve({ ...defaultPreferences, workbenchMode })
     )
     applyLanguagePreferenceMock.mockResolvedValue('zh-CN')
@@ -237,7 +237,7 @@ describe('GeneralSettingsPage', () => {
     await userEvent.click(screen.getByTestId('general-workbench-mode-confirm-button'))
 
     await waitFor(() => {
-      expect(changeWorkbenchModeMock).toHaveBeenCalledWith('developer', 'focus')
+      expect(changeWorkbenchModeMock).toHaveBeenCalledWith('focus')
     })
     expect(focusButton).toHaveAttribute('aria-pressed', 'true')
   })

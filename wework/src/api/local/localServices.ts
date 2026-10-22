@@ -1,3 +1,4 @@
+import { createStandInExecutorApi } from '@/api/standIn'
 import { createLocalProjectDevicePluginApi } from '@/api/projectDevicePlugins'
 import { requestRunnerSelection } from '@/lib/runner-selection'
 import {
@@ -3905,7 +3906,32 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     request,
     LOCAL_USER.id,
     listRunnerEnvironments,
-    deps.listCloudModels
+    deps.listCloudModels,
+    async projectId => {
+      const device = localDeviceFromStatus(await bootstrapStatus())
+      const project = projectId
+        ? (await deliveryApi.listCloudProjects()).items.find(item => String(item.id) === projectId)
+        : null
+      return [
+        {
+          id: device.device_id,
+          device_key: device.device_id,
+          name: device.name,
+          owner_type: 'user' as const,
+          owner_id: String(LOCAL_USER.id),
+          status: device.status === 'online' ? ('online' as const) : ('offline' as const),
+          project_authorized: Boolean(project?.execution_environment?.devices?.[device.device_id]),
+          runtimes: ['codex', 'claude_code'] as RunnerEnvironment['runtimes'],
+          models: [],
+        },
+      ]
+    },
+    async () => {
+      const catalog = await request<{ models: RunnerModel[]; errors?: string[] }>(
+        'runtime.runner.catalog'
+      )
+      return { models: catalog.models, catalog_error: catalog.errors?.join(', ') || null }
+    }
   )
   const assignmentRequestWithLocalDevice: RequestWithLocalDevice = (method, data) =>
     request(method, data as Record<string, unknown>)
@@ -4117,11 +4143,15 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         deliveryApi.listCloudProjects(),
         deliveryApi.getLoopItem(itemId),
       ])
-      const projectAgents = await localProjectChatAgentApi.list(String(projectId))
+      const projectAgents = await localProjectChatAgentApi.list(String(projectId), {
+        forceRefresh: true,
+      })
       const workspaceAgents =
         String(projectId) === DEFAULT_WORK_ITEM_PROJECT_ID
           ? []
-          : await localProjectChatAgentApi.list(DEFAULT_WORK_ITEM_PROJECT_ID)
+          : await localProjectChatAgentApi.list(DEFAULT_WORK_ITEM_PROJECT_ID, {
+              forceRefresh: true,
+            })
       const agents = [
         ...projectAgents,
         ...workspaceAgents.filter(
@@ -4583,6 +4613,10 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       },
     },
     runtimeWorkApi,
+    standInApi: createStandInExecutorApi(async (method, payload, deviceId) => {
+      if (deviceId !== (await getLocalDeviceId())) throw new Error('executor-not-local')
+      return request(method, payload)
+    }),
     composerCatalogApi: createRuntimeComposerApi(
       {
         request: async (method, params, deviceId) => {

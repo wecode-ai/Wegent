@@ -53,7 +53,6 @@ def build_external_knowledge_mcp_app(
         async with external_knowledge_mcp_server.session_manager.run():
             yield
 
-    # MIGRATION-CANDIDATE(api="GET /api/mcp/knowledge-external/documents/:document_id/file"): remove after final confirmation.
     document_file_methods = (
         ["HEAD"] if mount_path == "/api/mcp/knowledge-external" else ["GET"]
     )

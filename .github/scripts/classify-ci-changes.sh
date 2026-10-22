@@ -125,6 +125,10 @@ classify_path() {
       changed[platform_e2e]=true
       changed[wework_e2e]=true
       ;;
+    packages/process-explorer/*)
+      changed[wework]=true
+      changed[wework_e2e]=true
+      ;;
     wework/*)
       changed[wework]=true
       changed[wework_e2e]=true

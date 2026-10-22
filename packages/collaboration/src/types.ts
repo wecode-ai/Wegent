@@ -111,27 +111,6 @@ export type BackendCollaborationProject = CollaborationProject & {
   access_role: CollaborationRole;
 };
 
-export interface CollaborationHumanWork {
-  assignment_id: string;
-  ai_task_binding?: {
-    humanAssignmentId: string;
-    dispatchId: string;
-    dispatchRoundId: string;
-    assignmentId: string;
-  } | null;
-  assignee_user_id: number;
-  reviewer_user_id: number | null;
-  submission_message_id: string | null;
-  submitted_by_user_id: number | null;
-  state: "none" | "submitted" | "accepted" | "changes_requested";
-  result: string;
-  return_reason: string;
-  ai_draft_delivery_id: string | null;
-  can_start: boolean;
-  can_submit: boolean;
-  can_review: boolean;
-}
-
 export interface CollaborationIssue {
   id: string;
   cloud_project_id: CollaborationProjectId;
@@ -151,7 +130,12 @@ export interface CollaborationIssue {
   execution_state?: string | null;
   execution_note?: string | null;
   can_approve?: boolean;
-  human_work?: CollaborationHumanWork | null;
+  human_task_binding?: {
+    humanAssignmentId: string;
+    dispatchId: string;
+    dispatchRoundId: string;
+    assignmentId: string;
+  } | null;
   ai_state?: {
     status?: string | null;
     last_error?: string | null;
@@ -533,6 +517,8 @@ export interface CollaborationHostAdapter {
     namespace: string;
   };
   projectCreate?: ProjectCreateHostAdapter;
+  renderBoardToolbarAction?(project: CollaborationProject): ReactNode;
+  renderProjectHeaderAction?(project: CollaborationProject): ReactNode;
   projectActions?: Array<{
     id: string;
     label: string;

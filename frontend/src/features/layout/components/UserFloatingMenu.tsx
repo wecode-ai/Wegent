@@ -100,6 +100,7 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
       {/* User avatar button */}
       <button
         type="button"
+        data-testid="user-floating-menu-toggle"
         onClick={handleToggleMenu}
         aria-expanded={isExpanded}
         aria-haspopup="true"
@@ -221,6 +222,7 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
           <button
             type="button"
             role="menuitem"
+            data-testid="user-floating-menu-logout"
             onClick={handleLogout}
             className="w-full flex items-center gap-3 px-3 py-2 text-sm text-text-primary hover:bg-muted transition-colors duration-150"
           >

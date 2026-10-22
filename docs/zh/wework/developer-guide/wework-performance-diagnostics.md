@@ -248,6 +248,8 @@ window.__WEWORK_PERF__.snapshot();
 
 返回值包含当前 URL、页面可见性、DOM 节点数、内存快照、导航时序、resource 数量、最近事件，以及 Wework 进程组快照。macOS 上 Chromium XPC 进程会被系统改挂到 PID 1；诊断会通过 LaunchServices 将当前 Wework 实例对应的 Web Content、GPU 和 Networking 进程重新关联进来。
 
+Performance Diagnostics 有意保留独立的采集器：它仍通过 `wework/electron/src/host/process-diagnostics.ts` 读取 macOS `ps` 的 RSS；Process Explorer 则使用 Electron metrics 与 `systeminformation`，其中 Electron 管理的进程使用 Electron `workingSetSize`。两者数值接近但不可互换：不要复用另一侧的内存阈值；如果要合并采集链路，应作为独立变更重新建立 memory E2E 基线。
+
 进程组同时提供 `rss_kib` 和 `physical_footprint_kib`：RSS 包含共享映射和可回收驻留页，通常明显高于真实内存压力；判断泄漏或系统资源占用时应优先比较 `physical_footprint_kib`，RSS 只作为地址空间驻留的辅助指标。需要持续观察时可以多次执行，重点比较：
 
 - `memory.usedJSHeapSize` 是否持续上涨。

@@ -21,6 +21,7 @@ from app.schemas.knowledge import (
 )
 from app.services.knowledge.folder_service import KnowledgeFolderService
 from app.services.knowledge.knowledge_service import KnowledgeService
+from app.services.knowledge.orchestrator import knowledge_orchestrator
 
 
 def _api_key_headers(raw_key: str) -> dict[str, str]:
@@ -308,27 +309,18 @@ def test_open_folder_create_move_and_list_documents(
     assert move_response.status_code == 200
     assert move_response.json()["folder_id"] == folder_id
 
-    folder_docs_response = test_client.get(
-        "/api/knowledge/documents",
-        headers=_api_key_headers(test_api_key[0]),
-        params={"knowledge_base_id": kb_id, "folder_id": folder_id},
+    folder_documents = KnowledgeService.list_documents(
+        test_db, kb_id, test_user.id, folder_id
     )
-    root_docs_response = test_client.get(
-        "/api/knowledge/documents",
-        headers=_api_key_headers(test_api_key[0]),
-        params={"knowledge_base_id": kb_id, "folder_id": 0},
-    )
+    root_documents = KnowledgeService.list_documents(test_db, kb_id, test_user.id, 0)
     tree_response = test_client.get(
         "/api/knowledge/folders",
         headers=_api_key_headers(test_api_key[0]),
         params={"knowledge_base_id": kb_id},
     )
 
-    assert folder_docs_response.status_code == 200
-    folder_doc_ids = {item["id"] for item in folder_docs_response.json()["items"]}
-    assert folder_doc_ids == {document.id}
-    assert root_docs_response.status_code == 200
-    assert root_docs_response.json()["items"] == []
+    assert {item.id for item in folder_documents} == {document.id}
+    assert root_documents == []
     assert tree_response.status_code == 200
     tree_folder_ids = {item["id"] for item in tree_response.json()}
     assert folder_id in tree_folder_ids
@@ -351,31 +343,28 @@ def test_open_list_documents_supports_subfolders_keyword_sort_and_folder_counts(
     )
     _create_document(test_db, kb_id, test_user.id, "Gamma root.md", folder_id=0)
 
-    direct_response = test_client.get(
-        "/api/knowledge/documents",
-        headers=_api_key_headers(test_api_key[0]),
-        params={"knowledge_base_id": kb_id, "folder_id": parent.id},
+    direct_response = knowledge_orchestrator.list_documents(
+        test_db,
+        test_user,
+        kb_id,
+        folder_id=parent.id,
     )
-    subtree_response = test_client.get(
-        "/api/knowledge/documents",
-        headers=_api_key_headers(test_api_key[0]),
-        params={
-            "knowledge_base_id": kb_id,
-            "folder_id": parent.id,
-            "include_subfolders": True,
-            "sort_by": "name",
-            "sort_order": "asc",
-        },
+    subtree_response = knowledge_orchestrator.list_documents(
+        test_db,
+        test_user,
+        kb_id,
+        folder_id=parent.id,
+        include_subfolders=True,
+        sort_by="name",
+        sort_order="asc",
     )
-    keyword_response = test_client.get(
-        "/api/knowledge/documents",
-        headers=_api_key_headers(test_api_key[0]),
-        params={
-            "knowledge_base_id": kb_id,
-            "folder_id": parent.id,
-            "include_subfolders": True,
-            "keyword": "child",
-        },
+    keyword_response = knowledge_orchestrator.list_documents(
+        test_db,
+        test_user,
+        kb_id,
+        folder_id=parent.id,
+        include_subfolders=True,
+        keyword="child",
     )
     tree_response = test_client.get(
         "/api/knowledge/folders",
@@ -383,17 +372,12 @@ def test_open_list_documents_supports_subfolders_keyword_sort_and_folder_counts(
         params={"knowledge_base_id": kb_id},
     )
 
-    assert direct_response.status_code == 200
-    assert [item["id"] for item in direct_response.json()["items"]] == [parent_doc.id]
-
-    assert subtree_response.status_code == 200
-    assert [item["id"] for item in subtree_response.json()["items"]] == [
+    assert [item.id for item in direct_response.items] == [parent_doc.id]
+    assert [item.id for item in subtree_response.items] == [
         parent_doc.id,
         child_doc.id,
     ]
-
-    assert keyword_response.status_code == 200
-    assert [item["id"] for item in keyword_response.json()["items"]] == [child_doc.id]
+    assert [item.id for item in keyword_response.items] == [child_doc.id]
 
     assert tree_response.status_code == 200
     parent_node = next(item for item in tree_response.json() if item["id"] == parent.id)
@@ -647,12 +631,10 @@ def test_open_batch_move_documents_moves_documents_to_folder(
     assert response.status_code == 200
     assert response.json()["success_count"] == 2
 
-    folder_docs_response = test_client.get(
-        "/api/knowledge/documents",
-        headers=_api_key_headers(test_api_key[0]),
-        params={"knowledge_base_id": kb_id, "folder_id": folder.id},
+    folder_docs = KnowledgeService.list_documents(
+        test_db, kb_id, test_user.id, folder.id
     )
-    folder_doc_ids = {item["id"] for item in folder_docs_response.json()["items"]}
+    folder_doc_ids = {item.id for item in folder_docs}
     assert folder_doc_ids == {first_doc.id, second_doc.id}
 
 
@@ -695,19 +677,3 @@ def test_open_batch_move_documents_maps_zero_success_errors(
 
     assert response.status_code == expected_status
     assert response.json()["detail"] == message
-
-
-@pytest.fixture(autouse=True)
-def _retained_python_handler_contracts(test_client):
-    import app.api.endpoints.knowledge_open as endpoint_0
-    from tests.legacy_python_routes import legacy_python_handlers
-
-    with legacy_python_handlers(test_client.app) as register:
-        register(
-            "/api/knowledge/documents",
-            endpoint_0.list_documents_open,
-            endpoint_0.router,
-            methods=["GET"],
-            response_model=endpoint_0.KnowledgeDocumentListResponse,
-        )
-        yield

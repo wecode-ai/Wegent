@@ -58,7 +58,7 @@ pub struct LoopItemResponse {
     assignment_history: Vec<Value>,
     status_history: Vec<Value>,
     approval: Option<Value>,
-    human_work: Option<Value>,
+    human_task_binding: Option<Value>,
     queued_at: Option<String>,
     execution_note: Option<String>,
     execution_error: Option<String>,
@@ -277,9 +277,9 @@ pub async fn response_values(
         String::new()
     };
 
-    // `human_work = human_issue_work_service.view(db, item, user_id)`.
-    let human_work =
-        super::human_work::human_work_view(state, item, current_user.id, project).await?;
+    let human_task_binding =
+        super::human_task_binding::human_task_binding(state, item, current_user.id, project)
+            .await?;
 
     Ok(LoopItemResponse {
         id: item.id.clone(),
@@ -313,7 +313,7 @@ pub async fn response_values(
         approval: overlay
             .approval
             .or_else(|| json_object(metadata.approval.as_ref())),
-        human_work,
+        human_task_binding,
         queued_at: overlay
             .queued_at
             .or_else(|| json_string(metadata.queued_at.as_ref())),

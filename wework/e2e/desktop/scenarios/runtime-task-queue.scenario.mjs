@@ -2,7 +2,9 @@ import assert from 'node:assert/strict'
 import { access } from 'node:fs/promises'
 
 import { ensureProjectExpandedInActiveSidebar } from '../modules/project-sidebar.mjs'
+import { waitForCompletedRuntimeTaskThread } from '../modules/runtime-task-evidence.mjs'
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
+import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -16,6 +18,14 @@ const PROMPTS = {
   fifth: 'QUEUE_5_STARTS_AFTER_LIMIT_INCREASE_WEWORK_DESKTOP_E2E',
   followUpCancel: 'QUEUE_FOLLOW_UP_CANCEL_WEWORK_DESKTOP_E2E',
   followUpForce: 'QUEUE_FOLLOW_UP_FORCE_WEWORK_DESKTOP_E2E',
+  backgroundFirst: 'QUEUE_BACKGROUND_FIRST_WEWORK_DESKTOP_E2E',
+  backgroundSecond: 'QUEUE_BACKGROUND_SECOND_WEWORK_DESKTOP_E2E',
+  backgroundThird: 'QUEUE_BACKGROUND_THIRD_WEWORK_DESKTOP_E2E',
+  resumeInitial: 'QUEUE_RESUME_INITIAL_WEWORK_DESKTOP_E2E',
+  resumeInput: 'QUEUE_RESUME_INPUT_WEWORK_DESKTOP_E2E',
+  resumeFirst: 'QUEUE_RESUME_FIRST_WEWORK_DESKTOP_E2E',
+  resumeSecond: 'QUEUE_RESUME_SECOND_WEWORK_DESKTOP_E2E',
+  resumeThird: 'QUEUE_RESUME_THIRD_WEWORK_DESKTOP_E2E',
 }
 
 function sse(events) {
@@ -107,13 +117,13 @@ async function sendNewTask(
   }
 }
 
-async function waitForRequestCount(requests, count, timeoutMs) {
+async function waitForRequestCount(requests, count, timeoutMs, description = 'model requests') {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
     if (requests.length >= count) return
     await new Promise(resolve => setTimeout(resolve, 100))
   }
-  throw new Error(`Timed out waiting for ${count} runtime queue model requests`)
+  throw new Error(`Timed out waiting for ${count} runtime queue ${description}`)
 }
 
 async function waitForSnapshot(control, predicate, message, timeoutMs) {
@@ -146,9 +156,65 @@ async function prepareScreenshot(control, hoverSelector = '[data-testid="new-cha
   await new Promise(resolve => setTimeout(resolve, 500))
 }
 
+async function enqueueFollowUps(control, prompts, timeoutMs) {
+  for (const prompt of prompts) {
+    await control.command('fill', COMPOSER_SELECTOR, { value: prompt })
+    await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+    await control.command(
+      'waitFor',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="conversation-queue-panel"]`,
+      { text: prompt, timeoutMs }
+    )
+  }
+  const rowIds = await queueRowIds(control)
+  assert.equal(rowIds.length, prompts.length, 'Not all follow-ups were retained in the queue')
+  return rowIds
+}
+
+async function queueRowIds(control) {
+  const snapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+  return snapshot.testIds.filter(testId => testId.startsWith('conversation-queue-row-'))
+}
+
+async function assertRestoredFollowUps(control, prompts, timeoutMs) {
+  const previewSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-preview"]`
+  for (const prompt of prompts) {
+    await control.command('waitFor', previewSelector, { text: prompt, timeoutMs })
+    const turnIndex = await control.command('getAttribute', previewSelector, {
+      text: prompt,
+      value: 'data-turn-index',
+    })
+    assert.match(turnIndex, /^\d+$/, `No navigation marker for the follow-up: ${prompt}`)
+    await control.command(
+      'click',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-marker"][data-turn-index="${turnIndex}"]`
+    )
+    await control.command('waitFor', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`, {
+      text: prompt,
+      stableMs: 500,
+      timeoutMs,
+    })
+    const messages = await control.command(
+      'getText',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
+    )
+    assert.equal(
+      messages.split(prompt).length - 1,
+      1,
+      `The follow-up was missing or duplicated after task restoration: ${prompt}`
+    )
+    await control.command(
+      'waitFor',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+      { text: `${prompt}_COMPLETE`, timeoutMs }
+    )
+  }
+}
+
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
   let active = false
   const requests = []
+  const cancelledRequests = []
   const releases = new Map()
 
   const releaseFor = prompt =>
@@ -181,6 +247,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       }
 
       requests.push(prompt)
+      let cancelled = false
+      const recordCancellation = () => {
+        if (cancelled || response.writableEnded) return
+        cancelled = true
+        cancelledRequests.push(prompt)
+        releases.get(prompt)()
+      }
+      request.once('aborted', recordCancellation)
+      response.once('close', recordCancellation)
       const responseId = `wework-runtime-queue-${requests.length}`
       response.writeHead(200, {
         'Cache-Control': 'no-cache',
@@ -189,10 +264,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       })
       response.flushHeaders()
       response.write(sse([responseCreated(responseId)]))
-      await releasePromises.get(prompt)
-      response.end(
-        sse([assistantMessage(responseId, `${prompt}_COMPLETE`), responseCompleted(responseId)])
-      )
+      try {
+        await releasePromises.get(prompt)
+        if (!cancelled && !request.aborted && !response.destroyed) {
+          response.end(
+            sse([assistantMessage(responseId, `${prompt}_COMPLETE`), responseCompleted(responseId)])
+          )
+        }
+      } finally {
+        request.off('aborted', recordCancellation)
+        response.off('close', recordCancellation)
+      }
       return true
     },
 
@@ -574,13 +656,279 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       )
       await prepareScreenshot(control)
       await captureScreenshot(control, 'runtime-queue-06-limit-increase-drained.png', 'body')
+
+      await control.command(
+        'click',
+        `${refreshedSidebarSelector} [data-testid="${fourth.rowTestId}"]`,
+        { visible: refreshedSidebarVisible }
+      )
+      const backgroundTaskSnapshot = await waitForWorkbenchDebugState(
+        control,
+        snapshot => snapshot.workbench?.currentRuntimeTask?.taskId === fourth.taskId,
+        'The background queue source task did not become active',
+        uiTimeoutMs
+      )
+      const backgroundTask = backgroundTaskSnapshot.workbench.currentRuntimeTask
+      const backgroundPaneSelector = `[data-workbench-pane-host="runtime:${backgroundTask.deviceId}:${fourth.taskId}"]`
+      await control.command('waitFor', backgroundPaneSelector, { timeoutMs: uiTimeoutMs })
+      const backgroundPrompts = [
+        PROMPTS.backgroundFirst,
+        PROMPTS.backgroundSecond,
+        PROMPTS.backgroundThird,
+      ]
+      await enqueueFollowUps(control, backgroundPrompts, uiTimeoutMs)
+      const requestsBeforeBackgroundDrain = [...requests]
+      assert.equal(
+        requestsBeforeBackgroundDrain.length,
+        6,
+        'A queued follow-up reached the model while its source task was still running'
+      )
+      await captureScreenshot(control, 'runtime-queue-background-01-three-follow-ups.png', 'body')
+
+      await control.command(
+        'click',
+        `${refreshedSidebarSelector} [data-testid="${fifth.rowTestId}"]`,
+        { visible: refreshedSidebarVisible }
+      )
+      await waitForWorkbenchDebugState(
+        control,
+        snapshot => snapshot.workbench?.currentRuntimeTask?.taskId === fifth.taskId,
+        'The other task did not become active before draining the background queue',
+        uiTimeoutMs
+      )
+      assert.equal(
+        Number(await control.command('getElementCount', backgroundPaneSelector)),
+        0,
+        'The source conversation remained mounted after switching tasks'
+      )
+      const otherTaskSnapshot = JSON.parse(
+        await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+      )
+      assert.equal(
+        otherTaskSnapshot.testIds.includes('conversation-queue-panel'),
+        false,
+        'The background task queue leaked into the other conversation'
+      )
+
+      // Complete the source turn only after its conversation has unmounted.
+      assert.deepEqual(
+        requests,
+        requestsBeforeBackgroundDrain,
+        'The background queue dispatched before its source response was released'
+      )
       releases.get(PROMPTS.fourth)?.()
+      for (const [index, prompt] of backgroundPrompts.entries()) {
+        await waitForRequestCount(
+          requests,
+          requestsBeforeBackgroundDrain.length + index + 1,
+          uiTimeoutMs
+        )
+        assert.deepEqual(
+          requests,
+          [...requestsBeforeBackgroundDrain, ...backgroundPrompts.slice(0, index + 1)],
+          'The unmounted task did not send queued messages exactly once in submission order'
+        )
+        releases.get(prompt)?.()
+      }
+      await waitForCompletedRuntimeTaskThread(control, fourth.taskId, uiTimeoutMs)
+      const afterDrainSnapshot = JSON.parse(
+        await control.command('getWorkbenchDebugSnapshot', 'body')
+      )
+      assert.equal(
+        afterDrainSnapshot.workbench?.currentRuntimeTask?.taskId,
+        fifth.taskId,
+        'Draining the background queue changed the active conversation'
+      )
+      await captureScreenshot(control, 'runtime-queue-background-02-drained-while-away.png', 'body')
+
+      await control.command(
+        'click',
+        `${refreshedSidebarSelector} [data-testid="${fourth.rowTestId}"]`,
+        { visible: refreshedSidebarVisible }
+      )
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+        { text: `${PROMPTS.backgroundThird}_COMPLETE`, stableMs: 500, timeoutMs: uiTimeoutMs }
+      )
+      const restoredSnapshot = JSON.parse(
+        await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+      )
+      assert.equal(
+        restoredSnapshot.testIds.includes('conversation-queue-panel'),
+        false,
+        'Returning to the completed background task restored an already-drained queue'
+      )
+      await assertRestoredFollowUps(control, backgroundPrompts, uiTimeoutMs)
+      assert.deepEqual(
+        requests,
+        [...requestsBeforeBackgroundDrain, ...backgroundPrompts],
+        'Returning to the source task sent a queued message again'
+      )
+      await captureScreenshot(
+        control,
+        'runtime-queue-background-03-restored-without-duplicates.png',
+        'body'
+      )
+
+      const requestsBeforeResume = [...requests]
+      await control.command('fill', COMPOSER_SELECTOR, { value: PROMPTS.resumeInitial })
+      await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+      await waitForRequestCount(requests, requestsBeforeResume.length + 1, uiTimeoutMs)
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="pause-response-button"]`,
+        { timeoutMs: uiTimeoutMs }
+      )
+      const resumePrompts = [PROMPTS.resumeFirst, PROMPTS.resumeSecond, PROMPTS.resumeThird]
+      const preservedRowIds = await enqueueFollowUps(control, resumePrompts, uiTimeoutMs)
+      const requestsBeforeResumeInput = [...requestsBeforeResume, PROMPTS.resumeInitial]
+      assert.deepEqual(
+        requests,
+        requestsBeforeResumeInput,
+        'The follow-ups reached the model before the source turn was stopped'
+      )
+      await control.command(
+        'click',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="pause-response-button"]`
+      )
+      await waitForRequestCount(cancelledRequests, 1, uiTimeoutMs, 'cancelled model requests')
+      assert.deepEqual(cancelledRequests, [PROMPTS.resumeInitial])
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="resume-queue-button"]`,
+        { timeoutMs: uiTimeoutMs }
+      )
+      await waitForCompletedRuntimeTaskThread(control, fourth.taskId, uiTimeoutMs)
+      assert.deepEqual(await queueRowIds(control), preservedRowIds, 'Stopping lost queued messages')
+      assert.deepEqual(requests, requestsBeforeResumeInput, 'Stopping dispatched a queued message')
+      await captureScreenshot(control, 'runtime-queue-resume-01-paused.png', 'body')
+
+      await control.command('fill', COMPOSER_SELECTOR, { value: PROMPTS.resumeInput })
+      await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+      await control.command('waitFor', '[data-testid="paused-queue-send-dialog"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.deepEqual(requests, requestsBeforeResumeInput, 'Opening the resume dialog sent input')
+      await control.command('click', '[data-testid="paused-queue-send-preserve-button"]')
+      await waitForRequestCount(requests, requestsBeforeResumeInput.length + 1, uiTimeoutMs)
+      const requestsDuringResumeInput = [...requestsBeforeResumeInput, PROMPTS.resumeInput]
+      assert.deepEqual(
+        requests,
+        requestsDuringResumeInput,
+        'The additional input did not start before the preserved queue'
+      )
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="pause-response-button"]`,
+        { timeoutMs: uiTimeoutMs }
+      )
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="resume-queue-button"]`,
+        { timeoutMs: uiTimeoutMs }
+      )
+      assert.deepEqual(
+        await queueRowIds(control),
+        preservedRowIds,
+        'Keeping the queue replaced or removed its original messages'
+      )
+      await control.command(
+        'click',
+        `${refreshedSidebarSelector} [data-testid="${fifth.rowTestId}"]`,
+        { visible: refreshedSidebarVisible }
+      )
+      await waitForWorkbenchDebugState(
+        control,
+        snapshot => snapshot.workbench?.currentRuntimeTask?.taskId === fifth.taskId,
+        'The other task did not become active during the additional-input turn',
+        uiTimeoutMs
+      )
+      assert.equal(
+        Number(await control.command('getElementCount', backgroundPaneSelector)),
+        0,
+        'The paused queue source remained mounted after switching tasks'
+      )
+      assert.deepEqual(
+        await queueRowIds(control),
+        [],
+        'The resumed queue leaked into the other task'
+      )
+      assert.deepEqual(
+        requests,
+        requestsDuringResumeInput,
+        'The preserved queue ran while the additional-input turn was still held'
+      )
+      await captureScreenshot(control, 'runtime-queue-resume-02-input-held-while-away.png', 'body')
+      assert.deepEqual(
+        requests,
+        requestsDuringResumeInput,
+        'The preserved queue dispatched before the additional-input response was released'
+      )
+
+      // Keep the manual turn held until the source pane is gone, then release one queued turn at a time.
+      releases.get(PROMPTS.resumeInput)()
+      for (const [index, prompt] of resumePrompts.entries()) {
+        await waitForRequestCount(
+          requests,
+          requestsDuringResumeInput.length + index + 1,
+          uiTimeoutMs
+        )
+        assert.deepEqual(
+          requests,
+          [...requestsDuringResumeInput, ...resumePrompts.slice(0, index + 1)],
+          'The preserved queue did not resume exactly once in order after the manual turn ended'
+        )
+        releases.get(prompt)()
+      }
+      await waitForCompletedRuntimeTaskThread(control, fourth.taskId, uiTimeoutMs)
+      const resumedSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+      assert.equal(
+        resumedSnapshot.workbench?.currentRuntimeTask?.taskId,
+        fifth.taskId,
+        'Resuming the background queue changed the active task'
+      )
+      await captureScreenshot(control, 'runtime-queue-resume-03-drained-while-away.png', 'body')
+      await control.command(
+        'click',
+        `${refreshedSidebarSelector} [data-testid="${fourth.rowTestId}"]`,
+        { visible: refreshedSidebarVisible }
+      )
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+        { text: `${PROMPTS.resumeThird}_COMPLETE`, stableMs: 500, timeoutMs: uiTimeoutMs }
+      )
+      const finalSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+      assert.equal(
+        finalSnapshot.testIds.includes('conversation-queue-panel'),
+        false,
+        'Returning restored a queue that had already resumed and drained'
+      )
+      await assertRestoredFollowUps(control, [PROMPTS.resumeInput, ...resumePrompts], uiTimeoutMs)
+      assert.deepEqual(
+        requests,
+        [...requestsDuringResumeInput, ...resumePrompts],
+        'Returning after resume dispatched the additional input or a queued message again'
+      )
+      assert.deepEqual(cancelledRequests, [PROMPTS.resumeInitial])
+      await captureScreenshot(
+        control,
+        'runtime-queue-resume-04-restored-without-duplicates.png',
+        'body'
+      )
       releases.get(PROMPTS.fifth)?.()
+      await waitForCompletedRuntimeTaskThread(control, fifth.taskId, uiTimeoutMs)
       active = false
     },
 
+    async cleanup() {
+      active = false
+      for (const release of releases.values()) release()
+    },
+
     diagnostics() {
-      return { active, requests }
+      return { active, requests, cancelledRequests }
     },
   }
 }

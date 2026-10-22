@@ -5,6 +5,9 @@
 //! `GET /api/tasks/{task_id}/remote-workspace/status` matching
 //! `app.services.remote_workspace_service.RemoteWorkspaceService.get_status`.
 use crate::remote_workspace_payload::ExecutorPayload;
+use crate::remote_workspace_tree::workspace_root::{
+    ResolveWorkspaceRootError, resolve_executor_workspace_root,
+};
 use brz_http_server::StatusCode;
 use brz_mysql::Mysql;
 #[cfg(test)]
@@ -102,25 +105,51 @@ async fn status(
             resolve_workspace_base_url(state, task_id, &detail.subtasks, &sandbox_payload)
                 .await
                 .map_err(internal_error)?;
-        let available = base_url.is_some();
-        let root_path = if sandbox_available(&sandbox_payload) {
-            SANDBOX_HOME_ROOT.to_string()
-        } else {
-            format!("{WORKSPACE_ROOT}/{task_id}")
+        let (available, root_path, reason) = match base_url.as_deref() {
+            None => (
+                false,
+                format!("{WORKSPACE_ROOT}/{task_id}"),
+                Some("sandbox_not_running"),
+            ),
+            Some(_) if sandbox_available(&sandbox_payload) => {
+                (true, SANDBOX_HOME_ROOT.to_string(), None)
+            }
+            Some(base_url) => {
+                match resolve_executor_workspace_root(state.http.client(), base_url, task_id).await
+                {
+                    Ok(root_path) => (true, root_path, None),
+                    Err(ResolveWorkspaceRootError::NotFound) => (
+                        false,
+                        format!("{WORKSPACE_ROOT}/{task_id}"),
+                        Some("starting"),
+                    ),
+                    Err(error) => return Err(workspace_root_status_error(error)),
+                }
+            }
         };
         RemoteWorkspaceStatusResponse {
             connected: true,
             available,
             root_path,
-            reason: if available {
-                None
-            } else {
-                Some("sandbox_not_running")
-            },
+            reason,
         }
     };
 
     Ok((StatusCode::OK, response))
+}
+
+fn workspace_root_status_error(error: ResolveWorkspaceRootError) -> StatusError {
+    let status = match error {
+        ResolveWorkspaceRootError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+        ResolveWorkspaceRootError::NotFound => StatusCode::NOT_FOUND,
+        ResolveWorkspaceRootError::Upstream | ResolveWorkspaceRootError::InvalidResponse => {
+            StatusCode::BAD_GATEWAY
+        }
+    };
+    StatusError {
+        status,
+        detail: error.detail().to_string(),
+    }
 }
 
 /// `RemoteWorkspaceService._get_sandbox_payload`: a non-200 or undecodable

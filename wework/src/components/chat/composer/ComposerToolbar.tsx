@@ -62,6 +62,8 @@ interface ComposerToolbarProps {
   onSubmit: (options?: ComposerSubmitOptions) => void
   sendButtonTestId?: string
   sendButtonLabel?: string
+  showSubmitButton?: boolean
+  showAttachmentActions?: boolean
   leadingContext?: ReactNode
   onListLocalApps?: () => Promise<LocalDeviceApp[]>
   workspaceTarget?: WorkspaceTarget | null

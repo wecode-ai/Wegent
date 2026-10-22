@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
+import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 
 const ACTIVE = '[data-workspace-tab-content][aria-hidden="false"]'
 const INPUT = `${ACTIVE} [data-testid="chat-message-input"]`
@@ -82,11 +83,10 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
           !input.includes('originalGoal'),
           'Prediction rebuilt the conversation as a text summary'
         )
-        if (predictionRequests === 1) await heldPrediction
-        complete(
-          response,
-          JSON.stringify({ suggestion: predictionRequests === 1 ? SUGGESTION : null })
-        )
+        await heldPrediction
+        // A draft edit can cancel the stale prediction before the next turn settles.
+        if (response.destroyed || response.writableEnded) return true
+        complete(response, JSON.stringify({ suggestion: SUGGESTION }))
         return true
       }
       if (!input.includes(INITIAL) && !input.includes(EDITED)) return false
@@ -119,17 +119,26 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       await capture('reply-03-original-request.png')
       await control.command('press', INPUT, { key: 'Enter' })
       await control.command('waitFor', PENDING, { text: '正在生成建议' })
-      await capture('reply-03b-generating-suggestion.png')
       await control.command('fill', INPUT, { value: '生成时我也能输入' })
       assert.equal(Number(await control.command('getElementCount', PENDING)), 0)
-      await control.command('fill', INPUT, { value: '' })
-      await control.command('waitFor', PENDING)
+      // Predictions abort after 30 seconds. Release the held response before
+      // slower parallel checkpoint work can turn this deliberate hold into a timeout.
       releasePrediction()
+      await control.command('fill', INPUT, { value: '' })
       await control.command('waitFor', GHOST, { text: SUGGESTION, timeoutMs: 30000 })
       assert.equal(Number(await control.command('getElementCount', PENDING)), 0)
       assert.equal(await control.command('getValue', INPUT), '')
       assert.equal(normalRequests, 1)
       await capture('reply-04-ghost-suggestion.png')
+      const predictionRequestsBeforeReload = predictionRequests
+      await reloadMainWindow(control, 'Reply prediction reload did not reconnect')
+      await control.command('waitFor', GHOST, { text: SUGGESTION })
+      assert.equal(
+        predictionRequests,
+        predictionRequestsBeforeReload,
+        'Reload regenerated the completed-turn suggestion'
+      )
+      assert.equal(Number(await control.command('getElementCount', PENDING)), 0)
       await control.command('fill', INPUT, { value: '/model' })
       await control.command('waitFor', `${ACTIVE} [data-testid="slash-command-option-model"]`)
       await control.command('click', `${ACTIVE} [data-testid="slash-command-option-model"]`)
@@ -159,14 +168,37 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       assert.equal(Number(await control.command('getElementCount', GHOST)), 0)
       assert.equal(await control.command('getValue', INPUT), '我自己写的草稿')
       await capture('reply-04b-existing-draft-protected.png')
+      const predictionRequestsBeforeEdit = predictionRequests
       await control.command('fill', INPUT, { value: '' })
       await control.command('waitFor', GHOST, { text: SUGGESTION })
-      assert.equal(predictionRequests, 1, 'Editing the draft regenerated a prediction')
+      assert.equal(
+        predictionRequests,
+        predictionRequestsBeforeEdit,
+        'Editing the draft regenerated a prediction'
+      )
       await control.command('nativePress', INPUT, { key: 'Enter' })
       assert.equal(await control.command('getValue', INPUT), SUGGESTION)
       assert.equal(normalRequests, 1, 'Accepting the suggestion sent a message')
       await capture('reply-05-accepted-not-sent.png')
+      await control.command('fill', INPUT, { value: '' })
+      const predictionRequestsBeforeAccept = predictionRequests
+      await reloadMainWindow(control, 'Accepted reply prediction reload did not reconnect')
+      await control.command('waitFor', INPUT)
+      await control.command('waitFor', `${ACTIVE} [data-testid="message-assistant"]`, {
+        text: ANSWER,
+      })
+      assert.equal(Number(await control.command('getElementCount', GHOST)), 0)
+      assert.equal(Number(await control.command('getElementCount', PENDING)), 0)
+      assert.equal(
+        predictionRequests,
+        predictionRequestsBeforeAccept,
+        'Reload regenerated an accepted suggestion'
+      )
       await control.command('fill', INPUT, { value: EDITED })
+      await control.command(
+        'waitFor',
+        `${ACTIVE} [data-testid="send-message-button"]:not([disabled])`
+      )
       await capture('reply-06-edited-draft.png')
       await control.command('nativePress', INPUT, { key: 'Enter' })
       await control.command('waitFor', `${ACTIVE} [data-testid="message-assistant"]`, {
@@ -176,6 +208,7 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       assert.equal(normalRequests, 2)
       await capture('reply-07-edited-sent.png')
       await control.command('navigate', 'body', { value: '/settings/general' })
+      await control.command('waitFor', '[data-testid="reply-prediction-settings"]')
       await control.command('scrollIntoView', '[data-testid="reply-prediction-settings"]')
       await control.command('click', '[data-testid="reply-prediction-enabled"]')
       await control.command(
@@ -186,6 +219,65 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       await control.command('click', '[data-testid="settings-back-button"]')
       assert.equal(Number(await control.command('getElementCount', GHOST)), 0)
       await capture('reply-09-disabled-conversation.png')
+
+      const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+      const task = debug.workbench?.currentRuntimeTask
+      assert.ok(task?.deviceId && task?.taskId, 'The completed task address is missing')
+      const cacheKey = `wework.replyPrediction.v1.${JSON.stringify([
+        task.deviceId,
+        task.taskId,
+        task.workspacePath,
+      ])}`
+      const cached = await control.command('getLocalStorageItem', 'body', { value: cacheKey })
+      assert.ok(cached, 'The completed task did not persist its prediction result')
+      await control.command('hover', `[data-testid="runtime-local-task-row-${task.taskId}"]`)
+      await control.command('click', `[data-testid="runtime-local-task-archive-${task.taskId}"]`)
+      await control.command(
+        'waitFor',
+        `[data-testid="runtime-local-task-archive-toast-${task.taskId}"]`
+      )
+      const archiveDeadline = Date.now() + 10000
+      while (
+        Number(
+          await control.command(
+            'getElementCount',
+            `[data-testid="runtime-local-task-row-${task.taskId}"]`
+          )
+        )
+      ) {
+        assert.ok(Date.now() < archiveDeadline, 'The task did not finish archiving')
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+      await control.command('navigate', 'body', { value: '/settings/archived-conversations' })
+      const taskSuffix = `${task.deviceId}-${task.taskId}`.replace(/[^a-zA-Z0-9_-]/g, '-')
+      const deleteButton = `[data-testid="archived-delete-button-${taskSuffix}"]`
+      await control.command('waitFor', deleteButton)
+      assert.equal(
+        await control.command('getLocalStorageItem', 'body', { value: cacheKey }),
+        cached,
+        'Archiving removed the reusable suggestion cache'
+      )
+      await control.command('click', deleteButton)
+      await control.command('click', '[data-testid="archived-delete-confirm-dialog-cancel-button"]')
+      assert.equal(
+        await control.command('getLocalStorageItem', 'body', { value: cacheKey }),
+        cached,
+        'Cancelling deletion removed the suggestion cache'
+      )
+      await control.command('click', deleteButton)
+      await control.command(
+        'click',
+        '[data-testid="archived-delete-confirm-dialog-confirm-button"]'
+      )
+      const deletionDeadline = Date.now() + 10000
+      while (await control.command('getLocalStorageItem', 'body', { value: cacheKey })) {
+        assert.ok(Date.now() < deletionDeadline, 'Deleting the task left its suggestion cache')
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+      await reloadMainWindow(control, 'Deleted reply prediction reload did not reconnect')
+      await control.command('waitFor', '[data-testid="archived-conversations-settings-page"]')
+      assert.equal(await control.command('getLocalStorageItem', 'body', { value: cacheKey }), '')
+      assert.equal(Number(await control.command('getElementCount', deleteButton)), 0)
     },
     diagnostics() {
       return { normalRequests, predictionRequests }

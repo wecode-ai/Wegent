@@ -77,7 +77,7 @@ import {
 import { openExternalUrl } from '@/lib/external-links'
 import { fileManagerRevealLabel } from '@/lib/file-manager'
 import { openLocalFile, revealLocalFile } from '@/lib/local-terminal'
-import { normalizeBrowserUrl } from '@/lib/browser-url'
+import { browserDiagnosticOrigin, normalizeBrowserUrl } from '@/lib/browser-url'
 import { navigateTo } from '@/lib/navigation'
 import { BROWSER_ZOOM_DEFAULT_PERCENT, zoomPercentToScaleFactor } from '@/lib/browser-zoom'
 import {
@@ -321,21 +321,18 @@ async function waitForVisibleBrowserHost(
   throw new Error('Embedded browser open was cancelled')
 }
 
-function browserOpenErrorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message
-  if (typeof error === 'string') return error
-  try {
-    return JSON.stringify(error)
-  } catch {
-    return String(error)
-  }
-}
-
 function logBrowserOpenDiagnostic(
   stage: BrowserOpenDiagnosticStage,
   detail: Record<string, unknown>
 ) {
-  console.info('[Wework] Embedded browser open diagnostic', JSON.stringify({ stage, ...detail }))
+  console.info(
+    '[Wework] Embedded browser open diagnostic',
+    JSON.stringify({
+      stage,
+      ...detail,
+      url: typeof detail.url === 'string' ? browserDiagnosticOrigin(detail.url) : null,
+    })
+  )
 }
 
 function observeElementIfPresent(observer: ResizeObserver, element: Element | null) {
@@ -723,7 +720,9 @@ export function WorkspaceBrowserTabPanel({
 
   useEffect(() => {
     const listener = listenEmbeddedBrowserCloseRequests(event => {
-      if (event.label !== currentLabelRef.current) return
+      if (event.label !== currentLabelRef.current || event.nativeLabel !== nativeLabelRef.current) {
+        return
+      }
       console.info(
         '[Wework] Embedded browser close consumed',
         JSON.stringify({ label: event.label, nativeLabel: event.nativeLabel })
@@ -1305,6 +1304,33 @@ export function WorkspaceBrowserTabPanel({
       }
       await setEmbeddedBrowserBounds({ x: 0, y: 0, width: 1, height: 1 }, false, openingLabel, true)
     }
+    const adoptOpenedBrowser = async (initialPageState: EmbeddedBrowserPageState) => {
+      adoptNativeLabel(initialPageState.nativeLabel, openingLabel)
+      nativeBrowserOpenRef.current = true
+      const bridgeNavigationPending = activeOpenRequestIdRef.current !== null
+      const pendingUrl = pendingNavigationUrlRef.current
+      const queuedUrl =
+        !bridgeNavigationPending && pendingUrl && pendingUrl !== openingUrl ? pendingUrl : null
+      let pageState = initialPageState
+      if (queuedUrl) {
+        await navigateEmbeddedBrowser(queuedUrl, openingLabel)
+        if (isAbandoned()) return false
+        pageState = await readEmbeddedBrowserPageState(openingLabel)
+        if (isAbandoned()) return false
+      }
+      if (activeOpenRequestIdRef.current === requestId) {
+        activeOpenRequestIdRef.current = null
+      }
+      const requestedUrl = queuedUrl ?? openingUrl
+      if (!bridgeNavigationPending && pendingNavigationUrlRef.current === requestedUrl) {
+        pendingNavigationUrlRef.current = null
+      }
+      setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
+      updatePageUrl(bridgeNavigationPending ? openingUrl : pageState.url || requestedUrl)
+      schedulePostOpenBoundsSync(activeRef.current)
+      applyNativePageStatus(pageState)
+      return true
+    }
     const recoverBrowserFromPageState = async () => {
       const recoveryDelays = [0, 120, 300, 600]
       for (const delay of recoveryDelays) {
@@ -1314,13 +1340,7 @@ export function WorkspaceBrowserTabPanel({
         try {
           const pageState = await readEmbeddedBrowserPageState(openingLabel)
           if (isAbandoned()) return true
-          adoptNativeLabel(pageState.nativeLabel, openingLabel)
-          setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
-          nativeBrowserOpenRef.current = true
-          updatePageUrl(pageState.url || openingUrl)
-          pendingNavigationUrlRef.current = null
-          schedulePostOpenBoundsSync(activeRef.current)
-          applyNativePageStatus(pageState)
+          await adoptOpenedBrowser(pageState)
           return true
         } catch {
           // No existing browser state to recover yet.
@@ -1331,7 +1351,7 @@ export function WorkspaceBrowserTabPanel({
     const openWhenHostIsReady = async () => {
       console.info('[Wework][browser-open] nativeOpenStart', {
         label,
-        currentUrl,
+        currentUrl: browserDiagnosticOrigin(openingUrl),
         active,
       })
       try {
@@ -1371,7 +1391,7 @@ export function WorkspaceBrowserTabPanel({
               )
             : await openEmbeddedBrowser(nativeOpeningUrl, bounds, openingLabel, false, !active)
         if (isAbandoned()) {
-          await closeEmbeddedBrowser(openingLabel).catch(() => undefined)
+          await closeEmbeddedBrowser(openingLabel, pageState.nativeLabel).catch(() => undefined)
           logBrowserOpenDiagnostic('lifecycle_cancelled', {
             active,
             label: openingLabel,
@@ -1380,17 +1400,8 @@ export function WorkspaceBrowserTabPanel({
           })
           return
         }
-        adoptNativeLabel(pageState.nativeLabel, openingLabel)
-        setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
-        nativeBrowserOpenRef.current = true
-        if (activeOpenRequestIdRef.current === requestId) {
-          activeOpenRequestIdRef.current = null
-        }
-        updatePageUrl(requestId ? openingUrl : pageState.url || openingUrl)
-        if (!requestId) pendingNavigationUrlRef.current = null
+        if (!(await adoptOpenedBrowser(pageState))) return
         await revealHiddenBrowser(visible)
-        schedulePostOpenBoundsSync(activeRef.current)
-        applyNativePageStatus(pageState)
         logBrowserOpenDiagnostic('native_open_succeeded', {
           active,
           label: openingLabel,
@@ -1399,23 +1410,23 @@ export function WorkspaceBrowserTabPanel({
           url: pageState.url || openingUrl,
         })
       } catch (error) {
-        const message = browserOpenErrorMessage(error)
+        const errorType = error instanceof Error ? error.name : typeof error
         const abandoned = isAbandoned()
         console.error(
           '[Wework] Embedded browser open failed',
           JSON.stringify({
             active,
             disposed: abandoned,
-            error: message,
+            error: errorType,
             label: openingLabel,
             requestId,
-            url: openingUrl,
+            url: browserDiagnosticOrigin(openingUrl),
           })
         )
         logBrowserOpenDiagnostic('native_open_failed', {
           active,
           disposed: abandoned,
-          error: message,
+          error: errorType,
           label: openingLabel,
           requestId,
           url: openingUrl,
@@ -2471,7 +2482,7 @@ export function WorkspaceBrowserTabPanel({
                 if (currentPageUrl) setAddress(currentPageUrl)
               }}
               placeholder={t('workbench.browser_url_placeholder')}
-              className="h-8 w-full rounded-md border border-border bg-surface px-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-primary focus:bg-background"
+              className="workbench-chrome-input h-8 w-full rounded-md border-0 bg-surface px-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:bg-background"
             />
           </form>
           <BrowserToolbarButton

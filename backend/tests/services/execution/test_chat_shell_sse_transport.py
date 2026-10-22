@@ -7,7 +7,8 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, patch
+from dataclasses import replace
+from unittest.mock import AsyncMock, call, patch
 
 import httpx
 import pytest
@@ -226,8 +227,14 @@ class _UnfinishedTerminalStream(httpx.AsyncByteStream):
 @pytest.mark.parametrize("failure", ["timeout", "read_error", "cancel"])
 async def test_terminal_cleanup_preserves_completion(failure) -> None:
     body = _UnfinishedTerminalStream(failure)
+    requests = []
 
     def handler(request):
+        requests.append(request)
+        if len(requests) > 1:
+            return httpx.Response(
+                200, headers={"content-type": "text/event-stream"}, content=_COMPLETED
+            )
         return httpx.Response(
             200, headers={"content-type": "text/event-stream"}, stream=body
         )
@@ -257,3 +264,19 @@ async def test_terminal_cleanup_preserves_completion(failure) -> None:
         ]
         emitter.emit_error.assert_not_awaited()
         session.unregister_stream.assert_awaited_once_with(request.subtask_id)
+
+        next_request = replace(request, subtask_id=request.subtask_id + 1)
+        next_emitter = AsyncMock()
+        await asyncio.wait_for(
+            dispatcher._dispatch_sse(next_request, target, next_emitter), timeout=30
+        )
+
+        assert len(requests) == 2
+        assert not client.is_closed()
+        assert [call.args[0].type for call in next_emitter.emit.await_args_list] == [
+            EventType.DONE.value
+        ]
+        next_emitter.emit_error.assert_not_awaited()
+        session.unregister_stream.assert_has_awaits(
+            [call(request.subtask_id), call(next_request.subtask_id)]
+        )

@@ -7,7 +7,7 @@
 from typing import Any
 
 from sqlalchemy import update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Query, Session
 
 from app.models.kind import Kind
 from app.models.user import User
@@ -91,6 +91,34 @@ def _unambiguous_device(matches: list[Kind]) -> Kind | None:
     return None
 
 
+def _resolve_device_alias(devices: list[Kind], device_id: str) -> Kind | None:
+    """Apply the same installation identity rules to one owned device snapshot."""
+    submitted = device_id.strip()
+    if not submitted:
+        return None
+    record_id = record_id_from_route(submitted)
+    if record_id is not None:
+        matches = [
+            device
+            for device in devices
+            if device.id == record_id and device_kind_type(device) == DeviceType.APP
+        ]
+    else:
+        matches = [
+            device for device in devices if submitted in device_identity_ids(device)
+        ]
+    return _unambiguous_device(matches)
+
+
+def _owned_devices_query(db: Session, user_id: int) -> Query[Kind]:
+    return db.query(Kind).filter_by(
+        user_id=user_id,
+        kind="Device",
+        namespace="default",
+        is_active=True,
+    )
+
+
 def resolve_owned_device_alias(
     db: Session,
     *,
@@ -102,24 +130,41 @@ def resolve_owned_device_alias(
     submitted = device_id.strip()
     if not submitted:
         return None
-    query = db.query(Kind).filter_by(
-        user_id=user_id,
-        kind="Device",
-        namespace="default",
-        is_active=True,
-    )
+    query = _owned_devices_query(db, user_id)
     record_id = record_id_from_route(submitted)
     if record_id is not None:
         device = query.filter_by(id=record_id).one_or_none()
-        return (
-            device
-            if device is not None and device_kind_type(device) == DeviceType.APP
-            else None
-        )
-    matches = [
-        device for device in query.all() if submitted in device_identity_ids(device)
-    ]
-    return _unambiguous_device(matches)
+        return _resolve_device_alias([device] if device is not None else [], submitted)
+    return _resolve_device_alias(query.all(), submitted)
+
+
+def owned_device_aliases(db: Session, *, user_id: int, device_id: str) -> set[str]:
+    """Expand an address only through aliases identifying the same owned device."""
+
+    aliases = {device_id}
+    devices = _owned_devices_query(db, user_id).all()
+    device = _resolve_device_alias(devices, device_id)
+    if device is None:
+        return aliases
+    for alias in device_identity_ids(device):
+        resolved = _resolve_device_alias(devices, alias)
+        if resolved is not None and resolved.id == device.id:
+            aliases.add(alias)
+    return aliases
+
+
+def same_owned_device(
+    db: Session,
+    *,
+    user_id: int,
+    left_device_id: str,
+    right_device_id: str,
+) -> bool:
+    """Compare recorded addresses without merging ambiguous installations."""
+
+    return left_device_id == right_device_id or right_device_id in owned_device_aliases(
+        db, user_id=user_id, device_id=left_device_id
+    )
 
 
 def lock_device_owner(db: Session, user_id: int) -> None:

@@ -76,6 +76,36 @@ Wework automatically maintains a **Current device agent** in the local space, so
 
 When two or more agents are selected, the creation flow recommends organizing them into a collaboration group. After confirming, choose a generation model and optionally add collaboration instructions in the task composer. Wework progressively generates the leader, member responsibilities, assignment principles, and suggested workflow. You can edit the result before saving and update it later in project settings.
 
+### Use workspace agents in a project
+
+After creating or adding an agent under the workspace's **Settings → Collaboration participants → Agents**, a project administrator can select it directly under **Assignee → Workspace agents** when creating or editing an Issue. Saving the assignment enables the agent in the project before assigning and executing the task. Administrators can also enable it beforehand through **Project settings → Agents → Add agent → Existing agents**, so members can assign it or call it through an @ mention. Catalogs show the display name entered during creation, or the resource name when no display name is set.
+
+Local spaces save the agent configuration in the project, preserving its resource name, display name, model policy, and tools. In cloud spaces, workspace sharing grants use permission, while a project binding determines where the agent is available. Sharing does not grant permission to edit its source definition. Execution still requires an authorized project device and model.
+
+### Add and create Agents
+
+When adding an Agent, search existing Agents by name or owning space, or open
+the creation form. New Agents default to **Automatic selection** for execution
+and the first available cloud model. The basic tab shows the current environment
+and model in its footer, so you can create the Agent without opening runtime settings.
+
+Open **Runtime settings** to change these defaults. The environment menu lists
+automatic selection, selection at run time, and specific devices, with project
+shared devices before personal devices. Search by name or device ID. Only online
+devices appear initially; use **Show offline devices** in the bottom-right corner
+to include other devices. Native models are added only after selecting a specific
+device. Editing an existing Agent preserves its saved choices.
+
+Cloud model requests end after 10 seconds and release the pending cache entry,
+so refreshing starts a new request. You can still select and save a cloud model
+while device-native model discovery fails or remains pending. Collaboration groups
+load their member list independently. A member loading failure offers a retry;
+loaded groups, Agents, and group saves remain available.
+
+Basic project settings initially show project properties. Expand **Tags** to load
+task tags, with retry on failure. Once loaded, tags used by tasks remain manageable;
+renaming or deleting a tag also updates the affected tasks.
+
 ### Set cloud board access
 
 Cloud projects have two access modes: **Private** and **Public**. A public project grants every signed-in user the Viewer (read-only) or Developer (create and edit issues) role. A private project is available only through existing grants. Project roles are Owner, Maintainer, Developer, and Viewer. Owners manage the project and members; Maintainers can also manage issue security. Developers and above can assign the issue owner, and the issue creator can always assign their own issue.
@@ -128,6 +158,14 @@ The first time an empty project-space board is opened, Wework shows a collapsibl
 Each completed step is marked automatically, and the guide hides after all three steps are complete. Choose **Collapse** to reduce its footprint temporarily, or **Don't show again** to disable it for the current user and project space. Boards that already contain items do not interrupt users with this first-run guide.
 
 Empty columns also explain what belongs in each stage and name the creation action that is currently available. During a drag, the destination column describes the resulting status. The default **My tasks** board uses task terminology, while other project spaces continue to use issue terminology.
+
+## Lane sorting
+
+Each lane on a native project-space board has its own **Sort by** control and defaults to highest priority first. Add ascending or descending rules for priority, creation time, and update time, then move rules up or down or remove them. Rules apply from top to bottom: each subsequent rule breaks ties, and manual order breaks any remaining ties. Choose **Manual order** to reorder cards within status, priority, assignee, or tag lanes, or insert a card into another lane at a specific position. Non-status lanes can mix Issues with different statuses; reordering within a lane preserves status, assignee, and tags. Manual positions use the project’s shared order across groupings. Preferences are saved on the current device by user, project space, grouping, and lane, are restored when reopening the board, and do not affect other members. Drop onto the blank space at the end of a lane to append a card. Group fields and position are saved together; a failed save commits neither. Changes to different lane preferences in multiple windows are retained independently and synchronized to open boards.
+
+Desktop sorting regression: `pnpm --filter wework e2e:desktop --segment collaboration-board-sorting`. This independent checkpoint runs in Core CI against the real cloud backend and local SQLite, covering default priority, independent compound lane rules, restoration after window reloads, rejected within-lane reordering under automatic sorting, and persistence of manual drags and cross-lane moves.
+
+Post-save refresh recovery regression: `pnpm --filter wework e2e:desktop --segment collaboration-board-move-recovery`. This independent Core CI checkpoint uses a real Developer member with three visible Issues interleaved with hidden siblings. It verifies backward moves, visible order after interrupted snapshot delivery, recovery on reload, and fields and ordering across concurrent moves and out-of-order snapshots. The test faults only transport of real backend responses and verifies that hidden Issues remain invisible.
 
 ## Calendar, Gantt, and table views
 

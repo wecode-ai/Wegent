@@ -5,7 +5,15 @@ import {
   runtimeTurnNavigationLoadOptions,
 } from '@wegent/chat-core/runtime-transcript-page'
 export { runtimeTurnNavigationLoadOptions } from '@wegent/chat-core/runtime-transcript-page'
-import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type SetStateAction,
+} from 'react'
 import i18n from '@/i18n'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
@@ -24,7 +32,6 @@ import {
   resolveRuntimePaneLifecycleAddress,
 } from '@/features/workbench/runtimePaneStatus'
 import {
-  consumeRuntimeTaskLifecycleBlock,
   runtimeTaskLifecycleTransitionChanged,
   type RuntimeTaskLifecycleSnapshot,
   useRuntimeTaskLifecycle,
@@ -98,10 +105,10 @@ import {
 } from '@/lib/browser-annotation-context'
 import {
   abortRuntimeConversationHydration,
-  appendAcceptedRuntimeConversationMessage,
   applyRuntimeConversationAction,
   appendOptimisticRuntimeConversationGuidance,
   beginRuntimeConversationHydration,
+  beginRuntimeConversationOperation,
   beginRuntimeGoalSnapshot,
   cacheRuntimeConversationQueuedMessagesByKey,
   cacheRuntimeConversationQueuePausedByKey,
@@ -111,8 +118,8 @@ import {
   getRuntimeConversationTurns,
   getRuntimeConversationMetadata,
   getRuntimeConversationQueuedMessagesByKey,
+  getRuntimeConversationQueueDiagnosticSnapshotByKey,
   getRuntimeConversationQueuePausedByKey,
-  getRuntimeConversationTurnIds,
   isRuntimeGoalSnapshotCurrent,
   markRuntimeConversationGuidanceInterrupted,
   optimisticallyInterruptRuntimeConversation,
@@ -120,12 +127,10 @@ import {
   removeRuntimeConversationTurn,
   reconcileRuntimeConversationSnapshot,
   replaceRuntimeConversationFromUserMessage,
-  runtimeConversationMessageHasStartedTurn,
   runtimeConversationSnapshotSettlesLatestTurn,
   runtimeConversationHydrationHasUpdates,
   runtimeConversationKey,
   restoreOptimisticallyInterruptedRuntimeConversation,
-  settleRuntimeConversationAcceptedMessage,
   subscribeRuntimeConversation,
   subscribeRuntimeTransportReplaced,
   takeInterruptedRuntimeConversationGuidance,
@@ -135,6 +140,13 @@ import {
   createRuntimeUserMessage,
   type RuntimeUserMessageOptions,
 } from '@/features/workbench/runtimeUserMessage'
+import { getRuntimeConversationQueueController } from '@/features/workbench/runtimeConversationQueueController'
+import { logRuntimeQueueStage } from '@/features/workbench/runtimeQueueDiagnostics'
+import {
+  createRuntimeQueuedUserMessage,
+  retainRuntimeQueuedMessage as retainQueuedMessage,
+  sendRuntimeQueuedMessage,
+} from '@/features/workbench/runtimeQueuedMessageSender'
 import { RUNTIME_RETRY_CONTINUATION_PROMPT } from './runtimeRetry'
 
 interface WorkbenchPaneSessionOptions {
@@ -207,6 +219,7 @@ export function useWorkbenchPaneSession({
   currentRuntimeTask,
   debugSnapshotEnabled = true,
 }: WorkbenchPaneSessionOptions) {
+  const queueDiagnosticSessionId = useId()
   const runtimeTranscriptPageSize = resolveRuntimeTranscriptPageSize()
   const {
     state: workbenchState,
@@ -230,6 +243,18 @@ export function useWorkbenchPaneSession({
   const queuedMessageScopeKey = currentRuntimeTask
     ? runtimeConversationKey(currentRuntimeTask)
     : null
+  const queueController = useMemo(
+    () => (currentRuntimeTask ? getRuntimeConversationQueueController(currentRuntimeTask) : null),
+    [currentRuntimeTask]
+  )
+  const queuedMessageBusyBlocks = useMemo(
+    () => queueController?.busyBlocks ?? new Map<string, RuntimeTaskLifecycleSnapshot | null>(),
+    [queueController]
+  )
+  useEffect(
+    () => queueController?.attach({ lifecycleStore, sendRuntimePaneMessage }),
+    [lifecycleStore, queueController, sendRuntimePaneMessage]
+  )
   const [queuedMessages, setQueuedMessagesState] = useState<RuntimePaneQueuedMessage[]>(() =>
     queuedMessageScopeKey ? getRuntimeConversationQueuedMessagesByKey(queuedMessageScopeKey) : []
   )
@@ -375,15 +400,7 @@ export function useWorkbenchPaneSession({
   const displayedTranscriptIdentityRef = useRef<string | null>(null)
   const loadedTranscriptRangesRef = useRef<LoadedTranscriptRange[]>([])
   const interruptAndSendInFlightRef = useRef(false)
-  const queuedMessageSendInFlightIdsRef = useRef(new Set<string>())
-  const queuedMessageBusyBlockSnapshotsRef = useRef(
-    new Map<string, RuntimeTaskLifecycleSnapshot | null>()
-  )
-  const resumePausedQueueAfterTurnRef = useRef<{
-    scopeKey: string
-    previousLifecycle: RuntimeTaskLifecycleSnapshot | null
-    observedManualTurn: boolean
-  } | null>(null)
+  const lastQueueDiagnosticRef = useRef<string | null>(null)
   const pendingMessageActionsRef = useRef<RuntimePaneMessageAction[]>([])
   const rebuildingTranscriptRef = useRef(false)
   const rebuildingTranscriptIdentityRef = useRef<string | null>(null)
@@ -550,7 +567,57 @@ export function useWorkbenchPaneSession({
   }, [currentRuntimeTask])
 
   useEffect(() => {
-    resumePausedQueueAfterTurnRef.current = null
+    if (!queuedMessageScopeKey) return
+    lastQueueDiagnosticRef.current = null
+    const logPaneQueue = (stage: string) => {
+      logRuntimeTaskCreateStage(stage, {
+        conversationKey: queuedMessageScopeKey,
+        paneSessionId: queueDiagnosticSessionId,
+        ...getRuntimeConversationQueueDiagnosticSnapshotByKey(queuedMessageScopeKey),
+      })
+    }
+    logPaneQueue('queue-pane-attached')
+    return () => logPaneQueue('queue-pane-detached')
+  }, [queuedMessageScopeKey, queueDiagnosticSessionId])
+
+  useEffect(() => {
+    if (!queuedMessageScopeKey) return
+    // Read the scoped cache because React state can still belong to the previous pane.
+    const queueSnapshot = getRuntimeConversationQueueDiagnosticSnapshotByKey(queuedMessageScopeKey)
+    if (queueSnapshot.queueLength === 0 && lastQueueDiagnosticRef.current === null) return
+    const details = {
+      conversationKey: queuedMessageScopeKey,
+      paneSessionId: queueDiagnosticSessionId,
+      ...queueSnapshot,
+      canSendQueuedMessage: paneStatus.canSendQueuedMessage,
+      continuable: paneStatus.taskExecution.continuable,
+      responseActive: paneStatus.isResponseActive,
+      executionPhase: taskLifecycle?.execution.phase ?? null,
+      turnPhase: taskLifecycle?.turn.phase ?? null,
+      turnId: taskLifecycle?.turn.id ?? null,
+      busyBlockedMessageIds: queueSnapshot.messages
+        .filter(message => queuedMessageBusyBlocks.has(message.id))
+        .map(message => message.id),
+    }
+    const signature = JSON.stringify(details)
+    if (signature === lastQueueDiagnosticRef.current) return
+    lastQueueDiagnosticRef.current = queueSnapshot.queueLength > 0 ? signature : null
+    logRuntimeTaskCreateStage('queue-state', details)
+  }, [
+    queuedMessageScopeKey,
+    queueDiagnosticSessionId,
+    queuedMessageBusyBlocks,
+    queuedMessages,
+    queuedMessagesPaused,
+    paneStatus.canSendQueuedMessage,
+    paneStatus.taskExecution.continuable,
+    paneStatus.isResponseActive,
+    taskLifecycle?.execution.phase,
+    taskLifecycle?.turn.phase,
+    taskLifecycle?.turn.id,
+  ])
+
+  useEffect(() => {
     setQueuedMessagesState(
       queuedMessageScopeKey ? getRuntimeConversationQueuedMessagesByKey(queuedMessageScopeKey) : []
     )
@@ -558,35 +625,6 @@ export function useWorkbenchPaneSession({
       queuedMessageScopeKey ? getRuntimeConversationQueuePausedByKey(queuedMessageScopeKey) : false
     )
   }, [queuedMessageScopeKey])
-
-  useEffect(() => {
-    const lifecycle = currentRuntimeTask ? lifecycleStore.getTask(currentRuntimeTask) : null
-    const pendingResume = resumePausedQueueAfterTurnRef.current
-    if (!pendingResume || pendingResume.scopeKey !== queuedMessageScopeKey || !lifecycle) return
-
-    if (!pendingResume.observedManualTurn) {
-      const previousTurn = pendingResume.previousLifecycle?.turn
-      const turnChanged =
-        !previousTurn ||
-        previousTurn.id !== lifecycle.turn.id ||
-        previousTurn.phase !== lifecycle.turn.phase ||
-        previousTurn.outcome !== lifecycle.turn.outcome
-      if (!turnChanged) return
-      pendingResume.observedManualTurn = true
-    }
-
-    if (lifecycle.turn.phase === 'streaming' || lifecycle.turn.outcome === null) return
-
-    resumePausedQueueAfterTurnRef.current = null
-    setQueuedMessagesPaused(false)
-  }, [
-    currentRuntimeTask,
-    lifecycleStore,
-    queuedMessageScopeKey,
-    setQueuedMessagesPaused,
-    taskLifecycle?.turn.outcome,
-    taskLifecycle?.turn.phase,
-  ])
 
   useEffect(() => {
     if (currentRuntimeTaskLoadTarget) {
@@ -639,6 +677,9 @@ export function useWorkbenchPaneSession({
       syncConversationState()
       setQueuedMessagesState(
         getRuntimeConversationQueuedMessagesByKey(runtimeConversationKey(address))
+      )
+      setQueuedMessagesPausedState(
+        getRuntimeConversationQueuePausedByKey(runtimeConversationKey(address))
       )
     })
   }, [runtimeTaskLoadTarget])
@@ -1151,106 +1192,41 @@ export function useWorkbenchPaneSession({
       options: SendRuntimeMessageOptions = {}
     ): Promise<RuntimeMessageSendResult> => {
       if (!currentRuntimeTask) return { accepted: false, queued: false }
-
-      const userMessage = createRuntimeUserMessage(message.content, message.attachments, {
-        id: message.id,
-        createdAt: message.createdAt,
-        runtimeGoalRequest: message.runtimeGoalRequest,
-        codeComments: message.codeComments,
-      })
-      const appendedLocalMessage = options.appendLocalMessage !== false
-      if (appendedLocalMessage) {
-        const visibleMessage =
-          message.displayContent === undefined
-            ? userMessage
-            : createRuntimeUserMessage(message.displayContent, message.attachments, {
-                id: message.id,
-                createdAt: message.createdAt,
-                runtimeGoalRequest: message.runtimeGoalRequest,
-                codeComments: message.codeComments,
-              })
-        setMessages(
-          applyRuntimeConversationAction(currentRuntimeTask, {
-            type: 'user_added',
-            message: visibleMessage,
-          })
-        )
-      }
-      const messageAttachments = message.attachments ?? []
-      const attachmentIds = remoteAttachmentIds(messageAttachments)
-      const attachments = localRuntimeAttachments(messageAttachments)
-      const terminalContext = readRuntimeTerminalAdditionalContext(currentRuntimeTask)
-      const additionalContext = { ...message.additionalContext, ...terminalContext }
-      const turnIdsBeforeSend = appendedLocalMessage
-        ? new Set<string>()
-        : getRuntimeConversationTurnIds(currentRuntimeTask)
-      let queued = false
-      let queuePosition: number | null | undefined
-      const sent = await sendRuntimePaneMessage(
-        {
-          address: currentRuntimeTask,
-          message: message.content,
-          clientUserMessageId: message.id,
-          ...(message.modelId
-            ? {
-                modelId: message.modelId,
-                modelType: message.modelType,
-              }
-            : {}),
-          ...(message.modelOptions ? { modelOptions: message.modelOptions } : {}),
-          ...(options.initialGoal ? { initialGoal: options.initialGoal } : {}),
-          ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
-          ...(attachments.length > 0 ? { attachments } : {}),
-          ...(Object.keys(additionalContext).length > 0 ? { additionalContext } : {}),
-          ...(message.cloudProjectId ? { cloudProjectId: message.cloudProjectId } : {}),
-          ...(message.origin ? { origin: message.origin } : {}),
-        },
-        {
-          onError: options.onError ?? setError,
-          onQueued: response => {
-            queued = true
-            queuePosition = response.queuePosition
-          },
-          silentBusyRetry: options.silentBusyRetry,
-        }
-      )
-      if (sent && !queued) {
-        if (!appendedLocalMessage) {
-          const visibleMessage =
-            message.displayContent === undefined
-              ? userMessage
-              : createRuntimeUserMessage(message.displayContent, message.attachments, {
-                  id: message.id,
-                  createdAt: message.createdAt,
-                  runtimeGoalRequest: message.runtimeGoalRequest,
-                  codeComments: message.codeComments,
-                })
-          const activeTurnId = lifecycleStore.getTask(currentRuntimeTask)?.turn.id ?? null
+      const operation = beginRuntimeConversationOperation(currentRuntimeTask)
+      try {
+        const appendedLocalMessage = options.appendLocalMessage !== false
+        if (appendedLocalMessage) {
           setMessages(
-            appendAcceptedRuntimeConversationMessage(
-              currentRuntimeTask,
-              visibleMessage,
-              activeTurnId,
-              turnIdsBeforeSend
-            )
+            applyRuntimeConversationAction(currentRuntimeTask, {
+              type: 'user_added',
+              message: createRuntimeQueuedUserMessage(message),
+            })
           )
         }
-      }
-      if (sent) {
-        markRuntimeTerminalAdditionalContextDelivered(terminalContext)
-      }
-      if ((!sent || queued) && appendedLocalMessage) {
-        const rolledBackMessages = rollbackRejectedRuntimeConversationTurn(
+        const result = await sendRuntimeQueuedMessage(
           currentRuntimeTask,
-          currentRuntimeTaskRef.current,
-          message.id
+          message,
+          { lifecycleStore, sendRuntimePaneMessage },
+          {
+            ...options,
+            isCurrent: operation.isCurrent,
+            appendAcceptedMessage: !appendedLocalMessage,
+            onError: options.onError ?? setError,
+          }
         )
-        if (rolledBackMessages) setMessages(rolledBackMessages)
-      }
-      return {
-        accepted: sent,
-        queued,
-        ...(queued ? { queuePosition } : {}),
+        if (!operation.isCurrent()) return { accepted: false, queued: false }
+        const { accepted: sent, queued } = result
+        if ((!sent || queued) && appendedLocalMessage) {
+          const rolledBackMessages = rollbackRejectedRuntimeConversationTurn(
+            currentRuntimeTask,
+            currentRuntimeTaskRef.current,
+            message.id
+          )
+          if (rolledBackMessages) setMessages(rolledBackMessages)
+        }
+        return result
+      } finally {
+        operation.dispose()
       }
     },
     [currentRuntimeTask, lifecycleStore, sendRuntimePaneMessage, setError]
@@ -1258,27 +1234,9 @@ export function useWorkbenchPaneSession({
 
   const retainRuntimeQueuedMessage = useCallback(
     (message: RuntimePaneQueuedMessage, queuePosition?: number | null) => {
-      const runtimeQueuedMessage: RuntimePaneQueuedMessage = {
-        ...message,
-        status: 'queued',
-        runtimeQueued: true,
-        runtimeQueuePosition: queuePosition,
-        runtimeTurnIdsBeforeStart:
-          message.runtimeTurnIdsBeforeStart ??
-          (currentRuntimeTask ? [...getRuntimeConversationTurnIds(currentRuntimeTask)] : []),
-        deliveryMode: undefined,
-        awaitingTurnStart: undefined,
-        error: undefined,
-        notice: undefined,
-      }
-      setQueuedMessages(messages => {
-        const exists = messages.some(item => item.id === message.id)
-        return exists
-          ? messages.map(item => (item.id === message.id ? runtimeQueuedMessage : item))
-          : [...messages, runtimeQueuedMessage]
-      })
+      if (currentRuntimeTask) retainQueuedMessage(currentRuntimeTask, message, queuePosition)
     },
-    [currentRuntimeTask, setQueuedMessages]
+    [currentRuntimeTask]
   )
 
   const interruptAndSendQueuedMessage = useCallback(
@@ -1400,7 +1358,7 @@ export function useWorkbenchPaneSession({
       }
       const lifecycleAfterSend = lifecycleStore.getTask(currentRuntimeTask)
       if (!runtimeTaskLifecycleTransitionChanged(lifecycleBeforeSend, lifecycleAfterSend)) {
-        queuedMessageBusyBlockSnapshotsRef.current.set(message.id, lifecycleBeforeSend)
+        queuedMessageBusyBlocks.set(message.id, lifecycleBeforeSend)
       }
       setQueuedMessages(messages => [...messages, message])
       return true
@@ -1409,6 +1367,7 @@ export function useWorkbenchPaneSession({
       currentRuntimeTask,
       getRuntimeModelFields,
       lifecycleStore,
+      queuedMessageBusyBlocks,
       retainRuntimeQueuedMessage,
       sendRuntimeMessage,
       setError,
@@ -1598,195 +1557,11 @@ export function useWorkbenchPaneSession({
   )
 
   const sendQueuedMessage = useCallback(
-    async (queuedMessage: RuntimePaneQueuedMessage) => {
-      if (queuedMessageSendInFlightIdsRef.current.has(queuedMessage.id)) return
-      queuedMessageSendInFlightIdsRef.current.add(queuedMessage.id)
-      setQueuedMessages(messages =>
-        messages.map(message =>
-          message.id === queuedMessage.id
-            ? {
-                ...message,
-                status: 'sending',
-                deliveryMode: 'message',
-                awaitingTurnStart: false,
-              }
-            : message
-        )
-      )
-
-      try {
-        const lifecycleBeforeSend = currentRuntimeTask
-          ? lifecycleStore.getTask(currentRuntimeTask)
-          : null
-        let sendError: string | null = null
-        const result = await sendRuntimeMessage(queuedMessage, {
-          appendLocalMessage: false,
-          initialGoal: queuedMessage.initialGoal,
-          onError: error => {
-            sendError = error
-          },
-        })
-        if (result.queued) {
-          queuedMessageBusyBlockSnapshotsRef.current.delete(queuedMessage.id)
-          retainRuntimeQueuedMessage(queuedMessage, result.queuePosition)
-          return
-        }
-        if (result.accepted) {
-          queuedMessageBusyBlockSnapshotsRef.current.delete(queuedMessage.id)
-          if (!currentRuntimeTask) return
-          if (runtimeConversationMessageHasStartedTurn(currentRuntimeTask, queuedMessage.id)) {
-            settleRuntimeConversationAcceptedMessage(currentRuntimeTask, queuedMessage.id)
-          } else {
-            setQueuedMessages(messages =>
-              messages.map(message =>
-                message.id === queuedMessage.id ? { ...message, awaitingTurnStart: true } : message
-              )
-            )
-          }
-          return
-        }
-        if (isRuntimeTaskBusyError(sendError)) {
-          const lifecycleAfterSend = currentRuntimeTask
-            ? lifecycleStore.getTask(currentRuntimeTask)
-            : null
-          const lifecycleAlreadyChanged = runtimeTaskLifecycleTransitionChanged(
-            lifecycleBeforeSend,
-            lifecycleAfterSend
-          )
-          if (lifecycleAlreadyChanged) {
-            queuedMessageBusyBlockSnapshotsRef.current.delete(queuedMessage.id)
-          } else {
-            queuedMessageBusyBlockSnapshotsRef.current.set(queuedMessage.id, lifecycleBeforeSend)
-          }
-          console.info('[Wework] Queued runtime message remains queued while executor is busy', {
-            id: queuedMessage.id,
-            deviceId: currentRuntimeTask?.deviceId ?? null,
-            taskId: currentRuntimeTask?.taskId ?? null,
-            executionPhase: lifecycleBeforeSend?.execution.phase ?? null,
-            turnPhase: lifecycleBeforeSend?.turn.phase ?? null,
-            executorSnapshotRunning: lifecycleBeforeSend?.task?.running ?? null,
-            lifecycleAlreadyChanged,
-          })
-        } else {
-          queuedMessageBusyBlockSnapshotsRef.current.delete(queuedMessage.id)
-        }
-        setQueuedMessages(messages =>
-          messages.map(message =>
-            message.id !== queuedMessage.id
-              ? message
-              : isRuntimeTaskBusyError(sendError)
-                ? {
-                    ...message,
-                    status: 'queued',
-                    awaitingTurnStart: undefined,
-                    error: undefined,
-                  }
-                : {
-                    ...message,
-                    status: 'failed',
-                    awaitingTurnStart: undefined,
-                    error: '发送失败',
-                  }
-          )
-        )
-      } catch (error) {
-        queuedMessageBusyBlockSnapshotsRef.current.delete(queuedMessage.id)
-        console.error('[Wework] Queued runtime message send failed', {
-          id: queuedMessage.id,
-          error,
-        })
-        setQueuedMessages(messages =>
-          messages.map(message =>
-            message.id === queuedMessage.id
-              ? {
-                  ...message,
-                  status: 'failed',
-                  awaitingTurnStart: undefined,
-                  error: '发送失败',
-                }
-              : message
-          )
-        )
-      } finally {
-        queuedMessageSendInFlightIdsRef.current.delete(queuedMessage.id)
-      }
+    async (message: RuntimePaneQueuedMessage) => {
+      await queueController?.send(message)
     },
-    [
-      currentRuntimeTask,
-      lifecycleStore,
-      retainRuntimeQueuedMessage,
-      sendRuntimeMessage,
-      setQueuedMessages,
-    ]
+    [queueController]
   )
-
-  useEffect(() => {
-    if (queuedMessagesPaused) return
-    if (queuedMessages.some(message => message.status === 'sending')) return
-    const queuedMessage = queuedMessages.find(
-      message => message.status === 'queued' && !message.runtimeQueued
-    )
-    if (!queuedMessage) return
-    if (
-      !consumeRuntimeTaskLifecycleBlock(
-        queuedMessageBusyBlockSnapshotsRef.current,
-        queuedMessage.id,
-        currentRuntimeTask ? lifecycleStore.getTask(currentRuntimeTask) : null
-      )
-    ) {
-      return
-    }
-    const canStartQueuedGoal =
-      Boolean(queuedMessage.initialGoal) &&
-      Boolean(currentRuntimeTask) &&
-      paneStatus.taskExecution.continuable &&
-      !paneStatus.isResponseActive
-    if (!paneStatus.canSendQueuedMessage && !canStartQueuedGoal) return
-
-    // Goal activation intentionally keeps the task busy between turns. Its initial turn must
-    // advance when the current response settles instead of waiting for the task to become idle.
-    void sendQueuedMessage(queuedMessage)
-  }, [
-    currentRuntimeTask,
-    lifecycleStore,
-    paneStatus.canSendQueuedMessage,
-    paneStatus.isResponseActive,
-    paneStatus.taskExecution.continuable,
-    queuedMessages,
-    queuedMessagesPaused,
-    sendQueuedMessage,
-  ])
-
-  useEffect(() => {
-    if (!currentRuntimeTask) return
-    const startedRuntimeQueuedMessages = queuedMessages
-      .filter(message => message.runtimeQueued)
-      .filter(message => runtimeConversationMessageHasStartedTurn(currentRuntimeTask, message.id))
-    if (startedRuntimeQueuedMessages.length === 0) return
-    const activeTurnId = lifecycleStore.getTask(currentRuntimeTask)?.turn.id ?? null
-    for (const message of startedRuntimeQueuedMessages) {
-      const visibleMessage = createRuntimeUserMessage(
-        message.displayContent ?? message.content,
-        message.attachments,
-        {
-          id: message.id,
-          createdAt: message.createdAt,
-          runtimeGoalRequest: message.runtimeGoalRequest,
-          codeComments: message.codeComments,
-        }
-      )
-      setMessages(
-        appendAcceptedRuntimeConversationMessage(
-          currentRuntimeTask,
-          visibleMessage,
-          activeTurnId,
-          new Set(message.runtimeTurnIdsBeforeStart ?? [])
-        )
-      )
-    }
-    const startedIds = new Set(startedRuntimeQueuedMessages.map(message => message.id))
-    setQueuedMessages(messages => messages.filter(message => !startedIds.has(message.id)))
-  }, [currentRuntimeTask, lifecycleStore, messages, queuedMessages, setMessages, setQueuedMessages])
 
   const loadFullTranscriptForExport = useCallback(async () => {
     if (!runtimeTaskLoadTarget) return messagesRef.current
@@ -1807,7 +1582,7 @@ export function useWorkbenchPaneSession({
   const sendQueuedMessageAsGuidance = useCallback(
     async (queuedMessage: RuntimePaneQueuedMessage, forceActiveTurn = false): Promise<boolean> => {
       const id = queuedMessage.id
-      queuedMessageBusyBlockSnapshotsRef.current.delete(id)
+      queuedMessageBusyBlocks.delete(id)
       if (!currentRuntimeTask) {
         setQueuedMessages(messages =>
           messages.map(message =>
@@ -1955,6 +1730,7 @@ export function useWorkbenchPaneSession({
     [
       currentRuntimeTask,
       readCurrentPaneBusy,
+      queuedMessageBusyBlocks,
       retainRuntimeQueuedMessage,
       sendRuntimeMessage,
       sendRuntimePaneGuidance,
@@ -1972,58 +1748,68 @@ export function useWorkbenchPaneSession({
 
       const message = requestUserInputResponseText(response)
       const requestUserInputKey = requestUserInputResponseKey(response)
-      const runtimeModelOverride = options.forceDefaultCollaborationMode
-        ? { collaborationMode: 'default' }
-        : undefined
-      if (options.forceDefaultCollaborationMode) {
-        projectChat.setSelectedModelOption('collaborationMode', 'default')
-      }
-      // A question that is answered by the next user message - a non-blocking
-      // Codex question or an implementation-plan confirmation - is delivered like
-      // any other user message. Codex then steers the running turn while the model
-      // is still working and starts a new turn once it has stopped, instead of
-      // rejecting the answer for arriving mid-turn.
-      const answerIsUserMessage =
-        options.appendUserMessage ||
-        isAsyncRequestUserInputPayload(
-          findRequestUserInputPayload(messagesRef.current, requestUserInputKey)
-        )
-      if (answerIsUserMessage) {
-        const answerMessage: RuntimePaneQueuedMessage = {
-          id: `queued-runtime-pane-${Date.now()}-${queuedMessages.length}`,
-          content: message,
-          status: 'queued',
-          createdAt: new Date().toISOString(),
-          ...getRuntimeModelFields(runtimeModelOverride),
+      const operation = beginRuntimeConversationOperation(currentRuntimeTask, {
+        requestUserInputKey,
+      })
+      try {
+        const runtimeModelOverride = options.forceDefaultCollaborationMode
+          ? { collaborationMode: 'default' }
+          : undefined
+        if (options.forceDefaultCollaborationMode) {
+          projectChat.setSelectedModelOption('collaborationMode', 'default')
         }
-        setQueuedMessages(messages => [...messages, answerMessage])
-        if (!(await sendQueuedMessageAsGuidance(answerMessage))) return false
-      } else {
-        const additionalContext = readRuntimeTerminalAdditionalContext(currentRuntimeTask)
-        const sent = await sendRuntimePaneMessage({
-          address: currentRuntimeTask,
-          message,
-          requestUserInputResponse: response,
-          ...(additionalContext ? { additionalContext } : {}),
-        })
-        if (!sent) return false
-        markRuntimeTerminalAdditionalContextDelivered(additionalContext)
+        // A question that is answered by the next user message - a non-blocking
+        // Codex question or an implementation-plan confirmation - is delivered like
+        // any other user message. Codex then steers the running turn while the model
+        // is still working and starts a new turn once it has stopped, instead of
+        // rejecting the answer for arriving mid-turn.
+        const answerIsUserMessage =
+          options.appendUserMessage ||
+          isAsyncRequestUserInputPayload(
+            findRequestUserInputPayload(messagesRef.current, requestUserInputKey)
+          )
+        if (answerIsUserMessage) {
+          const answerMessage: RuntimePaneQueuedMessage = {
+            id: `queued-runtime-pane-${Date.now()}-${queuedMessages.length}`,
+            content: message,
+            status: 'queued',
+            createdAt: new Date().toISOString(),
+            ...getRuntimeModelFields(runtimeModelOverride),
+          }
+          setQueuedMessages(messages => [...messages, answerMessage])
+          if (!(await sendQueuedMessageAsGuidance(answerMessage))) return false
+        } else {
+          const additionalContext = readRuntimeTerminalAdditionalContext(currentRuntimeTask)
+          const sent = await sendRuntimePaneMessage({
+            address: currentRuntimeTask,
+            message,
+            requestUserInputResponse: response,
+            ...(additionalContext ? { additionalContext } : {}),
+          })
+          if (!sent) return false
+          markRuntimeTerminalAdditionalContextDelivered(additionalContext)
+        }
+        if (!operation.isCurrent()) return false
+        if (answerIsUserMessage) lifecycleStore.userInputResponded(currentRuntimeTask)
+        if (requestUserInputKey) {
+          setAnsweredRequestUserInputIds(current => {
+            if (current.has(requestUserInputKey)) return current
+            const next = new Set(current)
+            next.add(requestUserInputKey)
+            return next
+          })
+        }
+        applyLocalRequestUserInputResponse(response)
+        return true
+      } finally {
+        operation.dispose()
       }
-      if (requestUserInputKey) {
-        setAnsweredRequestUserInputIds(current => {
-          if (current.has(requestUserInputKey)) return current
-          const next = new Set(current)
-          next.add(requestUserInputKey)
-          return next
-        })
-      }
-      applyLocalRequestUserInputResponse(response)
-      return true
     },
     [
       applyLocalRequestUserInputResponse,
       currentRuntimeTask,
       getRuntimeModelFields,
+      lifecycleStore,
       projectChat,
       queuedMessages.length,
       sendQueuedMessageAsGuidance,
@@ -2450,9 +2236,9 @@ export function useWorkbenchPaneSession({
               ? lifecycleStore.getTask(currentRuntimeTask)
               : null
             if (runtimeTaskLifecycleTransitionChanged(lifecycleBeforeSend, lifecycleAfterSend)) {
-              queuedMessageBusyBlockSnapshotsRef.current.delete(queuedMessage.id)
+              queuedMessageBusyBlocks.delete(queuedMessage.id)
             } else {
-              queuedMessageBusyBlockSnapshotsRef.current.set(queuedMessage.id, lifecycleBeforeSend)
+              queuedMessageBusyBlocks.set(queuedMessage.id, lifecycleBeforeSend)
             }
             setQueuedMessages(messages => [...messages, queuedMessage])
             setInput('')
@@ -2515,9 +2301,9 @@ export function useWorkbenchPaneSession({
             ? lifecycleStore.getTask(currentRuntimeTask)
             : null
           if (runtimeTaskLifecycleTransitionChanged(lifecycleBeforeSend, lifecycleAfterSend)) {
-            queuedMessageBusyBlockSnapshotsRef.current.delete(queuedMessage.id)
+            queuedMessageBusyBlocks.delete(queuedMessage.id)
           } else {
-            queuedMessageBusyBlockSnapshotsRef.current.set(queuedMessage.id, lifecycleBeforeSend)
+            queuedMessageBusyBlocks.set(queuedMessage.id, lifecycleBeforeSend)
           }
           setQueuedMessages(messages => [...messages, queuedMessage])
           setInput('')
@@ -2546,6 +2332,7 @@ export function useWorkbenchPaneSession({
         pendingGoalState,
         addExistingAttachmentForScope,
         queuedMessages.length,
+        queuedMessageBusyBlocks,
         readCurrentPaneBusy,
         retainRuntimeQueuedMessage,
         resetAttachments,
@@ -2630,10 +2417,16 @@ export function useWorkbenchPaneSession({
           return
         }
       }
-      queuedMessageBusyBlockSnapshotsRef.current.delete(id)
+      queuedMessageBusyBlocks.delete(id)
       setQueuedMessages(messages => messages.filter(message => message.id !== id))
     },
-    [cancelRuntimeTask, currentRuntimeTask, queuedMessages, setQueuedMessages]
+    [
+      cancelRuntimeTask,
+      currentRuntimeTask,
+      queuedMessageBusyBlocks,
+      queuedMessages,
+      setQueuedMessages,
+    ]
   )
 
   const forceStartQueuedMessage = useCallback(
@@ -2666,35 +2459,51 @@ export function useWorkbenchPaneSession({
   )
 
   const resumeQueuedMessages = useCallback(() => {
+    if (currentRuntimeTask) {
+      logRuntimeQueueStage(currentRuntimeTask, 'queue-resume-requested', {
+        source: 'resume',
+        hasInput: false,
+        hasInterruptedGuidance: queuedMessages.some(isInterruptedGuidance),
+      })
+    }
     setQueuedMessagesPaused(false)
     const interruptedGuidance = queuedMessages.find(isInterruptedGuidance)
     const queuedMessage =
       interruptedGuidance ??
       queuedMessages.find(message => message.status === 'queued' && !message.runtimeQueued)
     if (queuedMessage) {
-      queuedMessageBusyBlockSnapshotsRef.current.delete(queuedMessage.id)
+      queuedMessageBusyBlocks.delete(queuedMessage.id)
       void sendQueuedMessage(queuedMessage)
     }
-  }, [queuedMessages, sendQueuedMessage, setQueuedMessagesPaused])
+  }, [
+    currentRuntimeTask,
+    queuedMessageBusyBlocks,
+    queuedMessages,
+    sendQueuedMessage,
+    setQueuedMessagesPaused,
+  ])
 
   const resumeQueuedMessagesWithInput = useCallback(
     async (inputOverride?: string, options?: RuntimePaneSendOptions) => {
       const interruptedGuidance = queuedMessages.find(isInterruptedGuidance)
+      if (currentRuntimeTask) {
+        logRuntimeQueueStage(currentRuntimeTask, 'queue-resume-requested', {
+          source: 'resume-with-input',
+          hasInput: Boolean((inputOverride ?? input).trim()),
+          hasInterruptedGuidance: Boolean(interruptedGuidance),
+        })
+      }
       if (!interruptedGuidance) {
         const queuedMessage = queuedMessages.find(
           message => message.status === 'queued' && !message.runtimeQueued
         )
         const lifecycle = currentRuntimeTask ? lifecycleStore.getTask(currentRuntimeTask) : null
         if (queuedMessage && queuedMessageScopeKey) {
-          resumePausedQueueAfterTurnRef.current = {
-            scopeKey: queuedMessageScopeKey,
-            previousLifecycle: lifecycle,
-            observedManualTurn: false,
-          }
+          queueController?.resumeAfterTurn(lifecycle)
         }
         const sent = await send(inputOverride, options)
         if (!sent) {
-          resumePausedQueueAfterTurnRef.current = null
+          queueController?.cancelResumeAfterTurn()
           return
         }
         if (!queuedMessage) {
@@ -2717,6 +2526,7 @@ export function useWorkbenchPaneSession({
       currentRuntimeTask,
       input,
       lifecycleStore,
+      queueController,
       queuedMessageScopeKey,
       queuedMessages,
       send,
@@ -2726,14 +2536,20 @@ export function useWorkbenchPaneSession({
   )
 
   const clearQueuedMessages = useCallback(() => {
-    queuedMessageBusyBlockSnapshotsRef.current.clear()
+    queuedMessageBusyBlocks.clear()
     const runtimeQueuedMessage = queuedMessages.find(message => message.runtimeQueued)
     setQueuedMessages(messages => messages.filter(message => message.runtimeQueued))
     setQueuedMessagesPaused(false)
     if (runtimeQueuedMessage) {
       void cancelQueuedMessage(runtimeQueuedMessage.id)
     }
-  }, [cancelQueuedMessage, queuedMessages, setQueuedMessages, setQueuedMessagesPaused])
+  }, [
+    cancelQueuedMessage,
+    queuedMessageBusyBlocks,
+    queuedMessages,
+    setQueuedMessages,
+    setQueuedMessagesPaused,
+  ])
 
   const reorderQueuedMessages = useCallback(
     (sourceId: string, targetId: string) => {
@@ -2762,14 +2578,14 @@ export function useWorkbenchPaneSession({
       if (!queuedMessage || queuedMessage.status === 'sending' || queuedMessage.runtimeQueued)
         return
 
-      queuedMessageBusyBlockSnapshotsRef.current.delete(id)
+      queuedMessageBusyBlocks.delete(id)
       setInput(queuedMessage.content)
       queuedMessage.attachments?.forEach(attachment => {
         addExistingAttachment(attachment)
       })
       setQueuedMessages(messages => messages.filter(message => message.id !== id))
     },
-    [addExistingAttachment, queuedMessages, setInput, setQueuedMessages]
+    [addExistingAttachment, queuedMessageBusyBlocks, queuedMessages, setInput, setQueuedMessages]
   )
 
   const sendQueuedAsGuidance = useCallback(
@@ -2785,7 +2601,7 @@ export function useWorkbenchPaneSession({
     async (id: string) => {
       const queuedMessage = queuedMessages.find(message => message.id === id)
       if (!queuedMessage || queuedMessage.runtimeQueued) return
-      queuedMessageBusyBlockSnapshotsRef.current.delete(id)
+      queuedMessageBusyBlocks.delete(id)
       const submittedInput = input.trim()
       const currentAttachments = attachmentState.attachments
       const combinedMessage: RuntimePaneQueuedMessage = {
@@ -2812,6 +2628,7 @@ export function useWorkbenchPaneSession({
       attachmentState.attachments,
       input,
       interruptAndSendQueuedMessage,
+      queuedMessageBusyBlocks,
       queuedMessages,
       resetAttachments,
       restoreInputAfterFailure,
@@ -2966,33 +2783,48 @@ export function useWorkbenchPaneSession({
 
   const pauseCurrentResponse = useCallback(async () => {
     if (!currentRuntimeTask) return
-
-    if (goal?.status === 'active' || taskGoalStatus === 'active') {
-      const paused = await updateCurrentGoalStatus('paused')
-      if (!paused) return
-    }
-
-    const shouldPauseQueue = queuedMessages.some(message => message.status === 'queued')
-    if (shouldPauseQueue) {
-      setQueuedMessagesPaused(true)
-    }
-    const cancelled = await cancelRuntimePaneTask(currentRuntimeTask)
-    if (!cancelled) {
-      if (shouldPauseQueue) {
-        setQueuedMessagesPaused(false)
+    logRuntimeQueueStage(currentRuntimeTask, 'queue-stop-requested', {
+      source: 'composer',
+      goalPauseRequired: goal?.status === 'active' || taskGoalStatus === 'active',
+    })
+    let accepted: boolean | null = null
+    let queuePauseRequested = false
+    let restoreQueue: (() => void) | undefined
+    let abortReason: 'goal-pause-rejected' | null = null
+    try {
+      if (goal?.status === 'active' || taskGoalStatus === 'active') {
+        const paused = await updateCurrentGoalStatus('paused')
+        if (!paused) {
+          abortReason = 'goal-pause-rejected'
+          return
+        }
       }
-      return
-    }
 
-    optimisticallyInterruptRuntimeConversation(currentRuntimeTask)
-    void refreshWorkLists()
+      restoreQueue = queueController?.pauseForCancellation()
+      queuePauseRequested = getRuntimeConversationQueuePausedByKey(
+        runtimeConversationKey(currentRuntimeTask)
+      )
+      const cancelled = await cancelRuntimePaneTask(currentRuntimeTask)
+      accepted = cancelled
+      if (!cancelled) return
+
+      optimisticallyInterruptRuntimeConversation(currentRuntimeTask)
+      void refreshWorkLists()
+    } finally {
+      if (accepted !== true) restoreQueue?.()
+      logRuntimeQueueStage(currentRuntimeTask, 'queue-stop-result', {
+        source: 'composer',
+        accepted,
+        queuePauseRequested,
+        abortReason,
+      })
+    }
   }, [
     cancelRuntimePaneTask,
     currentRuntimeTask,
     goal?.status,
-    queuedMessages,
+    queueController,
     refreshWorkLists,
-    setQueuedMessagesPaused,
     taskGoalStatus,
     updateCurrentGoalStatus,
   ])

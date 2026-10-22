@@ -129,9 +129,6 @@ describe('CollaborationPage platform routing', () => {
     expect(capturedHost?.projectAgentConfiguration).toEqual(
       expect.objectContaining({
         renderDialog: expect.any(Function),
-        renderModePicker: expect.any(Function),
-        renderPrimaryAction: expect.any(Function),
-        renderSelect: expect.any(Function),
       })
     )
     expect(screen.getByTestId('collaboration-page-main')).toHaveClass('flex-1', 'overflow-hidden')
@@ -237,6 +234,32 @@ describe('CollaborationPage platform routing', () => {
     }
   )
 
+  it('preserves the active settings section across cached project navigation and reload', () => {
+    const projectPath = '/collaboration/workspaces/workspace%201/projects/project%201'
+    mockPathname = projectPath
+    mockSearchParams = new URLSearchParams('view=manage&section=groups')
+    const { rerender } = render(<CollaborationPage />)
+    expect(capturedHost?.location.projectSettingsSection).toBe('groups')
+    capturedHost?.navigate({ ...capturedHost.location, projectId: 'project 2' })
+    expect(mockPush).toHaveBeenCalledWith(
+      '/collaboration/workspaces/workspace%201/projects/project%202?view=manage&section=groups'
+    )
+    mockPathname = '/collaboration/workspaces/workspace%201/projects/project%202'
+    rerender(<CollaborationPage />)
+    expect(capturedHost?.location.projectSettingsSection).toBe('groups')
+    capturedHost?.navigate({ ...capturedHost.location, projectView: 'board' })
+    expect(mockPush).toHaveBeenLastCalledWith(mockPathname)
+  })
+
+  it.each(['view=manage&section=invalid', 'view=board&section=groups'])(
+    'ignores an inapplicable settings section: %s',
+    query => {
+      mockSearchParams = new URLSearchParams(query)
+      render(<CollaborationPage />)
+      expect(capturedHost?.location.projectSettingsSection).toBeUndefined()
+    }
+  )
+
   it('delegates URL view resolution to the shared project shell', () => {
     mockPathname = '/collaboration/workspaces/workspace%201/projects/project%201'
     mockSearchParams = new URLSearchParams('view=automation')
@@ -335,6 +358,9 @@ describe('CollaborationPage platform routing', () => {
       '/collaboration/workspaces/workspace%201/projects/project%2F1/issues/issue%201?view=table'
     )
     expect(collaborationLocationPath({ ...base, workspaceId: null, rootView: 'home' })).toBe(
+      '/collaboration'
+    )
+    expect(collaborationLocationPath({ ...base, workspaceId: null, rootView: 'stand-in' })).toBe(
       '/collaboration'
     )
     expect(collaborationLocationPath({ ...base, workspaceId: null, rootView: 'inbox' })).toBe(

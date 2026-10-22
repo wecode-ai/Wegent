@@ -34,7 +34,10 @@ function buildFakeMenu(template: MenuItemConstructorOptions[]): Menu {
   } as unknown as Menu
 }
 
-function createMenu(platform: NodeJS.Platform = 'darwin') {
+function createMenu(
+  platform: NodeJS.Platform = 'darwin',
+  closeWindow?: () => BrowserWindow | null
+) {
   let built: Menu | null = null
   const dispatch = vi.fn()
   const menu = new ApplicationMenu({
@@ -50,6 +53,7 @@ function createMenu(platform: NodeJS.Platform = 'darwin') {
         isDestroyed: () => false,
         webContents: { id: 1 },
       }) as unknown as BrowserWindow,
+    closeWindow,
     dispatch,
     openDevTools: vi.fn(),
     openLogDirectory: vi.fn(async () => undefined),
@@ -71,6 +75,7 @@ describe('application menu model', () => {
     expect(item('work.tasks')).toBe('Tasks')
     expect(item('work.projectSpaces')).toBe('Project spaces')
     expect(item('file.newTaskTab')).toBe('New task tab')
+    expect(item('developer.processExplorer')).toBe('Process Explorer')
   })
 
   test('hides capability-gated items until the capability is reported', () => {
@@ -134,6 +139,15 @@ describe('application menu model', () => {
     menu.setCapabilities({})
     expect(menu.activateForTesting('view.terminal', 'main')).toBe(false)
     expect(dispatch).not.toHaveBeenCalled()
+  })
+
+  test('closes the focused window from the window menu', () => {
+    const close = vi.fn()
+    const target = { isDestroyed: () => false, close } as unknown as BrowserWindow
+    const { built } = createMenu('darwin', () => target)
+    const item = built().getMenuItemById('window.close')!
+    item.click!(item, target, {} as never)
+    expect(close).toHaveBeenCalledOnce()
   })
 
   test('localizes the menu without changing item ids', () => {

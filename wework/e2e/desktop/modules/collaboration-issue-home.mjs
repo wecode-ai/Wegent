@@ -145,7 +145,10 @@ export async function verifyCollaborationIssueHome(
 
   await openComposer()
   await control.command('fill', input, { value: '手动修改负责人 @' })
-  await control.command('click', `[data-testid="collaboration-home-mention-member-${owner.id}"]`)
+  await control.command(
+    'clickWhenEnabled',
+    `[data-testid="collaboration-home-mention-member-${owner.id}"]`
+  )
   await control.command('click', ownerButton)
   await control.command('click', `[data-testid="collaboration-issue-owner-group:${group.id}"]`)
   await control.command('waitFor', ownerButton, { text: group.name })

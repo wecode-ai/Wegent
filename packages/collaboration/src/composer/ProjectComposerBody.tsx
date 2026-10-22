@@ -34,7 +34,7 @@ import {
 import { ComposerErrorBanner } from './ComposerErrorBanner'
 
 export interface ProjectComposerBodyProps {
-  presentation?: 'chat' | 'document'
+  presentation?: 'chat' | 'document' | 'configuration'
   value: string
   onChange(value: string): void
   onSubmit(value: string, options?: ComposerSubmitOptions): void
@@ -44,6 +44,7 @@ export interface ProjectComposerBodyProps {
   disabled: boolean
   submitDisabled?: boolean
   requireText?: boolean
+  allowEmptySubmit?: boolean
   isModelSelectionReady: boolean
   placeholder: string
   inputTestId?: string
@@ -94,6 +95,7 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
       disabled,
       submitDisabled,
       requireText = false,
+      allowEmptySubmit = false,
       isModelSelectionReady,
       placeholder,
       inputTestId = 'chat-message-input',
@@ -139,7 +141,7 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
       },
       focus: () => editorRef.current?.focus(),
       getValue: getLiveValue,
-      insertReference: reference => editorRef.current?.insertReference(reference),
+      insertReference: (reference) => editorRef.current?.insertReference(reference),
       setValue: (nextValue, cursor) => editorRef.current?.setValue(nextValue, cursor),
     }))
     useEffect(() => {
@@ -153,7 +155,9 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
       [onChange]
     )
     const canSend =
-      (hasText || (!requireText && (attachments.length > 0 || codeCommentCount > 0))) &&
+      (allowEmptySubmit ||
+        hasText ||
+        (!requireText && (attachments.length > 0 || codeCommentCount > 0))) &&
       isModelSelectionReady &&
       !disabled &&
       !submitDisabled
@@ -170,7 +174,9 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
       !goalDraftActive
     const submitValue = (current: string, options?: ComposerSubmitOptions) => {
       const hasContent =
-        current.trim() || (!requireText && (attachments.length || codeCommentCount))
+        allowEmptySubmit ||
+        current.trim() ||
+        (!requireText && (attachments.length || codeCommentCount))
       if (hasContent && isModelSelectionReady && !disabled && !submitDisabled)
         onSubmit(current, options)
     }
@@ -214,11 +220,11 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
           formProps={{
             onDragEnter: handleDragOver,
             onDragOver: handleDragOver,
-            onDragLeave: event => {
+            onDragLeave: (event) => {
               if (!event.currentTarget.contains(event.relatedTarget as Node | null))
                 setDraggingFiles(false)
             },
-            onDrop: event => {
+            onDrop: (event) => {
               if (!acceptsDrop(event.dataTransfer)) return
               event.preventDefault()
               setDraggingFiles(false)
@@ -236,11 +242,11 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
                   if (references) appendText(references)
                   if (attachmentFiles.length) await onFileSelect(attachmentFiles)
                 })
-                .catch(cause =>
+                .catch((cause) =>
                   setTransferError(cause instanceof Error ? cause.message : String(cause))
                 )
             },
-            onSubmit: event => {
+            onSubmit: (event) => {
               event.preventDefault()
               submit(primaryComposerSubmitOptions(isStreaming, followUpBehavior))
             },

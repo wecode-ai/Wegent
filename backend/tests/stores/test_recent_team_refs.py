@@ -68,6 +68,10 @@ def test_projection_preserves_selection_without_loading_tasks(test_db, store_and
     assert len(test_db.identity_map) == 0
     assert len(statements) == 1
     assert "JSON_EXTRACT" in statements[0]
+    chat_refs = store.list_recent_task_team_refs(
+        test_db, user_id=7, limit=1, mode="chat"
+    )
+    assert [ref.team_ref for ref in chat_refs] == expected
 
 
 def test_projection_handles_missing_and_malformed_json(test_db, store_and_model):
@@ -100,3 +104,33 @@ def test_projection_handles_missing_and_malformed_json(test_db, store_and_model)
     assert len(refs) == len(payloads)
     assert all(ref.task_type is None and ref.team_ref is None for ref in refs)
     assert store.list_recent_task_team_refs(test_db, user_id=7, limit=0) == []
+
+
+@pytest.mark.parametrize("labels", [{}, {"taskType": None}, {"taskType": ""}])
+def test_mode_filter_defaults_missing_null_and_empty_task_type_to_chat(
+    test_db, store_and_model, labels
+):
+    store, model = store_and_model
+    test_db.add(
+        model(
+            id=9201,
+            user_id=7,
+            kind="Task",
+            namespace="default",
+            name="default-chat",
+            json={
+                "metadata": {"labels": labels},
+                "spec": {"teamRef": {"name": "chat-team"}},
+            },
+            is_active=TaskResource.STATE_ACTIVE,
+            is_group_chat=False,
+        )
+    )
+    test_db.commit()
+
+    refs = store.list_recent_task_team_refs(test_db, user_id=7, limit=1, mode="chat")
+
+    assert [ref.team_ref["name"] for ref in refs] == ["chat-team"]
+    assert (
+        store.list_recent_task_team_refs(test_db, user_id=7, limit=1, mode="code") == []
+    )

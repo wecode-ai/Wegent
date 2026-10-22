@@ -20,6 +20,7 @@ from app.schemas.project_chat import (
     ProjectChatMessageView,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.device.identity import owned_device_aliases, same_owned_device
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.project_chat.push import push_project_chat_message
 from app.services.project_chat.runtime_binding import (
@@ -72,6 +73,35 @@ def _thread_agent(
     )
 
 
+def _session_execution(
+    db: Session, request: ProjectChatCommentExecution, target: ProjectChatMessage
+) -> LoopItemExecution | None:
+    candidates = (
+        db.query(LoopItemExecution)
+        .filter(
+            LoopItemExecution.cloud_project_id == request.project_id,
+            LoopItemExecution.loop_item_id == request.task_id,
+            LoopItemExecution.runtime_task_id == target.runtime_task_id,
+        )
+        .order_by(LoopItemExecution.id.desc())
+        .all()
+    )
+    aliases = {
+        owner: owned_device_aliases(
+            db, user_id=owner, device_id=target.runtime_device_id
+        )
+        for owner in {row.executor_owner_user_id for row in candidates}
+    }
+    matches = [
+        row
+        for row in candidates
+        if row.runtime_device_id in aliases[row.executor_owner_user_id]
+    ]
+    if len({row.executor_owner_user_id for row in matches}) > 1:
+        raise HTTPException(409, "Project session has conflicting execution owners")
+    return matches[0] if matches else None
+
+
 def _execution(
     db: Session, request: ProjectChatCommentExecution, target: ProjectChatMessage
 ) -> LoopItemExecution | BoundCommentSession:
@@ -86,16 +116,7 @@ def _execution(
         return resolve_collaboration_member_session(db, request, target)
     execution = db.get(LoopItemExecution, execution_id) if execution_id else None
     if execution is None and not execution_id:
-        execution = (
-            db.query(LoopItemExecution)
-            .filter(
-                LoopItemExecution.cloud_project_id == request.project_id,
-                LoopItemExecution.loop_item_id == request.task_id,
-                LoopItemExecution.runtime_device_id == target.runtime_device_id,
-                LoopItemExecution.runtime_task_id == target.runtime_task_id,
-            )
-            .first()
-        )
+        execution = _session_execution(db, request, target)
         if execution is None:
             return resolve_bound_comment_session(db, request, target)
     if (
@@ -109,7 +130,12 @@ def _execution(
         not target.runtime_task_id
         or not target.runtime_device_id
         or target.runtime_task_id != execution.runtime_task_id
-        or target.runtime_device_id != execution.runtime_device_id
+        or not same_owned_device(
+            db,
+            user_id=execution.executor_owner_user_id,
+            left_device_id=execution.runtime_device_id,
+            right_device_id=target.runtime_device_id,
+        )
     ):
         raise HTTPException(409, "The comment session no longer matches its execution")
     return execution

@@ -21,6 +21,8 @@ from app.schemas.project_chat import (
     LoopItemExecutionAssignmentStatus,
     ProjectChatCommentExecution,
 )
+from app.services.device.identity import same_owned_device
+from app.services.loop_items.task_bindings import active_task_binding_query
 
 
 @dataclass(frozen=True)
@@ -154,7 +156,12 @@ def resolve_collaboration_manager_session(
             source.cloud_project_id != request.project_id
             or source.loop_item_id != request.task_id
             or source.runtime_task_id != task_id
-            or source.runtime_device_id != target.runtime_device_id
+            or not same_owned_device(
+                db,
+                user_id=source.executor_owner_user_id,
+                left_device_id=source.runtime_device_id,
+                right_device_id=target.runtime_device_id,
+            )
             or source.runtime_origin_context.get("dispatch_id")
             != dispatch.runtime_origin_context.get("dispatch_id")
             or source.agent_id != target.agent_id
@@ -392,18 +399,16 @@ def resolve_bound_comment_session(
     request: ProjectChatCommentExecution,
     target: ProjectChatMessage,
 ) -> BoundCommentSession:
-    binding = (
-        db.query(LoopItemTaskBinding)
-        .filter(
-            LoopItemTaskBinding.cloud_project_id == request.project_id,
-            LoopItemTaskBinding.loop_item_id == request.task_id,
-            LoopItemTaskBinding.device_id == target.runtime_device_id,
-            LoopItemTaskBinding.task_id == target.runtime_task_id,
-            loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
-            loop_datetime_is_unset(LoopItemTaskBinding.deleted_at),
-        )
-        .one_or_none()
-    )
+    bindings = active_task_binding_query(
+        db,
+        project_id=request.project_id,
+        item_id=request.task_id,
+        device_id=target.runtime_device_id,
+        task_id=target.runtime_task_id,
+    ).all()
+    if len({row.task_user_id for row in bindings}) > 1:
+        raise HTTPException(409, "Project session has conflicting execution owners")
+    binding = bindings[0] if bindings else None
     if binding is None or not binding.task_user_id or not target.agent_id:
         raise HTTPException(409, "The comment has no valid execution binding")
     selection = binding.model_selection or {}

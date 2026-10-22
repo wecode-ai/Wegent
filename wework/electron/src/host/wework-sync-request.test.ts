@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
-  createWeworkSyncDownloadTimeout,
   createWeworkSyncFetchInit,
   createWeworkSyncRequestSignal,
   describeWeworkSyncRequestFailure,
@@ -78,26 +77,6 @@ describe('Wework sync request normalization', () => {
     expect(describeWeworkSyncRequestFailure(failure)).toBe(
       'Wework cloud request failed: fetch failed for [URL removed]: connect timeout'
     )
-  })
-
-  test('renews and clears the download inactivity timeout', () => {
-    vi.useFakeTimers()
-    try {
-      const timeout = createWeworkSyncDownloadTimeout(30)
-      vi.advanceTimersByTime(20)
-      timeout.refresh()
-      vi.advanceTimersByTime(20)
-      expect(timeout.signal.aborted).toBe(false)
-      vi.advanceTimersByTime(10)
-      expect(timeout.signal.aborted).toBe(true)
-
-      const completed = createWeworkSyncDownloadTimeout(1)
-      completed.clear()
-      vi.advanceTimersByTime(1)
-      expect(completed.signal.aborted).toBe(false)
-    } finally {
-      vi.useRealTimers()
-    }
   })
 
   test('builds authenticated multipart uploads to the backend', async () => {

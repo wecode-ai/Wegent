@@ -517,11 +517,6 @@ jobs:
               --notes "Content-addressed shared dependencies plus rolling Electron and component update manifests." \
               --prerelease
           fi
-          gh release edit wework-updater \
-            --target "$RELEASE_SHA" \
-            --title "Wework shared dependencies and updater manifests" \
-            --notes "Content-addressed shared dependencies plus rolling Electron and component update manifests."
-
           existing_component_assets="$RUNNER_TEMP/existing-component-assets.txt"
           gh release view wework-updater \
             --json assets \

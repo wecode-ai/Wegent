@@ -11,6 +11,7 @@ import {
 } from 'react'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { resetRuntimeConversationQueueControllersForTests } from './runtimeConversationQueueController'
 import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
 import {
   clearPluginMarketplaceCache,
@@ -75,10 +76,12 @@ import {
 import {
   applyRuntimeConversationAction,
   cacheRuntimeConversationQueuedMessages,
+  cacheRuntimeConversationQueuePaused,
   clearRuntimeConversationCacheForTests,
   getRuntimeConversationMetadata,
   getRuntimeConversationMessages,
   getRuntimeConversationQueuedMessages,
+  getRuntimeConversationQueuePaused,
   setRuntimeConversationGoal,
 } from './runtimeConversationCache'
 import { createRuntimeUserMessage } from './runtimeUserMessage'
@@ -2760,6 +2763,30 @@ function ExternalRuntimeSendProbe() {
     >
       repair pull request
     </button>
+  )
+}
+
+function ExecutionQueueCancelProbe({ address }: { address: RuntimeTaskAddress }) {
+  const workbench = useWorkbench()
+  const [result, setResult] = useState('idle')
+
+  return (
+    <>
+      <span data-testid="execution-queue-cancel-result">{result}</span>
+      <button
+        data-testid="execution-queue-cancel"
+        type="button"
+        onClick={() => {
+          setResult('pending')
+          void workbench.cancelRuntimeTask(address).then(
+            () => setResult('completed'),
+            () => setResult('failed')
+          )
+        }}
+      >
+        stop execution queue task
+      </button>
+    </>
   )
 }
 
@@ -10330,6 +10357,7 @@ describe('WorkbenchProvider runtime tasks', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    resetRuntimeConversationQueueControllersForTests()
     clearRuntimeConversationCacheForTests()
     resetRuntimeTerminalContextForTests()
   })
@@ -18463,7 +18491,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('queued-messages')).toHaveTextContent('sending:继续修')
   })
 
-  test('waits for the sent queued runtime message to start before sending the next queued item', async () => {
+  test('waits for the queued turn to start and drains the next item while another task is open', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
       if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
@@ -18660,6 +18688,16 @@ describe('WorkbenchProvider runtime tasks', () => {
       })
     })
 
+    await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('follow-up-current-runtime-task')).toHaveTextContent(
+      'device-1:runtime-b'
+    )
+    expect(sendRuntimeMessage.mock.calls[1][0]).toEqual(
+      expect.objectContaining({
+        address: expect.objectContaining({ taskId: 'runtime-a' }),
+        message: '执行ls',
+      })
+    )
     await userEvent.click(screen.getByText('open follow-up runtime a'))
     await waitFor(() =>
       expect(screen.getByTestId('follow-up-current-runtime-task')).toHaveTextContent(
@@ -18673,6 +18711,159 @@ describe('WorkbenchProvider runtime tasks', () => {
       })
     )
   })
+
+  test.each([
+    { outcome: 'accepted', initiallyPaused: false },
+    { outcome: 'rejected', initiallyPaused: false },
+    { outcome: 'transport', initiallyPaused: false },
+    { outcome: 'rejected', initiallyPaused: true },
+    { outcome: 'notify-failed', initiallyPaused: false },
+  ] as const)(
+    'execution cancellation preserves a background queue ($outcome, initiallyPaused=$initiallyPaused)',
+    async ({ outcome, initiallyPaused }) => {
+      const address = {
+        deviceId: 'device-1',
+        workspacePath: '/workspace/project-alpha',
+        taskId: 'runtime-a',
+      } satisfies RuntimeTaskAddress
+      let runtimeRunning = true
+      const cancellation = deferred<{ accepted: boolean; taskId: string; error?: string }>()
+      const cancelRuntimeTask = vi.fn().mockReturnValue(cancellation.promise)
+      const sendRuntimeMessage = vi.fn().mockResolvedValue({
+        accepted: true,
+        taskId: address.taskId,
+      })
+      const runtimeWorkApi = createRuntimeWorkApiMock({
+        listRuntimeWork: vi.fn().mockImplementation(async () =>
+          createRuntimeWork({
+            projects: [
+              {
+                project: { id: 7, name: 'Wegent' },
+                deviceWorkspaces: [
+                  {
+                    deviceId: address.deviceId,
+                    available: true,
+                    workspacePath: address.workspacePath,
+                    tasks: [
+                      {
+                        taskId: address.taskId,
+                        workspacePath: address.workspacePath,
+                        title: 'Runtime A',
+                        runtime: 'claude_code',
+                        running: runtimeRunning,
+                        continuable: true,
+                      },
+                      {
+                        taskId: 'runtime-b',
+                        workspacePath: address.workspacePath,
+                        title: 'Runtime B',
+                        runtime: 'claude_code',
+                        running: false,
+                        continuable: true,
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+            totalTasks: 2,
+          })
+        ),
+        getRuntimeTranscript: vi.fn().mockImplementation(async ({ taskId }) => ({
+          taskId,
+          workspacePath: address.workspacePath,
+          runtime: 'claude_code',
+          messages: [],
+        })),
+        cancelRuntimeTask,
+        sendRuntimeMessage,
+      })
+      renderWorkbench(
+        <>
+          <FollowUpProbe />
+          <ExecutionQueueCancelProbe address={address} />
+          <RuntimeRunningTasksProbe />
+        </>,
+        createWorkbenchServices({
+          runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+        })
+      )
+      await userEvent.click(await screen.findByText('open follow-up runtime a'))
+      await waitFor(() =>
+        expect(screen.getByTestId('follow-up-pane-busy')).toHaveTextContent('busy')
+      )
+      await userEvent.click(screen.getByText('set follow-up'))
+      await userEvent.click(screen.getByText('send follow-up'))
+      await userEvent.click(screen.getByText('set ls follow-up'))
+      await userEvent.click(screen.getByText('send follow-up'))
+      const queuedMessages = getRuntimeConversationQueuedMessages(address)
+      expect(queuedMessages).toHaveLength(2)
+      expect(sendRuntimeMessage).not.toHaveBeenCalled()
+      await userEvent.click(screen.getByText('open follow-up runtime b'))
+      await waitFor(() =>
+        expect(screen.getByTestId('follow-up-current-runtime-task')).toHaveTextContent(
+          'device-1:runtime-b'
+        )
+      )
+      if (initiallyPaused) {
+        act(() => cacheRuntimeConversationQueuePaused(address, true))
+      }
+      if (outcome === 'notify-failed') {
+        runtimeWorkSyncMocks.notifyMainRuntimeWorkChanged.mockRejectedValueOnce(
+          new Error('work list notification unavailable')
+        )
+      }
+
+      await userEvent.click(screen.getByTestId('execution-queue-cancel'))
+
+      await waitFor(() => expect(cancelRuntimeTask).toHaveBeenCalledExactlyOnceWith(address))
+      expect(getRuntimeConversationQueuePaused(address)).toBe(true)
+      expect(getRuntimeConversationQueuedMessages(address)).toEqual(queuedMessages)
+      runtimeRunning = false
+      await userEvent.click(screen.getByText('refresh work lists'))
+      await waitFor(() =>
+        expect(screen.getByTestId('runtime-running-task-ids')).toHaveTextContent('none')
+      )
+      expect(sendRuntimeMessage).not.toHaveBeenCalled()
+
+      await act(async () => {
+        if (outcome === 'transport') cancellation.reject(new Error('executor unavailable'))
+        else {
+          cancellation.resolve({
+            accepted: outcome !== 'rejected',
+            taskId: address.taskId,
+            ...(outcome === 'rejected' ? { error: 'stop rejected' } : {}),
+          })
+        }
+      })
+
+      await waitFor(() =>
+        expect(screen.getByTestId('execution-queue-cancel-result')).toHaveTextContent(
+          outcome === 'accepted' ? 'completed' : 'failed'
+        )
+      )
+      const shouldStayPaused =
+        initiallyPaused || outcome === 'accepted' || outcome === 'notify-failed'
+      expect(getRuntimeConversationQueuePaused(address)).toBe(shouldStayPaused)
+      if (shouldStayPaused) {
+        expect(sendRuntimeMessage).not.toHaveBeenCalled()
+        expect(getRuntimeConversationQueuedMessages(address)).toEqual(queuedMessages)
+      } else {
+        await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(1))
+        expect(sendRuntimeMessage).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            address,
+            message: queuedMessages[0].content,
+            clientUserMessageId: queuedMessages[0].id,
+          })
+        )
+      }
+      expect(screen.getByTestId('follow-up-current-runtime-task')).toHaveTextContent(
+        'device-1:runtime-b'
+      )
+      expect(screen.getByTestId('queued-messages')).toBeEmptyDOMElement()
+    }
+  )
 
   test('drains the preserved queue when a manual turn settles before React commits', async () => {
     let streamHandlers: ChatStreamHandlers = {}

@@ -40,6 +40,7 @@ const SAFE_ENVIRONMENT_KEYS = new Set([
   'WEWORK_NODE_PATH',
   'WEWORK_NODE_RUNTIME_KIND',
   'WEWORK_RUNTIME_BIN',
+  'WEWORK_HARNESS_RESOURCE_ROOT',
 ])
 
 export interface VerifySmartAppRuntimeOptions {

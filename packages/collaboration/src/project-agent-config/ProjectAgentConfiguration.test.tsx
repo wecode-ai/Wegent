@@ -134,19 +134,6 @@ async function click(testId: string) {
   });
 }
 
-async function change(testId: string, value: string) {
-  const target = element(testId) as HTMLInputElement | HTMLSelectElement;
-  await act(async () => {
-    const setter = Object.getOwnPropertyDescriptor(
-      Object.getPrototypeOf(target),
-      "value",
-    )?.set;
-    setter?.call(target, value);
-    target.dispatchEvent(new Event("change", { bubbles: true }));
-    target.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-}
-
 const hostedCreationHost: ProjectAgentConfigurationHost = {
   supportsExistingAgentSelection: false,
   renderAgentCreator({ namespace, onCreated, workspaceName }) {
@@ -222,50 +209,6 @@ const hostedCreationHost: ProjectAgentConfigurationHost = {
   renderDialog({ children, testIds }) {
     return <div data-testid={testIds.dialog}>{children}</div>;
   },
-  renderModePicker({ onChange, options }) {
-    return (
-      <div>
-        {options.map((option) => (
-          <button
-            data-testid={option.testId}
-            key={option.value}
-            onClick={() => onChange(option.value)}
-            type="button"
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
-    );
-  },
-  renderSelect({ ariaLabel, onChange, options, testId, value }) {
-    return (
-      <select
-        aria-label={ariaLabel}
-        data-testid={testId}
-        onChange={(event) => onChange(event.target.value)}
-        value={value}
-      >
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-    );
-  },
-  renderPrimaryAction({ children, disabled, onClick, testId }) {
-    return (
-      <button
-        data-testid={testId}
-        disabled={disabled}
-        onClick={onClick}
-        type="button"
-      >
-        {children}
-      </button>
-    );
-  },
 };
 
 describe("ProjectAgentConfiguration", () => {
@@ -323,6 +266,28 @@ describe("ProjectAgentConfiguration", () => {
     });
   }
 
+  it("keeps the project list visible when the deferred candidate catalog fails", async () => {
+    const { api } = createApi();
+    api.resources!.list = vi
+      .fn()
+      .mockRejectedValue(new Error("Catalog unavailable"));
+    await render(api);
+    expect(element("project-agent-row-project-agent-1")).toBeTruthy();
+    expect(api.resources!.list).not.toHaveBeenCalled();
+    await click("project-agent-add");
+    expect(element("project-agent-candidates-error").textContent).toContain(
+      "Catalog unavailable",
+    );
+    expect(element("project-agent-row-project-agent-1")).toBeTruthy();
+    api.resources!.list = vi
+      .fn()
+      .mockResolvedValue({ agents: [], execution_environments: [] });
+    await click("project-agent-candidates-retry");
+    expect(
+      document.querySelector('[data-testid="project-agent-candidates-error"]'),
+    ).toBeNull();
+  });
+
   it("separates a shared Agent source from its executor type", async () => {
     const { api } = createApi();
     await render(api);
@@ -356,6 +321,9 @@ describe("ProjectAgentConfiguration", () => {
     );
     await render(api, { ...project, workspace_access_role: undefined });
     expect(api.workspaces!.list).toHaveBeenCalledOnce();
+    expect(api.workspaces!.listAgents).not.toHaveBeenCalled();
+    expect(api.resources!.list).not.toHaveBeenCalled();
+    await click("project-agent-add");
     expect(api.workspaces!.listAgents).toHaveBeenCalledWith(
       project.workspace_id,
     );
@@ -372,11 +340,11 @@ describe("ProjectAgentConfiguration", () => {
   });
 
   it("adds an existing Agent without exposing a duplicate inline creator", async () => {
-    const { api, create } = createApi();
+    const { api, create } = createApi({ agents: [] });
     await render(api);
 
     await click("project-agent-add");
-    await change("project-agent-wegent-team", "12");
+    await click("project-agent-option-12");
     await click("project-agent-wegent-create");
     expect(create).toHaveBeenNthCalledWith(1, project.id, {
       name: "研发团队",
@@ -419,21 +387,21 @@ describe("ProjectAgentConfiguration", () => {
     expect(element("project-agent-dialog")).toBeTruthy();
   });
 
-  it.each(['allowed', 'denied', 'failed'] as const)(
-    'waits for legacy source access before consuming a host add action: %s',
-    async result => {
-      const { api } = createApi()
-      let resolveAccess!: (workspaces: never[]) => void
-      let rejectAccess!: (cause: Error) => void
+  it.each(["allowed", "denied", "failed"] as const)(
+    "waits for legacy source access before consuming a host add action: %s",
+    async (result) => {
+      const { api } = createApi();
+      let resolveAccess!: (workspaces: never[]) => void;
+      let rejectAccess!: (cause: Error) => void;
       api.workspaces!.list = vi.fn(
         () =>
           new Promise<never[]>((resolve, reject) => {
-            resolveAccess = resolve
-            rejectAccess = reject
-          })
-      )
-      const onConsumed = vi.fn()
-      const onError = vi.fn()
+            resolveAccess = resolve;
+            rejectAccess = reject;
+          }),
+      );
+      const onConsumed = vi.fn();
+      const onError = vi.fn();
       await act(async () => {
         root.render(
           <ProjectAgentConfiguration
@@ -443,27 +411,32 @@ describe("ProjectAgentConfiguration", () => {
             project={{ ...project, workspace_access_role: undefined }}
             onError={onError}
             translate={(_key, fallback) => fallback}
-          />
-        )
-      })
-      expect(onConsumed).not.toHaveBeenCalled()
-      expect(api.resources!.list).not.toHaveBeenCalled()
-      expect(api.workspaces!.listAgents).not.toHaveBeenCalled()
+          />,
+        );
+      });
+      expect(onConsumed).not.toHaveBeenCalled();
+      expect(api.resources!.list).not.toHaveBeenCalled();
+      expect(api.workspaces!.listAgents).not.toHaveBeenCalled();
       await act(async () => {
-        if (result === 'failed') rejectAccess(new Error('Space access failed'))
-        else resolveAccess(result === 'allowed' ? [{ id: project.workspace_id } as never] : [])
-      })
-      expect(onConsumed).toHaveBeenCalledExactlyOnceWith(18)
-      if (result === 'allowed') {
-        expect(element('project-agent-dialog')).toBeTruthy()
+        if (result === "failed") rejectAccess(new Error("Space access failed"));
+        else
+          resolveAccess(
+            result === "allowed" ? [{ id: project.workspace_id } as never] : [],
+          );
+      });
+      expect(onConsumed).toHaveBeenCalledExactlyOnceWith(18);
+      if (result === "allowed") {
+        expect(element("project-agent-dialog")).toBeTruthy();
       } else {
-        expect(container.querySelector('[data-testid="project-agent-dialog"]')).toBeNull()
-        expect(api.resources!.list).not.toHaveBeenCalled()
-        expect(api.workspaces!.listAgents).not.toHaveBeenCalled()
-        expect(onError).toHaveBeenCalledTimes(result === 'failed' ? 1 : 0)
+        expect(
+          container.querySelector('[data-testid="project-agent-dialog"]'),
+        ).toBeNull();
+        expect(api.resources!.list).not.toHaveBeenCalled();
+        expect(api.workspaces!.listAgents).not.toHaveBeenCalled();
+        expect(onError).toHaveBeenCalledTimes(result === "failed" ? 1 : 0);
       }
-    }
-  )
+    },
+  );
 
   it("excludes cloud Agent resources from local projects", async () => {
     const cloudAgent = { ...workspaceAgent, location: "cloud" as const };
@@ -497,6 +470,7 @@ describe("ProjectAgentConfiguration", () => {
   it("reuses the current-device Agent without inventing a Team binding", async () => {
     const binding = {
       name: "current-device-agent",
+      displayName: "当前设备智能体",
       runtime: "codex",
       executionPolicy: { mode: "project_pool" },
       modelPolicy: { mode: "user_select" },
@@ -529,18 +503,14 @@ describe("ProjectAgentConfiguration", () => {
     });
 
     await click("project-agent-add");
-    const select = element("project-agent-wegent-team") as HTMLSelectElement;
-    await act(async () => {
-      select.value = "current-device-resource";
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    await click("project-agent-option-current-device-resource");
     await click("project-agent-wegent-create");
 
-    expect(create).toHaveBeenCalledWith(project.id, {
-      ...binding,
-      name: "当前设备智能体",
-    });
+    expect(create).toHaveBeenCalledWith(project.id, binding);
     expect(create.mock.calls[0][1]).not.toHaveProperty("wegentTeamId");
+    expect(element("project-agent-row-created-codex").textContent).toContain(
+      "当前设备智能体",
+    );
   });
 
   it("creates a project Agent through the resource-library host and binds it to the project", async () => {

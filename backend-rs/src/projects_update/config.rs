@@ -650,9 +650,9 @@ pub(super) fn validate_project_config(value: &Value) -> Result<StoredProjectConf
                     }
                 }
                 "local_path" => {
-                    if !execution
+                    if execution
                         .as_ref()
-                        .is_some_and(|execution| execution.target_type == "local")
+                        .is_none_or(|execution| execution.target_type != "local")
                     {
                         return Err(config_error(
                             &["config"],

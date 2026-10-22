@@ -309,34 +309,41 @@ describe('DeviceMonitorPanel', () => {
   })
 
   it('passes version filter params when version input changes', async () => {
-    render(<DeviceMonitorPanel />)
-
-    await waitFor(() => {
+    jest.useFakeTimers()
+    let unmount: (() => void) | undefined
+    try {
+      await act(async () => {
+        unmount = render(<DeviceMonitorPanel />).unmount
+      })
       expect(mockedAdminApis.getDevices).toHaveBeenCalledTimes(1)
-    })
 
-    fireEvent.change(screen.getByTestId('version-filter-input'), {
-      target: { value: '1.6.5' },
-    })
+      fireEvent.change(screen.getByTestId('version-filter-input'), {
+        target: { value: '1.6.5' },
+      })
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(599)
+      })
+      expect(mockedAdminApis.getDevices).toHaveBeenCalledTimes(1)
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(1)
+      })
 
-    await waitFor(
-      () => {
-        expect(mockedAdminApis.getDevices).toHaveBeenCalledTimes(2)
-      },
-      { timeout: 1200 }
-    )
-
-    expect(mockedAdminApis.getDevices).toHaveBeenLastCalledWith(
-      1,
-      20,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      'lt',
-      '1.6.5'
-    )
-    expect(mockedAdminApis.getDeviceStats).toHaveBeenCalledTimes(1)
+      expect(mockedAdminApis.getDevices).toHaveBeenCalledTimes(2)
+      expect(mockedAdminApis.getDevices).toHaveBeenLastCalledWith(
+        1,
+        20,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'lt',
+        '1.6.5'
+      )
+      expect(mockedAdminApis.getDeviceStats).toHaveBeenCalledTimes(1)
+    } finally {
+      unmount?.()
+      jest.useRealTimers()
+    }
   })
 
   it('does not send incomplete version filters while typing', async () => {

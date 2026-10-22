@@ -97,7 +97,8 @@ const hookRuntime = vi.hoisted(() => {
   }
 })
 
-vi.mock('react', () => ({
+vi.mock('react', async () => ({
+  ...(await vi.importActual<typeof import('react')>('react')),
   useCallback: hookRuntime.useCallback,
   useEffect: hookRuntime.useEffect,
   useLayoutEffect: hookRuntime.useEffect,
@@ -106,6 +107,7 @@ vi.mock('react', () => ({
   useState: hookRuntime.useState,
 }))
 
+import { createCollaborationTranslator } from '../i18n'
 import { ProjectManageView } from './ProjectManageView'
 import { ProjectMembersSection } from './ProjectMembersSection'
 import { ProjectTagsSection } from './ProjectManageSections'
@@ -136,6 +138,7 @@ function project(id: string, visibility: 'private' | 'public', version = 1): Pro
 
 function createApi() {
   return {
+    getProject: vi.fn(),
     listMembers: vi.fn().mockResolvedValue([]),
     listItems: vi.fn().mockResolvedValue({ items: [] }),
     searchUsers: vi.fn().mockResolvedValue({ users: [] }),
@@ -188,11 +191,13 @@ function renderView(
   quickAdd?: {
     requestId: number
     onConsumed(requestId: number): void
-  }
+  },
+  section?: 'all' | 'overview' | 'members' | 'agents' | 'board'
 ) {
   hookRuntime.beginRender()
   const tree = ProjectManageView({
     api,
+    section,
     host,
     project: currentProject,
     onProjectUpdated,
@@ -358,6 +363,45 @@ describe('ProjectManageView project scope', () => {
     expect(api.updateMember).toHaveBeenCalledWith('project-a', 2, {
       capability_description: '前端实现与交互验收',
     })
+  })
+
+  it('does not apply an old self-role refresh after navigating to another project', async () => {
+    const api = createApi()
+    const host = createHost()
+    const member: ProjectManageMember = {
+      user_id: 2,
+      user_name: 'member',
+      email: null,
+      role: 'Maintainer',
+      direct_role: 'Maintainer',
+      inherited_role: 'Developer',
+    }
+    vi.mocked(api.listMembers).mockResolvedValue([member])
+    vi.mocked(api.updateMember).mockResolvedValue({
+      ...member,
+      role: 'Viewer',
+      direct_role: 'Viewer',
+    })
+    const refresh = deferred<ProjectManageProject>()
+    vi.mocked(api.getProject).mockReturnValue(refresh.promise)
+    const projectA = { ...project('project-a', 'private'), current_user_id: 2 }
+    const projectB = project('project-b', 'private')
+    const onProjectUpdated = vi.fn()
+    renderView(api, host, projectA, onProjectUpdated)
+    await flushPromises()
+    const tree = renderView(api, host, projectA, onProjectUpdated)
+    findByTestId(tree, 'cloud-project-member-role-2').props.onChange({
+      target: { value: 'Viewer' },
+    })
+    await flushPromises()
+    expect(api.getProject).toHaveBeenCalledWith('project-a')
+
+    renderView(api, host, projectB, onProjectUpdated)
+    refresh.resolve({ ...projectA, access_role: 'Viewer' })
+    await flushPromises()
+
+    expect(onProjectUpdated).not.toHaveBeenCalled()
+    expect(host.trackFailed).not.toHaveBeenCalled()
   })
 
   it('does not write an old project mutation response into the new project', async () => {
@@ -561,4 +605,92 @@ it('retains the existing role and releases saving controls after a rejected chan
   expect(findByTestId(tree, 'cloud-project-member-role-2').props.value).toBe('Developer')
   expect(findByTestId(tree, 'cloud-project-member-role-2').props.disabled).toBe(false)
   expect(host.trackFailed).toHaveBeenCalledOnce()
+})
+
+it('loads only resources needed by the selected settings section', async () => {
+  const api = createApi()
+  const host = createHost()
+  const current = project('project-a', 'private')
+  renderView(api, host, current, vi.fn(), undefined, 'agents')
+  await flushPromises()
+  expect(api.listItems).not.toHaveBeenCalled()
+  expect(api.listMembers).not.toHaveBeenCalled()
+  renderView(api, host, current, vi.fn(), undefined, 'members')
+  await flushPromises()
+  expect(api.listMembers).toHaveBeenCalledOnce()
+  expect(api.listItems).not.toHaveBeenCalled()
+  renderView(api, host, current, vi.fn(), undefined, 'overview')
+  await flushPromises()
+  expect(api.listItems).not.toHaveBeenCalled()
+  const tree = renderView(api, host, current, vi.fn(), undefined, 'overview')
+  findByTestId(tree, 'cloud-project-manage-tags').props.onToggle({
+    currentTarget: { open: true },
+  })
+  renderView(api, host, current, vi.fn(), undefined, 'overview')
+  await flushPromises()
+  expect(api.listItems).toHaveBeenCalledOnce()
+  expect(api.listMembers).toHaveBeenCalledOnce()
+})
+
+it.each(['en', 'zh-CN'] as const)(
+  'uses tag-specific %s copy for non-Error failures and recovers on retry',
+  async locale => {
+    const api = createApi()
+    const host = createHost()
+    const current = project('project-a', 'private')
+    host.translate = createCollaborationTranslator(locale)
+    vi.mocked(api.listItems)
+      .mockRejectedValueOnce({ status: 503 })
+      .mockResolvedValueOnce({
+        items: [{ id: 'item-1', version: 1, tags: ['task-only-tag'] }],
+      })
+    let tree = renderView(api, host, current, vi.fn(), undefined, 'overview')
+    findByTestId(tree, 'cloud-project-manage-tags').props.onToggle({
+      currentTarget: { open: true },
+    })
+    renderView(api, host, current, vi.fn(), undefined, 'overview')
+    await flushPromises()
+    tree = renderView(api, host, current, vi.fn(), undefined, 'overview')
+    expect(findByTestId(tree, 'cloud-project-manage-tags-error').props.children[0]).toBe(
+      locale === 'en' ? 'Failed to load tag catalog' : '加载标签目录失败'
+    )
+    expect(findByTestId(tree, 'cloud-project-tag-task-only-tag')).toBeNull()
+    findByTestId(tree, 'cloud-project-manage-tags-retry').props.onClick()
+    renderView(api, host, current, vi.fn(), undefined, 'overview')
+    await flushPromises()
+    tree = renderView(api, host, current, vi.fn(), undefined, 'overview')
+    expect(findByTestId(tree, 'cloud-project-tag-task-only-tag')).not.toBeNull()
+    expect(findByTestId(tree, 'cloud-project-manage-tags-error')).toBeNull()
+    expect(api.listItems).toHaveBeenCalledTimes(2)
+    renderView(api, { ...host }, current, vi.fn(), undefined, 'overview')
+    await flushPromises()
+    expect(api.listItems).toHaveBeenCalledTimes(2)
+  }
+)
+
+it('discards late tag discovery after switching projects and leaves the next overview metadata-only', async () => {
+  const api = createApi()
+  const host = createHost()
+  const first = project('project-a', 'private')
+  const second = project('project-b', 'private')
+  let resolveTags!: (result: { items: ProjectManageItem[] }) => void
+  vi.mocked(api.listItems).mockImplementationOnce(
+    () =>
+      new Promise(resolve => {
+        resolveTags = resolve
+      })
+  )
+  let tree = renderView(api, host, first, vi.fn(), undefined, 'overview')
+  findByTestId(tree, 'cloud-project-manage-tags').props.onToggle({
+    currentTarget: { open: true },
+  })
+  renderView(api, host, first, vi.fn(), undefined, 'overview')
+  renderView(api, host, second, vi.fn(), undefined, 'overview')
+  resolveTags({
+    items: [{ id: 'item-1', version: 1, tags: ['old-task-tag'] }],
+  })
+  await flushPromises()
+  tree = renderView(api, host, second, vi.fn(), undefined, 'overview')
+  expect(findByTestId(tree, 'cloud-project-tag-old-task-tag')).toBeNull()
+  expect(api.listItems).toHaveBeenCalledOnce()
 })

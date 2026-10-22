@@ -57,6 +57,7 @@ import {
   evictRuntimeConversation,
 } from './runtimeConversationCache'
 import { archiveRuntimeTaskAddresses, findFailedRuntimeTaskArchive } from './runtimeTaskArchive'
+import { logRuntimeQueueStage } from './runtimeQueueDiagnostics'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import { projectRuntimePaneTranscript } from './runtimeTaskLifecycle/projection'
 
@@ -281,8 +282,28 @@ export function useWorkbenchRuntimeTasks({
         address =>
           !localFailedTargets.some(localAddress => isSameRuntimeTaskAddress(localAddress, address))
       )
+      localFailedTargets.forEach(address =>
+        logRuntimeQueueStage(address, 'queue-archive-requested', { localOnly: true })
+      )
+      persistedTargets.forEach(address =>
+        logRuntimeQueueStage(address, 'queue-archive-requested', { localOnly: false })
+      )
       const archiveResults = await archiveRuntimeTaskAddresses(persistedTargets, address =>
         executorClient.runtime.archiveConversation(address)
+      )
+      localFailedTargets.forEach(address =>
+        logRuntimeQueueStage(address, 'queue-archive-result', {
+          localOnly: true,
+          accepted: true,
+          failed: false,
+        })
+      )
+      archiveResults.forEach(result =>
+        logRuntimeQueueStage(result.address, 'queue-archive-result', {
+          localOnly: false,
+          accepted: result.response?.accepted ?? false,
+          failed: !result.response,
+        })
       )
       const archivedAddresses = [
         ...localFailedTargets,
@@ -291,6 +312,7 @@ export function useWorkbenchRuntimeTasks({
       if (archivedAddresses.length > 0) {
         archivedAddresses.forEach(evictRuntimeConversation)
         archivedAddresses.forEach(address => lifecycleStore.remove(address))
+        archivedAddresses.forEach(address => logRuntimeQueueStage(address, 'queue-archive-evicted'))
         markRuntimeTasksArchived(archivedAddresses)
         const worktreeCleanupSucceeded = await removeArchivedWorktrees(
           findRuntimeTaskWorktrees(state.runtimeWork, archivedAddresses)

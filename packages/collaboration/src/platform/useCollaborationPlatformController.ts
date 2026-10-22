@@ -218,11 +218,22 @@ export function useCollaborationPlatformController({
     workspaces: [] as CollaborationWorkspace[],
     projects: [] as CollaborationProject[],
   });
+  const navigationSourcesRef = useRef<SharedWorkspaceApi[]>([])
   const refreshKeyRef = useRef(refreshKey);
 
   const load = useCallback(
     async (force = false) => {
       const revision = ++loadRevisionRef.current;
+      const sources = navigationApis?.length ? navigationApis : [api]
+      const previousSources = navigationSourcesRef.current
+      if (
+        sources.length !== previousSources.length ||
+        sources.some((source, index) => source !== previousSources[index])
+      ) {
+        navigationSourcesRef.current = sources
+        navigationCacheReadyRef.current = false
+        navigationCacheRef.current = { workspaces: [], projects: [] }
+      }
       if (force) navigationCacheReadyRef.current = false;
       const rootView = location.rootView ?? "home";
       if (

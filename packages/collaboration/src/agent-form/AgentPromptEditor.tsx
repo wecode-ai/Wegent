@@ -6,7 +6,7 @@ import type {
   LocalDeviceApp,
   LocalDeviceSkill,
 } from "@wegent/chat-core/runtime-composer-catalog";
-import { useMemo, useRef } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef } from "react";
 
 import { ComposerAutocompleteInput } from "../composer/ComposerAutocompleteInput";
 import type { CollaborationTranslate } from "../i18n";
@@ -17,12 +17,14 @@ import type { UnifiedAgentPluginRef } from "./types";
 export function AgentPromptEditor({
   busy,
   field,
+  onFocus,
   plugins,
   skills,
   translate,
 }: {
   busy: boolean;
   field: AgentFormField;
+  onFocus?(): void;
   plugins: UnifiedAgentPluginRef[];
   skills: AgentCapabilitySkill[];
   translate: CollaborationTranslate;
@@ -33,17 +35,31 @@ export function AgentPromptEditor({
     () => plugins.map(toComposerPlugin),
     [plugins],
   );
+  const catalogChanged = useId();
+  const catalogEvents = useMemo(() => ({ catalogChanged }), [catalogChanged]);
+  const listSkills = useCallback(async () => composerSkills, [composerSkills]);
+  const listPlugins = useCallback(
+    async () => composerPlugins,
+    [composerPlugins],
+  );
+  useEffect(() => {
+    window.dispatchEvent(new Event(catalogChanged));
+  }, [catalogChanged, composerSkills, composerPlugins]);
 
   return (
-    <label className="block space-y-1.5 text-sm text-text-secondary">
+    <label
+      className="block space-y-1.5 text-sm text-text-secondary"
+      onFocus={onFocus}
+    >
       <span>{field.label}</span>
       <ComposerAutocompleteInput
+        catalogEvents={catalogEvents}
         canSend={false}
         className="min-h-24 max-h-48 overflow-y-auto rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-text-primary shadow-sm outline-none transition-[border-color,box-shadow] placeholder:text-text-muted focus:border-focus focus:ring-2 focus:ring-focus/15"
         disabled={busy || field.disabled}
         onChange={field.onChange}
-        onListLocalApps={async () => composerPlugins}
-        onListLocalSkills={async () => composerSkills}
+        onListLocalApps={listPlugins}
+        onListLocalSkills={listSkills}
         onSubmit={() => undefined}
         placeholder={field.placeholder ?? ""}
         rows={5}

@@ -362,6 +362,10 @@ fn copy_codex_config_for_wework(source: &Path, destination: &Path) -> Result<(),
             source.display()
         )
     })?;
+    // Plugin synchronization reads and replaces this same config under this lock.
+    let _lock = super::personal_marketplace_lock::acquire_personal_marketplace_lock(
+        &destination.join("plugins/cache/wework-personal"),
+    )?;
     fs::create_dir_all(destination)
         .map_err(|error| format!("Failed to create {}: {error}", destination.display()))?;
     replace_config(&destination.join("config.toml"), sanitized)
@@ -663,6 +667,49 @@ mod tests {
             "example"
         );
         assert_eq!(result.imported_entries, vec!["config.toml", "skills"]);
+    }
+
+    #[test]
+    fn import_waits_for_a_pending_plugin_config_write() {
+        use std::{sync::mpsc, thread, time::Duration};
+
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        let destination = root.path().join("destination");
+        fs::create_dir_all(home.join(".codex")).unwrap();
+        fs::write(home.join(".codex/config.toml"), "model = \"imported\"\n").unwrap();
+        let plugin_lock =
+            super::super::personal_marketplace_lock::acquire_personal_marketplace_lock(
+                &destination.join("plugins/cache/wework-personal"),
+            )
+            .unwrap();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (finished_tx, finished_rx) = mpsc::channel();
+        let import_destination = destination.clone();
+        let importer = thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            finished_tx
+                .send(import_external_content_from_paths(
+                    "codex",
+                    &home,
+                    &import_destination,
+                ))
+                .unwrap();
+        });
+        started_rx.recv().unwrap();
+        assert!(matches!(
+            finished_rx.recv_timeout(Duration::from_millis(100)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        // Finish the stale plugin transaction before letting the import commit.
+        fs::write(destination.join("config.toml"), "model = \"old\"\n").unwrap();
+        drop(plugin_lock);
+        finished_rx.recv().unwrap().unwrap();
+        importer.join().unwrap();
+        assert_eq!(
+            fs::read_to_string(destination.join("config.toml")).unwrap(),
+            "model = \"imported\"\n"
+        );
     }
 
     #[test]
