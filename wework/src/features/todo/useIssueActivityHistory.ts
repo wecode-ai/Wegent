@@ -12,7 +12,6 @@ export function useIssueActivityHistory(
 ) {
   const [loaded, setLoaded] = useState<{
     taskId: string
-    version: number
     history: IssueHistory
   } | null>(null)
 
@@ -26,7 +25,7 @@ export function useIssueActivityHistory(
     let active = true
     void api.getLoopItem(task.id).then(
       item => {
-        if (active) setLoaded({ taskId: task.id, version: task.version, history: item })
+        if (active) setLoaded({ taskId: task.id, history: item })
       },
       () => undefined
     )
@@ -36,11 +35,10 @@ export function useIssueActivityHistory(
   }, [api, enabled, statusHistory.length, task.assignment_history, task.id, task.version])
 
   return useMemo(() => {
-    const history =
-      loaded?.taskId === task.id && loaded.version === task.version ? loaded.history : null
+    const history = loaded?.taskId === task.id ? loaded.history : null
     return {
       statusHistory: statusHistory.length ? statusHistory : (history?.status_history ?? []),
       assignmentHistory: task.assignment_history ?? history?.assignment_history ?? [],
     }
-  }, [loaded, statusHistory, task.assignment_history, task.id, task.version])
+  }, [loaded, statusHistory, task.assignment_history, task.id])
 }

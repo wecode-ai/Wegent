@@ -7,6 +7,7 @@ import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import {
   openBlankProjectCreation,
+  selectCollaborationProjectView,
   webApi,
   writeSharedComposer,
 } from '../../utils/collaboration-test-support'
@@ -513,10 +514,11 @@ test.describe('Collaboration cloud capabilities', () => {
       await expect(page.getByTestId(`collaboration-workspace-${workspace.id}`)).toContainText(
         workspace.name
       )
+      // Project metadata can show a read-only parent label before the workspace catalog arrives.
+      await page.getByTestId(`collaboration-workspace-home-${workspace.id}`).click()
+      await expect(page).toHaveURL(`/collaboration/workspaces/${workspace.id}`)
       const workspaceToggle = page.getByTestId(`collaboration-workspace-toggle-${workspace.id}`)
-      if ((await workspaceToggle.getAttribute('aria-expanded')) !== 'true') {
-        await workspaceToggle.click()
-      }
+      await expect(workspaceToggle).toHaveAttribute('aria-expanded', 'true')
       const projectNavigation = page.getByTestId(`collaboration-workspace-project-${project.id}`)
       await expect(projectNavigation).toContainText(project.name)
       await captureEvidence(page, 'web-01-project-home')
@@ -677,15 +679,17 @@ test.describe('Collaboration cloud capabilities', () => {
       await selectGroupBy(page, project.id, 'status')
       const reorderResponse = page.waitForResponse(response => {
         const pathname = new URL(response.url()).pathname
-        return response.request().method() === 'POST' && pathname.endsWith('/loop-items/reorder')
+        return (
+          response.request().method() === 'PATCH' &&
+          pathname.endsWith(`/loop-items/${statusIssue.id}`)
+        )
       })
       await dragIssueTo(page, statusIssue.id, 'completed')
       const reordered = await reorderResponse
       expect(reordered.ok(), `Board reorder failed: ${await reordered.text()}`).toBe(true)
-      const reorderedItems = (await reordered.json()) as { items: CloudIssue[] }
-      expect(reorderedItems.items.find(item => item.id === statusIssue.id)?.status).toBe(
-        'completed'
-      )
+      const moved = (await reordered.json()) as CloudIssue
+      expect(moved.status).toBe('completed')
+      expect(reordered.request().postDataJSON()).toHaveProperty('position')
       expect((await issue(page, statusIssue.id)).status).toBe('completed')
       await page.getByTestId(`collaboration-issue-${statusIssue.id}`).scrollIntoViewIfNeeded()
       await captureEvidence(page, 'web-06-status-board')
@@ -922,6 +926,7 @@ test.describe('Collaboration cloud capabilities', () => {
         })
         .toBe('public')
 
+      await page.getByTestId('cloud-project-manage-tags-toggle').click()
       await page.getByRole('button', { name: /新建标签|New tag/ }).click()
       await page.getByTestId('cloud-project-tag-create-input').fill(tagName)
       await page.getByTestId('cloud-project-tag-create-confirm').click()
@@ -943,7 +948,7 @@ test.describe('Collaboration cloud capabilities', () => {
             `/api/v1/cloud-projects/${encodeURIComponent(project.id)}`
           )
         ).board_config?.statuses.length ?? 0
-      await page.getByTestId('collaboration-tab-board').click()
+      await selectCollaborationProjectView(page, 'board')
       await page.getByTestId('collaboration-board-settings').click()
       await expect(page.getByTestId('project-board-settings-dialog')).toBeVisible()
       await page.getByTestId('cloud-board-status-add').click()

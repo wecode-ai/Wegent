@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -3413,7 +3413,9 @@ export function CollaborationPlatformApp({
     if (!state.loading && !state.error) onReady?.();
   }, [onReady, state.error, state.loading]);
   const navigationProjectsRef = useRef(state.navigationProjects);
-  navigationProjectsRef.current = state.navigationProjects;
+  useLayoutEffect(() => {
+    navigationProjectsRef.current = state.navigationProjects;
+  }, [state.navigationProjects]);
   const hasFullWorkspaceAccess =
     state.workspace?.id === host.location.workspaceId;
   const scopedApi = useMemo<SharedWorkspaceApi>(() => {

@@ -182,7 +182,8 @@ describe('CollaborationApp project collaboration groups', () => {
     await waitFor(() =>
       expect(addCollaborationGroup).toHaveBeenCalledWith(project.id, workspaceGroup.id)
     )
-    expect(api.workspaces?.list).toHaveBeenCalled()
+    expect(api.workspaces?.listCollaborationGroups).toHaveBeenCalledWith(project.workspace_id)
+    expect(api.workspaces?.list).not.toHaveBeenCalled()
   })
 
   it('creates a project-owned collaboration group', async () => {
@@ -228,6 +229,25 @@ describe('CollaborationApp project collaboration groups', () => {
       stages: [],
     })
     expect(savedInput).not.toHaveProperty('policy')
+  })
+
+  it('loads human members for a group without requesting a board snapshot', async () => {
+    const api = projectApi()
+    jest
+      .mocked(api.members.list)
+      .mockResolvedValue([
+        { id: 7, user_id: 7, user_name: '新项目成员', email: '', role: 'Developer' },
+      ])
+    const host = automationHost()
+    host.location.projectSettingsSection = 'groups'
+    render(<CollaborationApp api={api} host={host} locale="zh-CN" pollIntervalMs={0} />)
+    fireEvent.click(await screen.findByTestId('collaboration-group-open-create'))
+    fireEvent.click(screen.getByTestId('collaboration-group-create-add-members'))
+    expect(
+      await screen.findByTestId('collaboration-group-create-member-human-7')
+    ).toHaveTextContent('新项目成员')
+    expect(api.members.list).toHaveBeenCalledWith(project.id)
+    expect(api.issues.getBoardSnapshot).not.toHaveBeenCalled()
   })
 
   it('keeps automatic processing separate from collaboration participants', async () => {

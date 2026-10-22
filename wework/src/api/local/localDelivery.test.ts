@@ -529,6 +529,24 @@ describe('local delivery API', () => {
     expect(items[0].assignee_agent_id).toBe('LA-1')
   })
 
+  test('shares local agent reads and refreshes them after successful writes', async () => {
+    const request = vi.fn(async (method: string) =>
+      method === 'chat_agents.list' ? [] : { id: 'LA-1' }
+    )
+    const api = createLocalProjectChatAgentApi(request, 7)
+    await Promise.all([api.list('project-1'), api.list('project-1')])
+    await api.list('project-1')
+    expect(request).toHaveBeenCalledOnce()
+    await api.list('project-1', { forceRefresh: true })
+    expect(request).toHaveBeenCalledTimes(2)
+    await api.create('project-1', { name: 'Bot', runtime: 'codex' })
+    await api.list('project-1')
+    expect(request.mock.calls.filter(([method]) => method === 'chat_agents.list')).toHaveLength(3)
+    await api.archive('project-1', 'LA-1', 1)
+    await api.list('project-1')
+    expect(request.mock.calls.filter(([method]) => method === 'chat_agents.list')).toHaveLength(4)
+  })
+
   test('local robot create sends the creator id', async () => {
     const request = vi.fn(async () => ({ id: 'LA-1', created_by_user_id: 7 }))
     const api = createLocalProjectChatAgentApi(request, 7)
@@ -1017,7 +1035,7 @@ describe('local delivery API', () => {
 
     await api.listLoopItems('project-1')
     await expect(
-      api.updateLoopItem('LOCAL-1', { version: 1, tags: ['bug'] })
+      api.updateLoopItem('LOCAL-1', { version: 1, tags: ['bug'], position: { beforeItemId: null } })
     ).resolves.toMatchObject({
       local_project_id: 91,
       local_project_name: 'Wegent',
@@ -1029,6 +1047,7 @@ describe('local delivery API', () => {
       todo: {
         version: 1,
         tags: ['bug', 'wegent:local-project:91:Wegent'],
+        position: { before_item_id: null },
       },
     })
   })
@@ -1055,48 +1074,51 @@ describe('local delivery API', () => {
     })
   })
 
-  test('remembers task ownership for updates and persists board order', async () => {
-    const updatedRecord = { ...taskRecord, title: 'Updated', version: 2 }
-    const request = vi.fn(async (method: string) => {
-      if (method === 'todos.list') return [taskRecord]
-      if (method === 'todos.update') return updatedRecord
-      if (method === 'todos.reorder') return [updatedRecord]
-      if (method === 'todos.archive') return {}
-      throw new Error(`Unexpected method: ${method}`)
-    })
-    const api = createLocalDeliveryApi(request)
-
-    await api.listLoopItems('project-1')
-    await expect(
-      api.updateLoopItem('LOCAL-1', { version: 1, title: 'Updated' })
-    ).resolves.toMatchObject({ title: 'Updated', version: 2 })
-    await expect(
-      api.reorderLoopItems('project-1', {
-        parent_id: null,
-        status: 'inbox',
-        item_ids: ['LOCAL-1'],
+  test.each(['inbox', null])(
+    'remembers task ownership and persists order (status=%s)',
+    async status => {
+      const updatedRecord = { ...taskRecord, title: 'Updated', version: 2 }
+      const request = vi.fn(async (method: string) => {
+        if (method === 'todos.list') return [taskRecord]
+        if (method === 'todos.update') return updatedRecord
+        if (method === 'todos.reorder') return [updatedRecord]
+        if (method === 'todos.archive') return {}
+        throw new Error(`Unexpected method: ${method}`)
       })
-    ).resolves.toMatchObject({ items: [{ id: 'LOCAL-1' }] })
-    await api.archiveLoopItem('LOCAL-1')
+      const api = createLocalDeliveryApi(request)
 
-    expect(request).toHaveBeenCalledWith('todos.update', {
-      project_id: 'project-1',
-      task_id: 'LOCAL-1',
-      todo: { version: 1, title: 'Updated' },
-    })
-    expect(request).toHaveBeenCalledWith('todos.reorder', {
-      project_id: 'project-1',
-      reorder: {
-        parent_id: null,
-        status: 'inbox',
-        item_ids: ['LOCAL-1'],
-      },
-    })
-    expect(request).toHaveBeenCalledWith('todos.archive', {
-      project_id: 'project-1',
-      task_id: 'LOCAL-1',
-    })
-  })
+      await api.listLoopItems('project-1')
+      await expect(
+        api.updateLoopItem('LOCAL-1', { version: 1, title: 'Updated' })
+      ).resolves.toMatchObject({ title: 'Updated', version: 2 })
+      await expect(
+        api.reorderLoopItems('project-1', {
+          parent_id: null,
+          status,
+          item_ids: ['LOCAL-1'],
+        })
+      ).resolves.toMatchObject({ items: [{ id: 'LOCAL-1' }] })
+      await api.archiveLoopItem('LOCAL-1')
+
+      expect(request).toHaveBeenCalledWith('todos.update', {
+        project_id: 'project-1',
+        task_id: 'LOCAL-1',
+        todo: { version: 1, title: 'Updated' },
+      })
+      expect(request).toHaveBeenCalledWith('todos.reorder', {
+        project_id: 'project-1',
+        reorder: {
+          parent_id: null,
+          status,
+          item_ids: ['LOCAL-1'],
+        },
+      })
+      expect(request).toHaveBeenCalledWith('todos.archive', {
+        project_id: 'project-1',
+        task_id: 'LOCAL-1',
+      })
+    }
+  )
 
   test('binds a runtime task through executor storage', async () => {
     const request = vi.fn(async (method: string) => {

@@ -471,12 +471,24 @@ test.describe('Collaboration agent execution', () => {
     await page.getByTestId('collaboration-project-settings-agents').click()
     await expect(page.getByTestId('project-agent-config')).toBeVisible()
     await page.getByTestId('project-agent-add').click()
+    await expect(page.getByTestId('project-agent-dialog')).toBeVisible()
+    await expect(page.getByTestId('project-agent-search')).toBeFocused()
+    await expect(page.getByTestId('project-agent-wegent-create')).toBeDisabled()
+    const prematureCatalogRequests: string[] = []
+    const observeCatalog = (request: import('@playwright/test').Request) => {
+      const path = new URL(request.url()).pathname
+      if (path.includes('/kinds/skills/unified') || path.endsWith('/plugins/installed'))
+        prematureCatalogRequests.push(path)
+    }
+    page.on('request', observeCatalog)
     await page.getByTestId('project-agent-mode-create').click()
     await expect(page.getByTestId('web-agent-resource-creator')).toBeVisible()
     await page.getByTestId('web-agent-display-name').fill(displayName)
     await page.getByTestId('web-agent-model').selectOption({
       label: resources.modelName,
     })
+    page.off('request', observeCatalog)
+    expect(prematureCatalogRequests).toEqual([])
     await page.getByTestId('web-agent-resource-creator-advanced-toggle').click()
     await page.getByTestId('web-agent-capability-mode-manual').click()
     await page.getByTestId('web-agent-skills-add').click()

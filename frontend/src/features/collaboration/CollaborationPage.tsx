@@ -17,6 +17,7 @@ import {
   type CollaborationPlatformHostAdapter,
   type CollaborationPlatformLocation,
   type CollaborationView,
+  type ProjectSettingsSectionId,
   type CollaborationWorkspaceView,
 } from '@wegent/collaboration'
 import { toast } from 'sonner'
@@ -174,7 +175,7 @@ export function CollaborationPage() {
         readWorkspaceFile: readRuntimeWorkspaceFile,
       },
     }
-  }, [])
+  }, [user?.id])
   useEffect(
     () => () => {
       api.activity.dispose()
@@ -236,6 +237,15 @@ export function CollaborationPage() {
       ? decodeURIComponent(segments[3])
       : null
   const projectView = (searchParams.get('view') || 'board') as CollaborationView
+  const section = searchParams.get('section')
+  const projectSettingsSection =
+    projectView === 'manage' &&
+    section &&
+    ['project', 'agents', 'members', 'groups', 'environments', 'automatic-processing'].includes(
+      section
+    )
+      ? (section as ProjectSettingsSectionId)
+      : null
   useEffect(() => {
     if (removedRootRoute) {
       router.replace('/collaboration')
@@ -297,6 +307,7 @@ export function CollaborationPage() {
         workspaceView: workspaceViewFromPath(pathname),
         projectId,
         projectView,
+        ...(projectSettingsSection ? { projectSettingsSection } : {}),
         issueId,
       } satisfies CollaborationPlatformLocation,
       navigate(nextLocation) {
@@ -338,6 +349,7 @@ export function CollaborationPage() {
       pathname,
       projectId,
       projectView,
+      projectSettingsSection,
       rootView,
       router,
       user,

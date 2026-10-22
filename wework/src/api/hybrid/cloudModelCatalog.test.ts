@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { UnifiedModel } from '@/types/api'
 import { createCloudModelCatalog } from './cloudModelCatalog'
+import { createModelApi } from '@wegent/chat-core/model-api'
 
 const cloudModel: UnifiedModel = { name: 'cloud-model', type: 'public' }
 const disposers: (() => void)[] = []
@@ -17,6 +18,38 @@ afterEach(() => {
 })
 
 describe('on-demand cloud model catalog', () => {
+  it('refreshes through a new HTTP request after the shared model API stalls', async () => {
+    let resolveOld!: (value: { data: UnifiedModel[] }) => void
+    const client = {
+      get: vi
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise(resolve => {
+              resolveOld = resolve
+            })
+        )
+        .mockResolvedValue({ data: [cloudModel] }),
+    }
+    const api = createModelApi(client)
+    const catalog = createCloudModelCatalog(async (signal, forceRefresh) => {
+      const response = await api.listModels({ signal, forceRefresh })
+      return response.data
+    })
+    disposers.push(catalog.subscribe(vi.fn()))
+    catalog.loadIfNeeded()
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(client.get.mock.calls[0][1].signal.aborted).toBe(true)
+    catalog.refresh()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(client.get).toHaveBeenCalledTimes(2)
+    expect(catalog.getModels()).toEqual([cloudModel])
+    resolveOld({ data: [{ name: 'stale-model', type: 'public' }] })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(catalog.getModels()).toEqual([cloudModel])
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('does not poll or retry a failed initial load until explicitly refreshed', async () => {
     const load = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue([cloudModel])
     const catalog = createCloudModelCatalog(load)
@@ -38,30 +71,6 @@ describe('on-demand cloud model catalog', () => {
     expect(load).toHaveBeenCalledTimes(2)
     expect(changed).toHaveBeenCalledOnce()
     await vi.advanceTimersByTimeAsync(600_000)
-    expect(load).toHaveBeenCalledTimes(2)
-  })
-
-  it('aborts a stalled request and allows the next explicit refresh', async () => {
-    let signal!: AbortSignal
-    const load = vi.fn<(signal: AbortSignal) => Promise<UnifiedModel[]>>()
-    load.mockImplementationOnce(requestSignal => {
-      signal = requestSignal
-      return new Promise((_resolve, reject) => {
-        signal.addEventListener('abort', () => reject(signal.reason), { once: true })
-      })
-    })
-    load.mockResolvedValue([cloudModel])
-    const catalog = createCloudModelCatalog(load)
-    disposers.push(catalog.subscribe(vi.fn()))
-    catalog.loadIfNeeded()
-    await vi.advanceTimersByTimeAsync(10_000)
-    expect(signal.aborted).toBe(true)
-    expect(signal.reason.name).toBe('TimeoutError')
-    await vi.advanceTimersByTimeAsync(600_000)
-    expect(load).toHaveBeenCalledOnce()
-    catalog.refresh()
-    await vi.advanceTimersByTimeAsync(0)
-    expect(catalog.getModels()).toEqual([cloudModel])
     expect(load).toHaveBeenCalledTimes(2)
   })
 

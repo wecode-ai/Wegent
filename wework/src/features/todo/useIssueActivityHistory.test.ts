@@ -40,7 +40,7 @@ describe('useIssueActivityHistory', () => {
     expect(api.getLoopItem).toHaveBeenCalledExactlyOnceWith(task.id)
   })
 
-  it('refreshes missing history on a version change and discards the previous revision', async () => {
+  it('refreshes missing history on a version change without hiding the previous revision', async () => {
     const next = { ...assignment, action: 'unassign' as const, to_type: null, to_id: null }
     let finish!: (item: CloudLoopItem) => void
     const api = {
@@ -60,7 +60,7 @@ describe('useIssueActivityHistory', () => {
     )
     await waitFor(() => expect(result.current.assignmentHistory).toEqual([assignment]))
     rerender({ version: 2 })
-    expect(result.current.assignmentHistory).toEqual([])
+    expect(result.current.assignmentHistory).toEqual([assignment])
     await act(async () => finish({ ...task, version: 2, assignment_history: [assignment, next] }))
     expect(result.current.assignmentHistory).toEqual([assignment, next])
   })

@@ -81,8 +81,8 @@ test.each(['cloud-project-chat-agent-editor', 'wework-agent-resource-creator'])(
       calls.map(({ action, selector }) => [action, selector]),
       [
         ['clickWhenEnabled', 'main [data-testid="project-agent-add"]'],
-        ['waitFor', '[data-testid="project-agent-mode-create-card"]'],
-        ['click', '[data-testid="project-agent-mode-create-card"]'],
+        ['waitFor', '[data-testid="project-agent-mode-create"]'],
+        ['click', '[data-testid="project-agent-mode-create"]'],
         ['waitFor', `[data-testid="${editorTestId}"]`],
       ]
     )

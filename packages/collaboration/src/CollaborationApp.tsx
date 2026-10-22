@@ -51,6 +51,7 @@ import type {
   SharedWorkspaceApi,
   WorkspaceTaskBinding,
 } from "./ports/SharedWorkspaceApi";
+import { executeStandardCloudBoardMutation } from "./project-board/useStandardCloudBoardController";
 import { useCollaborationWorkspaceController } from "./workspace-controller";
 import { canEditCollaborationIssue } from "./permissions";
 import { ProjectCreateDialog, projectCreateLabels } from "./project-create";
@@ -769,52 +770,76 @@ export function CollaborationApp({
                           })
                         }
                         onMove={async (issue, mutation) => {
-                          if (mutation.kind === "status") {
-                            await commands.reorderIssue({
-                              issue,
-                              status: mutation.status,
-                              laneIds: mutation.laneIds,
-                              optimisticItems: mutation.optimisticItems,
-                            });
-                            return;
-                          }
-                          if (
-                            mutation.kind === "assignee" &&
-                            mutation.assigneeType
-                          ) {
-                            await commands.assignIssue(
-                              String(project.id),
-                              issue.id,
-                              {
-                                version: issue.version,
-                                assigneeType: mutation.assigneeType,
-                                assigneeId: mutation.assigneeId!,
-                                notifyAssignee: true,
-                              },
-                            );
-                            return;
-                          }
-                          await commands.updateIssue(
-                            issue.id,
-                            mutation.kind === "priority"
-                              ? {
-                                  version: issue.version,
-                                  priority:
-                                    mutation.priority as CollaborationIssue["priority"],
-                                }
-                              : mutation.kind === "tag"
-                                ? {
-                                    version: issue.version,
-                                    tags: mutation.tags,
-                                  }
-                                : {
-                                    version: issue.version,
-                                    assigneeUserId: null,
-                                    assigneeAgentId: null,
-                                    assigneeTeamId: null,
+                          await executeStandardCloudBoardMutation({
+                            item: issue,
+                            mutation,
+                            commands: {
+                              update: async (target, input) => {
+                                const updated = await commands.updateIssue(
+                                  target.id,
+                                  {
+                                    version: target.version,
+                                    position: input.position,
+                                    ...(input.status !== undefined
+                                      ? { status: input.status }
+                                      : {}),
+                                    ...(input.priority !== undefined
+                                      ? {
+                                          priority:
+                                            input.priority as CollaborationIssue["priority"],
+                                        }
+                                      : {}),
+                                    ...(input.tags !== undefined
+                                      ? { tags: input.tags }
+                                      : {}),
+                                    ...(input.assignee_user_id !== undefined
+                                      ? {
+                                          assigneeUserId:
+                                            input.assignee_user_id,
+                                        }
+                                      : {}),
+                                    ...(input.assignee_agent_id !== undefined
+                                      ? {
+                                          assigneeAgentId:
+                                            input.assignee_agent_id,
+                                        }
+                                      : {}),
+                                    ...(input.assignee_team_id !== undefined
+                                      ? {
+                                          assigneeTeamId:
+                                            input.assignee_team_id,
+                                        }
+                                      : {}),
                                   },
-                            { throwOnError: true },
-                          );
+                                  { throwOnError: true },
+                                );
+                                if (!updated)
+                                  throw new Error(messages.saveFailed);
+                                return updated;
+                              },
+                              assign: async (target, assignment) => {
+                                const updated = await commands.assignIssue(
+                                  String(project.id),
+                                  target.id,
+                                  {
+                                    version: target.version,
+                                    ...assignment,
+                                  },
+                                );
+                                if (!updated)
+                                  throw new Error(messages.saveFailed);
+                                return updated;
+                              },
+                              refreshOrder: async (target) => {
+                                await commands.loadProjectSnapshot(
+                                  target.cloud_project_id,
+                                  { invalidate: true, throwOnError: true },
+                                );
+                              },
+                            },
+                          }).catch(() => {
+                            // The workspace commands already report save and load failures.
+                          });
                         }}
                         onCreateIssue={requestIssueCreate}
                         onOpenBoardSettings={() => setBoardSettingsOpen(true)}

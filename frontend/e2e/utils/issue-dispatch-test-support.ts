@@ -37,6 +37,7 @@ export interface IssueDispatchMockModel {
 interface ProjectAgent {
   id: string
   name: string
+  wegentTeamId: number
 }
 
 function encoded(value: string): string {
