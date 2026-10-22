@@ -403,9 +403,9 @@ export async function createDesktopScenario({
     await control.command('waitFor', testId('new-chat-button'), {
       timeoutMs: workbenchReadyTimeoutMs,
     })
+    await primeComposerApps(control)
     await refresh(control, primary)
     await waitRuntime(blocked, '1.0.0')
-    await primeComposerApps(control)
     await assertSurfaces(control, primary, true, workbenchReadyTimeoutMs)
     await openPlugin(control, primary)
     await control.command('click', testId(`plugin-marketplace-row-${primary.pluginId}`))
@@ -453,13 +453,13 @@ export async function createDesktopScenario({
     await control.command('waitFor', testId('new-chat-button'), {
       timeoutMs: workbenchReadyTimeoutMs,
     })
+    await primeComposerApps(control)
     await refresh(control, primary)
     assert.equal(
       await entry(primary),
       undefined,
       'Restart revived an explicitly uninstalled plugin'
     )
-    await primeComposerApps(control)
     await assertSurfaces(control, primary, false, workbenchReadyTimeoutMs)
     await openPlugin(control, primary)
     await control.command(
