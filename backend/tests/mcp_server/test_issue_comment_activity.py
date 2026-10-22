@@ -304,8 +304,26 @@ def test_mcp_denied_recipient_rolls_back_comment_and_notifications(
 ) -> None:
     project, item = issue_context
     recipient = inherited_comment_recipient
+    workspace_id = workspace_id_for_project(test_db, int(project.id))
+    parent = test_db.query(ResourceMember).filter_by(
+        resource_type="CloudProject",
+        resource_id=int(project.id),
+        entity_type="workspace",
+        entity_id=str(workspace_id),
+    )
+    parent_id = parent.one().id
     if denial == "nonmember":
-        test_db.query(ResourceMember).filter_by(entity_id=str(recipient.id)).delete()
+        removed = (
+            test_db.query(ResourceMember)
+            .filter_by(
+                resource_type="Workspace",
+                resource_id=workspace_id,
+                entity_type="user",
+                entity_id=str(recipient.id),
+            )
+            .delete()
+        )
+        assert removed == 1
     elif denial == "inactive":
         recipient.is_active = False
     elif denial == "restricted":
@@ -313,6 +331,7 @@ def test_mcp_denied_recipient_rolls_back_comment_and_notifications(
     elif denial == "related":
         item.metadata_json = {"security_level": "related"}
     test_db.commit()
+    assert parent.one().id == parent_id
     mentions = [
         {
             "type": "user",
