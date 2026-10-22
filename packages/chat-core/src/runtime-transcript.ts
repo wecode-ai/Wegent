@@ -11,6 +11,7 @@ import type {
 } from "./runtime-conversation";
 import { stripCodexUiDirectives } from "./codex-directives";
 import { normalizeTurnFileChanges } from "./turn-file-changes";
+import { resolveRuntimeTurnThinkingContent } from "./runtime-turn-helpers";
 
 import {
   normalizeProcessingBlock,
@@ -95,6 +96,10 @@ export function runtimeTranscriptTurnsToConversationTurns(
         itemMerge: turn.itemMerge,
         items,
         status,
+        streamingThinkingContent: resolveRuntimeTurnThinkingContent({
+          items,
+          status,
+        }),
         startedAt: normalizeRuntimeTurnTimestamp(turn.startedAt),
         durationMs: normalizeRuntimeTurnDuration(turn.durationMs),
         completedAt: turn.completedAt,
