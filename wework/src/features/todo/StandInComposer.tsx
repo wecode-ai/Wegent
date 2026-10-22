@@ -1,7 +1,11 @@
 import { useEffect, type ReactNode, type Dispatch, type SetStateAction } from 'react'
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
 import { useStandInModels } from './useStandInModels'
-import type { WorkspaceStandInSettings, WorkspaceProjectAgent } from '@wegent/collaboration'
+import {
+  runnerModelKey,
+  type WorkspaceStandInSettings,
+  type WorkspaceProjectAgent,
+} from '@wegent/collaboration'
 import { useProjectWorktreeAvailabilityProbe } from '@/components/layout/useProjectWorktreeAvailabilityProbe'
 import { resolveProjectWorktreeAvailability } from '@/lib/worktree-availability'
 import { ProjectWorkBar, ProjectWorkSection } from '@/components/chat/composer/ProjectWorkBar'
@@ -29,6 +33,7 @@ export function StandInComposer({
   runtimeWork,
   devices,
   services,
+  showPrompt = true,
 }: {
   draft: WorkspaceStandInSettings
   onChange: Dispatch<SetStateAction<WorkspaceStandInSettings>>
@@ -42,6 +47,7 @@ export function StandInComposer({
   runtimeWork?: RuntimeWorkListResponse | null
   devices: DeviceInfo[]
   services?: WorkbenchServices
+  showPrompt?: boolean
 }) {
   const { t } = useTranslation('common')
   const composerCatalog = useRuntimeComposerCatalog(
@@ -57,10 +63,14 @@ export function StandInComposer({
   )
   const models = useStandInModels(services, draft, selectedAgent)
   useEffect(() => {
-    const model = models.defaultIdentity
-    if (!draft.model && model)
-      onChange(current => (current.model ? current : { ...current, model }))
-  }, [draft.model, models.defaultIdentity, onChange])
+    const model = models.fixedIdentity ?? models.defaultIdentity
+    if (
+      model &&
+      (!draft.model ||
+        (models.fixedIdentity && runnerModelKey(draft.model) !== runnerModelKey(model)))
+    )
+      onChange(current => ({ ...current, model }))
+  }, [draft.model, models.defaultIdentity, models.fixedIdentity, onChange])
   const rows = (runtimeWork?.projects ?? []).flatMap(row => {
     const workspace = row.deviceWorkspaces.find(
       workspace =>
@@ -155,8 +165,12 @@ export function StandInComposer({
         className="grid grid-cols-[5rem_minmax(0,1fr)] items-center gap-x-3 gap-y-1 text-sm"
         data-testid="stand-in-workspace-bar"
       >
-        <span className="text-text-muted">{t('standIn.agent_label')}</span>
-        <div className="min-w-0">{controls}</div>
+        {controls && (
+          <>
+            <span className="text-text-muted">{t('standIn.agent_label')}</span>
+            <div className="min-w-0">{controls}</div>
+          </>
+        )}
         <span className="text-text-muted">{t('standIn.device_label')}</span>
         <div className="min-w-0">{deviceControl}</div>
         <span className="text-text-muted">{t('standIn.local_project')}</span>
@@ -190,44 +204,46 @@ export function StandInComposer({
           />
         </div>
       </div>
-      <ComposerCatalogContext.Provider value={composerCatalog}>
-        <BufferedChatInput
-          value={draft.prompt}
-          onChange={prompt => onChange(current => ({ ...current, prompt }))}
-          onDraftEdit={prompt => onChange(current => ({ ...current, prompt }))}
-          onSubmit={prompt => onSave(prompt ?? draft.prompt)}
-          disabled={disabled}
-          submitDisabled={!valid}
-          clearOnSubmit={false}
-          allowEmptySubmit
-          placeholder={t(
-            draft.goalMode ? 'standIn.goal_placeholder' : 'standIn.dynamic_placeholder',
-            {
-              environment: draft.workspace ? environment : t('standIn.default_workspace'),
+      {showPrompt && (
+        <ComposerCatalogContext.Provider value={composerCatalog}>
+          <BufferedChatInput
+            value={draft.prompt}
+            onChange={prompt => onChange(current => ({ ...current, prompt }))}
+            onDraftEdit={prompt => onChange(current => ({ ...current, prompt }))}
+            onSubmit={prompt => onSave(prompt ?? draft.prompt)}
+            disabled={disabled}
+            submitDisabled={!valid}
+            clearOnSubmit={false}
+            allowEmptySubmit
+            placeholder={t(
+              draft.goalMode ? 'standIn.goal_placeholder' : 'standIn.dynamic_placeholder',
+              {
+                environment: draft.workspace ? environment : t('standIn.default_workspace'),
+              }
+            )}
+            variant="desktop"
+            presentation="configuration"
+            inputTestId="stand-in-prompt"
+            submitButtonTestId="stand-in-save"
+            submitLabel={t('standIn.save')}
+            showProjectWorkBar={false}
+            showWorkspaceMenu={false}
+            showExecutionTools={false}
+            onSetGoal={() => onChange(current => ({ ...current, goalMode: true }))}
+            goalDraftActive={Boolean(draft.goalMode)}
+            onCancelGoalDraft={() => onChange(current => ({ ...current, goalMode: false }))}
+            toolbarLeadingContext={
+              <>
+                {models.error && (
+                  <span role="status" className="text-xs text-error">
+                    {models.error}
+                  </span>
+                )}
+              </>
             }
-          )}
-          variant="desktop"
-          presentation="configuration"
-          inputTestId="stand-in-prompt"
-          submitButtonTestId="stand-in-save"
-          submitLabel={t('standIn.save')}
-          showProjectWorkBar={false}
-          showWorkspaceMenu={false}
-          showExecutionTools={false}
-          onSetGoal={() => onChange(current => ({ ...current, goalMode: true }))}
-          goalDraftActive={Boolean(draft.goalMode)}
-          onCancelGoalDraft={() => onChange(current => ({ ...current, goalMode: false }))}
-          toolbarLeadingContext={
-            <>
-              {models.error && (
-                <span role="status" className="text-xs text-error">
-                  {models.error}
-                </span>
-              )}
-            </>
-          }
-        />
-      </ComposerCatalogContext.Provider>
+          />
+        </ComposerCatalogContext.Provider>
+      )}
     </div>
   )
 }

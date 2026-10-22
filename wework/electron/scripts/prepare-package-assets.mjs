@@ -1,6 +1,7 @@
 import { hashComponentPath } from '../../scripts/lib/component-content-hash.mjs'
 import { spawn } from 'node:child_process'
-import { chmod, cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
@@ -48,7 +49,7 @@ const {
   materializedRoot: harnessRuntimeMaterializedRoot,
 } = resolveHarnessRuntimeCachePaths(weworkRoot, packageEnvironment)
 const configuredExecutorPath = process.env.WEWORK_EXECUTOR_PATH?.trim()
-const [executorPath] = await Promise.all([
+const [executorPath, , , , appWebRoot] = await Promise.all([
   configuredExecutorPath
     ? waitForConfiguredExecutor(
         resolve(configuredExecutorPath),
@@ -87,10 +88,17 @@ for (const directory of CORE_PLUGIN_DIRECTORIES) {
     join(corePluginsRoot, corePluginTarget(directory)),
     {
       recursive: true,
-      filter: source => !source.endsWith('.test.mjs'),
+      filter: source =>
+        !source.endsWith('.test.mjs') &&
+        !(
+          directory === 'app-wework' &&
+          source === join(corePluginSource(weworkRoot, directory), 'web')
+        ),
     }
   )
 }
+await cp(appWebRoot, join(corePluginsRoot, 'wework-app', 'web'), { recursive: true })
+await rm(appWebRoot, { recursive: true, force: true })
 if (INTERNAL_CORE_PLUGINS.length > 0) {
   await cp(INTERNAL_CORE_PLUGIN_MANIFEST, join(corePluginsRoot, 'internal-plugins.json'))
 }
@@ -191,14 +199,16 @@ function resolveExecutorProfile() {
 }
 
 async function buildDshApp() {
-  await run(pnpmCommand, ['run', 'build:dsh-app'], weworkRoot)
-  const output = join(weworkRoot, 'dsh', 'app-wework', 'web')
+  // Package builds must not share generated files with a live development watcher.
+  const output = await mkdtemp(join(tmpdir(), 'wework-package-web-'))
+  await run(pnpmCommand, ['run', 'build:dsh-app', '--outDir', output], weworkRoot)
   const manifestPath = join(output, 'flyfish-viewer-assets.json')
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
   await writeFile(
     manifestPath,
     `${JSON.stringify(normalizeFileViewerAssetManifest(manifest, output), null, 2)}\n`
   )
+  return output
 }
 
 async function buildExecutor(profile, target, targetDirectory) {

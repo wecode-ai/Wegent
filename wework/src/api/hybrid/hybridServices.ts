@@ -1682,6 +1682,18 @@ export function createHybridWorkbenchServices(
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
     standInApi: {
+      async personalAgents(userId, deviceId) {
+        return (await standInApiForDevice(deviceId)).personalAgents(userId, deviceId)
+      },
+      async personalGet(userId, deviceId) {
+        return (await standInApiForDevice(deviceId)).personalGet(userId, deviceId)
+      },
+      async personalSave(userId, settings) {
+        return (await standInApiForDevice(settings.executionDeviceId)).personalSave(
+          userId,
+          settings
+        )
+      },
       async readTask(deviceId, taskId) {
         return (await standInApiForDevice(deviceId)).readTask(deviceId, taskId)
       },

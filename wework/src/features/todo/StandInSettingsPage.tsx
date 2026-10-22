@@ -1,13 +1,32 @@
-import { useEffect, useState } from 'react'
-import { X } from 'lucide-react'
-import type { CollaborationProject, SharedWorkspaceApi } from '@wegent/collaboration'
-import type { StandInProjectSettings } from '@/api/standIn'
+import { useEffect, useImperativeHandle, useState, type Ref } from 'react'
+import { ArrowLeft, Bot, ChevronRight, Folder, Plus, X } from 'lucide-react'
+import { dequal } from 'dequal'
+import type {
+  CollaborationProject,
+  SharedWorkspaceApi,
+  WorkspaceStandInSettings,
+  WorkspaceProjectAgent,
+} from '@wegent/collaboration'
+import {
+  newStandInRole,
+  roleIncludesProject,
+  type PersonalStandInSettings,
+  type StandInRole,
+} from '@/api/personalStandIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import type { DeviceInfo } from '@/types/api'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
+import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
-import { StandInPopover } from './StandInPopover'
-import { StandInIcon } from './StandInIcon'
+import { useStandInProjectAgents, projectAgentChoiceValue } from './useStandInProjectAgents'
+import { usePersonalStandIn } from './usePersonalStandIn'
+import { StandInConnections } from './StandInConnections'
+import { StandInRoleScheduling } from './StandInRoleScheduling'
+import { StandInRequirements } from './StandInRequirements'
+import { StandInComposer } from './StandInComposer'
+
+type View = 'main' | 'connections' | 'scheduling' | 'advanced' | 'create'
+export interface StandInSettingsHandle {
+  requestClose(): void
+}
 
 export function StandInSettingsPage({
   api,
@@ -15,262 +34,675 @@ export function StandInSettingsPage({
   services,
   devices,
   userId,
+  initialDeviceId,
+  initialProfileId,
+  initialProject,
+  onCancel,
+  onSaved,
+  onSavingChange,
+  ref,
 }: {
   api: SharedWorkspaceApi
   projects: CollaborationProject[]
   services: WorkbenchServices
   devices: DeviceInfo[]
   userId: number
+  initialDeviceId?: string
+  initialProfileId?: string
+  initialProject?: CollaborationProject
+  onCancel?(): void
+  onSaved?(settings: WorkspaceStandInSettings): void
+  onSavingChange?(saving: boolean): void
+  ref?: Ref<StandInSettingsHandle>
 }) {
   const { t } = useTranslation('common')
-  const [result, setResult] = useState<{
-    key: string
-    rows: StandInProjectSettings[]
-    error: string | null
+  const state = usePersonalStandIn(services, userId, initialDeviceId)
+  const { draft, saved, setDraft, updateRole, loading, saving, setError } = state
+  const executionDeviceId = draft?.executionDeviceId
+  const [selectedId, setSelectedId] = useState(initialProfileId ?? '')
+  const [view, setView] = useState<View>(initialProject ? 'connections' : 'main')
+  const [beforeView, setBeforeView] = useState<PersonalStandInSettings | null>(null)
+  const [notice, setNotice] = useState(false)
+  const [confirmDiscard, setConfirmDiscard] = useState(false)
+  const [personalAgentDetail, setPersonalAgentDetail] = useState<{
+    id: number
+    agent: WorkspaceProjectAgent
   } | null>(null)
-  const [revision, setRevision] = useState(0)
-  const [editing, setEditing] = useState<{
-    projectId: string
-    deviceId?: string
-    profileId?: string
-  } | null>(null)
-  const [saving, setSaving] = useState(false)
-  const closeEditor = () => {
-    if (!saving) setEditing(null)
-  }
-  const dialogRef = useDialogKeyboard<HTMLElement>(
-    closeEditor,
-    Boolean(editing),
-    'select:not([disabled])'
-  )
-  const project = projects.find(project => project.id === editing?.projectId)
-  const deviceKeys = devices
-    .filter(device => device.status !== 'offline')
-    .map(device => device.device_id)
-    .sort()
-    .join('\n')
-  const requestKey = JSON.stringify([userId, deviceKeys, revision])
-  const currentResult = result?.key === requestKey ? result : null
-  const loading = !currentResult
-  const rows = currentResult?.rows ?? []
-  const error = currentResult?.error ?? null
+  const [runtimeWork, setRuntimeWork] = useState<RuntimeWorkListResponse | null>(null)
+  const role =
+    draft?.roles.find(role => role.id === selectedId) ??
+    (initialProject &&
+      draft?.roles.find(role =>
+        roleIncludesProject(role, {
+          id: initialProject.id,
+          store: initialProject.project_store === 'local' ? 'local' : 'cloud',
+        })
+      )) ??
+    draft?.roles[0]
+  const selectedResourceId = role?.agentResourceId
   useEffect(() => {
+    if (view !== 'advanced' || !selectedResourceId || !services.agentResourceApi) return
     let active = true
-    void (async () => {
-      const identity = await services.getLocalRuntimeSidebarIdentity?.()
-      const targets = new Set(deviceKeys.split('\n').filter(Boolean))
-      if (identity?.deviceId) {
-        for (const device of devices)
-          if ([device.device_id, device.app_device_id].includes(identity.deviceId))
-            targets.delete(device.device_id)
-        targets.add(identity.deviceId)
-      }
-      const results = await Promise.allSettled(
-        [...targets].map(deviceId => services.standInApi!.list(userId, deviceId, true))
-      )
-      if (!active) return
-      const failure = results.find(result => result.status === 'rejected')
-      setResult({
-        key: requestKey,
-        rows: results.flatMap(result => (result.status === 'fulfilled' ? result.value : [])),
-        error: failure?.status === 'rejected' ? String(failure.reason) : null,
+    void services.agentResourceApi
+      .getAgent(selectedResourceId)
+      .then(detail => {
+        if (active)
+          setPersonalAgentDetail({
+            id: selectedResourceId,
+            agent: {
+              id: String(detail.teamId),
+              name: detail.displayName || detail.name,
+              runtime: detail.runtime ?? undefined,
+              modelPolicy: detail.modelPolicy,
+              executionPolicy: detail.executionPolicy,
+            },
+          })
       })
-    })().catch(cause => {
-      if (active) setResult({ key: requestKey, rows: [], error: String(cause) })
-    })
+      .catch(cause => {
+        if (active) setError(String(cause))
+      })
     return () => {
       active = false
     }
-  }, [services, userId, deviceKeys, devices, revision, requestKey])
-  const visibleRows = rows.filter(row =>
-    projects.some(
-      project =>
-        project.id === row.projectId &&
-        (project.project_store === 'local' ? 'local' : 'cloud') === row.projectStore
+  }, [view, selectedResourceId, services, setError])
+  const multiple = Boolean(draft && draft.roles.length > 1)
+  const dirty = Boolean(draft && saved && !dequal(draft, saved))
+  useEffect(() => {
+    onSavingChange?.(saving)
+  }, [saving, onSavingChange])
+  useEffect(() => {
+    if (view !== 'advanced' || !executionDeviceId || !services.runtimeWorkApi) return
+    let active = true
+    void services.runtimeWorkApi
+      .listRuntimeWork({ deviceId: executionDeviceId })
+      .then(value => {
+        if (active) setRuntimeWork(value)
+      })
+      .catch(cause => {
+        if (active) setError(String(cause))
+      })
+    return () => {
+      active = false
+    }
+  }, [view, executionDeviceId, services, setError])
+
+  const openView = (next: View) => {
+    setBeforeView(draft)
+    setView(next)
+    setNotice(false)
+  }
+  const changeRole = (value: StandInRole) => {
+    setSelectedId(value.id)
+    updateRole(value.id, () => value)
+  }
+  const close = () => {
+    if (saving) return
+    if (view !== 'main') {
+      if (beforeView) setDraft(beforeView)
+      setSelectedId(beforeView?.roles.some(row => row.id === selectedId) ? selectedId : '')
+      setView('main')
+    } else if (dirty) setConfirmDiscard(true)
+    else onCancel?.()
+  }
+  const closeSettings = () => {
+    if (saving) return
+    if (dirty) setConfirmDiscard(true)
+    else onCancel?.()
+  }
+  useImperativeHandle(ref, () => ({ requestClose: closeSettings }))
+  const save = async () => {
+    if (!draft || !role) return
+    if (multiple && draft.roles.some(row => !row.name.trim())) {
+      state.setError(t('standIn.personal.role_name_required'))
+      return
+    }
+    const result = await state.save()
+    if (!result) return
+    setBeforeView(result)
+    setNotice(true)
+    if (view !== 'main') setView('main')
+    else onSaved?.(result.roles.find(row => row.id === role.id) ?? result.roles[0])
+  }
+  const createRole = () => {
+    if (!draft) return
+    const added = newStandInRole(draft.executionDeviceId)
+    const roles = draft.roles.map(row =>
+      row.name ? row : { ...row, name: t('standIn.personal.default_role') }
     )
+    setBeforeView(draft)
+    setDraft({ ...draft, roles: [...roles, added] })
+    setSelectedId(added.id)
+    setView('create')
+    setNotice(false)
+  }
+  const availableProjects = projects.filter(
+    project =>
+      project.project_store !== 'local' || draft?.executionDeviceId === state.currentDeviceId
   )
-  return (
-    <section
-      className="flex h-full min-h-0 flex-col overflow-y-auto px-6 py-6"
-      data-testid="stand-in-page"
-    >
-      <div className="mx-auto w-full max-w-5xl">
-        <header className="mb-6 flex items-center justify-between gap-4">
-          <div>
-            <h1 className="heading-lg text-text-primary">{t('standIn.title')}</h1>
-            <p className="mt-1 text-sm text-text-muted">{t('standIn.list_description')}</p>
-          </div>
-          <button
-            type="button"
-            data-testid="stand-in-list-configure"
-            disabled={!projects.length}
-            onClick={() => setEditing({ projectId: projects[0].id })}
-            className="min-h-11 shrink-0 rounded-lg bg-text-primary px-3 text-sm text-background disabled:opacity-40 md:min-h-8"
+  const projectCatalog = useStandInProjectAgents(api, availableProjects)
+  const selectedProjectValue =
+    role?.agentId && role.agentProject
+      ? projectAgentChoiceValue({ id: role.agentId, project: role.agentProject })
+      : 'project-reference'
+  const included = role
+    ? availableProjects.filter(project =>
+        roleIncludesProject(role, {
+          id: project.id,
+          store: project.project_store === 'local' ? 'local' : 'cloud',
+        })
+      )
+    : []
+  const selectedAgentMissing =
+    role?.agentResourceId && !state.agents.some(agent => agent.id === role.agentResourceId)
+  const title = view === 'main' ? 'title' : `personal.${view}_title`
+  const agentField = role && (
+    <div className="grid grid-cols-[7rem_minmax(0,1fr)] items-start gap-x-3 gap-y-1">
+      <label htmlFor="stand-in-agent" className="flex min-h-8 items-center text-text-secondary">
+        {t('standIn.personal.execution_agent')}
+      </label>
+      <div className="min-w-0">
+        <div className="flex min-h-8 items-center gap-2 rounded-md border border-border px-2">
+          <Bot className="h-4 w-4 shrink-0 text-text-muted" />
+          <select
+            id="stand-in-agent"
+            data-testid="stand-in-agent"
+            disabled={saving}
+            value={role.agentResourceId ?? (role.agentId ? selectedProjectValue : '')}
+            onChange={event => {
+              const selected = projectCatalog.choices.find(
+                choice => projectAgentChoiceValue(choice) === event.target.value
+              )
+              changeRole({
+                ...role,
+                agentResourceId:
+                  selected || !event.target.value ? null : Number(event.target.value),
+                agentId: selected?.id ?? null,
+                agentProject: selected?.project,
+                model: null,
+                collaboration: selected
+                  ? {
+                      ...role.collaboration,
+                      enabled: true,
+                      allProjects: false,
+                      projects: [selected.project],
+                      excludedProjects: [],
+                    }
+                  : role.collaboration,
+              })
+            }}
+            className="min-h-8 min-w-0 flex-1 bg-transparent text-sm outline-none"
           >
-            {t('standIn.configure')}
-          </button>
-        </header>
-        {error && (
-          <p role="alert" className="mb-3 text-sm text-error">
-            {error}
+            <option value="">{t('standIn.default_agent')}</option>
+            {role.agentId &&
+              !projectCatalog.choices.some(
+                choice => projectAgentChoiceValue(choice) === selectedProjectValue
+              ) && (
+                <option value={selectedProjectValue}>{t('standIn.personal.project_agent')}</option>
+              )}
+            {selectedAgentMissing && (
+              <option value={role.agentResourceId!}>{t('standIn.agent_unavailable')}</option>
+            )}
+            {state.agents.map(agent => (
+              <option key={agent.id} value={agent.id}>
+                {agent.name}
+              </option>
+            ))}
+            {projectCatalog.choices.length > 0 && (
+              <optgroup label={t('standIn.personal.project_agents')}>
+                {projectCatalog.choices.map(choice => (
+                  <option
+                    key={projectAgentChoiceValue(choice)}
+                    value={projectAgentChoiceValue(choice)}
+                  >
+                    {choice.name} · {choice.projectName}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+          </select>
+        </div>
+        {role.agentProject && (
+          <p data-testid="stand-in-project-agent-scope" className="mt-2 text-xs text-text-muted">
+            {t('standIn.personal.project_agent_scope', {
+              project:
+                projects.find(project => project.id === role.agentProject?.id)?.name ??
+                role.agentProject.id,
+            })}
           </p>
         )}
+        {state.agentError && (
+          <p className="mt-1 text-xs text-text-muted" role="status">
+            {t('standIn.personal.catalog_unavailable')}
+          </p>
+        )}
+        <StandInRequirements
+          key={role.id}
+          role={role}
+          services={services}
+          onChange={changeRole}
+          disabled={saving}
+          onSave={() => void save()}
+        />
+      </div>
+    </div>
+  )
+
+  return (
+    <section
+      className="h-full min-h-0 overflow-y-auto text-sm text-text-primary"
+      data-testid="stand-in-page"
+    >
+      <div className="mx-auto w-full max-w-2xl" data-testid="stand-in-settings">
+        {!!draft?.selectionErrors?.length && (
+          <div
+            role="alert"
+            data-testid="stand-in-selection-errors"
+            className="m-5 rounded-lg border border-border p-3"
+          >
+            <p>{t('standIn.personal.selection_failed')}</p>
+            {draft.selectionErrors.map(item => (
+              <p key={item.issueId} className="mt-1 text-xs text-text-muted">
+                {item.title}: {item.error}
+              </p>
+            ))}
+            <button
+              type="button"
+              data-testid="stand-in-selection-retry"
+              disabled={saving}
+              onClick={() => void save()}
+              className="mt-2 text-primary"
+            >
+              {t('standIn.personal.selection_retry')}
+            </button>
+          </div>
+        )}
+        <header className="flex items-start gap-3 px-5 pb-5 pt-5">
+          {view !== 'main' && (
+            <button
+              type="button"
+              onClick={close}
+              disabled={saving}
+              data-testid="stand-in-back"
+              aria-label={t('standIn.personal.back')}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-muted"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </button>
+          )}
+          <div className="min-w-0 flex-1">
+            <h1 className="heading-sm">{t(`standIn.${title}`)}</h1>
+            <p className="mt-1 text-sm text-text-muted">
+              {t(
+                view === 'main'
+                  ? 'standIn.personal.description'
+                  : view === 'connections'
+                    ? 'standIn.personal.connections_help'
+                    : view === 'scheduling'
+                      ? 'standIn.personal.scheduling_help'
+                      : view === 'create'
+                        ? 'standIn.personal.create_help'
+                        : 'standIn.personal.advanced_help'
+              )}
+            </p>
+          </div>
+          {view === 'main' && (
+            <button
+              type="button"
+              data-testid="stand-in-list-configure"
+              disabled={saving || loading}
+              onClick={createRole}
+              className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-md border border-border px-3 text-sm hover:bg-muted disabled:opacity-40 md:min-h-8"
+            >
+              <Plus className="h-4 w-4" />
+              {t('standIn.personal.add_role')}
+            </button>
+          )}
+          {onCancel && (
+            <button
+              type="button"
+              data-testid="stand-in-close"
+              disabled={saving}
+              aria-label={t('standIn.close')}
+              onClick={closeSettings}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-muted"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </header>
         {loading ? (
-          <p role="status" className="text-sm text-text-muted">
+          <p role="status" className="px-5 py-8 text-text-muted">
             {t('standIn.loading')}
           </p>
-        ) : visibleRows.length ? (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm" data-testid="stand-in-list">
-              <thead className="text-xs text-text-muted">
-                <tr>
-                  {['title', 'collaboration_project', 'device', 'auto', 'actions'].map(key => (
-                    <th
-                      key={key}
-                      scope="col"
-                      className="border-b border-border px-3 py-2 font-normal"
+        ) : draft && role ? (
+          <>
+            <div className="space-y-5 px-5 pb-5">
+              {multiple && view !== 'create' && view !== 'scheduling' && (
+                <label className="grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-3">
+                  <span className="text-text-secondary">{t('standIn.personal.current_role')}</span>
+                  <select
+                    data-testid="stand-in-role-select"
+                    value={role.id}
+                    disabled={saving}
+                    onChange={event => setSelectedId(event.target.value)}
+                    className="min-h-9 rounded-md border border-border bg-transparent px-2"
+                  >
+                    {draft.roles.map(row => (
+                      <option key={row.id} value={row.id}>
+                        {row.name || t('standIn.personal.default_role')}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {view === 'create' && (
+                <label className="grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-3">
+                  <span className="text-text-secondary">{t('standIn.personal.role_name')}</span>
+                  <input
+                    autoFocus
+                    data-testid="stand-in-role-name"
+                    value={role.name}
+                    disabled={saving}
+                    onChange={event => changeRole({ ...role, name: event.target.value })}
+                    className="min-h-9 rounded-md border border-border bg-background px-2"
+                    placeholder={t('standIn.personal.role_name_placeholder')}
+                  />
+                </label>
+              )}
+              {initialProject && (view === 'main' || view === 'connections') && (
+                <p
+                  data-testid="stand-in-project-context"
+                  className="rounded-lg bg-muted px-3 py-2 text-text-secondary"
+                >
+                  {t('standIn.personal.current_project', { project: initialProject.name })}
+                </p>
+              )}
+              {(view === 'main' || view === 'create') && agentField}
+              {view === 'main' && (
+                <>
+                  <div className="border-t border-border pt-4">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <h2 className="font-medium">{t('standIn.personal.sources')}</h2>
+                      <button
+                        type="button"
+                        data-testid="stand-in-connections-open"
+                        disabled={saving}
+                        onClick={() => openView('connections')}
+                        className="flex min-h-8 items-center gap-1 text-text-secondary hover:text-text-primary"
+                      >
+                        {t('standIn.personal.manage')}
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
+                    </div>
+                    {role.collaboration.enabled ? (
+                      <div
+                        className="flex items-start gap-3 py-2"
+                        data-testid="stand-in-source-summary"
+                      >
+                        <Folder className="mt-0.5 h-4 w-4 shrink-0" />
+                        <div>
+                          <p>{t('standIn.personal.collaboration')}</p>
+                          <p className="mt-1 text-xs text-text-muted">
+                            {t(
+                              role.collaboration.allProjects
+                                ? 'standIn.personal.connected_all'
+                                : 'standIn.personal.connected_selected',
+                              { count: included.length }
+                            )}
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-text-muted" data-testid="stand-in-sources-empty">
+                        {t('standIn.personal.no_sources')}
+                      </p>
+                    )}
+                    <button
+                      type="button"
+                      data-testid="stand-in-add-source"
+                      disabled={saving}
+                      onClick={() => openView('connections')}
+                      className="mt-2 inline-flex min-h-9 items-center gap-1 text-text-secondary hover:text-text-primary"
                     >
-                      {t(`standIn.${key}`)}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {visibleRows.map(row => {
-                  const project = projects.find(
-                    project =>
-                      project.id === row.projectId &&
-                      (project.project_store === 'local' ? 'local' : 'cloud') === row.projectStore
-                  )!
-                  const device = devices.find(device =>
-                    [device.device_id, device.app_device_id].includes(row.executionDeviceId)
-                  )
-                  return (
-                    <tr
-                      key={`${row.projectStore}:${row.projectId}:${row.executionDeviceId}:${row.id}`}
-                      data-testid={`stand-in-list-row-${row.projectId}`}
-                      className="border-b border-border/60"
+                      <Plus className="h-4 w-4" />
+                      {t('standIn.personal.add_source')}
+                    </button>
+                  </div>
+                  <div className="border-t border-border pt-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="font-medium">{t('standIn.personal.automatic')}</span>
+                      <button
+                        type="button"
+                        role="switch"
+                        data-testid="stand-in-auto"
+                        aria-label={t('standIn.personal.automatic')}
+                        aria-checked={role.enabled}
+                        disabled={saving}
+                        onClick={() => changeRole({ ...role, enabled: !role.enabled })}
+                        className={`inline-flex h-6 w-10 shrink-0 items-center rounded-full p-0.5 ${role.enabled ? 'bg-text-primary' : 'bg-border'}`}
+                      >
+                        <span
+                          className={`h-5 w-5 rounded-full bg-background transition-transform ${role.enabled ? 'translate-x-4' : ''}`}
+                        />
+                      </button>
+                    </div>
+                    <p className="mt-1 text-xs text-text-muted">
+                      {t('standIn.personal.automatic_help')}
+                    </p>
+                    {dirty && (
+                      <p
+                        className="mt-1 text-xs text-text-muted"
+                        data-testid="stand-in-pending-save"
+                      >
+                        {t('standIn.personal.pending_save')}
+                      </p>
+                    )}
+                  </div>
+                  {multiple && (
+                    <button
+                      type="button"
+                      data-testid="stand-in-scheduling-open"
+                      disabled={saving}
+                      onClick={() => openView('scheduling')}
+                      className="flex w-full items-center gap-2 border-t border-border pt-4 text-left"
                     >
-                      <td className="px-3 py-4">
-                        <span className="inline-flex items-center gap-2 font-medium text-text-primary">
-                          <StandInIcon enabled={row.enabled} />
-                          {row.name || t('standIn.default_profile')}
+                      <span className="min-w-0 flex-1">
+                        <span className="font-medium">{t('standIn.personal.scheduling')}</span>
+                        <span className="mt-1 block text-xs text-text-muted">
+                          {t('standIn.personal.shared_scheduling')}
                         </span>
-                      </td>
-                      <td className="px-3 py-4 text-text-secondary">{project.name}</td>
-                      <td className="px-3 py-4 text-text-secondary">
-                        <span>{device?.name ?? row.executionDeviceId}</span>
-                        <span className="mt-1 block max-w-64 truncate text-xs text-text-muted">
-                          {row.workspace?.workspacePath || t('standIn.inherit_environment')}
-                        </span>
-                      </td>
-                      <td className="px-3 py-4 text-text-secondary">
-                        {t(row.enabled ? 'standIn.auto_on' : 'standIn.auto_off')}
-                      </td>
-                      <td className="px-3 py-4">
-                        <button
-                          type="button"
-                          data-testid={`stand-in-list-edit-${row.projectId}`}
-                          onClick={() =>
-                            setEditing({
-                              projectId: row.projectId,
-                              deviceId: row.executionDeviceId,
-                              profileId: row.id,
-                            })
-                          }
-                          className="min-h-11 rounded-md px-2 text-text-secondary hover:bg-muted md:min-h-7"
-                        >
-                          {t('standIn.configure')}
-                        </button>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+                      </span>
+                      <span className="text-xs text-text-muted">
+                        {t(
+                          draft.autoSelect
+                            ? 'standIn.personal.ai_selection'
+                            : 'standIn.personal.order_selection'
+                        )}
+                      </span>
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    data-testid="stand-in-advanced-open"
+                    disabled={saving}
+                    onClick={() => openView('advanced')}
+                    className="flex w-full items-center gap-2 border-t border-border pt-4 text-left"
+                  >
+                    <span className="flex-1 font-medium">{t('standIn.personal.more')}</span>
+                    <span className="text-xs text-text-muted">
+                      {t('standIn.personal.more_summary')}
+                    </span>
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </>
+              )}
+              {view === 'connections' && (
+                <StandInConnections
+                  role={role}
+                  projects={availableProjects}
+                  focusedProjectId={initialProject?.id}
+                  disabled={saving}
+                  onChange={changeRole}
+                />
+              )}
+              {view === 'scheduling' && (
+                <StandInRoleScheduling settings={draft} onChange={setDraft} disabled={saving} />
+              )}
+              {view === 'advanced' && (
+                <StandInComposer
+                  key={role.id}
+                  draft={role}
+                  onChange={update =>
+                    changeRole(
+                      typeof update === 'function'
+                        ? (update(role) as StandInRole)
+                        : (update as StandInRole)
+                    )
+                  }
+                  onSave={async () => {
+                    await save()
+                  }}
+                  disabled={saving}
+                  submitDisabled={saving}
+                  controls={null}
+                  selectedAgent={
+                    role.agentResourceId
+                      ? personalAgentDetail?.id === role.agentResourceId
+                        ? personalAgentDetail.agent
+                        : undefined
+                      : projectCatalog.choices.find(
+                          choice => projectAgentChoiceValue(choice) === selectedProjectValue
+                        )?.agent
+                  }
+                  showPrompt={false}
+                  runtimeWork={runtimeWork}
+                  devices={devices}
+                  services={services}
+                  deviceControl={
+                    <select
+                      data-testid="stand-in-device"
+                      aria-label={t('standIn.device')}
+                      value={draft.executionDeviceId}
+                      disabled={saving || dirty}
+                      onChange={event => state.setDeviceId(event.target.value)}
+                      className="min-h-8 max-w-full bg-transparent px-2"
+                    >
+                      <option value={state.currentDeviceId}>{t('standIn.current_device')}</option>
+                      {devices
+                        .filter(
+                          device =>
+                            device.device_id !== state.currentDeviceId &&
+                            device.app_device_id !== state.currentDeviceId
+                        )
+                        .map(device => (
+                          <option
+                            key={device.device_id}
+                            value={device.device_id}
+                            disabled={device.status === 'offline'}
+                          >
+                            {device.name}
+                          </option>
+                        ))}
+                    </select>
+                  }
+                />
+              )}
+              {state.error && (
+                <div role="alert" className="text-sm text-error">
+                  <p>{state.error}</p>
+                  <button
+                    type="button"
+                    data-testid="stand-in-reload"
+                    disabled={saving}
+                    onClick={state.reload}
+                    className="mt-1 underline"
+                  >
+                    {t('standIn.reload')}
+                  </button>
+                </div>
+              )}
+              {notice && (
+                <p role="status" data-testid="stand-in-saved" className="text-sm text-text-muted">
+                  {t('standIn.saved')}
+                </p>
+              )}
+              {confirmDiscard && (
+                <div role="alert" className="rounded-md border border-border p-3">
+                  <p>{t('standIn.personal.discard_help')}</p>
+                  <div className="mt-2 flex gap-3">
+                    <button
+                      type="button"
+                      data-testid="stand-in-discard"
+                      onClick={() => {
+                        setDraft(saved)
+                        setConfirmDiscard(false)
+                        onCancel?.()
+                      }}
+                      className="min-h-8 rounded-md border border-border px-2"
+                    >
+                      {t('standIn.personal.discard')}
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="stand-in-keep-editing"
+                      onClick={() => setConfirmDiscard(false)}
+                      className="min-h-8 px-2"
+                    >
+                      {t('standIn.personal.keep_editing')}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+            <footer className="flex items-center gap-3 border-t border-border px-5 py-4">
+              <span className="mr-auto text-xs text-text-muted">
+                {view === 'scheduling'
+                  ? t('standIn.personal.shared_scheduling')
+                  : t('standIn.personal.personal_only')}
+              </span>
+              <button
+                type="button"
+                data-testid="stand-in-cancel"
+                disabled={saving}
+                onClick={close}
+                className="min-h-9 rounded-md px-3 text-text-secondary hover:bg-muted"
+              >
+                {t('standIn.cancel')}
+              </button>
+              <button
+                type="button"
+                data-testid="stand-in-save"
+                disabled={saving}
+                onClick={() => void save()}
+                className="min-h-9 rounded-md bg-text-primary px-4 font-medium text-background disabled:opacity-40"
+              >
+                {t(
+                  saving
+                    ? 'standIn.saving'
+                    : view === 'create'
+                      ? 'standIn.personal.create_role'
+                      : view === 'connections'
+                        ? 'standIn.personal.save_connections'
+                        : 'standIn.save'
+                )}
+              </button>
+            </footer>
+          </>
         ) : (
-          <div
-            className="py-16 text-center text-sm text-text-muted"
-            data-testid="stand-in-list-empty"
-          >
-            {t(projects.length ? 'standIn.list_empty' : 'standIn.no_projects')}
+          <div className="px-5 pb-5" role="alert">
+            <p className="text-error">{state.error}</p>
+            <button
+              type="button"
+              data-testid="stand-in-reload"
+              onClick={state.reload}
+              className="mt-2 underline"
+            >
+              {t('standIn.reload')}
+            </button>
           </div>
         )}
       </div>
-      {editing && project && (
-        <div
-          className="fixed inset-0 z-modal flex items-center justify-center bg-black/25 p-4"
-          onMouseDown={event => {
-            if (event.target === event.currentTarget) closeEditor()
-          }}
-        >
-          <section
-            ref={dialogRef}
-            tabIndex={-1}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="stand-in-page-editor-title"
-            data-testid="stand-in-page-editor"
-            className="max-h-[90dvh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-border bg-background shadow-lg"
-          >
-            <header className="flex items-center gap-3 px-5 pb-2 pt-4">
-              <h2 id="stand-in-page-editor-title" className="heading-sm mr-auto">
-                {t('standIn.configure')}
-              </h2>
-              <label className="sr-only" htmlFor="stand-in-project-select">
-                {t('standIn.collaboration_project')}
-              </label>
-              <select
-                id="stand-in-project-select"
-                data-testid="stand-in-project-select"
-                value={project.id}
-                disabled={saving}
-                onChange={event => setEditing({ projectId: event.target.value })}
-                className="min-h-8 max-w-56 rounded-md bg-transparent px-2 text-sm text-text-secondary"
-              >
-                {projects.map(project => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                data-testid="stand-in-page-editor-close"
-                aria-label={t('standIn.close')}
-                disabled={saving}
-                onClick={closeEditor}
-                className="flex h-8 w-8 items-center justify-center rounded-md text-text-muted hover:bg-muted"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </header>
-            <StandInPopover
-              key={`${project.id}:${editing.deviceId}:${editing.profileId}`}
-              embedded
-              api={api}
-              project={project}
-              services={services}
-              devices={devices}
-              readLocalIdentity={services.getLocalRuntimeSidebarIdentity}
-              userId={userId}
-              projects={projects}
-              initialDeviceId={editing.deviceId}
-              initialProfileId={editing.profileId}
-              onSavingChange={setSaving}
-              onCancel={closeEditor}
-              onSaved={(_settings, action) => {
-                setRevision(value => value + 1)
-                if (action !== 'automatic') {
-                  setSaving(false)
-                  setEditing(null)
-                }
-              }}
-            />
-          </section>
-        </div>
-      )}
     </section>
   )
 }

@@ -5,6 +5,11 @@ import type {
   RunnerModel,
 } from '@wegent/collaboration'
 import type { RuntimeTaskSummary } from '@/types/api'
+import {
+  publishPersonalStandIn,
+  type PersonalStandInAgent,
+  type PersonalStandInSettings,
+} from './personalStandIn'
 
 type Request = <T>(method: string, payload: Record<string, unknown>, deviceId: string) => Promise<T>
 type ProjectStore = 'local' | 'cloud'
@@ -14,6 +19,9 @@ export type StandInProjectSettings = WorkspaceStandInSettings & {
   userId: number
 }
 export interface StandInExecutorApi {
+  personalAgents(userId: number, deviceId: string): Promise<PersonalStandInAgent[]>
+  personalGet(userId: number, deviceId: string): Promise<PersonalStandInSettings>
+  personalSave(userId: number, settings: PersonalStandInSettings): Promise<PersonalStandInSettings>
   readTask(
     deviceId: string,
     taskId: string
@@ -49,12 +57,31 @@ export interface StandInExecutorApi {
 
 export function createStandInExecutorApi(request: Request): StandInExecutorApi {
   return {
+    personalAgents: async (userId, deviceId) =>
+      (
+        await request<{ items: PersonalStandInAgent[] }>(
+          'runtime.stand_in.personal.agents',
+          { userId },
+          deviceId
+        )
+      ).items,
+    personalGet: (userId, deviceId) =>
+      request('runtime.stand_in.personal.get', { userId }, deviceId),
+    personalSave: async (userId, settings) => {
+      const saved = await request<PersonalStandInSettings>(
+        'runtime.stand_in.personal.save',
+        { userId, settings },
+        settings.executionDeviceId
+      )
+      publishPersonalStandIn(saved)
+      return saved
+    },
     readTask: (deviceId, taskId) => request('runtime.tasks.get', { taskId }, deviceId),
     catalog: deviceId => request('runtime.runner.catalog', {}, deviceId),
-    run: (projectId, issueId, userId, projectStore, deviceId, standInId = 'default') =>
+    run: (projectId, issueId, userId, projectStore, deviceId, standInId) =>
       request(
         'runtime.stand_in.run',
-        { projectId, issueId, userId, projectStore, standInId },
+        { projectId, issueId, userId, projectStore, ...(standInId ? { standInId } : {}) },
         deviceId
       ),
     list: async (userId, deviceId, includeDisabled) =>
@@ -101,7 +128,7 @@ export function bindProjectStandInApi(
     return target
   }
   return {
-    async run(projectId, issueId, deviceId, standInId = 'default') {
+    async run(projectId, issueId, deviceId, standInId) {
       const target = await resolveDevice(deviceId)
       return api.run(projectId, issueId, userId, projectStore, target, standInId)
     },

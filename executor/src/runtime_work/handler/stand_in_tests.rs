@@ -3,22 +3,39 @@ use axum::{routing::get, Json, Router};
 use std::sync::atomic::AtomicUsize;
 
 #[test]
-fn tag_rules_prefer_a_specific_stand_in_and_never_choose_an_ambiguous_match() {
+fn tag_rules_return_specific_candidates_and_preserve_role_order() {
     let configs = vec![
         json!({"id":"default","tags":[]}),
         json!({"id":"review","tags":["review","security"]}),
         json!({"id":"docs","tags":["docs"]}),
     ];
     assert_eq!(
-        matching_stand_in(&configs, &json!({"tags":["review"]})).unwrap()["id"],
+        super::super::personal_stand_in::matching_personal_roles(
+            &configs,
+            &json!({"tags":["review"]})
+        )[0]["id"],
         "review"
     );
     assert_eq!(
-        matching_stand_in(&configs, &json!({"tags":["other"]})).unwrap()["id"],
+        super::super::personal_stand_in::matching_personal_roles(
+            &configs,
+            &json!({"tags":["other"]})
+        )[0]["id"],
         "default"
     );
-    assert!(matching_stand_in(&configs, &json!({"tags":["review","docs"]})).is_none());
-    assert!(matching_stand_in(&configs[1..], &json!({"tags":["other"]})).is_none());
+    assert_eq!(
+        super::super::personal_stand_in::matching_personal_roles(
+            &configs,
+            &json!({"tags":["review","docs"]})
+        )
+        .len(),
+        2
+    );
+    assert!(super::super::personal_stand_in::matching_personal_roles(
+        &configs[1..],
+        &json!({"tags":["other"]})
+    )
+    .is_empty());
 }
 
 #[test]
@@ -398,4 +415,13 @@ fn cloud_assignments_created_in_the_enable_second_are_not_lost() {
         &json!({"created_at":"2026-10-22T06:54:17Z"}),
         &json!({"projectStore":"local","enabledAfter":settings["enabledAfter"]})
     ));
+}
+
+#[tokio::test]
+async fn project_agent_reference_is_rejected_outside_its_owning_project_before_catalog_access() {
+    let handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    for (project, store) in [("other", "cloud"), ("owning", "local")] {
+        let error = handler.stand_in_agent(&json!({"agentId":"reviewer","agentProject":{"id":"owning","store":"cloud"},"projectId":project,"projectStore":store})).await.unwrap_err();
+        assert_eq!(error.code, "agent_project_mismatch");
+    }
 }
