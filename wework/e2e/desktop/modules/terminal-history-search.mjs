@@ -26,9 +26,10 @@ const ASYNC_REPLY_MATCH = {
   text: ASYNC_REPLY_TEXT,
   userReply: true,
 }
-const PLAN_TURN = 35
-const COMMENT_QUESTION_TURN = 36
-const COMMENT_REPLY_TURN = 37
+// Keep projected rows outside existing context pages and the latest 20-turn page.
+const PLAN_TURN = 55
+const COMMENT_QUESTION_TURN = 56
+const COMMENT_REPLY_TURN = 57
 const COMMENT_QUESTION = 'WEWORK_E2E_COMMENTED_ASYNC_QUESTION: continue?'
 export const USER_HISTORY_PROJECTION = {
   plan: {
