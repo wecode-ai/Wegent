@@ -5292,5 +5292,12 @@
     "save_before_enable": "有未保存的设置，请保存后开启自动处理。",
     "automatic_enabled": "自动处理已开启",
     "automatic_disabled": "自动处理已关闭"
+  },
+  "workbench_error": {
+    "startup_title": "Wework 启动失败",
+    "startup_description": "前端初始化失败，请刷新页面重试。如果问题持续，请打开调试面板查看日志。",
+    "crash_title": "Wework 页面出现错误",
+    "crash_description": "页面遇到异常，暂时无法显示。请刷新页面重试；尚未保存的内容可能会丢失。如果问题持续，请打开调试面板查看日志。",
+    "reload": "刷新页面"
   }
 }
