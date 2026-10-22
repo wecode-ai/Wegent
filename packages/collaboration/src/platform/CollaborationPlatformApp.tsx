@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -2826,6 +2826,7 @@ function IssueHomeLauncher({
       <div
         className="flex min-h-0 flex-1"
         data-testid="collaboration-issue-home"
+        data-execution-environment-readiness={environmentReadiness.kind}
       >
         {composer}
       </div>
@@ -2835,6 +2836,7 @@ function IssueHomeLauncher({
     <section
       className="collaboration-issue-home"
       data-testid="collaboration-issue-home"
+      data-execution-environment-readiness={environmentReadiness.kind}
     >
       <div className="collaboration-issue-home-heading">
         <h1 data-testid="collaboration-issue-home-title">
@@ -3412,18 +3414,23 @@ export function CollaborationPlatformApp({
   useEffect(() => {
     if (!state.loading && !state.error) onReady?.();
   }, [onReady, state.error, state.loading]);
+  const navigationProjectsRef = useRef(state.navigationProjects);
+  useLayoutEffect(() => {
+    navigationProjectsRef.current = state.navigationProjects;
+  }, [state.navigationProjects]);
+  const hasFullWorkspaceAccess =
+    state.workspace?.id === host.location.workspaceId;
   const scopedApi = useMemo<SharedWorkspaceApi>(() => {
     if (!host.location.workspaceId) return api;
     const workspaceId = host.location.workspaceId;
     const projectId = host.location.projectId;
-    const hasFullWorkspaceAccess = state.workspace?.id === workspaceId;
     return {
       ...api,
       projects: {
         ...api.projects,
         list: async () => {
           if (projectId) {
-            const selectedProject = state.navigationProjects.find(
+            const selectedProject = navigationProjectsRef.current.find(
               (project) => project.id === projectId,
             );
             if (selectedProject) return [selectedProject];
@@ -3441,8 +3448,7 @@ export function CollaborationPlatformApp({
     api,
     host.location.projectId,
     host.location.workspaceId,
-    state.navigationProjects,
-    state.workspace,
+    hasFullWorkspaceAccess,
   ]);
   const workspaceAgentConfigurationApi = useMemo(
     () =>

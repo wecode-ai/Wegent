@@ -3,6 +3,9 @@
 import os
 import uuid
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+from typing import Any
 
 import pytest
 import sqlalchemy as sa
@@ -37,6 +40,89 @@ def mysql_url() -> Iterator[str]:
                 db.exec_driver_sql(f"DROP DATABASE `{database}`")
     finally:
         admin.dispose()
+
+
+def test_independent_project_creation_does_not_lock_absent_parent_grants(
+    mysql_url: str,
+) -> None:
+    engine = sa.create_engine(mysql_url, isolation_level="REPEATABLE READ")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add(User(id=1, user_name="project-owner", password_hash="unused"))
+        for workspace_id in (11, 12):
+            db.add(
+                Kind(
+                    id=workspace_id,
+                    kind="CollaborationWorkspace",
+                    name=f"space-{workspace_id}",
+                    namespace="default",
+                    user_id=1,
+                    is_active=True,
+                    json=workspace_kind_payload(
+                        name=f"space-{workspace_id}",
+                        description="",
+                        namespace="default",
+                        public_id=str(uuid.uuid4()),
+                        is_default=False,
+                    ),
+                )
+            )
+        db.commit()
+
+    ready = Barrier(2, timeout=10)
+
+    def synchronize(
+        _db: sa.Connection,
+        _cursor: Any,
+        statement: str,
+        _params: Any,
+        context: Any,
+        _many: bool,
+    ) -> None:
+        if not statement.startswith("INSERT INTO resource_members"):
+            return
+        values = context.compiled_parameters[0] if context.compiled_parameters else {}
+        if (
+            values.get("resource_type") == "CloudProject"
+            and values.get("entity_type") == "workspace"
+        ):
+            ready.wait()
+
+    def create_project(workspace_id: int) -> str:
+        with Session(engine) as db:
+            project = cloud_project_service.create(
+                db,
+                1,
+                CloudProjectCreate(
+                    name="Concurrent project", workspace_id=str(workspace_id)
+                ),
+            )
+            parent = (
+                db.query(ResourceMember)
+                .filter_by(
+                    resource_type="CloudProject",
+                    resource_id=int(project.id),
+                    entity_type="workspace",
+                    entity_id=str(workspace_id),
+                )
+                .one()
+            )
+            assert parent.role == "Owner" and parent.status == "approved"
+            assert collaboration_permission_service.check(
+                db, 1, "execute", project.id
+            ).allowed
+            return project.id
+
+    sa.event.listen(engine, "before_cursor_execute", synchronize)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [
+                pool.submit(create_project, workspace_id) for workspace_id in (11, 12)
+            ]
+            assert len({future.result(timeout=20) for future in futures}) == 2
+    finally:
+        sa.event.remove(engine, "before_cursor_execute", synchronize)
+        engine.dispose()
 
 
 @pytest.mark.parametrize("interrupted_ddl", [False, True])

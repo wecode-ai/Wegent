@@ -342,6 +342,10 @@ export function createDesktopScenario({
             { method: 'DELETE' }
           )
         }
+        const unassignedEnvironments = await request(
+          `/api/v1/cloud-projects/${project.id}/execution-environments`
+        )
+        assert.equal(unassignedEnvironments.items.length, 0)
 
         agent = await request(`/api/v1/cloud-projects/${project.id}/chat-agents`, {
           method: 'POST',
@@ -360,14 +364,28 @@ export function createDesktopScenario({
           }),
         })
         await control.command('click', scoped('[data-testid="collaboration-primary-home"]'))
+        await control.command('waitFor', scoped('[data-testid="collaboration-issue-workspace"]'), {
+          timeoutMs: uiTimeoutMs,
+        })
         await control.command(
           'waitFor',
-          scoped('[data-testid="issue-execution-environment-notice"]'),
-          { timeoutMs: uiTimeoutMs }
+          scoped(
+            '[data-testid="collaboration-issue-home"][data-execution-environment-readiness="unassigned"]'
+          )
+        )
+        assert.equal(
+          Number(
+            await control.command(
+              'getElementCount',
+              scoped('[data-testid="issue-execution-environment-notice"]')
+            )
+          ),
+          0,
+          'A project without execution environments must not show an environment notice'
         )
         await control.command(
           'click',
-          scoped('[data-testid="issue-execution-environment-notice-action"]')
+          scoped(`[data-testid="collaboration-workspace-project-${project.id}"]`)
         )
         await configureFirstProjectExecutionEnvironment(
           control,

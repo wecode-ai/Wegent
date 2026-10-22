@@ -340,12 +340,14 @@ describe('TaskActivityView', () => {
           unsubscribe: vi.fn(),
         }),
       } as unknown as ProjectChatClient
+      const onTaskRead = vi.fn()
       const onTaskUpdated = vi.fn()
       const { rerender } = render(
         <TaskActivityView
           client={client}
           project={project}
           task={task}
+          onTaskRead={onTaskRead}
           onTaskUpdated={onTaskUpdated}
           issueTimeline
           linear
@@ -353,12 +355,14 @@ describe('TaskActivityView', () => {
       )
 
       await waitFor(() => expect(expectedRead).toHaveBeenCalledExactlyOnceWith(task.id, 0))
-      expect(onTaskUpdated).toHaveBeenCalledExactlyOnceWith(updated)
+      expect(onTaskRead).toHaveBeenCalledExactlyOnceWith(updated)
+      expect(onTaskUpdated).not.toHaveBeenCalled()
       rerender(
         <TaskActivityView
           client={client}
           project={project}
           task={updated}
+          onTaskRead={onTaskRead}
           onTaskUpdated={onTaskUpdated}
           issueTimeline
           linear
@@ -367,6 +371,140 @@ describe('TaskActivityView', () => {
       expect(expectedRead).toHaveBeenCalledOnce()
       expect(location === 'local' ? cloudRead : localRead).not.toHaveBeenCalled()
       expect(markLoopItemRead).not.toHaveBeenCalled()
+    }
+  )
+
+  it('includes saved assignments between creation, comments and status changes', async () => {
+    const client = {
+      subscribe: vi.fn().mockResolvedValue({
+        snapshot: {
+          messages: [{ ...userMessage, createdAt: '2026-10-10T01:00:02Z' }],
+          latestSequence: 1,
+          currentUserId: '1',
+        },
+        unsubscribe: vi.fn(),
+      }),
+    } as unknown as ProjectChatClient
+    render(
+      <TaskActivityView
+        client={client}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={
+          {
+            id: 'WEG-1',
+            title: 'Assignment timeline',
+            status: 'in_progress',
+            version: 1,
+            created_at: '2026-10-10T01:00:00Z',
+            assignment_history: [
+              {
+                by_user_id: 1,
+                to_type: 'user',
+                to_id: '2',
+                to_name: 'Grace',
+                action: 'assign',
+                at: '2026-10-10T09:00:01+08:00',
+              },
+            ],
+          } as never
+        }
+        projectMembers={[{ user_id: 1, user_name: 'Ada' } as never]}
+        statusHistory={[
+          {
+            from_status: 'inbox',
+            to_status: 'in_progress',
+            trigger: 'user_update',
+            by_user_id: 1,
+            at: '2026-10-10T01:00:03Z',
+          },
+        ]}
+        issueTimeline
+        linear
+      />
+    )
+    const assignment = await screen.findByTestId('cloud-task-assignment-event-0')
+    expect(assignment).toHaveTextContent('Ada')
+    expect(assignment).toHaveTextContent('Grace')
+    const list = screen.getByTestId('cloud-task-activity-list')
+    expect(
+      Array.from(list.children[0].children).map(
+        entry => entry.getAttribute('data-testid') ?? entry.className
+      )
+    ).toEqual([
+      'cloud-task-status-created',
+      'cloud-task-assignment-event-0',
+      'task-detail-thread is-timeline',
+      'cloud-task-status-event-0',
+    ])
+    expect(screen.getByTestId('cloud-task-activity-WEG-1')).toHaveTextContent('共 4 条')
+  })
+
+  it.each(['api', 'task', 'unmount', 'rerender'] as const)(
+    'only accepts a delayed read confirmation while its scope remains active: %s',
+    async change => {
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+        top: 0,
+        bottom: 400,
+        height: 400,
+      } as DOMRect)
+      const project = { id: '11', name: 'Wework' } as never
+      const task = {
+        id: 'WEG-1',
+        title: 'Inspect changes',
+        version: 1,
+        is_unread: true,
+        content_revision: 1,
+      } as never
+      const updated = { ...task, is_unread: false }
+      let confirmRead!: (value: typeof updated) => void
+      const pendingRead = new Promise<typeof updated>(resolve => {
+        confirmRead = resolve
+      })
+      markLoopItemRead
+        .mockImplementationOnce(() => pendingRead)
+        .mockImplementation(() => new Promise(() => {}))
+      const onTaskRead = vi.fn()
+      const onTaskUpdated = vi.fn()
+      const view = (
+        <TaskActivityView
+          project={project}
+          task={task}
+          onTaskRead={onTaskRead}
+          onTaskUpdated={onTaskUpdated}
+          issueTimeline
+          linear
+        />
+      )
+      const { rerender, unmount } = render(view)
+      await waitFor(() => expect(markLoopItemRead).toHaveBeenCalledExactlyOnceWith(task.id, 0))
+
+      if (change === 'api') {
+        const nextRead = vi.fn(() => new Promise(() => {}))
+        workbenchServices.projectSpaceApis = {
+          cloud: { markLoopItemRead: nextRead },
+          local: { markLoopItemRead: nextRead },
+        }
+        rerender(cloneElement(view))
+      } else if (change === 'task') {
+        rerender(cloneElement(view, { task: { ...task, id: 'WEG-2' } }))
+      } else if (change === 'unmount') {
+        unmount()
+      } else {
+        rerender(
+          cloneElement(view, {
+            task: { ...task, version: 2, content_revision: 2 },
+            onTaskRead: confirmation => onTaskRead(confirmation),
+          })
+        )
+      }
+      await act(async () => confirmRead(updated))
+
+      if (change === 'rerender') {
+        expect(onTaskRead).toHaveBeenCalledExactlyOnceWith(updated)
+      } else {
+        expect(onTaskRead).not.toHaveBeenCalled()
+      }
+      expect(onTaskUpdated).not.toHaveBeenCalled()
     }
   )
 
@@ -449,21 +587,25 @@ describe('TaskActivityView', () => {
     const client = {
       subscribe: vi.fn().mockResolvedValue({ snapshot: { messages: [] }, unsubscribe: vi.fn() }),
     } as unknown as ProjectChatClient
+    const onTaskRead = vi.fn()
     const onTaskUpdated = vi.fn()
     render(
       <TaskActivityView
         client={client}
         project={{ id: '11', name: 'Wework' } as never}
         task={task}
+        onTaskRead={onTaskRead}
         onTaskUpdated={onTaskUpdated}
         issueTimeline
         linear
       />
     )
     expect(await screen.findByRole('alert')).toHaveTextContent('read persistence failed')
+    expect(onTaskRead).not.toHaveBeenCalled()
     expect(onTaskUpdated).not.toHaveBeenCalled()
     fireEvent.scroll(screen.getByTestId('cloud-task-activity-list'))
-    await waitFor(() => expect(onTaskUpdated).toHaveBeenCalledOnce())
+    await waitFor(() => expect(onTaskRead).toHaveBeenCalledOnce())
+    expect(onTaskUpdated).not.toHaveBeenCalled()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(markLoopItemRead.mock.calls).toEqual([
       [task.id, 0],
@@ -1546,6 +1688,7 @@ describe('TaskActivityView', () => {
     // Content revisions are acknowledged independently from the activity cursor.
     const updated = { ...task, is_unread: false, activity_read_sequence: 2 }
     markLoopItemRead.mockResolvedValue(updated)
+    const onTaskRead = vi.fn()
     const onTaskUpdated = vi.fn()
     const messages = [1, 2, 3].map(sequence => ({
       ...userMessage,
@@ -1576,6 +1719,7 @@ describe('TaskActivityView', () => {
         client={client}
         project={{ id: '11', name: 'Wework' } as never}
         task={task as never}
+        onTaskRead={onTaskRead}
         onTaskUpdated={onTaskUpdated}
         statusHistory={[{ from_status: '', to_status: 'inbox', at: '2026-10-13T00:00:00Z' }]}
         issueTimeline
@@ -1584,7 +1728,8 @@ describe('TaskActivityView', () => {
     )
     await waitFor(() => expect(markLoopItemRead).toHaveBeenCalledWith(task.id, 2))
     expect(markLoopItemRead).not.toHaveBeenCalledWith(task.id, 3)
-    expect(onTaskUpdated).toHaveBeenCalledWith(updated)
+    expect(onTaskRead).toHaveBeenCalledWith(updated)
+    expect(onTaskUpdated).not.toHaveBeenCalled()
   })
 
   it('shows parent comments from oldest to newest without scrolling on load', async () => {
