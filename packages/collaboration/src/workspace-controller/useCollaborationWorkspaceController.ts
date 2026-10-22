@@ -6,6 +6,10 @@ import { useEffect, useMemo, useReducer, useRef } from "react";
 
 import { collectIssueSubtreeIds, removeIssueSubtree } from "../board";
 import { isIssueVersionConflict } from "../issue-detail/issueVersionConflict";
+import {
+  mergePersistedBoardMove,
+  type ProjectBoardPosition,
+} from "../project-board/useStandardCloudBoardController";
 import type {
   SharedWorkspaceApi,
   WorkspaceBoardSnapshot,
@@ -85,11 +89,11 @@ export interface CollaborationWorkspaceControllerCommands {
   loadProject(
     projectId: string,
     showLoading?: boolean,
-    options?: { isCurrent?(): boolean },
+    options?: { isCurrent?(): boolean; loadSnapshot?: boolean },
   ): Promise<void>;
   loadProjectSnapshot(
     projectId: string,
-    options?: { invalidate?: boolean },
+    options?: { invalidate?: boolean; throwOnError?: boolean },
   ): Promise<WorkspaceBoardSnapshot | null>;
   loadMoreExternalColumn(status: string): Promise<void>;
   getIssue(issueId: string): Promise<CollaborationIssue | null>;
@@ -124,12 +128,6 @@ export interface CollaborationWorkspaceControllerCommands {
     issueId: string,
     options?: { throwOnError?: boolean },
   ): Promise<boolean>;
-  reorderIssue(input: {
-    issue: CollaborationIssue;
-    status: string;
-    laneIds: string[];
-    optimisticItems: CollaborationIssue[];
-  }): Promise<void>;
   refreshSelectedIssue(): Promise<void>;
   refreshProjectAgents(projectId: string): Promise<void>;
   replaceProject(project: CollaborationProject): void;
@@ -172,7 +170,6 @@ const unavailableCollaborationWorkspaceControllerCommands: CollaborationWorkspac
     updateIssue: async () => null,
     assignIssue: async () => null,
     archiveIssue: async () => false,
-    reorderIssue: async () => undefined,
     refreshSelectedIssue: async () => undefined,
     refreshProjectAgents: async () => undefined,
     replaceProject: () => undefined,
@@ -204,6 +201,7 @@ export type CollaborationWorkspaceControllerAction =
       myWork: WorkspaceMyWorkItem[];
     }
   | { type: "project-catalog-loaded"; projects: CollaborationProject[] }
+  | { type: "project-metadata-loaded"; project: CollaborationProject }
   | {
       type: "project-snapshot-loaded";
       projectId: string;
@@ -254,9 +252,12 @@ export type CollaborationWorkspaceControllerAction =
     }
   | { type: "remove-project"; projectId: string }
   | { type: "replace-issues"; issues: CollaborationIssue[] }
-  | { type: "merge-reorder-issues"; issues: CollaborationIssue[] }
   | { type: "append-issue"; issue: CollaborationIssue }
-  | { type: "replace-issue"; issue: CollaborationIssue }
+  | {
+      type: "replace-issue";
+      issue: CollaborationIssue;
+      position?: ProjectBoardPosition;
+    }
   | { type: "remove-issue"; issueId: string }
   | { type: "replace-attachments"; attachments: CollaborationAttachment[] }
   | { type: "replace-comments"; comments: CollaborationComment[] }
@@ -301,21 +302,6 @@ function newestIssue(
     : incoming;
 }
 
-function mergeReorderIssues(
-  current: CollaborationIssue[],
-  incoming: CollaborationIssue[],
-): CollaborationIssue[] {
-  const currentById = new Map(current.map((issue) => [issue.id, issue]));
-  const incomingIds = new Set(incoming.map((issue) => issue.id));
-  return [
-    ...incoming.map((issue) => {
-      const existing = currentById.get(issue.id);
-      return newestIssue(existing, issue);
-    }),
-    ...current.filter((issue) => !incomingIds.has(issue.id)),
-  ];
-}
-
 export function collaborationWorkspaceControllerReducer(
   state: CollaborationWorkspaceControllerState,
   action: CollaborationWorkspaceControllerAction,
@@ -348,19 +334,24 @@ export function collaborationWorkspaceControllerReducer(
         error: null,
         errorSource: null,
       };
-    case "project-snapshot-loaded":
+    case "project-snapshot-loaded": {
+      const existing = new Map(
+        (state.projectItems[action.projectId] ?? []).map((item) => [
+          item.id,
+          item,
+        ]),
+      );
+      const items = action.snapshot.items.map((item) =>
+        newestIssue(existing.get(item.id), item),
+      );
       return {
         ...state,
         selectedIssue:
           state.selectedIssue && state.project?.id === action.projectId
-            ? (action.snapshot.items.find(
-                (item) => item.id === state.selectedIssue?.id,
-              ) ?? null)
+            ? (items.find((item) => item.id === state.selectedIssue?.id) ??
+              null)
             : state.selectedIssue,
-        issues:
-          state.project?.id === action.projectId
-            ? action.snapshot.items
-            : state.issues,
+        issues: state.project?.id === action.projectId ? items : state.issues,
         members:
           state.project?.id === action.projectId
             ? action.snapshot.members
@@ -375,7 +366,7 @@ export function collaborationWorkspaceControllerReducer(
             : state.taskBindings,
         projectItems: {
           ...state.projectItems,
-          [action.projectId]: action.snapshot.items,
+          [action.projectId]: items,
         },
         projectMembers: {
           ...state.projectMembers,
@@ -392,10 +383,29 @@ export function collaborationWorkspaceControllerReducer(
         error: null,
         errorSource: null,
       };
+    }
     case "my-work-loaded":
       return {
         ...state,
         myWork: action.items,
+        error: null,
+        errorSource: null,
+      };
+    case "project-metadata-loaded":
+      return {
+        ...state,
+        project: action.project,
+        projects: state.projects.some((item) => item.id === action.project.id)
+          ? state.projects.map((item) =>
+              item.id === action.project.id ? action.project : item,
+            )
+          : [action.project, ...state.projects],
+        issues: state.projectItems[action.project.id] ?? [],
+        members: state.projectMembers[action.project.id] ?? [],
+        agents: state.projectAgents[action.project.id] ?? [],
+        taskBindings: state.projectTaskBindings[action.project.id] ?? [],
+        selectedIssue:
+          state.project?.id === action.project.id ? state.selectedIssue : null,
         error: null,
         errorSource: null,
       };
@@ -576,16 +586,6 @@ export function collaborationWorkspaceControllerReducer(
           ? { ...state.projectItems, [state.project.id]: action.issues }
           : state.projectItems,
       };
-    case "merge-reorder-issues": {
-      const issues = mergeReorderIssues(state.issues, action.issues);
-      return {
-        ...state,
-        issues,
-        projectItems: state.project
-          ? { ...state.projectItems, [state.project.id]: issues }
-          : state.projectItems,
-      };
-    }
     case "append-issue":
       return {
         ...state,
@@ -598,27 +598,30 @@ export function collaborationWorkspaceControllerReducer(
           ],
         },
       };
-    case "replace-issue":
+    case "replace-issue": {
+      const replace = (items: CollaborationIssue[]) =>
+        action.position
+          ? mergePersistedBoardMove(items, action.issue, action.position)
+          : items.map((item) =>
+              item.id === action.issue.id
+                ? newestIssue(item, action.issue)
+                : item,
+            );
       return {
         ...state,
         selectedIssue:
           state.selectedIssue?.id === action.issue.id
             ? newestIssue(state.selectedIssue, action.issue)
             : state.selectedIssue,
-        issues: state.issues.map((item) =>
-          item.id === action.issue.id ? newestIssue(item, action.issue) : item,
-        ),
+        issues: replace(state.issues),
         projectItems: {
           ...state.projectItems,
-          [action.issue.cloud_project_id]: (
-            state.projectItems[action.issue.cloud_project_id] ?? []
-          ).map((item) =>
-            item.id === action.issue.id
-              ? newestIssue(item, action.issue)
-              : item,
+          [action.issue.cloud_project_id]: replace(
+            state.projectItems[action.issue.cloud_project_id] ?? [],
           ),
         },
       };
+    }
     case "remove-issue": {
       // The server soft deletes the whole subtree, so drop descendants too.
       const removedIds = collectIssueSubtreeIds(state.issues, action.issueId);
@@ -868,6 +871,17 @@ export function createCollaborationWorkspaceControllerCommands({
     homeSnapshotLoads.delete(projectId);
     homeSnapshotResults.delete(projectId);
   };
+  const reportPositionConflict = async (issueId: string, error: unknown) => {
+    if (!isIssueVersionConflict(error)) return false;
+    try {
+      const latest = await api.issues.get(issueId);
+      await loadProject(latest.cloud_project_id, false);
+      reportError(messages.conflict, "conflict");
+    } catch {
+      reportError(messages.loadFailed, "load");
+    }
+    return true;
+  };
   const pendingReadRequests = new Map<
     string,
     Promise<CollaborationIssue | null>
@@ -920,7 +934,7 @@ export function createCollaborationWorkspaceControllerCommands({
   const loadProject = async (
     projectId: string,
     showLoading = true,
-    options?: { isCurrent?(): boolean },
+    options?: { isCurrent?(): boolean; loadSnapshot?: boolean },
   ) => {
     const revision = ++projectLoadRevision;
     const isCurrent = () =>
@@ -938,6 +952,10 @@ export function createCollaborationWorkspaceControllerCommands({
         return;
       if (!catalogProjects.some((item) => item.id === project.id)) {
         catalogProjects = [...catalogProjects, project];
+      }
+      if (options?.loadSnapshot === false) {
+        dispatch({ type: "project-metadata-loaded", project });
+        return;
       }
       const externalBoardOptions = getExternalBoardOptions();
       const externalBoard = isExternalGitProject(project)
@@ -1125,6 +1143,7 @@ export function createCollaborationWorkspaceControllerCommands({
         if (mutationGeneration !== projectMutationGeneration(projectId))
           return null;
         reportError(messages.loadFailed, "load");
+        if (options?.throwOnError) throw new Error(messages.loadFailed);
         return null;
       }
     },
@@ -1319,10 +1338,15 @@ export function createCollaborationWorkspaceControllerCommands({
       try {
         const issue = await api.issues.update(issueId, input);
         markProjectMutated(issue.cloud_project_id);
-        dispatch({ type: "replace-issue", issue });
+        dispatch({
+          type: "replace-issue",
+          issue,
+          position: input.position,
+        });
         return issue;
       } catch (error) {
-        reportError(messages.saveFailed);
+        if (!input.position || !(await reportPositionConflict(issueId, error)))
+          reportError(messages.saveFailed);
         if (options?.throwOnError) throw error;
         return null;
       }
@@ -1331,10 +1355,15 @@ export function createCollaborationWorkspaceControllerCommands({
       try {
         const issue = await api.issues.assign(projectId, issueId, input);
         markProjectMutated(projectId);
-        dispatch({ type: "replace-issue", issue });
+        dispatch({
+          type: "replace-issue",
+          issue,
+          position: input.position,
+        });
         return issue;
-      } catch {
-        reportError(messages.saveFailed);
+      } catch (error) {
+        if (!input.position || !(await reportPositionConflict(issueId, error)))
+          reportError(messages.saveFailed);
         return null;
       }
     },
@@ -1351,50 +1380,6 @@ export function createCollaborationWorkspaceControllerCommands({
         reportError(messages.saveFailed);
         if (options?.throwOnError) throw error;
         return false;
-      }
-    },
-    async reorderIssue({ issue, status, laneIds, optimisticItems }) {
-      const mergedOptimisticItems = mergeReorderIssues(
-        getExternalBoardState().issues,
-        optimisticItems,
-      );
-      dispatch({ type: "replace-issues", issues: mergedOptimisticItems });
-      try {
-        if (issue.status !== status) {
-          const movedIssue = await api.issues.update(issue.id, {
-            version: issue.version,
-            status,
-          });
-          markProjectMutated(issue.cloud_project_id);
-          dispatch({
-            type: "replace-issue",
-            issue: movedIssue,
-          });
-        }
-        const updated = await api.issues.reorder(issue.cloud_project_id, {
-          parentId: issue.parent_id,
-          status,
-          issueIds: laneIds,
-        });
-        markProjectMutated(issue.cloud_project_id);
-        const byId = new Map(updated.map((item) => [item.id, item]));
-        const reorderedItems = mergedOptimisticItems.map((item) => {
-          const reordered = byId.get(item.id);
-          if (!reordered) return item;
-          return reordered.version < item.version ? item : reordered;
-        });
-        dispatch({
-          type: "merge-reorder-issues",
-          issues: reorderedItems,
-        });
-      } catch (error) {
-        if (isIssueVersionConflict(error)) {
-          await loadProject(issue.cloud_project_id, false);
-          reportError(messages.conflict, "conflict");
-        } else {
-          await loadProject(issue.cloud_project_id, false);
-          reportError(messages.saveFailed);
-        }
       }
     },
     async refreshSelectedIssue() {
@@ -1523,6 +1508,9 @@ export function useCollaborationWorkspaceController({
     });
   }, [api, messages, myWorkEnabled, preloadHomeSnapshots]);
 
+  const loadBoardOnLocation = location.view !== "manage";
+  const loadProjectSnapshotOnLocation =
+    loadProjectOnLocation && loadBoardOnLocation;
   useEffect(() => {
     if (!commands) return;
     const revision = ++locationLoadRevisionRef.current;
@@ -1530,7 +1518,10 @@ export function useCollaborationWorkspaceController({
     if (location.projectId) {
       const projectId = location.projectId;
       if (loadProjectOnLocation) {
-        void commands.loadProject(projectId, true, { isCurrent });
+        void commands.loadProject(projectId, true, {
+          isCurrent,
+          loadSnapshot: loadProjectSnapshotOnLocation,
+        });
       } else {
         void commands.loadProjectCatalog({ isCurrent });
       }
@@ -1549,6 +1540,7 @@ export function useCollaborationWorkspaceController({
   }, [
     commands,
     loadProjectOnLocation,
+    loadProjectSnapshotOnLocation,
     location.projectId,
     location.rootView,
     myWorkEnabled,
@@ -1557,13 +1549,13 @@ export function useCollaborationWorkspaceController({
   useEffect(() => {
     if (!commands) return;
     const projectId = location.projectId;
-    if (!projectId || pollIntervalMs <= 0) return;
+    if (!projectId || !loadBoardOnLocation || pollIntervalMs <= 0) return;
     const timer = window.setInterval(
       () => void commands.loadProject(projectId, false),
       pollIntervalMs,
     );
     return () => window.clearInterval(timer);
-  }, [commands, location.projectId, pollIntervalMs]);
+  }, [commands, loadBoardOnLocation, location.projectId, pollIntervalMs]);
 
   useEffect(() => {
     if (!commands) return;

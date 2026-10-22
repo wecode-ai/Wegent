@@ -4727,6 +4727,7 @@ describe('PluginsWorkspace', () => {
 
     expect(await screen.findByText('Documents')).toBeInTheDocument()
     expect(pluginListStarted).toBe(false)
+    expect(marketplaceMock.getReportDeviceCalls()).toBe(0)
 
     resolveInstalled?.({
       marketplaces: [
@@ -4741,6 +4742,7 @@ describe('PluginsWorkspace', () => {
 
     await waitFor(() => expect(marketplaceMock.getSyncDeviceCalls()).toBe(1))
     expect(pluginListStarted).toBe(false)
+    expect(marketplaceMock.getReportDeviceCalls()).toBe(0)
 
     releaseSyncGate?.()
     await waitFor(() => expect(pluginListStarted).toBe(true))

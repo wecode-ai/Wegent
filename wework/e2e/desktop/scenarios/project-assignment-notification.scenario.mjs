@@ -262,7 +262,7 @@ async function createIssue(
     timeoutMs: uiTimeoutMs,
   })
   await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
-  await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
+  await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), { value: title })
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
     value:
@@ -378,10 +378,14 @@ async function verifyIssueTags(control, request, issue, uiTimeoutMs) {
 }
 
 async function changeIssueStatus(control, request, issueId, status, uiTimeoutMs) {
-  await control.command('select', scoped('[data-testid="cloud-todo-detail-status"]'), {
+  const statusSelect = scoped('select[data-testid="cloud-todo-detail-status"]:not(:disabled)')
+  await control.command('waitFor', statusSelect, { timeoutMs: uiTimeoutMs })
+  await control.command('select', statusSelect, {
     value: status,
   })
-  await control.command('click', scoped('[data-testid="cloud-todo-save"]'))
+  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
+    timeoutMs: uiTimeoutMs,
+  })
   return waitForValue(
     () => request(`/api/v1/loop-items/${issueId}`),
     value => value.status === status,

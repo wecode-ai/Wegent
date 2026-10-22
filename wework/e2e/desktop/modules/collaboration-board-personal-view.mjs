@@ -17,7 +17,21 @@ export async function openProjectBoard(control, scoped, project) {
     text: project.name,
   })
   await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
-  await control.command('waitFor', scoped('[data-testid="cloud-board-group-by"]'))
+  await control.command('waitFor', scoped('[data-testid="collaboration-board"]'))
+}
+
+export async function selectProjectBoardSort(control, scoped, columnKey, rules = []) {
+  const testId = `cloud-board-sort-by-${columnKey}`
+  const trigger = scoped(`[data-testid="${testId}"]`)
+  await control.command('click', trigger)
+  await control.command('click', `[data-testid="${testId}-manual"]`)
+  for (const [index, rule] of rules.entries()) {
+    await control.command('click', `[data-testid="${testId}-add"]`)
+    await control.command('click', `[data-testid="${testId}-rule-${index}-mode"]`)
+    await control.command('click', `[data-testid="${testId}-rule-${index}-mode-${rule}"]`)
+  }
+  await control.command('click', trigger)
+  await control.command('waitFor', `${trigger}[data-sort-rules="${rules.join(',') || 'manual'}"]`)
 }
 
 export async function assertProjectBoardGrouping(control, scoped, groupBy) {
@@ -112,6 +126,10 @@ export async function verifyPersonalAssigneeFilter(
   await assertFilteredIssues(control, scoped, issues, [])
   await control.command('fill', search, { value: '' })
   await assertFilteredIssues(control, scoped, issues, [mine.id])
+  await control.command('select', filter, { value: `assignee-${issues[1].assignee_user_id}` })
+  await assertFilteredIssues(control, scoped, issues, [issues[1].id])
+  await control.command('select', filter, { value: 'assignee-unassigned' })
+  await assertFilteredIssues(control, scoped, issues, [issues[2].id])
   await control.command('select', filter, { value: '' })
   await assertFilteredIssues(
     control,
@@ -120,9 +138,13 @@ export async function verifyPersonalAssigneeFilter(
     issues.map(issue => issue.id)
   )
   await assertProjectBoardGrouping(control, scoped, 'assignee')
+  await control.command('select', filter, { value: `assignee-${currentUser.id}` })
+  await control.command('fill', search, { value: '共同关键词' })
   await reloadMainWindow(control, 'The desktop did not reconnect after filtering my Issues')
   await openProjectBoard(control, scoped, project)
   await assertProjectBoardGrouping(control, scoped, 'assignee')
+  assert.equal(await control.command('getValue', filter), '')
+  assert.equal(await control.command('getValue', search), '')
   await assertFilteredIssues(
     control,
     scoped,

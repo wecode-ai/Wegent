@@ -205,7 +205,7 @@ async function createAgent(control, request, projectId, timeoutMs, environmentId
 
 async function createAndAssignIssue(control, request, projectId, agent, timeoutMs, title = ISSUE) {
   await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
-  await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
+  await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), { value: title })
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
     value: `${MARKER}。由单个智能体在远程 Executor 上完成并提交待确认。`,

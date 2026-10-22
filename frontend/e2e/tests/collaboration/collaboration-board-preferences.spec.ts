@@ -58,6 +58,20 @@ async function groupBy(page: Page, value: GroupBy): Promise<void> {
   await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute('data-value', value)
 }
 
+async function columnSort(page: Page, column: string, rules: string[] = []): Promise<void> {
+  const testId = `cloud-board-sort-by-${column}`
+  const trigger = page.getByTestId(testId)
+  await trigger.click()
+  await page.getByTestId(`${testId}-manual`).click()
+  for (const [index, rule] of rules.entries()) {
+    await page.getByTestId(`${testId}-add`).click()
+    await page.getByTestId(`${testId}-rule-${index}-mode`).click()
+    await page.getByTestId(`${testId}-rule-${index}-mode-${rule}`).click()
+  }
+  await trigger.click()
+  await expect(trigger).toHaveAttribute('data-sort-rules', rules.join(',') || 'manual')
+}
+
 async function expectIssues(page: Page, all: Issue[], visible: Issue[]): Promise<void> {
   for (const issue of all) {
     await expect(page.getByTestId(`collaboration-issue-${issue.id}`)).toHaveCount(
@@ -369,7 +383,7 @@ async function expectViewerCannotDrag(
   }
 }
 
-async function expectNoopDrop(
+async function expectSortedDropUnchanged(
   page: Page,
   moving: Issue,
   source: Locator,
@@ -394,7 +408,7 @@ async function expectNoopDrop(
       'sort_order',
       'tags',
     ] as const) {
-      expect(after[key], `A same-column drop must preserve ${key}`).toEqual(before[key])
+      expect(after[key], `A sorted same-column drop must preserve ${key}`).toEqual(before[key])
     }
     await page.reload()
     await expect(source).toHaveCount(1)
@@ -409,9 +423,31 @@ async function expectNoopDrop(
     ] as const) {
       expect(reloaded[key], `Reload must preserve ${key}`).toEqual(before[key])
     }
-    expect(writes, 'Same-column priority and assignee drops must not write').toEqual([])
+    expect(writes, 'A compound-sorted same-column drop must not write').toEqual([])
   } finally {
     page.off('request', recordWrite)
+  }
+}
+
+async function expectManualDrop(
+  page: Page,
+  moving: Issue,
+  source: Locator,
+  target: Locator
+): Promise<void> {
+  const path = `/api/v1/loop-items/${moving.id}`
+  const before = await webApi<Issue>(page, path)
+  const saved = page.waitForResponse(
+    response => response.request().method() === 'PATCH' && new URL(response.url()).pathname === path
+  )
+  await dragCard(page, source, target)
+  const response = await saved
+  expect(response.ok(), `Manual reorder failed: ${await response.text()}`).toBe(true)
+  expect(response.request().postDataJSON()).toHaveProperty('position')
+  const after = await webApi<Issue>(page, path)
+  expect(after.version).toBeGreaterThan(before.version)
+  for (const key of ['priority', 'status', 'assignee_user_id', 'tags'] as const) {
+    expect(after[key], `A manual same-column drop must preserve ${key}`).toEqual(before[key])
   }
 }
 
@@ -439,6 +475,7 @@ async function expectDeveloperCanMove(
   )
   await page.reload()
   await groupBy(page, 'status')
+  await columnSort(page, 'pending')
   await page.getByTestId('cloud-board-search').fill(title)
   const card = (column: string, issueId = second.id) =>
     page.getByTestId(`cloud-todo-column-${column}`).getByTestId(`cloud-todo-card-${issueId}`)
@@ -449,8 +486,8 @@ async function expectDeveloperCanMove(
   await expect(orderedCards.first()).toHaveAttribute('data-testid', `cloud-todo-card-${first.id}`)
   const reordered = page.waitForResponse(
     response =>
-      response.request().method() === 'POST' &&
-      new URL(response.url()).pathname === `${projectApi(projectId)}/loop-items/reorder`
+      response.request().method() === 'PATCH' &&
+      new URL(response.url()).pathname === `/api/v1/loop-items/${second.id}`
   )
   await dragCard(page, card('pending'), card('pending', first.id))
   expect((await reordered).ok()).toBe(true)
@@ -475,19 +512,34 @@ async function expectDeveloperCanMove(
       otherUserId,
     ],
   ] as const) {
-    await groupBy(page, group)
     const moving = group === 'status' ? second : first
     if (group !== 'status') {
-      await expectNoopDrop(page, moving, card(sourceKey, moving.id), card(sourceKey, anchor.id))
+      await webApi(page, `${projectApi(projectId)}/loop-items/reorder`, {
+        method: 'POST',
+        body: { parent_id: null, status: null, item_ids: [anchor.id, moving.id] },
+      })
+      await page.reload()
     }
-    const reordered =
-      group === 'status'
-        ? page.waitForResponse(
-            response =>
-              response.request().method() === 'POST' &&
-              new URL(response.url()).pathname === `${projectApi(projectId)}/loop-items/reorder`
-          )
-        : undefined
+    await groupBy(page, group)
+    if (group !== 'status') {
+      await columnSort(page, sourceKey, ['priority-desc', 'created-asc'])
+      await expectSortedDropUnchanged(
+        page,
+        moving,
+        card(sourceKey, moving.id),
+        card(sourceKey, anchor.id)
+      )
+      await columnSort(page, sourceKey)
+      await expectManualDrop(page, moving, card(sourceKey, moving.id), card(sourceKey, anchor.id))
+      expect(
+        (await webApi<Issue>(page, `/api/v1/loop-items/${moving.id}`)).sort_order
+      ).toBeLessThan((await webApi<Issue>(page, `/api/v1/loop-items/${anchor.id}`)).sort_order)
+      await page.reload()
+      const ordered = page
+        .getByTestId(`cloud-todo-column-${sourceKey}`)
+        .getByTestId(new RegExp(`^cloud-todo-card-(${moving.id}|${anchor.id})$`))
+      await expect(ordered.first()).toHaveAttribute('data-testid', `cloud-todo-card-${moving.id}`)
+    }
     const mutation = page.waitForResponse(response => {
       const pathname = new URL(response.url()).pathname
       return (
@@ -502,7 +554,6 @@ async function expectDeveloperCanMove(
       page.getByTestId(`cloud-todo-column-dropzone-${targetKey}`)
     )
     expect((await mutation).ok()).toBe(true)
-    if (reordered) expect((await reordered).ok()).toBe(true)
     await expect
       .poll(async () => (await webApi<Issue>(page, `/api/v1/loop-items/${moving.id}`))[field])
       .toBe(expected)
@@ -513,7 +564,7 @@ async function expectDeveloperCanMove(
   }
 }
 
-test('keeps unrelated tags during real multi-column drops and preserves no-op same-column drops', async ({
+test('keeps unrelated tags during real multi-column drops and persists manual same-column order', async ({
   page,
 }) => {
   test.setTimeout(120_000)
@@ -548,6 +599,10 @@ test('keeps unrelated tags during real multi-column drops and preserves no-op sa
     const target = await createIssue(page, project.id, `Multi-tag target ${suffix}`, {
       tags: ['beta', 'gamma'],
     })
+    await webApi(page, `${projectApi(project.id)}/loop-items/reorder`, {
+      method: 'POST',
+      body: { parent_id: null, status: null, item_ids: [sibling.id, moving.id, target.id] },
+    })
     await page.goto(projectPath(workspace.id, project.id))
     await groupBy(page, 'tag')
     const column = (key: string) => page.getByTestId(`cloud-todo-column-${key}`)
@@ -567,11 +622,28 @@ test('keeps unrelated tags during real multi-column drops and preserves no-op sa
       await expect(card('tag-alpha')).toHaveCount(1)
       await expect(card('tag-beta')).toHaveCount(1)
       await expect(card('tag-keep')).toHaveCount(1)
-      await dragCard(page, card('tag-alpha'), card('tag-alpha', sibling.id))
-      const unchanged = await webApi<Issue>(page, `/api/v1/loop-items/${moving.id}`)
-      expect([...unchanged.tags].sort()).toEqual(['alpha', 'beta', 'keep'])
-      expect(unchanged.version).toBe(moving.version)
-      expect(mutations, 'A same-tag drop must not mutate or discard other tags').toEqual([])
+      await columnSort(page, 'tag-alpha', ['priority-desc', 'created-asc'])
+      await expectSortedDropUnchanged(
+        page,
+        moving,
+        card('tag-alpha'),
+        card('tag-alpha', sibling.id)
+      )
+      expect(mutations, 'A compound-sorted same-tag drop must not mutate the Issue').toEqual([])
+      await columnSort(page, 'tag-alpha')
+      await expectManualDrop(page, moving, card('tag-alpha'), card('tag-alpha', sibling.id))
+      expect(mutations).toEqual([`/api/v1/loop-items/${moving.id}`])
+      const reordered = await webApi<Issue>(page, `/api/v1/loop-items/${moving.id}`)
+      expect([...reordered.tags].sort()).toEqual(['alpha', 'beta', 'keep'])
+      expect(reordered.sort_order).toBeLessThan(
+        (await webApi<Issue>(page, `/api/v1/loop-items/${sibling.id}`)).sort_order
+      )
+      await page.reload()
+      await expect(
+        column('tag-alpha')
+          .getByTestId(new RegExp(`^cloud-todo-card-(${moving.id}|${sibling.id})$`))
+          .first()
+      ).toHaveAttribute('data-testid', `cloud-todo-card-${moving.id}`)
 
       const dropAndVerify = async (
         sourceKey: string,

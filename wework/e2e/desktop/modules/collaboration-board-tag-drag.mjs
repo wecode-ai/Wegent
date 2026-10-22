@@ -3,9 +3,14 @@ import assert from 'node:assert/strict'
 import {
   openProjectBoard,
   selectProjectBoardGrouping,
+  selectProjectBoardSort,
 } from './collaboration-board-personal-view.mjs'
 import { reloadMainWindow } from './workspace-flows.mjs'
-import { verifyBoardFieldDrag } from './collaboration-board-field-drag.mjs'
+import {
+  assertLaneOrder,
+  verifyBoardFieldDrag,
+  waitForIssue,
+} from './collaboration-board-field-drag.mjs'
 
 const TAGS = ['drag-A', 'drag-B', 'drag-C']
 
@@ -21,17 +26,6 @@ async function assertIssueColumns(control, scoped, issueId, tags) {
   await control.command('waitFor', scoped(card('tag-untagged', issueId)), {
     visible: tags.length === 0,
   })
-}
-
-async function persistedIssue(request, issueId, expectedTags, timeoutMs) {
-  const deadline = Date.now() + timeoutMs
-  let issue
-  while (Date.now() < deadline) {
-    issue = await request(`/api/v1/loop-items/${issueId}`)
-    if (JSON.stringify(issue.tags) === JSON.stringify(expectedTags)) return issue
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-  assert.deepEqual(issue.tags, expectedTags, 'The actual tag mutation did not persist')
 }
 
 async function verifyTagMoves(control, { scoped, request, project, uiTimeoutMs }) {
@@ -52,11 +46,27 @@ async function verifyTagMoves(control, { scoped, request, project, uiTimeoutMs }
     )
   }
   const [moving, , sameColumnAnchor, targetAnchor] = fixtures
+  await request(`/api/v1/cloud-projects/${project.id}/loop-items/reorder`, {
+    method: 'POST',
+    body: JSON.stringify({
+      parent_id: null,
+      status: null,
+      item_ids: [
+        sameColumnAnchor.id,
+        moving.id,
+        ...fixtures
+          .filter(issue => ![moving, sameColumnAnchor].includes(issue))
+          .map(issue => issue.id),
+      ],
+    }),
+  })
   await reloadMainWindow(control, 'The multi-tag board fixture did not load')
   await openProjectBoard(control, scoped, project)
   await selectProjectBoardGrouping(control, scoped, 'tag')
   await assertIssueColumns(control, scoped, moving.id, TAGS.slice(0, 2))
 
+  const sameColumn = `tag-${TAGS[1]}`
+  await selectProjectBoardSort(control, scoped, sameColumn, ['priority-desc', 'created-asc'])
   const beforeSameColumn = await request(`/api/v1/loop-items/${moving.id}`)
   await control.command('drag', scoped(card(`tag-${TAGS[1]}`, moving.id)), {
     target: scoped(card(`tag-${TAGS[1]}`, sameColumnAnchor.id)),
@@ -67,14 +77,37 @@ async function verifyTagMoves(control, { scoped, request, project, uiTimeoutMs }
   assert.equal(
     afterSameColumn.version,
     beforeSameColumn.version,
-    'Same-column tag drag mutated the Issue'
+    'A compound-sorted same-column tag drag mutated the Issue'
   )
   assert.equal(afterSameColumn.sort_order, beforeSameColumn.sort_order)
+  await selectProjectBoardSort(control, scoped, sameColumn)
+  await assertLaneOrder(control, scoped, sameColumn, [sameColumnAnchor.id, moving.id])
+  await control.command('drag', scoped(card(sameColumn, moving.id)), {
+    target: scoped(card(sameColumn, sameColumnAnchor.id)),
+  })
+  const reordered = await waitForIssue(
+    request,
+    moving.id,
+    issue => issue.version > beforeSameColumn.version,
+    uiTimeoutMs
+  )
+  for (const field of ['tags', 'status', 'priority', 'assignee_user_id']) {
+    assert.deepEqual(
+      reordered[field],
+      beforeSameColumn[field],
+      `A manual tag reorder changed ${field}`
+    )
+  }
+  assert.ok(
+    reordered.sort_order < (await request(`/api/v1/loop-items/${sameColumnAnchor.id}`)).sort_order,
+    'The manual tag reorder did not move the Issue before its anchor'
+  )
   await reloadMainWindow(control, 'The same-column tag drag did not reload')
   await openProjectBoard(control, scoped, project)
+  await assertLaneOrder(control, scoped, sameColumn, [moving.id, sameColumnAnchor.id])
   await assertIssueColumns(control, scoped, moving.id, TAGS.slice(0, 2))
   console.log(
-    '[desktop-e2e] PASS board-drag: multi-tag same-column drag leaves persisted fields unchanged'
+    '[desktop-e2e] PASS board-drag: multi-tag compound sort blocks manual drag; manual order persists without changing tags'
   )
 
   const moves = [
@@ -101,7 +134,12 @@ async function verifyTagMoves(control, { scoped, request, project, uiTimeoutMs }
         ? scoped(card(targetKey, move.anchor.id))
         : scoped(`[data-testid="cloud-todo-column-dropzone-${targetKey}"]`),
     })
-    const after = await persistedIssue(request, movedIssue.id, move.expected, uiTimeoutMs)
+    const after = await waitForIssue(
+      request,
+      movedIssue.id,
+      issue => JSON.stringify(issue.tags) === JSON.stringify(move.expected),
+      uiTimeoutMs
+    )
     assert.ok(after.version > before.version, 'The cross-column drag did not execute a mutation')
     assert.equal(after.status, before.status)
     assert.equal(after.priority, before.priority)

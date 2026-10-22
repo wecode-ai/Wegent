@@ -10,6 +10,7 @@ import {
   createStandardCloudBoardColumns,
   executeStandardCloudBoardMutation,
   filterStandardCloudBoardItems,
+  mergePersistedBoardMove,
   resolveStandardCloudBoardDrop,
   resolveStandardCloudBoardMutation,
   type StandardCloudBoardHostExtensions,
@@ -24,6 +25,8 @@ interface Item extends StandardCloudBoardItem {
 const items: Item[] = [
   {
     id: 'parent',
+    created_at: '2026-09-10T00:00:00Z',
+    updated_at: '2026-09-10T00:00:00Z',
     parent_id: null,
     priority: 'high',
     sort_order: 0,
@@ -34,6 +37,8 @@ const items: Item[] = [
   },
   {
     id: 'child-a',
+    created_at: '2026-09-10T00:00:00Z',
+    updated_at: '2026-09-10T00:00:00Z',
     parent_id: 'parent',
     priority: 'high',
     sort_order: 2,
@@ -46,6 +51,8 @@ const items: Item[] = [
   },
   {
     id: 'child-b',
+    created_at: '2026-09-10T00:00:00Z',
+    updated_at: '2026-09-10T00:00:00Z',
     parent_id: 'parent',
     priority: 'low',
     sort_order: 1,
@@ -72,113 +79,122 @@ function column(groupValue: string): ProjectBoardColumn {
   }
 }
 
+function sourceColumn(item: Item, groupBy: 'status' | 'priority' | 'assignee' | 'tag') {
+  const groupValue =
+    groupBy === 'status'
+      ? item.status
+      : groupBy === 'priority'
+        ? item.priority
+        : groupBy === 'tag'
+          ? (item.tags[0] ?? '')
+          : item.assignee_user_id == null
+            ? ''
+            : String(item.assignee_user_id)
+  return column(groupValue)
+}
+
 describe('standard cloud board controller', () => {
-  it.each([
-    ['red', 'red', ['red', 'blue'], null],
-    ['red', 'green', ['red', 'blue'], ['blue', 'green']],
-    ['red', 'blue', ['red', 'blue'], ['blue']],
-    ['red', '', ['red', 'blue'], []],
-    ['', 'red', [], ['red']],
-  ])('preserves unrelated tags when moving %s to %s', async (source, target, tags, expected) => {
-    const item = { ...items[0], tags: tags as string[] }
-    const mutation = resolveStandardCloudBoardMutation({
-      beforeItemId: 'other',
-      column: column(target as string),
-      groupBy: 'tag',
+  it('keeps external provider field moves without advertising manual persistence', () => {
+    const item = items[0]
+    expect(
+      resolveStandardCloudBoardMutation({
+        item,
+        items: [item],
+        groupBy: 'status',
+        column: column('pending'),
+        manualSort: true,
+        supportsOrder: false,
+        beforeItemId: null,
+        sourceColumn: sourceColumn(item, 'status'),
+      })
+    ).toBeNull()
+    const move = resolveStandardCloudBoardMutation({
       item,
       items: [item],
-      sourceColumn: column(source as string),
-    })
-    if (expected === null) {
-      expect(mutation).toBeNull()
-      expect(item.tags).toEqual(tags)
-      return
-    }
-    const update = vi.fn(async (_item, input) => ({ ...item, ...input }))
-    expect(mutation?.optimisticItems[0].tags).toEqual(expected)
-    await executeStandardCloudBoardMutation({ commands: { update }, item, mutation: mutation! })
-    expect(update).toHaveBeenCalledWith(item, { tags: expected })
-  })
-
-  it('uses the actual target card column when a card appears in multiple tag columns', () => {
-    const taggedItems = items.map(item => ({ ...item, tags: ['blue', 'red'] }))
-    const drop = resolveStandardCloudBoardDrop({
-      activeItemId: 'child-a',
-      beforeItemId: 'child-b',
-      columnDropKey: 'red',
-      sourceColumnKey: 'blue',
-      columns: [column('blue'), column('red')],
-      extensions,
-      groupBy: 'tag',
-      items: taggedItems,
-    })
-    expect(drop).toMatchObject({ column: column('red'), sourceColumn: column('blue') })
-    expect(
-      resolveStandardCloudBoardMutation({
-        ...drop!,
-        groupBy: 'tag',
-        item: taggedItems[1],
-        items: taggedItems,
-      })
-    ).toMatchObject({ tags: ['red'] })
-  })
-
-  it('allows moving onto another rendered copy of the same multi-tag Issue', () => {
-    const item = { ...items[1], tags: ['red', 'blue'] }
-    const drop = resolveStandardCloudBoardDrop({
-      activeItemId: item.id,
-      beforeItemId: item.id,
-      sourceColumnKey: 'red',
-      columnDropKey: 'blue',
-      columns: [column('red'), column('blue')],
-      extensions,
-      groupBy: 'tag',
-      items: [item],
-    })
-    expect(drop).toMatchObject({ beforeItemId: null, column: column('blue') })
-    expect(
-      resolveStandardCloudBoardMutation({ ...drop!, groupBy: 'tag', item, items: [item] })
-    ).toMatchObject({ tags: ['blue'] })
-  })
-
-  it.each(['priority', 'assignee'] as const)('does not write on a same-column %s drop', groupBy => {
-    const item = items[1]
-    const sourceColumn = column(groupBy === 'priority' ? item.priority : '1')
-    expect(
-      resolveStandardCloudBoardMutation({
-        beforeItemId: 'other',
-        column: sourceColumn,
-        groupBy,
-        item,
-        items,
-        sourceColumn,
-      })
-    ).toBeNull()
-  })
-
-  it('rejects cancelled, stale source and mismatched target column drops', () => {
-    const input = {
-      activeItemId: 'child-a',
+      groupBy: 'priority',
+      column: column('urgent'),
+      supportsOrder: false,
       beforeItemId: null,
-      columnDropKey: null,
-      sourceColumnKey: 'pending',
-      columns: [column('pending'), column('completed')],
-      extensions,
-      groupBy: 'status' as const,
-      items,
-    }
-    expect(resolveStandardCloudBoardDrop(input)).toBeNull()
-    expect(
-      resolveStandardCloudBoardDrop({
-        ...input,
-        columnDropKey: 'completed',
-        sourceColumnKey: 'missing',
-      })
-    ).toBeNull()
-    expect(
-      resolveStandardCloudBoardDrop({ ...input, columnDropKey: 'pending', beforeItemId: 'child-b' })
-    ).toBeNull()
+      sourceColumn: sourceColumn(item, 'priority'),
+    })
+    expect(move).toMatchObject({ kind: 'priority', priority: 'urgent' })
+    expect(move).not.toHaveProperty('position')
   })
+
+  it('orders equal ranks consistently before and after a refreshed snapshot', () => {
+    const earlier = {
+      ...items[0],
+      id: 'A',
+      updated_at: '2026-09-10T00:00:00Z',
+    }
+    const later = { ...earlier, id: 'B', updated_at: '2026-09-11T00:00:00Z' }
+    const tied = { ...later, id: 'C' }
+    const state = {
+      groupBy: 'status' as const,
+      groupFilter: '',
+      query: '',
+      getColumnSort: () => [],
+    }
+    const order = (boardItems: Item[]) =>
+      filterStandardCloudBoardItems({
+        column: column('pending'),
+        currentParentId: null,
+        extensions,
+        items: boardItems,
+        state,
+      }).map(item => item.id)
+    expect(order([earlier, tied, later])).toEqual(['B', 'C', 'A'])
+    expect(order([later, earlier, tied])).toEqual(['B', 'C', 'A'])
+  })
+
+  it.each(['status', 'assignee', 'tag'] as const)(
+    'sorts %s columns by priority and keeps manual order for ties',
+    groupBy => {
+      const priorities = ['none', 'low', 'high', 'urgent', 'medium', 'high']
+      const unordered = priorities.map((priority, sort_order) => ({
+        ...items[0],
+        id: String(sort_order),
+        priority,
+        sort_order,
+        assignee_user_id: 1,
+        tags: ['frontend'],
+      }))
+      const input = {
+        column: column({ status: 'pending', assignee: '1', tag: 'frontend' }[groupBy]),
+        currentParentId: null,
+        extensions,
+        items: unordered,
+        state: {
+          groupBy,
+          groupFilter: '',
+          query: '',
+          getColumnSort: () => ['priority-desc'] as const,
+        },
+      }
+      expect(filterStandardCloudBoardItems(input).map(item => item.id)).toEqual([
+        '3',
+        '2',
+        '5',
+        '4',
+        '1',
+        '0',
+      ])
+      expect(
+        filterStandardCloudBoardItems({
+          ...input,
+          state: { ...input.state, getColumnSort: () => [] },
+        }).map(item => item.id)
+      ).toEqual(['0', '1', '2', '3', '4', '5'])
+      expect(unordered.map(item => item.id)).toEqual(['0', '1', '2', '3', '4', '5'])
+      expect(
+        filterStandardCloudBoardItems({
+          ...input,
+          state: { ...input.state, query: 'missing' },
+        })
+      ).toEqual([])
+      expect(filterStandardCloudBoardItems({ ...input, currentParentId: 'other' })).toEqual([])
+    }
+  )
 
   it('keeps the local user with ID zero in the assigned board column', () => {
     const localItem = {
@@ -189,19 +205,29 @@ describe('standard cloud board controller', () => {
     expect(
       filterStandardCloudBoardItems({
         column: column('0'),
-        extensions,
         currentParentId: null,
+        extensions,
         items: [localItem],
-        state: { groupBy: 'assignee', groupFilter: '', query: '' },
+        state: {
+          groupBy: 'assignee',
+          groupFilter: '',
+          query: '',
+          getColumnSort: () => ['priority-desc'],
+        },
       }).map(item => item.id)
     ).toEqual([localItem.id])
     expect(
       filterStandardCloudBoardItems({
         column: column(''),
-        extensions,
         currentParentId: null,
+        extensions,
         items: [localItem],
-        state: { groupBy: 'assignee', groupFilter: '', query: '' },
+        state: {
+          groupBy: 'assignee',
+          groupFilter: '',
+          query: '',
+          getColumnSort: () => ['priority-desc'],
+        },
       })
     ).toEqual([])
   })
@@ -223,6 +249,7 @@ describe('standard cloud board controller', () => {
           groupBy: 'status',
           groupFilter: '',
           query: 'searchable',
+          getColumnSort: () => ['priority-desc'],
         },
       }).map(item => item.id)
     ).toEqual(['child-a'])
@@ -243,8 +270,8 @@ describe('standard cloud board controller', () => {
     ).toEqual({
       beforeItemId: 'child-b',
       column: column('2'),
-      itemId: 'child-a',
       sourceColumn: column('1'),
+      itemId: 'child-a',
     })
     expect(
       resolveStandardCloudBoardDrop({
@@ -252,16 +279,16 @@ describe('standard cloud board controller', () => {
         beforeItemId: null,
         columnDropKey: 'pending',
         sourceColumnKey: 'pending',
-        columns: [column('pending'), column('completed')],
+        columns: [column('pending')],
         extensions,
         groupBy: 'status',
-        items: [{ ...items[1], status: 'pending' }],
+        items,
       })
     ).toEqual({
       beforeItemId: null,
       column: column('pending'),
-      itemId: 'child-a',
       sourceColumn: column('pending'),
+      itemId: 'child-a',
     })
   })
 
@@ -306,11 +333,11 @@ describe('standard cloud board controller', () => {
         groupBy: 'priority',
       }).map(({ groupValue, label }) => [groupValue, label])
     ).toEqual([
-      ['none', 'Normal'],
-      ['low', 'Low'],
-      ['medium', 'Medium'],
-      ['high', 'High'],
       ['urgent', 'Urgent'],
+      ['high', 'High'],
+      ['medium', 'Medium'],
+      ['low', 'Low'],
+      ['none', 'Normal'],
     ])
     expect(
       createStandardCloudBoardColumns({
@@ -348,12 +375,12 @@ describe('standard cloud board controller', () => {
         column: column('completed'),
         groupBy: 'status',
         item,
-        sourceColumn: column(item.status),
         items: boardItems,
+        sourceColumn: sourceColumn(item, 'status'),
       })
     ).toMatchObject({
       kind: 'status',
-      laneIds: ['parent'],
+      position: { beforeItemId: null },
       status: 'completed',
     })
     const priorityMutation = resolveStandardCloudBoardMutation({
@@ -361,8 +388,8 @@ describe('standard cloud board controller', () => {
       column: column('urgent'),
       groupBy: 'priority',
       item,
-      sourceColumn: column(item.priority),
       items: boardItems,
+      sourceColumn: sourceColumn(item, 'priority'),
     })
     expect(priorityMutation).toMatchObject({
       kind: 'priority',
@@ -376,8 +403,8 @@ describe('standard cloud board controller', () => {
       column: column('agent:bot-1'),
       groupBy: 'assignee',
       item,
-      sourceColumn: column('1'),
       items: boardItems,
+      sourceColumn: sourceColumn(item, 'assignee'),
     })
     expect(assigneeMutation).toMatchObject({
       kind: 'assignee',
@@ -395,8 +422,8 @@ describe('standard cloud board controller', () => {
       column: column('backend'),
       groupBy: 'tag',
       item,
-      sourceColumn: column(''),
       items: boardItems,
+      sourceColumn: sourceColumn(item, 'tag'),
     })
     expect(tagMutation).toMatchObject({
       kind: 'tag',
@@ -407,89 +434,87 @@ describe('standard cloud board controller', () => {
     })
   })
 
-  it('owns standard mutation API command selection and ordering', async () => {
+  it('saves fields and position once before refreshing the canonical order', async () => {
     const item = { ...items[0], version: 3 }
-    const updated = {
-      ...item,
-      status: 'completed',
-      version: 4,
-      workflow: { nodes: [{ id: 'implement', status: 'ready' }] },
-    }
-    const calls: string[] = []
-    const update = vi.fn(async (_item, input) => {
-      calls.push(`update:${JSON.stringify(input)}`)
-      return updated
-    })
-    const assign = vi.fn(async () => {
-      calls.push('assign')
-      return updated
-    })
-    const reorder = vi.fn(async (_item, input) => {
-      calls.push(`reorder:${input.status}:${input.laneIds.join(',')}`)
-    })
-    const statusMutation = resolveStandardCloudBoardMutation({
+    const updated = { ...item, status: 'completed', version: 4 }
+    const update = vi.fn(async () => updated)
+    const assign = vi.fn(async () => updated)
+    const refreshOrder = vi.fn(async () => {})
+    const commands = { assign, update, refreshOrder }
+    const mutation = resolveStandardCloudBoardMutation({
       beforeItemId: null,
       column: column('completed'),
       groupBy: 'status',
       item,
-      sourceColumn: column(item.status),
       items: [item],
-    })
-
-    expect(statusMutation).not.toBeNull()
+      sourceColumn: sourceColumn(item, 'status'),
+    })!
     await executeStandardCloudBoardMutation({
       additionalUpdate: { automation_rule_id: 'rule-1' },
-      commands: { assign, reorder, update },
+      commands,
       item,
-      mutation: statusMutation!,
+      mutation,
     })
-
-    expect(calls).toEqual([
-      'update:{"automation_rule_id":"rule-1","status":"completed"}',
-      'reorder:completed:parent',
-    ])
-    expect(reorder).toHaveBeenCalledWith(updated, {
-      laneIds: ['parent'],
-      optimisticItems: [
-        expect.objectContaining({
-          id: item.id,
-          sort_order: 0,
-          status: 'completed',
-          version: 4,
-          workflow: updated.workflow,
-        }),
-      ],
+    expect(update).toHaveBeenCalledWith(item, {
+      automation_rule_id: 'rule-1',
       status: 'completed',
+      position: { beforeItemId: null },
     })
+    expect(refreshOrder).toHaveBeenCalledWith(updated)
+    expect(update.mock.invocationCallOrder[0]).toBeLessThan(
+      refreshOrder.mock.invocationCallOrder[0]
+    )
     expect(assign).not.toHaveBeenCalled()
 
-    const assigneeMutation = resolveStandardCloudBoardMutation({
+    const assignment = resolveStandardCloudBoardMutation({
       beforeItemId: null,
       column: column('agent:bot-1'),
       groupBy: 'assignee',
       item,
-      sourceColumn: column(''),
       items: [item],
-    })
+      sourceColumn: sourceColumn(item, 'assignee'),
+    })!
     await executeStandardCloudBoardMutation({
-      commands: { assign, reorder, update },
+      commands,
       item,
-      mutation: assigneeMutation!,
+      mutation: assignment,
       notifyAssignee: false,
     })
     expect(assign).toHaveBeenCalledWith(item, {
       assigneeId: 'bot-1',
       assigneeType: 'agent',
       notifyAssignee: false,
+      position: { beforeItemId: null },
     })
-    expect(reorder).toHaveBeenCalledTimes(1)
+    expect(refreshOrder).toHaveBeenCalledTimes(2)
   })
 
-  it('uses the shared update command for priority, tag and unassignment', async () => {
-    const item = { ...items[0], assignee_user_id: 1 }
-    const update = vi.fn(async (_item, input) => ({ ...item, ...input }))
-    const commands = { update }
+  it('does not refresh or report success after a failed atomic move', async () => {
+    const item = items[0]
+    const mutation = resolveStandardCloudBoardMutation({
+      beforeItemId: null,
+      column: column('urgent'),
+      groupBy: 'priority',
+      item,
+      items: [item],
+      sourceColumn: sourceColumn(item, 'priority'),
+    })!
+    const update = vi.fn().mockRejectedValue(new Error('write failed'))
+    const refreshOrder = vi.fn()
+    await expect(
+      executeStandardCloudBoardMutation({
+        commands: { update, refreshOrder },
+        item,
+        mutation,
+      })
+    ).rejects.toThrow('write failed')
+    expect(refreshOrder).not.toHaveBeenCalled()
+  })
 
+  it('uses one positioned update for priority, tag and unassignment', async () => {
+    const item = { ...items[0], assignee_user_id: 99 }
+    const update = vi.fn(async (_item, input) => ({ ...item, ...input }))
+    const commands = { update, refreshOrder: vi.fn(async () => {}) }
     for (const [groupBy, groupValue] of [
       ['priority', 'urgent'],
       ['tag', 'backend'],
@@ -500,24 +525,364 @@ describe('standard cloud board controller', () => {
         column: column(groupValue),
         groupBy,
         item,
-        sourceColumn: column(groupBy === 'priority' ? item.priority : groupBy === 'tag' ? '' : '1'),
         items: [item],
-      })
-      await executeStandardCloudBoardMutation({
-        commands,
-        item,
-        mutation: mutation!,
-      })
+        sourceColumn: sourceColumn(item, groupBy),
+      })!
+      await executeStandardCloudBoardMutation({ commands, item, mutation })
     }
-
     expect(update.mock.calls.map(([, input]) => input)).toEqual([
-      { priority: 'urgent' },
-      { tags: ['backend'] },
+      { priority: 'urgent', position: { beforeItemId: null } },
+      { tags: ['backend'], position: { beforeItemId: null } },
       {
         assignee_user_id: null,
         assignee_agent_id: null,
         assignee_team_id: null,
+        position: { beforeItemId: null },
       },
     ])
+  })
+})
+
+describe('committed board positions', () => {
+  it('keeps hidden sibling rank gaps when moving backward before a visible anchor', () => {
+    const first = {
+      ...items[0],
+      id: 'a',
+      parent_id: null,
+      sort_order: 0,
+      version: 1,
+    }
+    const second = { ...first, id: 'b', sort_order: 2 }
+    const third = { ...first, id: 'c', sort_order: 4 }
+    const saved = { ...first, version: 2, sort_order: 3 }
+
+    const result = mergePersistedBoardMove([first, second, third], saved, {
+      beforeItemId: third.id,
+    })
+
+    expect(result.slice().sort((a, b) => a.sort_order - b.sort_order)).toEqual([
+      { ...second, sort_order: 1 },
+      saved,
+      third,
+    ])
+  })
+
+  it.each([
+    {
+      moved: 'c',
+      before: 'a',
+      rank: 0,
+      expected: [
+        ['c', 0],
+        ['a', 1],
+        ['b', 3],
+      ],
+    },
+    {
+      moved: 'a',
+      before: null,
+      rank: 4,
+      expected: [
+        ['b', 1],
+        ['c', 3],
+        ['a', 4],
+      ],
+    },
+  ])(
+    'preserves sparse global ranks for $moved before $before',
+    ({ moved, before, rank, expected }) => {
+      const siblings = ['a', 'b', 'c'].map((id, index) => ({
+        ...items[0],
+        id,
+        parent_id: null,
+        sort_order: index * 2,
+        version: 1,
+      }))
+      const saved = {
+        ...siblings.find(item => item.id === moved)!,
+        version: 2,
+        sort_order: rank,
+      }
+      const result = mergePersistedBoardMove(siblings, saved, {
+        beforeItemId: before,
+      })
+      expect(
+        result
+          .slice()
+          .sort((a, b) => a.sort_order - b.sort_order)
+          .map(item => [item.id, item.sort_order])
+      ).toEqual(expected)
+    }
+  )
+
+  it('uses the visible anchor when cached sibling ranks changed concurrently', () => {
+    const siblings = ['a', 'b', 'c'].map((id, index) => ({
+      ...items[0],
+      id,
+      parent_id: null,
+      sort_order: index,
+      version: 1,
+    }))
+    const saved = { ...siblings[0], version: 2, sort_order: 4 }
+    const result = mergePersistedBoardMove(siblings, saved, {
+      beforeItemId: 'c',
+    })
+    expect(
+      result
+        .slice()
+        .sort((a, b) => a.sort_order - b.sort_order)
+        .map(item => item.id)
+    ).toEqual(['b', 'a', 'c'])
+  })
+
+  it('rebases sibling ranks without overwriting concurrent fields or other parents', () => {
+    const first = {
+      ...items[0],
+      id: 'a',
+      parent_id: null,
+      sort_order: 0,
+      version: 1,
+    }
+    const second = {
+      ...first,
+      id: 'b',
+      sort_order: 1,
+      title: 'Concurrent title',
+      tags: ['new'],
+      version: 4,
+    }
+    const third = { ...first, id: 'c', sort_order: 2 }
+    const child = { ...first, id: 'child', parent_id: 'a' }
+    const saved = { ...first, version: 2, sort_order: 1 }
+    const result = mergePersistedBoardMove([first, second, third, child], saved, {
+      beforeItemId: third.id,
+    })
+    expect(result).toEqual([saved, { ...second, sort_order: 0 }, third, child])
+    expect(
+      mergePersistedBoardMove(result, { ...first, sort_order: 0 }, { beforeItemId: second.id })
+    ).toBe(result)
+    expect(mergePersistedBoardMove(result, saved, { beforeItemId: third.id })).toBe(result)
+  })
+})
+
+describe('canonical manual order for every grouping', () => {
+  it.each(['status', 'priority', 'assignee', 'tag'] as const)(
+    'moves to a card and lane tail in %s without changing unrelated fields',
+    async groupBy => {
+      const first = {
+        ...items[0],
+        id: 'first',
+        priority: 'high',
+        assignee_user_id: 42,
+        tags: ['backend', 'shared'],
+        sort_order: 0,
+      }
+      const hidden = {
+        ...first,
+        id: 'hidden',
+        priority: 'low',
+        assignee_user_id: null,
+        tags: [],
+        status: 'inbox',
+        sort_order: 1,
+      }
+      const last = {
+        ...first,
+        id: 'last',
+        status: groupBy === 'status' ? 'pending' : 'completed',
+        sort_order: 2,
+      }
+      const child = {
+        ...first,
+        id: 'child',
+        parent_id: first.id,
+        sort_order: 0,
+      }
+      const otherProject = {
+        ...first,
+        id: 'other-project',
+        cloud_project_id: 'foreign',
+        sort_order: 0,
+      }
+      const boardItems = [last, child, first, hidden, otherProject]
+      const target = column(
+        { status: 'pending', priority: 'high', assignee: '42', tag: 'backend' }[groupBy]
+      )
+      const mutation = resolveStandardCloudBoardMutation({
+        beforeItemId: first.id,
+        column: target,
+        groupBy,
+        item: last,
+        items: boardItems,
+        manualSort: true,
+        sourceColumn: sourceColumn(last, groupBy),
+      })!
+      expect(mutation).toMatchObject({
+        kind: 'reorder',
+        position: { beforeItemId: first.id },
+      })
+      const update = vi.fn(async () => ({
+        ...last,
+        sort_order: 0,
+        version: 9,
+      }))
+      const refreshOrder = vi.fn(async () => {})
+      const saved = await executeStandardCloudBoardMutation({
+        item: last,
+        mutation,
+        commands: { update, refreshOrder },
+      })
+      expect(update).toHaveBeenCalledWith(last, {
+        position: { beforeItemId: first.id },
+      })
+      expect(saved).toMatchObject({
+        version: 9,
+        sort_order: 0,
+        tags: ['backend', 'shared'],
+      })
+      expect(mutation.optimisticItems.find(item => item.id === child.id)).toEqual(child)
+      expect(mutation.optimisticItems.find(item => item.id === otherProject.id)).toEqual(
+        otherProject
+      )
+      const orderedIds = (result: typeof mutation) =>
+        result.optimisticItems
+          .filter(item => !item.parent_id && !item.cloud_project_id)
+          .sort((a, b) => a.sort_order - b.sort_order)
+          .map(item => item.id)
+      expect(orderedIds(mutation)).toEqual(['last', 'first', 'hidden'])
+      const append = resolveStandardCloudBoardMutation({
+        beforeItemId: null,
+        column: target,
+        groupBy,
+        item: last,
+        items: mutation.optimisticItems,
+        manualSort: true,
+        sourceColumn: sourceColumn(last, groupBy),
+      })!
+      expect(append.position).toEqual({ beforeItemId: 'hidden' })
+      expect(orderedIds(append)).toEqual(['first', 'last', 'hidden'])
+      expect(
+        resolveStandardCloudBoardMutation({
+          beforeItemId: 'child',
+          column: target,
+          groupBy,
+          item: last,
+          items: boardItems,
+          manualSort: true,
+          sourceColumn: sourceColumn(last, groupBy),
+        })
+      ).toBeNull()
+      expect(
+        resolveStandardCloudBoardMutation({
+          beforeItemId: first.id,
+          column: target,
+          groupBy,
+          item: last,
+          items: boardItems,
+          sourceColumn: sourceColumn(last, groupBy),
+        })
+      ).toBeNull()
+      expect(
+        resolveStandardCloudBoardMutation({
+          beforeItemId: null,
+          column: target,
+          groupBy,
+          item: last,
+          items: append.optimisticItems,
+          manualSort: true,
+          sourceColumn: sourceColumn(last, groupBy),
+        })
+      ).toBeNull()
+    }
+  )
+
+  it.each(['status', 'priority', 'assignee', 'tag'] as const)(
+    'positions cross-column %s moves against the full sibling order',
+    groupBy => {
+      const first = {
+        ...items[0],
+        id: 'first',
+        assignee_user_id: 42,
+        tags: ['backend'],
+        sort_order: 0,
+      }
+      const moved = {
+        ...first,
+        id: 'moved',
+        priority: 'low',
+        status: 'completed',
+        assignee_user_id: 7,
+        tags: ['frontend'],
+        sort_order: 2,
+      }
+      const hidden = {
+        ...first,
+        id: 'hidden',
+        status: 'inbox',
+        priority: 'none',
+        tags: [],
+        assignee_user_id: null,
+        sort_order: 1,
+      }
+      const target = column(
+        { status: 'pending', priority: 'high', assignee: '42', tag: 'backend' }[groupBy]
+      )
+      const manual = resolveStandardCloudBoardMutation({
+        beforeItemId: first.id,
+        column: target,
+        groupBy,
+        item: moved,
+        items: [first, hidden, moved],
+        manualSort: true,
+        sourceColumn: sourceColumn(moved, groupBy),
+      })!
+      expect(manual.position).toEqual({ beforeItemId: first.id })
+      const automatic = resolveStandardCloudBoardMutation({
+        beforeItemId: first.id,
+        column: target,
+        groupBy,
+        item: moved,
+        items: [first, hidden, moved],
+        sourceColumn: sourceColumn(moved, groupBy),
+      })!
+      expect(automatic.position).toEqual({ beforeItemId: hidden.id })
+    }
+  )
+
+  it('uses a single anchor for projects with more than 1000 siblings', () => {
+    const siblings = Array.from({ length: 1001 }, (_, index) => ({
+      ...items[0],
+      id: String(index),
+      sort_order: index,
+    }))
+    const mutation = resolveStandardCloudBoardMutation({
+      beforeItemId: '0',
+      column: column('pending'),
+      groupBy: 'status',
+      item: siblings[1000],
+      items: siblings,
+      manualSort: true,
+      sourceColumn: sourceColumn(siblings[1000], 'status'),
+    })!
+    expect(mutation.position).toEqual({ beforeItemId: '0' })
+    expect(mutation).not.toHaveProperty('laneIds')
+  })
+
+  it('uses the actual target lane for cards with multiple tags', () => {
+    const target = { ...items[0], id: 'target', tags: ['backend', 'shared'] }
+    const backend = { ...column('backend'), key: 'tag-backend' }
+    const shared = { ...column('shared'), key: 'tag-shared' }
+    expect(
+      resolveStandardCloudBoardDrop({
+        activeItemId: 'moved',
+        sourceColumnKey: backend.key,
+        beforeItemId: target.id,
+        columnDropKey: shared.key,
+        columns: [backend, shared],
+        extensions: {},
+        groupBy: 'tag',
+        items: [{ ...target, id: 'moved' }, target],
+      })?.column
+    ).toEqual(shared)
   })
 })

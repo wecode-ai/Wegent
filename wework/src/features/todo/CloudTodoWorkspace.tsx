@@ -77,7 +77,9 @@ import {
 import { ProjectSettingsShell } from '@wegent/collaboration/project-manage'
 import {
   createStandardCloudBoardColumns,
+  createProjectBoardSortLabels,
   executeStandardCloudBoardMutation,
+  mergePersistedBoardMove,
   ProjectBoardBody,
   ProjectBoardGroupPicker,
   useStandardCloudBoardController,
@@ -1935,11 +1937,15 @@ export function CloudTodoWorkspace({
     extensions: standardBoardExtensions,
     focusStorageKey: focusExecutionColumnsKey,
     items: boardItems,
+    supportsOrder: !isExternalGitBoard && !isAITableProject && !isMyTasksBoard,
     onCurrentParentIdChange: setBoardParentId,
     onMove: async (item, column, beforeItemId, mutation) => {
       await performStandardBoardMove(item, column, beforeItemId, mutation)
     },
     personalGroupStorageKey: personalGroupKey,
+    personalSortStorageKey: selectedProjectKey
+      ? `wework-board-column-sort:v2:${user.id}:${selectedProjectKey}`
+      : null,
   })
   const {
     activeDragItemId,
@@ -3103,9 +3109,16 @@ export function CloudTodoWorkspace({
       activeItemTaskBindings[item.id]?.length ?? 0,
       runtimeAddressesByWorkItem.get(`${item.cloud_project_id}:${item.id}`)?.length ?? 0
     )
-    const previousItems = activeBoardSourceItems
-    if (itemProject?.location !== 'cloud') {
-      setItems(mutation.optimisticItems)
+    const acceptPersistedMove = (updated: CloudLoopItem) => {
+      const locatedUpdated = { ...updated, project_store: item.project_store }
+      if (itemProject?.location === 'local') {
+        setItems(current =>
+          mutation.position
+            ? mergePersistedBoardMove(current, locatedUpdated, mutation.position)
+            : current.map(candidate => (candidate.id === updated.id ? locatedUpdated : candidate))
+        )
+      }
+      setSelectedItem(current => (current?.id === updated.id ? locatedUpdated : current))
     }
     setBoardError(null)
     try {
@@ -3121,6 +3134,7 @@ export function CloudTodoWorkspace({
                 assigneeId: string
                 assigneeType: 'user' | 'agent' | 'team'
                 notifyAssignee: boolean
+                position?: { beforeItemId: string | null }
               }
             ): Promise<CloudLoopItem> =>
               itemProject.location === 'cloud'
@@ -3130,6 +3144,7 @@ export function CloudTodoWorkspace({
                       assigneeType: assignment.assigneeType,
                       assigneeId: assignment.assigneeId,
                       notifyAssignee: assignment.notifyAssignee,
+                      position: assignment.position,
                     })
                     .then(updated => {
                       if (!updated) throw new Error(cloudWorkspaceMessages.saveFailed)
@@ -3140,6 +3155,7 @@ export function CloudTodoWorkspace({
                     assigneeType: assignment.assigneeType,
                     assigneeId: assignment.assigneeId,
                     notifyAssignee: assignment.notifyAssignee,
+                    position: assignment.position,
                   })
           : undefined
       const updated = await executeStandardCloudBoardMutation({
@@ -3149,42 +3165,32 @@ export function CloudTodoWorkspace({
         commands: {
           update: updateStandardBoardItem,
           assign: assignItem,
-          reorder: isMyTasksBoard
-            ? undefined
-            : async (reorderedItem, reorder) => {
-                if (itemProject.location === 'cloud') {
-                  const optimisticItems = cloudWorkspace.state.issues.map(candidate => {
-                    const optimistic = reorder.optimisticItems.find(
-                      boardItem => boardItem.id === candidate.id
-                    )
-                    return optimistic ?? candidate
-                  })
-                  await cloudWorkspace.commands.reorderIssue({
-                    issue: reorderedItem as unknown as CollaborationIssue,
-                    status: reorder.status,
-                    laneIds: reorder.laneIds,
-                    optimisticItems: optimisticItems as unknown as CollaborationIssue[],
-                  })
-                  return
-                }
-                await itemApi!.reorderLoopItems(item.cloud_project_id, {
-                  parent_id: item.parent_id,
-                  status: reorder.status,
-                  item_ids: reorder.laneIds,
-                })
-              },
+          refreshOrder: async saved => {
+            acceptPersistedMove(saved)
+            if (itemProject.location === 'cloud') {
+              await cloudWorkspace.commands.loadProjectSnapshot(String(item.cloud_project_id), {
+                invalidate: true,
+                throwOnError: true,
+              })
+            } else {
+              const saved = await itemApi!.listLoopItems(item.cloud_project_id)
+              setItems(current => [
+                ...current.filter(
+                  candidate =>
+                    candidate.cloud_project_id !== item.cloud_project_id ||
+                    candidate.project_store !== item.project_store
+                ),
+                ...locateItems(saved.items, itemProject.location === 'local' ? 'local' : 'backend'),
+              ])
+            }
+          },
         },
         item,
         mutation,
         notifyAssignee,
       })
       const locatedUpdated = { ...updated, project_store: item.project_store }
-      if (itemProject.location === 'local') {
-        setItems(current =>
-          current.map(candidate => (candidate.id === updated.id ? locatedUpdated : candidate))
-        )
-      }
-      setSelectedItem(current => (current?.id === updated.id ? locatedUpdated : current))
+      if (!mutation.position) acceptPersistedMove(updated)
       const shouldOpenTaskComposer =
         enteringExecution &&
         shouldPrepareWorkItemTask(locatedUpdated, item.status, taskBindingCount)
@@ -3246,7 +3252,6 @@ export function CloudTodoWorkspace({
       })
       return true
     } catch (cause) {
-      if (itemProject?.location === 'local') setItems(previousItems)
       const candidates = automationSelectionCandidates(cause)
       if (candidates && !automationRuleId) {
         setBoardError(null)
@@ -3297,6 +3302,7 @@ export function CloudTodoWorkspace({
         target.id,
         {
           version: target.version,
+          position: update.position,
           status: update.status,
           priority: update.priority,
           assigneeUserId: update.assignee_user_id,
@@ -4638,6 +4644,11 @@ export function CloudTodoWorkspace({
                         exit: t('todo.exit_focus_view_description', '退出执行阶段专注视图'),
                         title: t('todo.focus_view', '专注视图'),
                       }}
+                      sortLabels={
+                        !isExternalGitBoard && !isMyTasksBoard
+                          ? createProjectBoardSortLabels(t)
+                          : undefined
+                      }
                       getColumnDragHint={column =>
                         activeDragItemId && nativeGroupBy === 'status'
                           ? columnDragHints[column.status as CloudLoopItem['status']]

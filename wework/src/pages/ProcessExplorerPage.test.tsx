@@ -162,6 +162,23 @@ describe('ProcessExplorerPage', () => {
     expect(screen.getByTestId('process-explorer-group-helpers')).toBeTruthy()
   })
 
+  test('matches a numeric filter to the exact PID instead of launch arguments', async () => {
+    const processes = snapshot()
+    processes.processes[1].detail += ' --shared-files=100,1100'
+    processes.processes[2].pid = 1100
+    mocks.invoke.mockResolvedValue(processes)
+    render(<ProcessExplorerPage />)
+    await screen.findByTestId('process-explorer-row-200')
+
+    fireEvent.change(screen.getByTestId('process-explorer-filter'), {
+      target: { value: '100' },
+    })
+
+    expect(screen.getByTestId('process-explorer-row-100')).toBeInTheDocument()
+    expect(screen.queryByTestId('process-explorer-row-200')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('process-explorer-row-1100')).not.toBeInTheDocument()
+  })
+
   test('surfaces a snapshot failure', async () => {
     mocks.invoke.mockImplementation(() =>
       Promise.reject(new Error('Process snapshot is unavailable'))

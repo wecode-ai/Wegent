@@ -43,4 +43,14 @@ describe('project board drop identity', () => {
     })
     expect(projectBoardDrop(event(null))).toMatchObject({ beforeItemId: null, columnDropKey: null })
   })
+
+  it('requires explicit Issue metadata instead of parsing a rendered card identity', () => {
+    const drop = event({
+      id: `todo-card:${JSON.stringify(['tag', 'tag-blue', 'target'])}`,
+      data: { current: { columnKey: 'tag-blue', groupBy: 'tag' } },
+    } as DragEndEvent['over'])
+    drop.active.data.current = undefined
+    expect(projectBoardDragItemId(drop.active)).toBeNull()
+    expect(projectBoardDrop(drop)).toMatchObject({ activeItemId: null, beforeItemId: null })
+  })
 })

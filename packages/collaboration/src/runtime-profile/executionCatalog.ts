@@ -5,6 +5,7 @@ import {
   buildInstalledPluginProjectCatalog,
   type InstalledPluginCatalogItem,
 } from "../plugin-catalog";
+import { createModelApi } from "@wegent/chat-core/model-api";
 import type {
   SharedWorkspaceAutomationExecutionCatalogApi,
   WorkspaceAutomationExecutionCatalog,
@@ -146,16 +147,16 @@ function mapAutomationPlugins(response: unknown): WorkspaceAutomationPlugin[] {
 
 export function createAutomationExecutionCatalogApi(client: {
   get<T>(path: string): Promise<T>;
+  getCacheScope?(): unknown;
 }): SharedWorkspaceAutomationExecutionCatalogApi {
+  const modelApi = createModelApi(client);
   return {
     async load(projectId) {
       const [devices, models, runtimeProfiles] = await Promise.all([
         client.get(
           `/v1/cloud-projects/${encodeURIComponent(projectId)}/execution-environments`,
         ),
-        client.get(
-          "/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework",
-        ),
+        modelApi.listModels(),
         client.get("/v1/runtime-profiles"),
       ]);
       return mapAutomationExecutionCatalog(devices, models, runtimeProfiles);

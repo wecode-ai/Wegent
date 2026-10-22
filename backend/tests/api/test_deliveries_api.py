@@ -588,10 +588,13 @@ def test_board_snapshot_returns_first_screen_dependencies(
     assert snapshot["agents"] == []
 
 
+@pytest.mark.parametrize("other_lane_first", [False, True])
 def test_loop_item_reorder_orders_one_lane(
     test_client: TestClient,
     test_token: str,
     delivery_project: CloudProject,
+    test_db: Session,
+    other_lane_first: bool,
 ) -> None:
     headers = _auth(test_token)
 
@@ -607,6 +610,14 @@ def test_loop_item_reorder_orders_one_lane(
     first = create("First")
     second = create("Second")
     other_lane = create("Other lane", status="pending")
+    initial_order = (
+        [other_lane, first, second] if other_lane_first else [first, second, other_lane]
+    )
+    for rank, item in enumerate(initial_order):
+        test_db.query(LoopItem).filter(LoopItem.id == item["id"]).update(
+            {LoopItem.sort_order: rank}
+        )
+    test_db.commit()
 
     response = test_client.post(
         f"/api/v1/cloud-projects/{delivery_project.id}/loop-items/reorder",
@@ -622,24 +633,34 @@ def test_loop_item_reorder_orders_one_lane(
         second["id"],
         first["id"],
     ]
-    assert [item["sort_order"] for item in response.json()["items"]] == [0, 1]
+    assert len({item["sort_order"] for item in response.json()["items"]}) == 2
 
     listed = test_client.get(
         f"/api/v1/cloud-projects/{delivery_project.id}/loop-items", headers=headers
     ).json()["items"]
     inbox_ids = [item["id"] for item in listed if item["status"] == "inbox"]
     assert inbox_ids == [second["id"], first["id"]]
-    # The other lane keeps its own ordering state.
+    # Status lanes are projections of one canonical sibling order.
+    assert sorted(item["sort_order"] for item in listed) == [0, 1, 2]
     assert (
-        next(item for item in listed if item["id"] == other_lane["id"])["sort_order"]
-        == 0
+        next(item for item in listed if item["id"] == other_lane["id"])["status"]
+        == "pending"
     )
 
-    # Moving a TODO to another lane resets its manual position to the top.
-    moved = test_client.patch(
+    refreshed_second = next(item for item in listed if item["id"] == second["id"])
+    assert refreshed_second["version"] == second["version"] + 1
+    stale = test_client.patch(
         f"/api/v1/loop-items/{second['id']}",
         headers=headers,
         json={"version": second["version"], "status": "pending"},
+    )
+    assert stale.status_code == 409
+
+    # Continue from the refreshed version after a persisted reorder.
+    moved = test_client.patch(
+        f"/api/v1/loop-items/{second['id']}",
+        headers=headers,
+        json={"version": refreshed_second["version"], "status": "pending"},
     )
     assert moved.status_code == 200
     assert moved.json()["sort_order"] == 0
@@ -1943,3 +1964,50 @@ def test_pr_delivery_resolves_unresolved_external_event_and_binds_run(
     assert run.task_id == str(item["id"])
     assert event.status == "processed"
     send_runtime_message.assert_awaited_once()
+
+
+@pytest.mark.parametrize("status_scope", [None, "inbox"])
+def test_loop_item_reorder_respects_sibling_scope_across_statuses(
+    test_client: TestClient,
+    test_token: str,
+    delivery_project: CloudProject,
+    status_scope: str | None,
+) -> None:
+    headers = _auth(test_token)
+    path = f"/api/v1/cloud-projects/{delivery_project.id}/loop-items"
+
+    def create(title: str, **values: Any) -> dict[str, Any]:
+        response = test_client.post(
+            path, headers=headers, json={"title": title, **values}
+        )
+        assert response.status_code == 201
+        return response.json()
+
+    first = create("First", status="inbox")
+    second = create("Second", status="completed")
+    child = create("Child", parent_id=first["id"], status="completed")
+    requested = [second["id"], first["id"], child["id"]]
+    response = test_client.post(
+        f"{path}/reorder",
+        headers=headers,
+        json={"parent_id": None, "status": status_scope, "item_ids": requested},
+    )
+    assert response.status_code == 200
+    expected = requested[:2] if status_scope is None else [first["id"]]
+    assert [item["id"] for item in response.json()["items"]] == expected
+    listed = test_client.get(path, headers=headers).json()["items"]
+    siblings = sorted(
+        [item for item in listed if item["id"] in expected],
+        key=lambda item: item["sort_order"],
+    )
+    assert [item["id"] for item in siblings] == expected
+    assert sorted(item["sort_order"] for item in listed if not item["parent_id"]) == [
+        0,
+        1,
+    ]
+    assert next(item for item in listed if item["id"] == child["id"]) == child
+    assert {item["id"]: item["status"] for item in listed} == {
+        first["id"]: "inbox",
+        second["id"]: "completed",
+        child["id"]: "completed",
+    }

@@ -24,14 +24,15 @@ export function projectBoardDragItemId(active: DragStartEvent['active']): string
 }
 
 export function projectBoardDrop(event: Pick<DragEndEvent, 'active' | 'over'>) {
+  const activeData = event.active.data.current
   const overData = event.over?.data.current
   const beforeItemId = typeof overData?.itemId === 'string' ? overData.itemId : null
   const id = event.over?.id
   return {
     activeItemId: projectBoardDragItemId(event.active),
     beforeItemId,
-    sourceColumnKey: event.active.data.current?.columnKey as string | undefined,
-    groupBy: event.active.data.current?.groupBy as ProjectBoardGroupBy | undefined,
+    sourceColumnKey: typeof activeData?.columnKey === 'string' ? activeData.columnKey : undefined,
+    groupBy: activeData?.groupBy as ProjectBoardGroupBy | undefined,
     columnDropKey: beforeItemId
       ? ((overData?.columnKey as string | undefined) ?? null)
       : typeof id === 'string' && id.startsWith('todo-column:')

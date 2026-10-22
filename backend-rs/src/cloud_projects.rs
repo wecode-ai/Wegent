@@ -329,7 +329,10 @@ fn cloud_project_not_found() -> FastApiError {
     FastApiError::detail(StatusCode::NOT_FOUND, "Cloud project not found")
 }
 
-/// Resolve project detail with the catalog's authorization and response projection.
+/// Handler body for `GET /api/v1/cloud-projects/{project_id}`.
+///
+/// Reuse the list policy and response so inherited roles and permission
+/// sources remain identical when opening a project or authorizing a Stand-in.
 async fn cloud_project<M: Mysql>(
     mysql: &M,
     project_id: &str,

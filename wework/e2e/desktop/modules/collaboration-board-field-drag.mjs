@@ -3,13 +3,14 @@ import assert from 'node:assert/strict'
 import {
   openProjectBoard,
   selectProjectBoardGrouping,
+  selectProjectBoardSort,
 } from './collaboration-board-personal-view.mjs'
 import { reloadMainWindow } from './workspace-flows.mjs'
 
 const card = (column, id) =>
   `[data-testid="cloud-todo-column-${column}"] [data-testid="cloud-todo-card-${id}"]`
 
-async function assertLaneOrder(control, scoped, columnKey, ids) {
+export async function assertLaneOrder(control, scoped, columnKey, ids) {
   const selector = scoped(`[data-testid="cloud-todo-column-${columnKey}"]`)
   for (const id of ids) {
     await control.command('waitFor', scoped(card(columnKey, id)), { visible: true })
@@ -22,7 +23,7 @@ async function assertLaneOrder(control, scoped, columnKey, ids) {
   )
 }
 
-async function waitForIssue(request, id, predicate, timeoutMs) {
+export async function waitForIssue(request, id, predicate, timeoutMs) {
   const deadline = Date.now() + timeoutMs
   let issue
   while (Date.now() < deadline) {
@@ -58,11 +59,18 @@ export async function verifyBoardFieldDrag(control, { scoped, request, project, 
   await reloadMainWindow(control, 'The board field drag fixtures did not load')
   await openProjectBoard(control, scoped, project)
   await selectProjectBoardGrouping(control, scoped, 'status')
+  await selectProjectBoardSort(control, scoped, 'pending')
   await assertLaneOrder(control, scoped, 'pending', manualOrder)
+  const beforeStatusOrder = await request(`/api/v1/loop-items/${moving.id}`)
   await control.command('drag', scoped(card('pending', moving.id)), {
     target: scoped(card('pending', anchor.id)),
   })
-  await waitForIssue(request, moving.id, asyncIssue => asyncIssue.sort_order < 1, uiTimeoutMs)
+  await waitForIssue(
+    request,
+    moving.id,
+    issue => issue.version > beforeStatusOrder.version,
+    uiTimeoutMs
+  )
   const persistedLane = await request(`/api/v1/cloud-projects/${project.id}/loop-items`)
   assert.deepEqual(
     persistedLane.items
@@ -79,17 +87,18 @@ export async function verifyBoardFieldDrag(control, { scoped, request, project, 
     '[desktop-e2e] PASS board-drag: status same-column order persisted and survived reload'
   )
 
-  for (const [group, column] of [
-    ['priority', 'priority-low'],
-    ['assignee', `assignee-${owner.id}`],
+  for (const [group, column, order] of [
+    ['priority', 'priority-low', [anchor.id, moving.id]],
+    ['assignee', `assignee-${owner.id}`, [moving.id, anchor.id]],
   ]) {
     await selectProjectBoardGrouping(control, scoped, group)
-    const before = await request(`/api/v1/loop-items/${moving.id}`)
-    await control.command('drag', scoped(card(column, moving.id)), {
-      target: scoped(card(column, anchor.id)),
+    await selectProjectBoardSort(control, scoped, column, ['priority-desc', 'created-asc'])
+    const before = await request(`/api/v1/loop-items/${order[0]}`)
+    await control.command('drag', scoped(card(column, order[0])), {
+      target: scoped(card(column, order[1])),
     })
-    await control.command('waitFor', scoped(card(column, moving.id)), { stableMs: 500 })
-    const after = await request(`/api/v1/loop-items/${moving.id}`)
+    await control.command('waitFor', scoped(card(column, order[0])), { stableMs: 500 })
+    const after = await request(`/api/v1/loop-items/${order[0]}`)
     for (const field of [
       'version',
       'sort_order',
@@ -98,13 +107,44 @@ export async function verifyBoardFieldDrag(control, { scoped, request, project, 
       'assignee_user_id',
       'tags',
     ]) {
-      assert.deepEqual(after[field], before[field], `Same-column ${group} drag changed ${field}`)
+      assert.deepEqual(
+        after[field],
+        before[field],
+        `Sorted same-column ${group} drag changed ${field}`
+      )
     }
+    await selectProjectBoardSort(control, scoped, column)
+    const beforeOrder = await request(`/api/v1/loop-items/${order[0]}`)
+    await control.command('drag', scoped(card(column, order[0])), {
+      target: scoped(card(column, order[1])),
+    })
+    const reordered = await waitForIssue(
+      request,
+      order[0],
+      issue => issue.version > beforeOrder.version,
+      uiTimeoutMs
+    )
+    for (const field of ['status', 'priority', 'assignee_user_id', 'tags']) {
+      assert.deepEqual(
+        reordered[field],
+        beforeOrder[field],
+        `Manual ${group} reorder changed ${field}`
+      )
+    }
+    const persisted = await request(`/api/v1/cloud-projects/${project.id}/loop-items`)
+    assert.deepEqual(
+      persisted.items
+        .filter(issue => fixtures.some(fixture => fixture.id === issue.id))
+        .sort((left, right) => left.sort_order - right.sort_order)
+        .map(issue => issue.id),
+      order,
+      `The ${group} column only changed its visual order`
+    )
     await reloadMainWindow(control, 'The same-column field drag did not reload')
     await openProjectBoard(control, scoped, project)
-    await assertLaneOrder(control, scoped, column, [moving.id, anchor.id])
+    await assertLaneOrder(control, scoped, column, order)
     console.log(
-      `[desktop-e2e] PASS board-drag: ${group} same-column drag leaves persisted fields unchanged`
+      `[desktop-e2e] PASS board-drag: ${group} compound sort blocks manual drag; manual order persists without changing fields`
     )
   }
 

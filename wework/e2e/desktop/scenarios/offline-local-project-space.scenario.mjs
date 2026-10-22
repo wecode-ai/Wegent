@@ -248,7 +248,10 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         uiTimeoutMs
       )
       await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
-      await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
+      await control.command(
+        'clickWhenEnabled',
+        scoped('[data-testid="collaboration-issue-create"]')
+      )
       await control.command('waitFor', scoped('[data-testid="cloud-todo-title"]'), {
         timeoutMs: uiTimeoutMs,
       })

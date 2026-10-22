@@ -9,6 +9,7 @@ import {
   selectProjectBoardGrouping,
 } from './collaboration-board-personal-view.mjs'
 import { reloadMainWindow } from './workspace-flows.mjs'
+import { createCollaborationBoardIssue } from './collaboration-board-issue.mjs'
 
 const preferenceKey = (userId, store, projectId) =>
   `collaboration-board-group:v1:${userId}:${store}:${projectId}`
@@ -59,6 +60,7 @@ export async function verifyBoardPreferenceIsolation(
   await reloadMainWindow(control, 'The local preference fixture did not load')
   try {
     await openProjectBoard(control, scoped, localProject)
+    await createCollaborationBoardIssue(control, `个人看板本地偏好任务-${process.pid}`, 'pending')
     await assertProjectBoardGrouping(control, scoped, 'status')
     const localBefore = JSON.parse(
       await control.command('readLocalProject', 'body', { value: localProject.id })
