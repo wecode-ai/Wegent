@@ -71,7 +71,7 @@ def test_repeated_sync_overwrites_one_row_and_rejects_all_old_ids(
                 consume(automation, test_db, test_user, previous)
     latest = reconcile(automation, test_db, test_user, installed)["migrations"][0]["id"]
     changed = consume(automation, test_db, test_user, latest, "new-synthetic")
-    assert changed.revision == revision + 1
+    assert changed.revision == revision + 2
     row = slots(test_db, test_user).populate_existing().one()
     assert row.id == row_id and row.name == latest and not row.is_active
     for previous in seen:

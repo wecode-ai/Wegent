@@ -5272,6 +5272,8 @@ describe('MessageList', () => {
       'data-composer-link-url',
       'https://github.com/wecode-ai/Wegent/pull/2350'
     )
+    expect(chip).toHaveAttribute('target', '_blank')
+    expect(chip).toHaveAttribute('rel', 'noopener noreferrer')
     fireEvent.click(chip)
     expect(openExternalUrlMock).toHaveBeenCalledWith(
       'https://github.com/wecode-ai/Wegent/pull/2350'

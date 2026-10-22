@@ -65,7 +65,11 @@ export function createProjectSpacePickerRegression({
       visible: true,
       timeoutMs: workbenchReadyTimeoutMs,
     })
-    await waitForWorkbenchTask(control, address.taskId, 'The picker task did not finish restoring')
+    await waitForWorkbenchTask(
+      control,
+      address.taskId,
+      'The project picker task did not finish restoring after navigation'
+    )
     const state = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
     assert.equal(state.workbench?.currentRuntimeTask?.taskId, address.taskId)
   }
