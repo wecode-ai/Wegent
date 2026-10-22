@@ -5290,5 +5290,12 @@
     "action_label": "AI stand-in",
     "auto_label": "Automatically handle tasks assigned to me",
     "settings": "Stand-in settings"
+  },
+  "workbench_error": {
+    "startup_title": "Wework could not start",
+    "startup_description": "The frontend could not initialize. Refresh the page to try again. If the problem persists, open the debug panel to view the logs.",
+    "crash_title": "Something went wrong in Wework",
+    "crash_description": "An unexpected error prevented this page from displaying. Refresh the page to try again; unsaved changes may be lost. If the problem persists, open the debug panel to view the logs.",
+    "reload": "Refresh page"
   }
 }

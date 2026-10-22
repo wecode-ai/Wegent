@@ -26,6 +26,7 @@ const CHECKPOINT_RESOURCES = new Map([
   ['project-assignment-notification', ['macos-inspector-foreground']],
 ])
 const CHECKPOINT_SCENARIO_MODULES = {
+  'renderer-crash-recovery': './scenarios/renderer-crash-recovery.scenario.mjs',
   'archived-worktree-cleanup': './scenarios/archived-worktree-cleanup.scenario.mjs',
   'plugin-toggle-persistence': './scenarios/plugin-toggle-persistence.scenario.mjs',
   'goal-state-sync': './scenarios/goal-output-identity.scenario.mjs',
@@ -254,6 +255,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'release-package-startup',
   'app-update-full',
   'component-update',
+  'renderer-crash-recovery',
   'native-window-startup',
   'native-window-chrome',
   'renderer-storage',

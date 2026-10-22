@@ -1,3 +1,4 @@
+import { rendererCrashStore } from './rendererCrashStore'
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
 import { createElementFrameSampler } from './element-frame-metrics'
 import { removeToken, setToken } from '@/api/auth'
@@ -1813,6 +1814,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
   if (verificationResult.handled) return verificationResult.value
 
   switch (command.action) {
+    case 'crashRenderer':
+      rendererCrashStore.trigger()
+      return 'Renderer crash requested'
     case 'getRoute':
       return stripAppBasePath(window.location.pathname)
     case 'getNativeWindowState':
