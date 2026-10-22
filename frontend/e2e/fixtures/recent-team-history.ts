@@ -230,15 +230,19 @@ export const test = base.extend<{
       })
     } finally {
       try {
-        const results = []
+        const results: unknown[] = []
         for (const { id, account } of accounts.reverse()) {
           try {
             await account.dispose()
           } catch (error) {
             results.push(error)
           }
-          const removed = await admin.delete(`/api/admin/users/${id}`)
-          expect(removed.status).toBe(204)
+          try {
+            const removed = await admin.delete(`/api/admin/users/${id}`)
+            expect(removed.status).toBe(204)
+          } catch (error) {
+            results.push(error)
+          }
         }
         if (results.length) throw new AggregateError(results, 'Account cleanup failed')
       } finally {
