@@ -124,7 +124,7 @@ Executor 仅在启动时执行专门的目录迁移检查：在清单初始化�
 
 恢复采用清单锁、原子写入和逐插件操作日志。进程中断后的恢复必须区分本次已发布状态与未完成操作；无法证明归属或发现用户后来改动时保留快照并报告冲突，不覆盖未知文件。恢复不接入每条消息的发送前置流程。
 
-Wework 的受管 Executor 环境固定设置 `WEGENT_PLUGIN_RUNTIME_TARGET=codex`，仅为插件注册 Codex 运行目录。未设置该变量的通用 Executor 保留原有双运行时插件支持，Skills、原生 Home 和凭据不随这个开关清理。
+Wework 的受管 Executor 环境固定设置 `WEGENT_PLUGIN_RUNTIME_TARGET=codex`，仅为插件注册 Codex 运行目录。未设置该变量的通用 Executor 保留原有双运行时插件支持，Skills、原生 Home 和凭据不随这个开关清理。Codex-only 模式不会为插件创建 Claude 侧状态，但卸载或清理失效插件时仍会移除早期双运行时安装留下的 Claude 注册信息（installed_plugins.json、settings.json 的启用项与记录的运行缓存），避免插件在卸载后仍出现在 Claude 会话中。
 
 恢复实现位于 Executor，运行目标由 Electron 注入，错误状态由插件界面展示，三者应作为同一桌面版本发布。仅更新前端不会给旧 Executor 增加恢复能力。清单保持 v2 并保留其他字段，不删除 Skills、MCP 或整个清单；未完成的恢复日志应由配套的新 Executor 继续处理。
 

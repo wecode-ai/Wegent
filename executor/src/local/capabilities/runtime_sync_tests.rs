@@ -53,6 +53,63 @@ async fn skill_and_mcp_sync_do_not_recover_unrelated_migrated_plugins() {
 }
 
 #[tokio::test]
+async fn codex_only_removal_cleans_claude_state_without_creating_it() {
+    // A dual-runtime installation removed under Codex-only mode must not stay
+    // registered and enabled for later Claude conversations.
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("root");
+    installed(&root, false).await;
+    let claude_installed = root.join("claude/plugins/installed_plugins.json");
+    let claude_settings = root.join("claude/settings.json");
+    assert!(
+        serde_json::from_str::<Value>(&fs::read_to_string(&claude_installed).unwrap()).unwrap()
+            ["plugins"]["demo@wegent"]
+            .is_array()
+    );
+    assert!(
+        serde_json::from_str::<Value>(&fs::read_to_string(&claude_settings).unwrap()).unwrap()
+            ["enabledPlugins"]["demo@wegent"]
+            .is_boolean()
+    );
+    let codex_only = store(&root, true);
+    let handler =
+        CapabilitySyncHandler::with_package_provider("", codex_only.clone(), Packages(vec![]));
+
+    let result = handler
+        .apply_sync(json!({"scope":"plugins","plugins":[]}))
+        .await
+        .unwrap();
+
+    assert_eq!(result["success"], true, "{result}");
+    assert!(codex_only.manifest.load().unwrap()["plugins"]["demo@wegent"].is_null());
+    assert!(
+        serde_json::from_str::<Value>(&fs::read_to_string(&claude_installed).unwrap()).unwrap()
+            ["plugins"]["demo@wegent"]
+            .is_null()
+    );
+    assert!(
+        serde_json::from_str::<Value>(&fs::read_to_string(&claude_settings).unwrap()).unwrap()
+            ["enabledPlugins"]["demo@wegent"]
+            .is_null()
+    );
+    let config = fs::read_to_string(root.join("codex/config.toml")).unwrap();
+    assert!(!config.contains("demo@wegent"), "{config}");
+
+    // A pure Codex-only lifecycle never creates Claude state.
+    let fresh = temp.path().join("fresh");
+    let created = installed(&fresh, true).await;
+    let handler =
+        CapabilitySyncHandler::with_package_provider("", created.clone(), Packages(vec![]));
+    let result = handler
+        .apply_sync(json!({"scope":"plugins","plugins":[]}))
+        .await
+        .unwrap();
+    assert_eq!(result["success"], true, "{result}");
+    assert!(!fresh.join("claude/plugins/installed_plugins.json").exists());
+    assert!(!fresh.join("claude/settings.json").exists());
+}
+
+#[tokio::test]
 async fn single_plugin_sync_does_not_recover_an_unrelated_migrated_plugin() {
     let temp = tempfile::tempdir().unwrap();
     let old = temp.path().join("old");

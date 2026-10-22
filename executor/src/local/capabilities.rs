@@ -952,7 +952,9 @@ impl GlobalCapabilityStore {
             .parent()
             .unwrap_or_else(|| Path::new("."))
             .join("settings.json");
-        if !self.codex_only_plugins && claude_settings_path.is_file() {
+        // Removal also cleans Claude enablement left by earlier dual-runtime
+        // installations; installation paths stay Codex-only.
+        if claude_settings_path.is_file() {
             let mut settings = read_json_or_default(&claude_settings_path, || json!({}))?;
             let mut changed = false;
             if let Some(enabled_plugins) = settings
@@ -1687,17 +1689,13 @@ where
                 .join("config.toml"),
             false,
         )?;
-        if !self.store.codex_only_plugins {
-            self.store.ensure_state_path(
-                &self.store.plugins_dir.join("installed_plugins.json"),
-                false,
-            )?;
-        }
-        let mut installed = if self.store.codex_only_plugins {
-            json!({"version": 2, "plugins": {}})
-        } else {
-            read_installed_plugins(&self.store.plugins_dir)?
-        };
+        // Codex-only mode never creates Claude state, but it still cleans
+        // registrations left by earlier dual-runtime installations.
+        let claude_installed_path = self.store.plugins_dir.join("installed_plugins.json");
+        self.store
+            .ensure_state_path(&claude_installed_path, false)?;
+        let claude_installed_exists = claude_installed_path.is_file();
+        let mut installed = read_installed_plugins(&self.store.plugins_dir)?;
         let mut moved_paths = Vec::new();
         if !self.store.shared_packages {
             for (key, plugin) in &stale {
@@ -1720,16 +1718,6 @@ where
                 .unwrap_or_else(|| Path::new("."))
                 .join("config.toml"),
         ];
-        if self.store.codex_only_plugins {
-            file_paths.retain(|path| {
-                !path.starts_with(
-                    self.store
-                        .plugins_dir
-                        .parent()
-                        .unwrap_or(&self.store.plugins_dir),
-                )
-            });
-        }
         let owned_personal = stale
             .iter()
             .filter(|(key, plugin)| {
@@ -1767,7 +1755,7 @@ where
                 }
                 ensure_object_field(manifest, "plugins").remove(&key);
             }
-            if !self.store.codex_only_plugins {
+            if !self.store.codex_only_plugins || claude_installed_exists {
                 write_json(
                     &self.store.plugins_dir.join("installed_plugins.json"),
                     &installed,

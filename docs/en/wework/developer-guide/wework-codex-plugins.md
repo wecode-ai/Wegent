@@ -124,7 +124,7 @@ Normal installation, updates, and retries process only the requested plugins, us
 
 Recovery uses the manifest lock, atomic publication, and a journal per plugin. Restart recovery distinguishes committed publication from incomplete work. Unproven ownership or later user changes preserve snapshots and report a conflict instead of overwriting unknown files. Recovery does not run before each message submission.
 
-The Wework managed Executor environment fixes `WEGENT_PLUGIN_RUNTIME_TARGET=codex`, registering only Codex plugin runtimes. Generic Executors without this variable retain dual-runtime plugin support. This switch does not clean up Skills, native Homes, or credentials.
+The Wework managed Executor environment fixes `WEGENT_PLUGIN_RUNTIME_TARGET=codex`, registering only Codex plugin runtimes. Generic Executors without this variable retain dual-runtime plugin support. This switch does not clean up Skills, native Homes, or credentials. Codex-only mode never creates Claude-side state for plugins, but uninstalling or reconciling stale plugins still removes Claude registrations left by earlier dual-runtime installations (`installed_plugins.json`, `settings.json` enablement, and recorded runtime caches), so a removed plugin cannot stay enabled in later Claude conversations.
 
 The Executor implements recovery, Electron selects the runtime target, and the plugin UI displays recovery errors; ship them together as one desktop version. Updating only the frontend does not add recovery to an older Executor. The manifest remains v2 and preserves unrelated fields, Skills, and MCP records. Pending recovery journals must be resumed by the matching updated Executor.
 

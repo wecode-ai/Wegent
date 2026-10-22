@@ -188,9 +188,6 @@ impl GlobalCapabilityStore {
             (&self.codex_plugins_dir, "codex_link"),
             (&self.plugins_dir, "claude_link"),
         ] {
-            if self.codex_only_plugins && field == "claude_link" {
-                continue;
-            }
             let Some(path) = entry
                 .get("runtime")
                 .and_then(|runtime| runtime.get(field))
