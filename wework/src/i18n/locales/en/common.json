@@ -203,7 +203,6 @@
     "project_chat_task_thread": "Task thread",
     "project_chat_processing_ellipsis": "Working…",
     "project_chat_completed": "Completed",
-    "project_chat_ai_received": "Robot received",
     "project_chat_processing": "Working",
     "project_chat_agents_title": "Robots",
     "project_chat_agents_description": "Robots can own tasks, execute them automatically, and submit results for human review.",

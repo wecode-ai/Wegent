@@ -688,6 +688,7 @@ fn assistant_message_phase(
     match assistant_message_phase_name(item).as_deref() {
         Some("analysis") => AssistantMessagePhase::Process,
         Some("commentary") if fold_commentary => AssistantMessagePhase::Process,
+        // A completed item can precede a tool while its turn is still active.
         None if unphased_is_process
             || string_field(item, "status")
                 .is_some_and(|status| normalized_phase_or_status(status) == "inprogress") =>
