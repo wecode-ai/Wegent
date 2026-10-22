@@ -12,7 +12,6 @@ import {
   accountPlugin,
   assertInstallButton,
   assertSurfaces,
-  inventory,
   openPlugin,
   pluginApi,
   testId,
@@ -158,7 +157,7 @@ export async function createDesktopScenario({
     })
   }
 
-  async function invoke(control, fixture, version, phase) {
+  async function invoke(control, fixture, version, phase, { offline = false } = {}) {
     const value = await waitRuntime(fixture, version)
     const id = `recovery-${phase}-${fixture.slug}`
     const prompt = `WEWORK_PLUGIN_RUNTIME_RECOVERY ${id}`
@@ -173,14 +172,21 @@ export async function createDesktopScenario({
     }
     await control.command('click', testId('new-chat-button'))
     await selectE2EModel(control)
-    await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: prompt })
-    await control.command('click', testId('composer-plugin-picker-button'))
-    await control.command('waitFor', testId('composer-plugin-picker'))
-    await control.command('fill', testId('composer-plugin-picker-search'), { value: fixture.slug })
-    await control.command(
-      'clickWhenEnabled',
-      testId(`composer-plugin-picker-item-plugin:${fixture.slug}`)
-    )
+    // Offline execution uses the native reference directly; online phases cover the picker.
+    await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
+      value: offline ? `[$${fixture.slug}](plugin://${fixture.slug}@wegent) ${prompt}` : prompt,
+    })
+    if (!offline) {
+      await control.command('click', testId('composer-plugin-picker-button'))
+      await control.command('waitFor', testId('composer-plugin-picker'))
+      await control.command('fill', testId('composer-plugin-picker-search'), {
+        value: fixture.slug,
+      })
+      await control.command(
+        'clickWhenEnabled',
+        testId(`composer-plugin-picker-item-plugin:${fixture.slug}`)
+      )
+    }
     const nativeReference = await control.command(
       'getAttribute',
       testId(`composer-plugin-chip-${fixture.slug}`),
@@ -188,7 +194,7 @@ export async function createDesktopScenario({
     )
     assert.ok(
       nativeReference?.includes(`plugin://${fixture.slug}@wegent`),
-      'Picker lost the native plugin reference'
+      'Composer lost the native plugin reference'
     )
     await control.command('clickWhenEnabled', testId('send-message-button'))
     await control.command(
@@ -346,16 +352,22 @@ export async function createDesktopScenario({
     await assert.rejects(lstat(homePath), { code: 'ENOENT' })
     await assert.rejects(lstat(executorHome), { code: 'ENOENT' })
     assert.equal(await entry(removed), undefined, 'Home recovery resurrected an uninstalled plugin')
-    await invoke(control, primary, '2.0.0', 'offline-after-home-change')
-    const offlineInventory = await inventory(control)
+    const offlineInventory = await requestExecutor(control, 'executor.plugins.store.list')
     for (const fixture of [primary, disabled, blocked, missing]) {
-      assert.ok(
-        offlineInventory.sharedInventory.installedPlugins.some(
-          item => item.pluginKey === fixture.slug
-        ),
-        'A recovery failure hid an existing plugin from the offline inventory'
+      const item = offlineInventory.plugins.find(item => item.name === fixture.slug)
+      assert.ok(item, 'A recovery failure hid an existing plugin from the offline inventory')
+      assert.equal(
+        item.installedPluginId,
+        fixture.installedId,
+        'Offline inventory changed the installed plugin identity'
       )
     }
+    const offlinePrimary = offlineInventory.plugins.find(item => item.name === primary.slug)
+    assert.equal(offlinePrimary.runtimeRecoveryError, null)
+    assert.equal(offlinePrimary.version, '2.0.0')
+    assert.equal(offlinePrimary.enabled, true)
+    isolatedPath(nextHome, offlinePrimary.pluginPath)
+    await invoke(control, primary, '2.0.0', 'offline-after-home-change', { offline: true })
     await captureScreenshot(control, 'plugin-home-offline-healthy-plugin-call.png', 'body')
     evidence.push({ phase: 'offline-isolation', failedPlugins: [blocked.slug, missing.slug] })
 

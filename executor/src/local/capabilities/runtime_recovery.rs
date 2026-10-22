@@ -505,7 +505,18 @@ impl GlobalCapabilityStore {
                     } else {
                         target.parent().unwrap().join(link)
                     };
+                    // Uninstall retains versioned caches. A new install may replace
+                    // the source only when this exact cache still belongs to its key.
+                    let retained = self.shared_packages
+                        && linked.parent() == runtime.parent()
+                        && manifest
+                            .get("plugin_runtime_owners")
+                            .and_then(|owners| owners.get(linked.to_string_lossy().as_ref()))
+                            .and_then(Value::as_str)
+                            == Some(spec.key.as_str())
+                        && self.ensure_runtime_path(&linked, false).is_ok();
                     linked == runtime
+                        || retained
                         || manifest
                             .get("plugin_runtime_owner_origins")
                             .and_then(|origins| origins.get(runtime.to_string_lossy().as_ref()))
@@ -924,3 +935,7 @@ mod tests;
 #[cfg(test)]
 #[path = "runtime_recovery_startup_tests.rs"]
 mod startup_tests;
+
+#[cfg(test)]
+#[path = "runtime_recovery_reinstall_tests.rs"]
+mod reinstall_tests;
