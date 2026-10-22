@@ -335,12 +335,16 @@ flowchart TD
     Human -->|否| Agent{明确提及或 Issue 负责人?}
     Agent -->|有| Queue[执行队列创建独立会话]
     Agent -->|无| Comment
-    Queue --> Claim[Executor pull + claim]
+    Queue --> Prepare[队列消费时准备执行配置]
+    Prepare -->|配置冲突| Failed[记录执行失败，保留评论]
+    Prepare -->|配置有效，包括离线设备| Claim[Executor 上线后 pull + claim]
     Claim --> Activity[状态与结果回写评论线程]
     Activity --> UI
 ```
 
 客户端通过 `wework:project_chat:comment:execute` 提交项目、Issue、已保存评论 ID 和附件 ID，不提交设备配置。后端使用评论锁和已有响应记录避免重复创建 Run；失败需回显，已保存评论不重复提交。Backend 只持久化可领取的执行意图，Executor 领取后创建 Runtime 会话。
+
+机器人候选由可见性与使用权限决定，不能按设备在线状态、Issue 环境绑定或模型就绪情况隐藏。新评论和队列会话回复先校验项目、Issue 与机器人使用权限，再保存待准备的执行意图。队列消费者复用执行准备逻辑检查环境绑定、模型和运行配置；配置冲突记录为 Run 失败，并更新对应 AI 动态，已保存的用户评论仍然成功。设备离线不阻止入队，配置有效的 Run 等待设备上线领取。提前回复尚未领取的会话同样入队，待原会话就绪后继续同一任务。人工审批仍须先批准，领取时继续重新校验当前权限。界面仅展示真实 Run 状态，不能仅凭 @ 文本显示“机器人已接收”。
 
 针对性验证覆盖成员看不到管理员智能体时的新 Run、新评论独立会话、负责人变化、重复请求、普通评论，以及跨项目、只读成员、他人评论等拒绝路径。桌面回归纳入现有 `collaboration-shared-core` 场景；E2E 仅在明确要求时运行。
 

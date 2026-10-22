@@ -69,6 +69,7 @@ interface MentionFixture {
     role: 'Maintainer' | 'Developer' | 'Viewer'
   ) => Promise<void>
   setActive: (active: boolean) => Promise<void>
+  expectAgentExecution: () => void
 }
 
 type MentionChat = Pick<ProjectChatClient, 'send' | 'dispose'> & {
@@ -185,7 +186,8 @@ export const test = base.extend<MentionOptions & { mentions: MentionFixture }>({
     }
     let assignedIssueId: string | undefined
     let runnerSeeded = false
-    const manageRunner = async (action: 'seed' | 'check' | 'cleanup') => {
+    let agentExecutionExpected = false
+    const manageRunner = async (action: 'seed' | 'check' | 'check-agent' | 'cleanup') => {
       if (!process.env.DATABASE_URL || !assignedIssueId)
         throw new Error('Assigned mention E2E requires an Issue and DATABASE_URL')
       await execFileAsync(
@@ -321,8 +323,12 @@ export const test = base.extend<MentionOptions & { mentions: MentionFixture }>({
         setActive: async active => {
           await apiData(api.put(`/api/admin/users/${recipientId}`, { is_active: active }))
         },
+        expectAgentExecution: () => {
+          agentExecutionExpected = true
+        },
       })
-      if (assignedUnavailableAgent) await manageRunner('check')
+      if (assignedUnavailableAgent)
+        await manageRunner(agentExecutionExpected ? 'check-agent' : 'check')
       if (provider) {
         for (const project of projects) await manageIndex(project.id, 'check')
         expect(

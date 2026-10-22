@@ -283,6 +283,12 @@ async def test_manager_reply_queues_same_session_and_rebuilds_member_profiles(
     assert queued.runtime_task_id == "original-session-manager-initial"
     assert queued.executor_owner_user_id == s.owner.id
     assert queued.assigner_user_id == s.member.id
+    assert queued.assignment_pending
+    assert queued.runtime_request == {}
+    assert loop_item_execution_service.prepare_queued_assignments(s.db) == 1
+    s.db.refresh(queued)
+    assert queued.status == "queued"
+    assert not queued.assignment_pending
     assert queued.runtime_request["newSession"] is False
     assert queued.runtime_request["origin"]["dispatchRole"] == "manager"
     assert queued.runtime_request["origin"]["executionId"] == queued.id
@@ -330,6 +336,12 @@ async def test_member_reply_without_execution_or_binding_queues_original_session
     assert queued.agent_id == s.member_agent.id
     assert queued.executor_owner_user_id == s.owner.id
     assert queued.runtime_task_id == s.root.runtime_task_id
+    assert queued.assignment_pending
+    assert queued.runtime_request == {}
+    assert loop_item_execution_service.prepare_queued_assignments(s.db) == 1
+    s.db.refresh(queued)
+    assert queued.status == "queued"
+    assert not queued.assignment_pending
     assert queued.runtime_request["newSession"] is False
     assert queued.runtime_request["modelId"] == "member-model"
     assert queued.runtime_request["origin"]["dispatchRole"] == "member"
@@ -436,6 +448,12 @@ async def test_member_reply_uses_upstream_session_after_round_owner_handoff(
     queued = s.db.get(LoopItemExecution, rows[0].metadata["execution_id"])
     assert queued.runtime_task_id == s.root.runtime_task_id
     assert queued.executor_owner_user_id == s.owner.id
+    assert queued.assignment_pending
+    assert queued.runtime_request == {}
+    assert loop_item_execution_service.prepare_queued_assignments(s.db) == 1
+    s.db.refresh(queued)
+    assert queued.status == "queued"
+    assert not queued.assignment_pending
     assert queued.runtime_request["newSession"] is False
     assert queued.runtime_request["modelId"] == "member-model"
     assert queued.runtime_request["origin"]["assignmentId"] == "assignment-1"

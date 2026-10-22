@@ -194,7 +194,7 @@ async def test_user_mentions_do_not_execute_assigned_agent(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("include_member", [False, True])
-async def test_agent_mentions_still_enforce_issue_runner_binding(
+async def test_agent_mentions_enqueue_before_checking_issue_runner_binding(
     test_db, test_user, assigned_mention_scope, include_member
 ):
     project, recipient, item, agent, _ = assigned_mention_scope
@@ -207,20 +207,53 @@ async def test_agent_mentions_still_enforce_issue_runner_binding(
         test_db, user_id=test_user.id, user_name=test_user.user_name, request=request
     )
 
-    with pytest.raises(HTTPException) as error:
-        await execute_comment(
-            test_db,
-            user_id=test_user.id,
-            request=ProjectChatCommentExecution(
-                project_id=project.id,
-                task_id=item.id,
-                trigger_message_id=result.message.message_id,
-            ),
-        )
+    from app.services.loop_item_executions.service import loop_item_execution_service
 
-    assert error.value.detail["error_code"] == "ISSUE_RUNNER_CONFLICT"
+    execution_request = ProjectChatCommentExecution(
+        project_id=project.id,
+        task_id=item.id,
+        trigger_message_id=result.message.message_id,
+    )
+    responses = await execute_comment(
+        test_db, user_id=test_user.id, request=execution_request
+    )
+    repeated = await execute_comment(
+        test_db, user_id=test_user.id, request=execution_request
+    )
+    assert responses[0].message_id == repeated[0].message_id
+    execution = test_db.get(LoopItemExecution, responses[0].metadata["execution_id"])
+    assert execution.status == "queued"
+    assert execution.assignment_pending
+    assert responses[0].metadata["run_status"] == "queued"
     assert "execution_dispatch" not in result.message.metadata
-    assert test_db.query(LoopItemExecution).count() == 0
+    assert test_db.query(LoopItemExecution).count() == 1
+
+    assert loop_item_execution_service.prepare_queued_assignments(test_db) == 1
+    test_db.refresh(execution)
+    assert execution.status == "failed"
+    assert execution.error_message.startswith("ISSUE_RUNNER_CONFLICT:")
+    activity = (
+        test_db.query(ProjectChatMessage)
+        .filter_by(message_id=responses[0].message_id)
+        .one()
+    )
+    assert activity.status == "failed"
+    assert activity.metadata_json["run_status"] == "failed"
+    after_failure = await execute_comment(
+        test_db, user_id=test_user.id, request=execution_request
+    )
+    assert after_failure[0].message_id == responses[0].message_id
+    assert after_failure[0].status == "failed"
+    assert test_db.query(LoopItemExecution).count() == 1
+    assert (
+        test_db.query(ProjectChatMessage)
+        .filter_by(message_id=result.message.message_id)
+        .one()
+        .status
+        == "completed"
+    )
+    assert item.assignee_agent_id == agent.id
+    assert loop_item_execution_service.prepare_queued_assignments(test_db) == 0
 
 
 @pytest.mark.parametrize("provider", ["github", "gitlab"])

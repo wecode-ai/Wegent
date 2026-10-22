@@ -55,6 +55,19 @@ def manage_runner(db: Session, item_id: str, action: str) -> None:
             .count()
         ):
             raise ValueError("Member mention created an AI response")
+    elif action == "check-agent":
+        if item.assignee_agent_id != agent_id:
+            raise ValueError("Agent mention changed the Issue assignee")
+        execution = db.query(LoopItemExecution).filter_by(loop_item_id=item_id).one()
+        if execution.agent_id != agent_id or execution.status != "failed":
+            raise ValueError("Unavailable agent must have one failed execution")
+        messages = db.query(ProjectChatMessage).filter_by(task_id=item_id).all()
+        comments = [message for message in messages if message.sender_type == "user"]
+        responses = [message for message in messages if message.sender_type == "agent"]
+        if len(comments) != 1 or comments[0].status != "completed":
+            raise ValueError("Agent mention must preserve the saved comment")
+        if len(responses) != 1 or responses[0].status != "failed":
+            raise ValueError("Execution failure must be projected to one AI activity")
     elif action == "cleanup":
         item.assignee_agent_id = ""
         db.delete(agent)
@@ -63,7 +76,7 @@ def manage_runner(db: Session, item_id: str, action: str) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["seed", "check", "cleanup"])
+    parser.add_argument("action", choices=["seed", "check", "check-agent", "cleanup"])
     parser.add_argument("item_id")
     args = parser.parse_args()
     if not os.environ.get("DATABASE_URL"):

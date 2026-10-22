@@ -70,11 +70,19 @@ sequenceDiagram
     participant API as 任一操作入口
     participant Policy as 统一权限服务
     participant Queue as 持久化队列
+    participant Prepare as 队列消费者
     participant Runtime as 执行设备
     Member->>API: 创建、指派或启动执行
     API->>Policy: 检查项目、Issue 和资源绑定
     Policy-->>API: 允许及来源 / 拒绝及原因
     API->>Queue: 保存执行意图
+    Queue->>Prepare: 准备已提交的评论执行
+    Prepare->>Policy: 检查当前授权与执行配置
+    alt 配置冲突
+        Prepare->>Queue: 记录任务失败，保留已保存评论
+    else 配置有效
+        Prepare->>Queue: 等待有权设备上线领取
+    end
     Runtime->>Queue: 领取工作
     Queue->>Policy: 重新检查当前授权
     Policy-->>Queue: 当前允许 / 授权已撤销
@@ -83,6 +91,8 @@ sequenceDiagram
 ```
 
 派发人、智能体定义所有者、设备所有者和 Runtime 会话身份分别记录。资源所有者共享的是明确的使用能力；模型与连接凭据仍由原有凭据权限和执行身份管理。项目访问只授予所属 Issue 的会话读取权，不授予整个设备的任务目录。
+
+评论入队先检查当前用户、Issue 与智能体的使用授权；Runtime 配置、模型和环境绑定由队列消费者准备，失败属于执行记录。待准备意图不授予设备使用权，准备和领取都必须重新校验当前资源授权。`test_queued_comment_execution.py` 覆盖只读成员、私有定义和已撤销资源的入队拒绝，以及入队后撤权、配置失败、人工审批、离线领取和未领取会话的提前回复；这些测试使用隔离数据库和合成执行状态，不代表真实 Runtime 联调。
 
 从 Issue 创建的个人任务以原项目和 Issue 作为默认上下文，可以通过 `wework_space` 显式指定当前用户有权限访问的任意项目和 Issue，按实际权限读取、修改、指派或评论。会话起点不构成额外的访问边界，服务端继续校验目标项目和 Issue 的权限；访问其他项目或 Issue 不改变原会话或交付物绑定。协作执行成员仍限定在派发 Issue 和执行类工具内；协作管理者保留项目内管理权限。`executor/src/task_runtime/mcp/issue_access_tests.rs` 覆盖同项目和跨项目的本地读写、云端读写与评论、服务端读写拒绝及默认上下文保持，角色边界由同模块现有契约测试保护。
 

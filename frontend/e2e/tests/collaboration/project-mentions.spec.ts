@@ -167,6 +167,42 @@ for (const scope of ['project', 'issue'] as const) {
 test.describe('member-only comments with an unavailable assigned robot', () => {
   test.use({ assignedUnavailableAgent: true })
 
+  test('accepts an unavailable agent mention and shows execution failure separately', async ({
+    page,
+    mentions,
+  }) => {
+    mentions.expectAgentExecution()
+    const agentId = `mention-e2e-${mentions.issue.id}`
+    await page.goto(`${mentions.projectPath}/issues/${mentions.issue.id}`)
+    const composer = page.getByTestId('collaboration-issue-comment')
+    await writeSharedComposer(composer, '@')
+    await page.getByTestId(`collaboration-issue-mention-agent-${agentId}`).click()
+    const text = `Unavailable agent comment ${crypto.randomUUID()}`
+    await composer.pressSequentially(` ${text}`)
+    await page.getByTestId('collaboration-issue-comment-submit').click()
+    await expect(page.getByTestId('collaboration-comments')).toContainText(text)
+    await expect
+      .poll(async () => {
+        const messages = await mentions.messages(mentions.issue.id)
+        return messages.find(message => message.sender.type === 'agent')?.metadata.run_status
+      })
+      .toBe('failed')
+    await expect(page.locator('.task-detail-comment-inline-error')).toHaveCount(0)
+    await expect(page.getByText('机器人已接收', { exact: true })).toHaveCount(0)
+    await page.reload()
+    const messages = await mentions.messages(mentions.issue.id)
+    const comment = messages.find(message => message.sender.type === 'user')!
+    expect(comment.content).toContain(text)
+    expect(comment.status).toBe('completed')
+    expect(comment.metadata.mentions).toEqual([
+      { type: 'agent', id: agentId, label: 'Unavailable mention runner' },
+    ])
+    expect(messages.filter(message => message.sender.type === 'agent')).toHaveLength(1)
+    expect(messages.find(message => message.sender.type === 'agent')?.status).toBe('failed')
+    await expect(page.getByTestId('collaboration-comments')).toContainText(text)
+    await expect(page.locator('.task-detail-comment-inline-error')).toHaveCount(0)
+  })
+
   test('selects an inherited member without executing the assigned robot and preserves the comment after refresh', async ({
     page,
     mentions,

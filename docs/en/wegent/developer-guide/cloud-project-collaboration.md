@@ -335,12 +335,16 @@ flowchart TD
     Human -->|No| Agent{Mentioned or assigned Agent?}
     Agent -->|Yes| Queue[Queue an independent session]
     Agent -->|No| Comment
-    Queue --> Claim[Executor pull + claim]
+    Queue --> Prepare[Prepare execution while consuming the queue]
+    Prepare -->|Configuration conflict| Failed[Fail the Run and preserve the comment]
+    Prepare -->|Valid configuration, including offline devices| Claim[Executor reconnects and claims]
     Claim --> Activity[Project status and results into the thread]
     Activity --> UI
 ```
 
 Clients send project, Issue, saved comment, and attachment IDs through `wework:project_chat:comment:execute`; they do not send device configuration. Comment locks and existing response records prevent duplicate Runs. Execution failures are surfaced without resending saved comments. Backend persists only a claimable execution intent, and the claiming Executor creates the Runtime session.
+
+Agent candidates follow visibility and use authority; device liveness, Issue runner affinity and model readiness do not hide candidates. New comments and queued session replies validate project, Issue and Agent use authority, then persist an execution request. Queue consumers reuse execution preparation to check runner affinity, models and runtime configuration. Conflicts fail the Run and update its AI activity while the saved user comment remains successful. Offline devices do not prevent admission: valid Runs wait for a runner to reconnect and claim them. Replies to unclaimed sessions also queue and resume the original task after it becomes ready. Manual approval remains mandatory, and claims revalidate current authority. The UI displays actual Run state rather than inferring Agent receipt from mention text.
 
 Focused checks cover hidden admin Agents, independent root Runs, reassignment, duplicate requests, comment-only behavior, and cross-project, read-only, and other-author rejection. Desktop regression coverage belongs to the existing `collaboration-shared-core` scenario; E2E runs require an explicit request.
 

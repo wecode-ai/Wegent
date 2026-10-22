@@ -204,7 +204,6 @@
     "project_chat_task_thread": "任务 Thread",
     "project_chat_processing_ellipsis": "正在处理…",
     "project_chat_completed": "已完成",
-    "project_chat_ai_received": "机器人已接收",
     "project_chat_processing": "正在处理",
     "project_chat_agents_title": "机器人",
     "project_chat_agents_description": "机器人可以被指派为任务负责人，自动执行并提交结果供人工验收。",
