@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from threading import Barrier
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy import create_engine
@@ -428,6 +428,50 @@ def _wire_route(*, versioned):
             )
         },
     )
+
+
+@pytest.mark.parametrize(
+    "error_code",
+    [
+        "plugin_write_busy",
+        "plugin_write_unavailable",
+        "plugin_write_lease_lost",
+        "plugin_write_conflict",
+    ],
+)
+@pytest.mark.asyncio
+async def test_intent_coordination_failure_propagates_before_executor_rpc(
+    snapshot_sessions, monkeypatch, error_code
+):
+    with snapshot_sessions() as db:
+        target = _wire_plugin(db, "target")
+    failure = PluginWriteError(error_code)
+    register = Mock(side_effect=failure)
+    call = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.device.plugin_sync_protocol.register_plugin_snapshot_intent",
+        register,
+    )
+    monkeypatch.setattr(
+        "app.services.device.capability_sync_service.runtime_route_resolver.resolve",
+        AsyncMock(return_value=_wire_route(versioned=True)),
+    )
+    monkeypatch.setattr(
+        "app.services.device.capability_sync_service.get_sio",
+        lambda: SimpleNamespace(call=call),
+    )
+
+    with pytest.raises(PluginWriteError) as caught:
+        await DeviceCapabilitySyncService(snapshot_sessions).sync_plugin_change(
+            user_id=1, device_id="device", installed_plugin_ids=[target]
+        )
+
+    assert caught.value is failure
+    register.assert_called_once()
+    call.assert_not_awaited()
+    with snapshot_sessions() as db:
+        state = db.query(Kind).filter_by(kind="PluginSyncState", user_id=1).one()
+        assert plugin_snapshot_watermark(state, "device", target) == 0
 
 
 @pytest.mark.parametrize("versioned", [False, True])

@@ -531,19 +531,19 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
             )
         dispatch_payload = {**payload, "device_id": route.runtime_device_id}
         started = time.monotonic()
-        try:
-            if snapshot is not None:
-                from app.services.device.plugin_sync_protocol import (
-                    register_plugin_snapshot_intent,
-                )
+        if snapshot is not None:
+            from app.services.device.plugin_sync_protocol import (
+                register_plugin_snapshot_intent,
+            )
 
-                await asyncio.to_thread(
-                    register_plugin_snapshot_intent,
-                    self._session_factory,
-                    user_id=user_id,
-                    device_id=device_id,
-                    payload=payload,
-                )
+            await asyncio.to_thread(
+                register_plugin_snapshot_intent,
+                self._session_factory,
+                user_id=user_id,
+                device_id=device_id,
+                payload=payload,
+            )
+        try:
             logger.info(
                 "Sending capability sync: user_id=%s logical_device_id=%s "
                 "runtime_device_id=%s socket_id=%s mode=%s skill_names=%s "
