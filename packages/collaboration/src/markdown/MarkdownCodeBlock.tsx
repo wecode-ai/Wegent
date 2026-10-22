@@ -392,4 +392,3 @@ function getCodeTagProps(wrapLines: boolean): HTMLProps<HTMLElement> {
     },
   };
 }
-
