@@ -81,7 +81,6 @@ from app.schemas.runtime_work import (
     RuntimeTranscriptRequest,
     RuntimeTranscriptResponse,
     RuntimeTranscriptSearchRequest,
-    RuntimeTranscriptSearchResponse,
     RuntimeWorkListResponse,
     RuntimeWorkSearchItem,
     RuntimeWorkSearchProjectRef,
@@ -126,7 +125,6 @@ logger = logging.getLogger(__name__)
 
 RUNTIME_LIST_TIMEOUT_SECONDS = 30
 RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS = 30
-RUNTIME_TRANSCRIPT_SEARCH_TIMEOUT_SECONDS = 120
 RUNTIME_SEARCH_TIMEOUT_SECONDS = 30
 RUNTIME_SEND_TIMEOUT_SECONDS = 600
 RUNTIME_CONTROL_TIMEOUT_SECONDS = 30
@@ -524,42 +522,6 @@ async def get_runtime_transcript(
         )
         raise HTTPException(
             502, "Runtime returned an invalid conversation response"
-        ) from exc
-
-
-@trace_async(
-    span_name="runtime_work.transcript.search", tracer_name="backend.runtime_work"
-)
-async def search_runtime_transcript(
-    *,
-    db: Session,
-    user_id: int,
-    request: RuntimeTranscriptSearchRequest,
-) -> RuntimeTranscriptSearchResponse:
-    """Search the exact authorized session without returning its full content."""
-
-    user_id, address = _resolve_runtime_session_read(db, user_id, request)
-    try:
-        result = await runtime_rpc_service.call(
-            user_id=user_id,
-            device_id=address.device_id,
-            method="runtime.tasks.transcript.search",
-            payload=_runtime_transcript_search_payload(request, address),
-            timeout_seconds=RUNTIME_TRANSCRIPT_SEARCH_TIMEOUT_SECONDS,
-            **(
-                {"allow_app_device_task_reading": True}
-                if request.project_session is not None
-                else {}
-            ),
-        )
-    except RuntimeRpcError as exc:
-        raise HTTPException(502, str(exc)) from exc
-    _raise_runtime_rpc_failure(result)
-    try:
-        return RuntimeTranscriptSearchResponse.model_validate(result)
-    except ValidationError as exc:
-        raise HTTPException(
-            502, "Runtime returned an invalid conversation search response"
         ) from exc
 
 

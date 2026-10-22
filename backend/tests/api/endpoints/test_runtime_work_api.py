@@ -483,37 +483,6 @@ def test_runtime_transcript_endpoint_dispatches_address(
     assert service_mock.await_args.kwargs["address"].before_cursor == "offset:120"
 
 
-def test_runtime_transcript_search_endpoint_preserves_bound_scope(
-    test_client, test_token, monkeypatch
-):
-    from app.api.endpoints import runtime_work
-
-    service_mock = AsyncMock(
-        return_value={"matches": [], "totalMatches": 0, "isCapped": False}
-    )
-    monkeypatch.setattr(
-        runtime_work.runtime_work_service, "search_runtime_transcript", service_mock
-    )
-    payload = {
-        "deviceId": "device-1",
-        "taskId": "runtime-1",
-        "query": "needle",
-        "limit": 250,
-        "projectSession": {"projectId": "project-1", "issueId": "issue-1"},
-    }
-
-    response = test_client.post(
-        "/api/runtime-work/transcript/search",
-        headers=_auth_headers(test_token),
-        json=payload,
-    )
-
-    assert response.status_code == 200
-    assert response.json() == {"matches": [], "totalMatches": 0, "isCapped": False}
-    request = service_mock.await_args.kwargs["request"]
-    assert request.model_dump(by_alias=True, exclude_none=True) == payload
-
-
 def test_runtime_search_endpoint_dispatches_request(
     test_client,
     test_token,

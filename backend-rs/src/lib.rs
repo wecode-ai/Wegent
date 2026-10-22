@@ -192,6 +192,7 @@ mod resource_refs;
 mod responses;
 mod runtime_check;
 mod runtime_profiles;
+mod runtime_transcript_search;
 mod runtime_work_im_notifications;
 mod sessions;
 mod share_knowledge_base_my_permission;

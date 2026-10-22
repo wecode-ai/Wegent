@@ -19,6 +19,29 @@ fn normalize(sql: &str) -> String {
     sql.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+#[tokio::test]
+async fn related_issue_uses_the_current_collaborator_table_and_bound_item_id() {
+    let mysql = crate::sql_test_support::KindQueryCapture::default();
+    assert!(
+        !LoopItemRepository::new(&mysql)
+            .is_related_item("EXAMPLE-'quoted", 86)
+            .await
+            .unwrap()
+    );
+    let queries = mysql.queries();
+    assert_eq!(queries.len(), 1);
+    assert_eq!(queries[0].args, 1);
+    let sql = &queries[0].sql;
+    assert!(sql.contains("WHERE loop_items.id = ?"));
+    assert!(!sql.contains("EXAMPLE-'quoted"));
+    assert!(!sql.contains("loop_item_collaborators"));
+    for kind in ["execution", "collaborator", "chat_agent"] {
+        assert!(sql.contains(&format!("loop_items.resource_type IN ('{kind}')")));
+    }
+    assert!(sql.contains("loop_items.user_id = 86"));
+    assert!(sql.contains("loop_items.unlinked_at IS NULL"));
+}
+
 /// `_find_project` selects the full labeled `loop_items` projection (the
 /// `db.query(CloudProject)` rendering), not a narrowed column list.
 #[tokio::test]

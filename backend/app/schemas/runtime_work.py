@@ -180,24 +180,6 @@ class RuntimeTranscriptSearchRequest(RuntimeSessionReadRequest):
     limit: Optional[int] = Field(default=None, ge=1, le=250)
 
 
-class RuntimeTranscriptSearchMatch(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    message_id: Optional[str] = Field(default=None, alias="messageId")
-    item_id: Optional[str] = Field(default=None, alias="itemId")
-    turn_id: Optional[str] = Field(default=None, alias="turnId")
-    occurrence: int = Field(..., ge=0)
-    cursor: str = Field(..., min_length=1)
-
-
-class RuntimeTranscriptSearchResponse(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    matches: list[RuntimeTranscriptSearchMatch]
-    total_matches: int = Field(..., alias="totalMatches", ge=0)
-    is_capped: bool = Field(..., alias="isCapped")
-
-
 class RuntimeFileChangesRevertRequest(BaseModel):
     """Revert a device-local runtime file-change artifact."""
 
