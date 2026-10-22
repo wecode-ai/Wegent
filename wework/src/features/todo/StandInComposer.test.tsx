@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { WorkspaceStandInSettings } from '@wegent/collaboration'
+import { runnerModelKey, type WorkspaceStandInSettings } from '@wegent/collaboration'
 import type { RuntimeWorkListResponse } from '@/types/api'
 import '@/i18n'
 import { installDshUiTestContributions } from '@/test/setup'
@@ -93,6 +93,34 @@ describe('Stand-in configuration composer', () => {
       }
     )
   })
+  it('waits for the model catalog before allowing settings to be saved', async () => {
+    const save = vi.fn(async () => true)
+    const model = {
+      runtime: 'codex' as const,
+      provider: 'local',
+      model_id: 'default-model',
+      label: 'Default model',
+      is_default: true,
+    }
+    let finishCatalog!: (catalog: { models: (typeof model)[] }) => void
+    const catalog = new Promise<{ models: (typeof model)[] }>(resolve => {
+      finishCatalog = resolve
+    })
+    const services = {
+      standInApi: { catalog: vi.fn(() => catalog) },
+      modelApi: { listModels: vi.fn(async () => ({ data: [] })) },
+    } as unknown as WorkbenchServices
+    render(<Fixture save={save} services={services} />)
+    expect(screen.getByTestId('stand-in-save')).toBeDisabled()
+    expect(screen.getByTestId('model-selector-button')).toBeInTheDocument()
+    await act(async () => finishCatalog({ models: [model] }))
+    await waitFor(() => expect(screen.getByTestId('stand-in-save')).toBeEnabled())
+    await userEvent.click(screen.getByTestId('stand-in-save'))
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({ model: expect.objectContaining({ model_id: 'default-model' }) })
+    )
+  })
+
   it('selects and saves the device default model without requiring an extra choice', async () => {
     const save = vi.fn(async () => true)
     const model = {
@@ -120,6 +148,89 @@ describe('Stand-in configuration composer', () => {
       expect.objectContaining({ model: expect.objectContaining({ model_id: 'default-model' }) })
     )
   })
+  it.each(['native', 'cloud'] as const)(
+    'separates same-name account and cloud models and saves the %s identity',
+    async source => {
+      const save = vi.fn(async () => true)
+      const native = {
+        runtime: 'codex' as const,
+        provider: 'openai',
+        model_id: 'gpt-6.1-sol',
+        label: 'GPT-6.1-Sol',
+        account_label: 'ChatGPT',
+        is_default: true,
+      }
+      const custom = {
+        ...native,
+        provider: 'custom',
+        account_label: 'Custom provider',
+        is_default: false,
+      }
+      const cloud = {
+        runtime: 'codex' as const,
+        provider: 'openai',
+        model_id: native.model_id,
+        source: 'cloud' as const,
+        cloud_model: {
+          name: 'cloud-sol',
+          type: 'public' as const,
+          namespace: 'default',
+          resource_user_id: 1,
+        },
+      }
+      const services = {
+        standInApi: { catalog: vi.fn(async () => ({ models: [native, custom] })) },
+        modelApi: {
+          listModels: vi.fn(async () => ({
+            data: [
+              {
+                name: cloud.cloud_model.name,
+                displayName: native.label,
+                modelId: native.model_id,
+                type: 'public',
+                provider: 'openai',
+                namespace: 'default',
+                resourceUserId: 1,
+                config: { protocol: 'openai-responses' },
+              },
+            ],
+          })),
+        },
+      } as unknown as WorkbenchServices
+      render(<Fixture save={save} services={services} />)
+      await waitFor(() =>
+        expect(screen.getByTestId('model-selector-button')).toHaveTextContent(native.label)
+      )
+      await userEvent.click(screen.getByTestId('model-selector-button'))
+      const localGroup = screen.getByTestId('model-source-local-chatgpt')
+      const cloudGroup = screen.getByTestId('model-source-cloud')
+      const customGroup = screen.getByTestId('model-source-custom')
+      expect(within(localGroup).getByText(native.label)).toBeInTheDocument()
+      expect(within(cloudGroup).getByText(native.label, { exact: false })).toBeInTheDocument()
+      expect(within(customGroup).getByText(native.label)).toBeInTheDocument()
+      expect(localGroup).toContainElement(
+        screen.getByTestId(`model-option-${runnerModelKey(native)}`)
+      )
+      expect(cloudGroup).toContainElement(
+        screen.getByTestId(`model-option-${runnerModelKey(cloud)}`)
+      )
+      expect(customGroup).toContainElement(
+        screen.getByTestId(`model-option-${runnerModelKey(custom)}`)
+      )
+      const selected = source === 'native' ? native : cloud
+      await userEvent.click(screen.getByTestId(`model-option-${runnerModelKey(selected)}`))
+      await userEvent.click(screen.getByTestId('stand-in-save'))
+      expect(save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: expect.objectContaining({
+            provider: selected.provider,
+            model_id: selected.model_id,
+            ...(source === 'cloud' ? { source: 'cloud', cloud_model: cloud.cloud_model } : {}),
+          }),
+        })
+      )
+    }
+  )
   it('saves empty optional instructions without copying the dynamic placeholder', async () => {
     const save = vi.fn(async () => true)
     render(<Fixture save={save} />)
@@ -134,6 +245,53 @@ describe('Stand-in configuration composer', () => {
     )
     await userEvent.click(screen.getByTestId('stand-in-save'))
     expect(save).toHaveBeenCalledWith(expect.objectContaining({ prompt: '', enabled: false }))
+  })
+
+  it('loads plugins and skills from the selected execution workspace for slash commands', async () => {
+    const readCatalog = vi.fn(async () => ({
+      taskId: null,
+      workspacePath: '/repo',
+      projectPluginIds: [],
+      apps: [],
+      marketplaces: [
+        {
+          name: 'local',
+          plugins: [{ name: 'tool', enabled: true, installed: true, source: { path: '/tool' } }],
+        },
+      ],
+      skills: [{ name: 'review', path: '/repo/review/SKILL.md' }],
+      store: { storePath: '/store', plugins: [] },
+      cloudInstalledPlugins: [],
+    }))
+    const services = {
+      composerCatalogApi: { readCatalog },
+      deviceApi: {},
+    } as unknown as WorkbenchServices
+    render(
+      <Fixture
+        save={vi.fn()}
+        services={services}
+        initial={{
+          projectKey: 'repo',
+          workspacePath: '/repo',
+          executionMode: 'current_workspace',
+        }}
+      />
+    )
+    const editor = screen.getByTestId('stand-in-prompt') as HTMLElement & { value: string }
+    act(() => {
+      editor.value = '/'
+      editor.focus()
+    })
+    expect(await screen.findByTestId('slash-command-option-app-plugin-tool')).toBeInTheDocument()
+    expect(await screen.findByTestId('slash-command-option-skill-review')).toBeInTheDocument()
+    expect(readCatalog).toHaveBeenCalledWith(
+      { deviceId: 'mac', scope: 'workspace', workspacePath: '/repo' },
+      true
+    )
+    await userEvent.click(screen.getByTestId('slash-command-option-skill-review'))
+    await userEvent.click(screen.getByTestId('stand-in-save'))
+    expect(editor.value).toContain('/repo/review/SKILL.md')
   })
 
   it('uses shared project and execution selectors and excludes other devices', async () => {
