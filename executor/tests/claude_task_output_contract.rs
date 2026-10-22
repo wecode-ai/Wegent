@@ -111,9 +111,17 @@ fn unrelated_or_nonduplicate_payloads_still_exceed_the_limit() {
 }
 
 #[test]
-fn oversized_canonical_tool_body_is_not_truncated_and_buffer_recovers() {
-    let mut event = oversized_task_output_event();
-    event["message"]["content"][0]["content"] = json!("x".repeat(MAX_MESSAGE_BYTES + 1));
+fn oversized_non_tool_body_is_rejected_and_buffer_recovers() {
+    let event = json!({
+        "type": "assistant",
+        "message": {
+            "role": "assistant",
+            "content": [{
+                "type": "text",
+                "text": "x".repeat(MAX_MESSAGE_BYTES + 1)
+            }]
+        }
+    });
     let mut buffer = ClaudeStdoutJsonBuffer::default();
 
     assert!(buffer.push_line(&event.to_string(), 172).is_err());
@@ -122,6 +130,38 @@ fn oversized_canonical_tool_body_is_not_truncated_and_buffer_recovers() {
         buffer.push_line(&next.to_string(), 173).unwrap(),
         Some(next)
     );
+}
+
+#[test]
+fn oversized_pdf_tool_result_is_compacted_with_its_file_reference() {
+    let file_reference = "PDF file read: /workspace/73117523397145/document.pdf\n";
+    let event = json!({
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": [{
+                "type": "tool_result",
+                "tool_use_id": "call_pdf",
+                "content": format!("{file_reference}{}", "extracted PDF text\n".repeat(80_000))
+            }]
+        }
+    });
+    let raw = event.to_string();
+    let normalized = compact_claude_stdout_line(&raw, 4).unwrap();
+    let actual: Value = serde_json::from_str(&normalized).unwrap();
+    let tool_results = extract_claude_tool_results(&actual);
+
+    assert!(raw.len() > MAX_MESSAGE_BYTES);
+    assert!(normalized.len() < MAX_MESSAGE_BYTES);
+    assert_eq!(tool_results.len(), 1);
+    assert_eq!(tool_results[0].tool_use_id, "call_pdf");
+    assert!(tool_results[0]
+        .content
+        .as_deref()
+        .is_some_and(|content| content.contains(file_reference)));
+    assert!(tool_results[0].content.as_deref().is_some_and(|content| {
+        content.contains("[tool result content omitted because it exceeded")
+    }));
 }
 
 #[test]
