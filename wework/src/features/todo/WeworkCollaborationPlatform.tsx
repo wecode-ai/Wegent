@@ -1,3 +1,4 @@
+import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
 import { useStandInProjects } from './useStandInProjects'
 import { StandInIcon } from './StandInIcon'
 import { bindProjectStandInApi } from '@/api/standIn'
@@ -46,6 +47,8 @@ import {
 } from '@/api/deliveries'
 import { loopItemLocalProject } from '@/api/localProjectAssociation'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
+import { getChangeRequestMonitor } from '@/features/workbench/changeRequestMonitor'
 import { useCollaborationMarkdownServices } from './useCollaborationMarkdownServices'
 import { AddCloudDeviceDialog } from '@/components/settings/AddCloudDeviceDialog'
 import { TransientNotice } from '@/components/common/TransientNotice'
@@ -390,6 +393,11 @@ export function WeworkSharedProject({
   workspace: CollaborationProjectRendererWorkspaceContext
 }) {
   const { t } = useTranslation('common')
+  const preferences = useAppPreferencesState()
+  const issueChangeRequestMonitor =
+    services.deviceApi && (preferences?.preferences.changeRequestStatusEnabled ?? true)
+      ? getChangeRequestMonitor(services.deviceApi)
+      : null
   const [taskComposer, setTaskComposer] = useState<{
     address?: RuntimeTaskAddress
     issue: CollaborationIssue
@@ -1210,6 +1218,14 @@ export function WeworkSharedProject({
                   display={display}
                   archiveDisabled={!onDelete}
                   progressDisplay={focused ? 'focused' : 'compact'}
+                  renderBadges={badges => (
+                    <IssueChangeRequestBadges
+                      badges={badges}
+                      monitor={issueChangeRequestMonitor}
+                      compact
+                      testId={`cloud-todo-card-badges-${issue.id}`}
+                    />
+                  )}
                 />
               </div>
             )

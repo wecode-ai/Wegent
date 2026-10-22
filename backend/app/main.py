@@ -52,6 +52,7 @@ from app.services.auth.internal_service_token import (
     require_internal_service_token_configured,
 )
 from app.services.jobs import start_background_jobs, stop_background_jobs
+from app.services.plugin_write_resources import close_plugin_write_resources
 from shared.telemetry.context.large_data import log_json_body
 
 # Redis lock key for startup operations (migrations + YAML init)
@@ -184,7 +185,10 @@ async def lifespan(app: FastAPI):
         async with chat_shell_clients.lifespan(), _application_lifespan(app):
             yield
     finally:
-        await cache_manager.aclose()
+        try:
+            close_plugin_write_resources()
+        finally:
+            await cache_manager.aclose()
 
 
 @asynccontextmanager

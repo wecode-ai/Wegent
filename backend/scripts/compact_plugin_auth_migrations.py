@@ -7,7 +7,7 @@ Run after all backend instances use reusable automatic migration slots:
 
 The default is read-only. Live intents, manual intents and ConnectorTransfer
 escrow are preserved. Deletions commit in bounded batches under the same user
-lock used by authentication services; rerun after old live intents expire.
+coordination used by authentication services; rerun after old live intents expire.
 """
 
 import argparse
@@ -25,6 +25,10 @@ from app.models.kind import Kind
 from app.models.user import User
 from app.services.plugin_account_connections import CONNECTION_NAMESPACE
 from app.services.plugin_auth_migrations import MIGRATION_KIND
+from app.services.plugin_write_coordination import (
+    acquire_plugin_write_lock,
+    configure_plugin_session,
+)
 
 
 def migration_query(db: Session) -> Query:
@@ -68,7 +72,8 @@ def obsolete_query(db: Session, user_id: int, now: int) -> Query:
 
 def compact_batch(db: Session, user_id: int, batch_size: int) -> int:
     """The caller owns commit/rollback for this bounded transaction."""
-    owner = db.query(User).filter(User.id == user_id).with_for_update().first()
+    acquire_plugin_write_lock(db, user_id)
+    owner = db.query(User).filter(User.id == user_id).populate_existing().first()
     if owner is None:
         raise ValueError("Migration owner does not exist")
     ids = [
@@ -98,6 +103,7 @@ def main() -> None:
     parser.add_argument("--batch-size", type=positive_int, default=1000)
     args = parser.parse_args()
     with SessionLocal() as db:
+        configure_plugin_session(db)
         query = migration_query(db).with_entities(Kind.user_id).distinct()
         if args.user_id is not None:
             query = query.filter(Kind.user_id == args.user_id)

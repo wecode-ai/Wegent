@@ -11,7 +11,17 @@ ruby -ryaml -e '
   source = step.fetch("env").fetch("BUILD_RUNTIMES_FROM_SOURCE")
   artifact = step.fetch("env").fetch("EXECUTOR_ARTIFACT")
   workflow = YAML.safe_load(File.read(ARGV[1]))
-  publish = workflow.fetch("jobs").fetch("build-backend-rs-e2e-runtime").fetch("steps").find { |s| s["name"] == "Publish content-addressed Backend Rust E2E image" }.fetch("if")
+  producer = workflow.fetch("jobs").fetch("build-backend-rs-e2e-runtime")
+  publish = producer.fetch("steps").find { |s| s["name"] == "Publish content-addressed Backend Rust E2E image" }.fetch("if")
+  consumer_workflow = YAML.safe_load(File.read(ARGV[2]))
+  consumer = consumer_workflow.fetch("jobs").fetch("build-wework-desktop-core-e2e")
+  producer_seconds = Integer(producer.fetch("timeout-minutes")) * 60
+  consumer_seconds = Integer(consumer.fetch("timeout-minutes")) * 60
+  oci_seconds = Integer(step.fetch("env").fetch("OCI_RUNTIME_WAIT_SECONDS"))
+  executor_seconds = Integer(step.fetch("env").fetch("WEWORK_E2E_PREBUILT_EXECUTOR_WAIT_SECONDS"))
+  raise "OCI wait must exceed the producer deadline" unless oci_seconds > producer_seconds
+  raise "Executor wait must cover the OCI wait" unless executor_seconds >= oci_seconds
+  raise "OCI wait must leave time within the consumer deadline" unless oci_seconds < consumer_seconds
   [["pull_request", "fork/Wegent", true, false],
    ["pull_request", "wecode-ai/Wegent", false, true],
    ["workflow_dispatch", "", false, true]].each do |event, head, expected_source, expected_publish|
@@ -26,7 +36,7 @@ ruby -ryaml -e '
     raise "wrong Executor artifact source for #{event}/#{head}" unless evaluate.call(artifact) == expected_source
     raise "wrong package publication for #{event}/#{head}" unless evaluate.call(publish) == expected_publish
   end
-' "$script_dir/../actions/build-wework-core-e2e/action.yml" "$script_dir/../workflows/e2e-tests.yml"
+' "$script_dir/../actions/build-wework-core-e2e/action.yml" "$script_dir/../workflows/e2e-tests.yml" "$script_dir/../workflows/wework-e2e.yml"
 ruby -ryaml -e '
   action = YAML.safe_load(File.read(ARGV[0]))
   step = action.fetch("runs").fetch("steps").find { |s| s["env"]&.key?("EXECUTOR_IMAGE") }
@@ -127,7 +137,7 @@ set -euo pipefail
 test "${GITHUB_TOKEN:-}" = synthetic-read-token
 test "$ACTIONS_ARTIFACT_WORKFLOW" = e2e-tests.yml
 test "$ACTIONS_ARTIFACT_HEAD_SHA" = synthetic-head-sha
-test "$ACTIONS_ARTIFACT_WAIT_SECONDS" = 1500
+test "$ACTIONS_ARTIFACT_WAIT_SECONDS" = 1800
 test "$1" = executor-e2e-binary
 echo artifact >> "$TEST_LOG"
 [[ "${FAIL_ARTIFACT:-false}" != true ]] || exit 1

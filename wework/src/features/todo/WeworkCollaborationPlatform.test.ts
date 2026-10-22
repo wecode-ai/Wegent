@@ -2137,6 +2137,110 @@ describe('Wework collaboration workspace API', () => {
     }
   )
 
+  it('renders metadata badges through the actual shared project board entry without content requests', async () => {
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(private callback: IntersectionObserverCallback) {}
+        observe() {
+          this.callback(
+            [{ isIntersecting: true } as IntersectionObserverEntry],
+            {} as IntersectionObserver
+          )
+        }
+        disconnect() {}
+      }
+    )
+    const projectId = 'external-pr-project'
+    const issue = {
+      id: 'PR-1',
+      badges: [
+        {
+          id: 'pr-42',
+          label: '#42',
+          url: 'https://github.com/org/app/pull/42',
+          icon: 'git-pull-request',
+        },
+      ],
+      cloud_project_id: projectId,
+      title: 'Review PR',
+      description: '',
+      detail_loaded: false,
+      status: 'completed',
+      priority: 'none',
+      version: 1,
+      can_view_detail: true,
+      tags: [],
+    }
+    const get = vi
+      .fn()
+      .mockResolvedValue({ ...issue, description: 'https://github.com/org/app/pull/42' })
+    const list = vi.fn().mockResolvedValue([{ body: 'https://github.com/org/app/pull/42' }])
+    const executeCommand = vi.fn().mockResolvedValue({
+      success: true,
+      stdout: { number: 42, url: 'https://github.com/org/app/pull/42', state: 'MERGED' },
+    })
+    render(
+      createElement(WeworkSharedProject, {
+        api: { projects: {}, issues: { get }, comments: { list } } as unknown as SharedWorkspaceApi,
+        localProjects: [],
+        locale: 'zh-CN',
+        location: {
+          platformView: 'project',
+          workspaceId: 'cloud-workspace',
+          workspaceView: 'projects',
+          projectId,
+          projectView: 'board',
+          issueId: null,
+        },
+        project: {
+          id: projectId,
+          name: 'External PR project',
+          project_store: 'backend',
+          task_provider: 'gitlab',
+        } as never,
+        services: { deviceApi: { executeCommand } } as never,
+        setLocation: vi.fn(),
+        userId: 1,
+        workspace: { id: 'cloud-workspace', name: 'Cloud workspace' } as never,
+      })
+    )
+    const renderer = renderedProjectControls.get(projectId)?.renderBoardIssueCard
+    render(
+      createElement(
+        'div',
+        null,
+        renderer?.({
+          column: {
+            key: 'completed',
+            label: 'Completed',
+            status: 'completed',
+            groupValue: 'completed',
+            dotClass: '',
+          },
+          defaultCard: null,
+          display: { showAssignee: false, showDate: false, showPriority: false, showTags: false },
+          focused: false,
+          issue: issue as never,
+          onOpen: vi.fn(),
+          onMarkRead: vi.fn(),
+          previewDisabled: false,
+          taskBindings: [],
+        })
+      )
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('issue-badge-pr-42')).toHaveAccessibleName(/已合并|Merged/)
+    )
+    expect(get).not.toHaveBeenCalled()
+    expect(list).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+    expect(executeCommand).toHaveBeenCalledWith(
+      'local-device',
+      expect.objectContaining({ command_key: 'git_github_pull_request_view' })
+    )
+  })
+
   it('restores one final reply on a reloaded shared project board with an empty conversation cache', async () => {
     const projectId = 'reloaded-reply-project'
     const issueId = 'REPLY-1'
