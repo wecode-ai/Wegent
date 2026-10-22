@@ -1,5 +1,5 @@
 //! Device-owned personal automation. Cloud APIs only synchronize existing Issue work.
-use super::stand_in_workspace::{apply_stand_in_workspace, validate_stand_in_workspace};
+use super::stand_in_workspace::apply_stand_in_workspace;
 use super::*;
 
 fn settings_error(error: crate::task_runtime::TaskRuntimeError) -> AppIpcError {
@@ -61,7 +61,7 @@ impl RuntimeWorkRpcHandler {
             .map_err(|error| AppIpcError::new("cloud_response_invalid", error.to_string()))
     }
 
-    async fn authorize_stand_in(&self, config: &Value) -> Result<(), AppIpcError> {
+    async fn verify_stand_in_user(&self, config: &Value) -> Result<(), AppIpcError> {
         let user = self
             .stand_in_http(reqwest::Method::GET, "/users/me", None)
             .await?;
@@ -69,45 +69,6 @@ impl RuntimeWorkRpcHandler {
             return Err(AppIpcError::new(
                 "permission_denied",
                 "Stand-in can only handle the connected user's assignments",
-            ));
-        }
-        let project = config["projectId"].as_str().unwrap_or_default();
-        let detail = self
-            .stand_in_http(
-                reqwest::Method::GET,
-                &format!("/v1/cloud-projects/{project}"),
-                None,
-            )
-            .await?;
-        if !matches!(
-            detail["access_role"].as_str(),
-            Some("Developer" | "Maintainer" | "Owner")
-        ) {
-            return Err(AppIpcError::new(
-                "permission_denied",
-                "Project execution permission is required",
-            ));
-        }
-        let environments = self
-            .stand_in_http(
-                reqwest::Method::GET,
-                &format!("/v1/cloud-projects/{project}/execution-environments"),
-                None,
-            )
-            .await?;
-        if !environments["items"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .any(|environment| {
-                environment["can_use"] == true
-                    && (environment["device_key"] == self.device_id
-                        || environment["app_device_id"] == self.device_id)
-            })
-        {
-            return Err(AppIpcError::new(
-                "permission_denied",
-                "This Executor is not authorized in the project",
             ));
         }
         Ok(())
@@ -147,18 +108,9 @@ impl RuntimeWorkRpcHandler {
                 "Save settings on the selected Executor",
             ));
         }
-        if settings["enabled"] == true {
-            validate_stand_in_workspace(&settings)?;
-        }
         settings["projectStore"] = json!(project_store);
         settings["projectId"] = json!(project);
         settings["userId"] = json!(user_id);
-        if settings["enabled"] == true {
-            if project_store == "cloud" {
-                self.authorize_stand_in(&settings).await?;
-            }
-            self.stand_in_agent(&settings).await?;
-        }
         store
             .save_stand_in_settings(&project, user_id, settings)
             .map_err(settings_error)
@@ -191,7 +143,7 @@ impl RuntimeWorkRpcHandler {
         config["executionDeviceId"] = json!(self.device_id);
         config["manual"] = json!(true);
         if !local {
-            self.authorize_stand_in(&config).await?;
+            self.verify_stand_in_user(&config).await?;
         }
         let gate = self.task_send_gate(&format!("stand-in-issue:{project}:{issue_id}"));
         let _guard = gate.lock().await;
@@ -542,7 +494,7 @@ impl RuntimeWorkRpcHandler {
         payload: Value,
     ) -> Result<(), AppIpcError> {
         if config["projectStore"] == "cloud" {
-            self.authorize_stand_in(config).await?;
+            self.verify_stand_in_user(config).await?;
         }
         let project = config["projectId"].as_str().unwrap_or_default();
         let issue_id = issue["id"].as_str().unwrap_or_default();
@@ -754,7 +706,7 @@ impl RuntimeWorkRpcHandler {
         binding: &Value,
     ) -> Result<Value, AppIpcError> {
         if config["projectStore"] == "cloud" {
-            self.authorize_stand_in(config).await?;
+            self.verify_stand_in_user(config).await?;
         }
         let project = config["projectId"].as_str().unwrap_or_default();
         let issue_id = issue["id"].as_str().unwrap_or_default();
@@ -822,29 +774,7 @@ impl RuntimeWorkRpcHandler {
             apply_stand_in_workspace(&mut payload, config)?;
             return Ok(payload);
         }
-        let metadata = if config["projectStore"] == "local" {
-            LocalTaskStore::open(self.task_store_path.as_ref())
-                .map_err(settings_error)?
-                .get_project(project)
-                .map_err(settings_error)?
-                .metadata
-        } else {
-            let project = self
-                .stand_in_http(
-                    reqwest::Method::GET,
-                    &format!("/v1/cloud-projects/{project}"),
-                    None,
-                )
-                .await?;
-            json!({"execution_environment": project["execution_environment"]})
-        };
-        crate::task_runtime::apply_project_workspace(
-            &mut payload,
-            &metadata,
-            &self.device_id,
-            project,
-        )
-        .map_err(settings_error)?;
+        payload["standaloneChatWorkspace"] = json!(true);
         Ok(payload)
     }
 }

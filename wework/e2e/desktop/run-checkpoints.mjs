@@ -105,6 +105,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-group-onboarding': './scenarios/collaboration-group-onboarding.scenario.mjs',
   'collaboration-local-agent-dispatch':
     './scenarios/collaboration-local-agent-dispatch.scenario.mjs',
+  'stand-in-personal-task': './scenarios/stand-in-personal-task.scenario.mjs',
   'stand-in': './scenarios/stand-in.scenario.mjs',
   'stand-in-cloud': './scenarios/stand-in-cloud.scenario.mjs',
   'stand-in-permissions': './scenarios/stand-in-permissions.scenario.mjs',
@@ -199,6 +200,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-first-use',
   'collaboration-group-onboarding',
   'collaboration-local-agent-dispatch',
+  'stand-in-personal-task',
   'stand-in',
   'stand-in-cloud',
   'stand-in-permissions',

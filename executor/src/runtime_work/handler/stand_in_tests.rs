@@ -307,28 +307,14 @@ async fn explicit_retry_reuses_failed_task_and_rolls_back_a_rejected_restart() {
 }
 
 #[tokio::test]
-async fn cloud_stand_in_requires_actor_project_and_device_permission() {
-    let allowed = Arc::new(Mutex::new(false));
-    let device_allowed = allowed.clone();
-    let router = Router::new()
-        .route("/api/users/me", get(|| async { Json(json!({"id":7})) }))
-        .route(
-            "/api/v1/cloud-projects/project",
-            get(|| async { Json(json!({"access_role":"Developer"})) }),
-        )
-        .route(
-            "/api/v1/cloud-projects/project/execution-environments",
-            get(move || {
-                let can_use = *device_allowed.lock().unwrap();
-                async move { Json(json!({"items":[{"device_key":"mac","can_use":can_use}]})) }
-            }),
-        );
+async fn personal_stand_in_checks_actor_without_project_device_setup() {
+    let router = Router::new().route("/api/users/me", get(|| async { Json(json!({"id":7})) }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
-    let runtime_root = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir().unwrap();
     let handler = RuntimeWorkRpcHandler {
-        store: RuntimeWorkStore::new(runtime_root.path().join("runtime-index.json")),
+        store: RuntimeWorkStore::new(root.path().join("runtime-index.json")),
         backend_connection: Arc::new(Mutex::new(Some(ConnectionConfig {
             backend_url: url,
             auth_token: "test".into(),
@@ -338,15 +324,59 @@ async fn cloud_stand_in_requires_actor_project_and_device_permission() {
     };
     let mut config = json!({"projectId":"project","userId":8});
     assert_eq!(
-        handler.authorize_stand_in(&config).await.unwrap_err().code,
+        handler
+            .verify_stand_in_user(&config)
+            .await
+            .unwrap_err()
+            .code,
         "permission_denied"
     );
     config["userId"] = json!(7);
-    assert_eq!(
-        handler.authorize_stand_in(&config).await.unwrap_err().code,
-        "permission_denied"
-    );
-    *allowed.lock().unwrap() = true;
-    handler.authorize_stand_in(&config).await.unwrap();
+    handler.verify_stand_in_user(&config).await.unwrap();
     server.abort();
+}
+
+#[tokio::test]
+async fn enabled_settings_save_offline_without_agent_model_or_workspace_preparation() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    let prompt = "x".repeat(16000);
+    let settings = json!({
+        "enabled":true,"executionDeviceId":"mac","version":0,"prompt":prompt,
+        "name":"n".repeat(200),"tags":(0..60).map(|n| n.to_string()).collect::<Vec<_>>(),
+        "agentId":"not-loaded",
+        "model":{"runtime":"codex","provider":"native","model_id":"not-loaded"},
+        "workspace":{"projectKey":"not-indexed","workspacePath":"/not-present","executionMode":"git_worktree"}
+    });
+    let saved = handler
+        .stand_in_settings(
+            json!({
+                "projectId":"cloud-project","projectStore":"cloud","userId":7,"settings":settings
+            }),
+            true,
+        )
+        .await
+        .unwrap();
+    assert_eq!(saved["enabled"], true);
+    assert_eq!(saved["version"], 1);
+    assert_eq!(saved["prompt"], prompt);
+    assert_eq!(saved["workspace"], settings["workspace"]);
+}
+
+#[tokio::test]
+async fn default_personal_task_needs_no_project_environment() {
+    let handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    let payload = handler
+        .prepare_stand_in_task(
+            &json!({"projectStore":"local","projectId":"not-configured","userId":7}),
+            &json!({"id":"issue","title":"Task"}),
+            &json!({"humanAssignmentId":"human"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(payload["taskId"], "stand-in-human");
+    assert_eq!(payload["executionRequest"]["bot"][0]["shell_type"], "Codex");
+    assert!(payload.get("workspacePath").is_none());
+    assert_eq!(payload["standaloneChatWorkspace"], true);
 }
