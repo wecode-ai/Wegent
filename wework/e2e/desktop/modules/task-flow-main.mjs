@@ -4895,6 +4895,11 @@ async function verifyMcpElicitationInFullAccess(control) {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  assert.equal(
+    Number(await control.command('getElementCount', '[data-testid="request-user-input-summary"]')),
+    2,
+    'Completion history must retain both the cancelled URL authorization and the accepted form'
+  )
 
   const startedAt = Date.now()
   let evidence = null

@@ -49,7 +49,6 @@ import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProvid
 import { persistAttachmentReferences } from '@/lib/attachments'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import {
-  applyRequestUserInputResponseToBlock,
   findRequestUserInputPayload,
   isAsyncRequestUserInputPayload,
   requestUserInputPayloadKey,
@@ -134,8 +133,8 @@ import {
   subscribeRuntimeConversation,
   subscribeRuntimeTransportReplaced,
   takeInterruptedRuntimeConversationGuidance,
-  updateRuntimeConversationBlocks,
 } from '@/features/workbench/runtimeConversationCache'
+import { prepareRuntimeUserInputResponse } from '@/features/workbench/runtimeUserInputResponse'
 import {
   createRuntimeUserMessage,
   type RuntimeUserMessageOptions,
@@ -1167,25 +1166,6 @@ export function useWorkbenchPaneSession({
     [dispatchMessages]
   )
 
-  const applyLocalRequestUserInputResponse = useCallback(
-    (response: RequestUserInputResponse) => {
-      if (!currentRuntimeTask) return
-      const previousCount = messagesRef.current.length
-      const nextMessages = updateRuntimeConversationBlocks(currentRuntimeTask, block =>
-        applyRequestUserInputResponseToBlock(block, response)
-      )
-      setMessages(nextMessages)
-      debugRuntimePaneMessageFlow('request-user-input-response-applied', {
-        address: runtimeAddressDebug(currentRuntimeTask),
-        requestUserInputKey: requestUserInputResponseKey(response),
-        previousCount,
-        nextCount: nextMessages.length,
-        nextMessages: summarizeWorkbenchMessages(nextMessages),
-      })
-    },
-    [currentRuntimeTask]
-  )
-
   const sendRuntimeMessage = useCallback(
     async (
       message: RuntimePaneQueuedMessage,
@@ -1746,6 +1726,7 @@ export function useWorkbenchPaneSession({
     ): Promise<boolean> => {
       if (!currentRuntimeTask) return false
 
+      const commitResponse = prepareRuntimeUserInputResponse(currentRuntimeTask, response)
       const message = requestUserInputResponseText(response)
       const requestUserInputKey = requestUserInputResponseKey(response)
       const runtimeModelOverride = options.forceDefaultCollaborationMode
@@ -1793,11 +1774,19 @@ export function useWorkbenchPaneSession({
           return next
         })
       }
-      applyLocalRequestUserInputResponse(response)
+      const previousCount = messagesRef.current.length
+      const nextMessages = commitResponse()
+      setMessages(nextMessages)
+      debugRuntimePaneMessageFlow('request-user-input-response-applied', {
+        address: runtimeAddressDebug(currentRuntimeTask),
+        requestUserInputKey,
+        previousCount,
+        nextCount: nextMessages.length,
+        nextMessages: summarizeWorkbenchMessages(nextMessages),
+      })
       return true
     },
     [
-      applyLocalRequestUserInputResponse,
       currentRuntimeTask,
       getRuntimeModelFields,
       projectChat,

@@ -1,14 +1,20 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { createElement, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import type { RuntimeTaskAddress } from '@/types/api'
+import type { RequestUserInputResponse, RuntimeTaskAddress } from '@/types/api'
+import type { RuntimeConversationTurn } from '@/types/workbench'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import {
   cacheRuntimeConversationQueuedMessages,
   cacheRuntimeConversationQueuePaused,
   clearRuntimeConversationCacheForTests,
+  evictRuntimeConversation,
+  getRuntimeConversationMessages,
+  getRuntimeConversationTurns,
   getRuntimeConversationQueuedMessages,
   getRuntimeConversationQueuePaused,
+  reconcileRuntimeConversationSnapshot,
+  replaceRuntimeConversationSnapshot,
 } from '@/features/workbench/runtimeConversationCache'
 import {
   getRuntimeConversationQueueController,
@@ -120,6 +126,108 @@ function expectDraftPreserved(session: ReturnType<typeof useWorkbenchPaneSession
   expect(mocks.setInput).not.toHaveBeenCalled()
   expect(mocks.resetAttachments).not.toHaveBeenCalled()
 }
+
+const inputResponse: RequestUserInputResponse = {
+  requestId: 74,
+  answers: { audience: { answers: ['仅自己'] } },
+}
+const inputTurn: RuntimeConversationTurn = {
+  id: 'input-turn',
+  status: 'streaming',
+  items: [
+    {
+      id: 'request-user-input-74',
+      type: 'block',
+      block: {
+        id: 'request-user-input-74',
+        type: 'tool',
+        toolName: 'request_user_input',
+        status: 'pending',
+        createdAt: 1,
+        renderPayload: {
+          kind: 'request_user_input',
+          requestId: 74,
+          questions: [{ id: 'audience', question: '访问范围' }],
+        },
+      },
+    },
+  ],
+}
+
+describe('runtime input response delivery', () => {
+  test('retains an accepted answer when completion history arrives before the send resolves', async () => {
+    const { result } = await renderSession()
+    act(() => reconcileRuntimeConversationSnapshot(address, [inputTurn]))
+    mocks.send.mockImplementation(async () => {
+      replaceRuntimeConversationSnapshot(address, [
+        {
+          id: inputTurn.id,
+          status: 'done',
+          items: [
+            {
+              id: 'final',
+              type: 'assistant_text',
+              content: 'Completed',
+              createdAt: '2026-10-22T00:00:00Z',
+            },
+          ],
+        },
+      ])
+      return true
+    })
+
+    await act(async () => {
+      expect(await result.current.sendRequestUserInputResponse(inputResponse)).toBe(true)
+    })
+
+    expect(getRuntimeConversationTurns(address)[0].status).toBe('done')
+    expect(getRuntimeConversationMessages(address)).toEqual([
+      expect.objectContaining({
+        content: 'Completed',
+        blocks: [
+          expect.objectContaining({
+            id: 'request-user-input-74',
+            status: 'done',
+            renderPayload: expect.objectContaining({ response: inputResponse }),
+          }),
+        ],
+      }),
+    ])
+    replaceRuntimeConversationSnapshot(address, [{ id: inputTurn.id, status: 'done', items: [] }])
+    expect(getRuntimeConversationMessages(address)[0].blocks).toHaveLength(1)
+  })
+
+  test('keeps the question pending when the executor rejects the response', async () => {
+    const { result } = await renderSession()
+    act(() => reconcileRuntimeConversationSnapshot(address, [inputTurn]))
+    mocks.send.mockResolvedValue(false)
+
+    await act(async () => {
+      expect(await result.current.sendRequestUserInputResponse(inputResponse)).toBe(false)
+    })
+
+    expect(getRuntimeConversationMessages(address)[0].blocks).toMatchObject([
+      { status: 'pending', renderPayload: { requestId: 74 } },
+    ])
+    const item = getRuntimeConversationTurns(address)[0].items[0]
+    expect(item.type === 'block' && item.block.renderPayload).not.toHaveProperty('response')
+  })
+
+  test('does not restore a removed conversation after a delayed acknowledgement', async () => {
+    const { result } = await renderSession()
+    act(() => reconcileRuntimeConversationSnapshot(address, [inputTurn]))
+    mocks.send.mockImplementation(async () => {
+      evictRuntimeConversation(address)
+      return true
+    })
+
+    await act(async () => {
+      expect(await result.current.sendRequestUserInputResponse(inputResponse)).toBe(true)
+    })
+
+    expect(getRuntimeConversationMessages(address)).toEqual([])
+  })
+})
 
 describe('pane continuation without composer submission', () => {
   test('continues the bound task with its model and leaves an unsent draft intact', async () => {
