@@ -75,7 +75,6 @@ export function createBackendWorkbenchServices(
     redirectOnUnauthorized: options.redirectOnUnauthorized,
   })
   const deviceApi = createDeviceApi(client)
-  const agentResourceApi = createAgentResourceApi(client)
   const projectApi = createProjectApi(client)
   const runtimeWorkApi = createRuntimeWorkApi(client)
   const taskApi = createTaskApi(client)
@@ -120,6 +119,9 @@ export function createBackendWorkbenchServices(
       clientOrigin: 'wework',
     })
   const projectDevicePluginApis = new Map<string, ProjectDevicePluginApi>()
+  const agentResourceApi = createAgentResourceApi(client, deviceId =>
+    composerRuntimeIpc.request('runtime.runner.catalog', {}, deviceId)
+  )
   let knownDevices: DeviceInfo[] | null = null
   let discoveryRevision = 0
   let lastDiscoveryRevision = 0

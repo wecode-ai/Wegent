@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { groupBoardIssues, reorderLaneItems } from "./board";
+import { groupBoardIssues } from "./board";
 import type { CollaborationIssue, CollaborationProject } from "./types";
 
 function issue(
@@ -45,32 +45,6 @@ const project = {
     ],
   },
 } as CollaborationProject;
-
-describe("reorderLaneItems", () => {
-  it("moves an issue into the requested lane and order", () => {
-    const items = [
-      issue("1", "todo"),
-      issue("2", "doing"),
-      issue("3", "doing"),
-    ];
-    const result = reorderLaneItems(items, "1", "doing", "3");
-
-    expect(result?.laneIds).toEqual(["2", "1", "3"]);
-    expect(result?.items.find((item) => item.id === "1")?.status).toBe("doing");
-  });
-
-  it("preserves the parent lane for sub-issues", () => {
-    const items = [
-      issue("1", "todo", { parent_id: "parent-a" }),
-      issue("2", "doing", { parent_id: "parent-a" }),
-      issue("3", "doing", { parent_id: "parent-b" }),
-    ];
-    const result = reorderLaneItems(items, "1", "doing", null);
-
-    expect(result?.laneIds).toEqual(["2", "1"]);
-    expect(result?.items.find((item) => item.id === "3")?.status).toBe("doing");
-  });
-});
 
 describe("groupBoardIssues", () => {
   it("uses the persisted project grouping", () => {

@@ -11,6 +11,7 @@ from app.models.share_link import ResourceType
 from app.models.user import User
 from app.services.workspaces.environment_status import execution_environment_statuses
 from app.services.workspaces.resource_mapping import (
+    agent_display_name,
     agent_status,
     personal_environment_values,
 )
@@ -46,7 +47,7 @@ class WorkspacePersonalResourceService:
             "agents": [
                 {
                     "id": str(team.id),
-                    "name": team.name,
+                    "name": agent_display_name(team),
                     "team_id": team.id,
                     "owner_type": "user",
                     "owner_id": str(user.id),

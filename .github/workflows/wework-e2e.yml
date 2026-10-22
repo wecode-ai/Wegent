@@ -385,37 +385,11 @@ jobs:
           pnpm --dir wework/electron install --frozen-lockfile
           pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
 
-      - name: Restore real object storage for Issue MCP E2E
+      - name: Set up real object storage for Issue MCP E2E
         if: contains(matrix.segments, 'collaboration-issue-mcp-comments')
-        id: issue-mcp-minio
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        uses: ./.github/actions/setup-minio-e2e
         with:
-          path: ${{ runner.temp }}/wework-minio/bin
-          key: ${{ runner.os }}-minio-9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a-go-1.25.9-v1
-
-      - name: Set up Go for real object storage
-        if: contains(matrix.segments, 'collaboration-issue-mcp-comments') && steps.issue-mcp-minio.outputs.cache-hit != 'true'
-        uses: actions/setup-go@v6
-        with:
-          go-version: "1.25.9"
-          cache: false
-
-      - name: Build real object storage
-        if: contains(matrix.segments, 'collaboration-issue-mcp-comments') && steps.issue-mcp-minio.outputs.cache-hit != 'true'
-        run: GOBIN="$RUNNER_TEMP/wework-minio/bin" go install github.com/minio/minio@9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a
-
-      - name: Save real object storage for Issue MCP E2E
-        if: github.ref == 'refs/heads/main' && contains(matrix.segments, 'collaboration-issue-mcp-comments') && steps.issue-mcp-minio.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: ${{ runner.temp }}/wework-minio/bin
-          key: ${{ steps.issue-mcp-minio.outputs.cache-primary-key }}
-
-      - name: Enable real object storage
-        if: contains(matrix.segments, 'collaboration-issue-mcp-comments')
-        run: |
-          test -x "$RUNNER_TEMP/wework-minio/bin/minio"
-          echo "$RUNNER_TEMP/wework-minio/bin" >> "$GITHUB_PATH"
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Run Wework desktop Core shard E2E
         env:
@@ -730,11 +704,71 @@ jobs:
           "WEWORK_E2E_MYSQLD_BIN=$mysqlServerPath" |
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+      - name: Restore real object storage for Issue MCP E2E
+        if: contains(matrix.segments, 'collaboration-issue-mcp-comments')
+        id: issue-mcp-minio
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/wework-minio/bin
+          key: ${{ runner.os }}-minio-9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a-go-1.25.9-v1
+
+      - name: Set up Go for real object storage
+        if: contains(matrix.segments, 'collaboration-issue-mcp-comments') && steps.issue-mcp-minio.outputs.cache-hit != 'true'
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.9"
+          cache: false
+
+      - name: Build real object storage
+        if: contains(matrix.segments, 'collaboration-issue-mcp-comments') && steps.issue-mcp-minio.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $env:GOBIN = Join-Path $env:RUNNER_TEMP "wework-minio\bin"
+          New-Item -ItemType Directory -Force -Path $env:GOBIN | Out-Null
+          go install github.com/minio/minio@9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to build the MinIO binary for desktop E2E"
+          }
+
+      - name: Save real object storage for Issue MCP E2E
+        if: github.ref == 'refs/heads/main' && contains(matrix.segments, 'collaboration-issue-mcp-comments') && steps.issue-mcp-minio.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/wework-minio/bin
+          key: ${{ steps.issue-mcp-minio.outputs.cache-primary-key }}
+
+      - name: Enable real object storage
+        if: contains(matrix.segments, 'collaboration-issue-mcp-comments')
+        shell: pwsh
+        run: |
+          $source = Join-Path $env:RUNNER_TEMP "wework-minio\bin\minio.exe"
+          if (-not (Test-Path $source -PathType Leaf)) {
+            throw "Missing MinIO binary: $source"
+          }
+          # The E2E process runs as a separate standard user, so expose the
+          # binary from the workspace instead of the runner temp directory.
+          $targetRoot = Join-Path $env:GITHUB_WORKSPACE "wework\test-results\windows-e2e-tools\minio"
+          New-Item -ItemType Directory -Force -Path $targetRoot | Out-Null
+          $target = Join-Path $targetRoot "minio.exe"
+          Copy-Item -LiteralPath $source -Destination $target -Force
+          & $target --version
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to run the MinIO binary: $target"
+          }
+          "WEWORK_E2E_MINIO_BIN=$target" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Install Electron for native startup and schema verification
         if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')
         run: |
           pnpm --dir wework/electron install --frozen-lockfile
           pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
+
+      - name: Set up real object storage for Issue MCP E2E
+        if: contains(matrix.segments, 'collaboration-issue-mcp-comments')
+        uses: ./.github/actions/setup-minio-e2e
+        with:
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Run Windows Wework desktop Core shard E2E
         id: windows-core-e2e

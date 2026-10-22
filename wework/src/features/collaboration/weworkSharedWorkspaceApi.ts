@@ -536,6 +536,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
               due_at: input.dueAt,
               tags: input.tags,
               security_level: input.securityLevel,
+              position: input.position,
             }) as Parameters<DeliveryApi['updateLoopItem']>[1]
           )
           .then(toIssue)

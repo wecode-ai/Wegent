@@ -4,6 +4,7 @@ import { StandInIcon } from './StandInIcon'
 import * as Popover from '@radix-ui/react-popover'
 import { Bot, ChevronDown, Monitor } from 'lucide-react'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { dequal } from 'dequal'
 import type {
   CollaborationProject,
   SharedWorkspaceApi,
@@ -20,6 +21,18 @@ const emptySettings: WorkspaceStandInSettings = {
   executionDeviceId: '',
   version: 0,
 }
+
+const configurationKeys = [
+  'prompt',
+  'executionDeviceId',
+  'agentId',
+  'model',
+  'modelOptions',
+  'workspace',
+  'goalMode',
+  'name',
+  'tags',
+] as const
 
 export function StandInPopover({
   api,
@@ -42,7 +55,7 @@ export function StandInPopover({
   services?: WorkbenchServices
   initialProfileId?: string
   initialDeviceId?: string
-  onSaved?(settings: WorkspaceStandInSettings): void
+  onSaved?(settings: WorkspaceStandInSettings, action?: 'settings' | 'automatic'): void
   onSavingChange?(saving: boolean): void
   onCancel?(): void
   api: SharedWorkspaceApi
@@ -58,6 +71,7 @@ export function StandInPopover({
   const [reuseNotice, setReuseNotice] = useState(false)
   const [saved, setSaved] = useState(emptySettings)
   const [draft, setDraft] = useState(emptySettings)
+  const [pendingEnable, setPendingEnable] = useState(false)
   const deviceLoad = useRef(0)
   const selectedDevice = useRef(initialDeviceId ?? '')
   const [currentDeviceId, setCurrentDeviceId] = useState('')
@@ -107,6 +121,7 @@ export function StandInPopover({
           if (signal.cancelled || !settings) return
           setError(null)
           setSaved(settings)
+          setPendingEnable(false)
           setLoaded(true)
           setDraft({ ...settings, executionDeviceId: settings.executionDeviceId || current })
         })
@@ -131,7 +146,7 @@ export function StandInPopover({
     if (!open || !api.agents) return
     let cancelled = false
     void api.agents
-      .list(project.id)
+      .list(project.id, { forceRefresh: true })
       .then(rows => {
         if (!cancelled) {
           setAgents(
@@ -156,6 +171,8 @@ export function StandInPopover({
     const revision = ++deviceLoad.current
     setDraft({ ...emptySettings, executionDeviceId: deviceId })
     setLoaded(false)
+    setLoading(true)
+    setPendingEnable(false)
     setError(null)
     try {
       const settings = await api.standIn!.get(
@@ -170,6 +187,8 @@ export function StandInPopover({
     } catch (cause) {
       if (revision === deviceLoad.current)
         setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      if (revision === deviceLoad.current) setLoading(false)
     }
   }
 
@@ -236,17 +255,38 @@ export function StandInPopover({
       [device.device_id, device.app_device_id].includes(draft.executionDeviceId)
     )
   )
-  const save = async (prompt: string) => {
+  const persist = async (settings: WorkspaceStandInSettings, action: 'settings' | 'automatic') => {
     if (!api.standIn || !loaded || loading || saving || !canConfigure) return
     setSaving(true)
     setError(null)
     try {
-      const result = await api.standIn.save(project.id, { ...draft, prompt })
+      const result = await api.standIn.save(project.id, settings)
       setSaved(result)
-      setDraft(result)
-      onSaved?.(result)
-      if (!embedded) setOpen(false)
-      setNotice(t('standIn.saved'))
+      setPendingEnable(false)
+      // Accept server metadata while retaining only unsaved configuration edits.
+      setDraft(current =>
+        action === 'automatic'
+          ? {
+              ...result,
+              ...Object.fromEntries(
+                configurationKeys
+                  .filter(key => !dequal(current[key], settings[key]))
+                  .map(key => [key, current[key]])
+              ),
+            }
+          : result
+      )
+      onSaved?.(result, action)
+      if (action === 'settings' && !embedded) setOpen(false)
+      setNotice(
+        t(
+          action === 'settings'
+            ? 'standIn.saved'
+            : result.enabled
+              ? 'standIn.automatic_enabled'
+              : 'standIn.automatic_disabled'
+        )
+      )
       return true
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
@@ -264,38 +304,75 @@ export function StandInPopover({
     row => row.projectId !== project.id || row.projectStore !== projectStore
   )
   const agentMissing = Boolean(draft.agentId && !agents.some(agent => agent.id === draft.agentId))
-  const hasChanges =
-    JSON.stringify(draft) !==
-    JSON.stringify({ ...saved, executionDeviceId: saved.executionDeviceId || currentDeviceId })
+  const savedConfiguration = {
+    ...saved,
+    executionDeviceId: saved.executionDeviceId || currentDeviceId,
+  }
+  const hasChanges = configurationKeys.some(key => !dequal(draft[key], savedConfiguration[key]))
+  const save = (prompt: string) =>
+    persist({ ...draft, prompt, enabled: saved.enabled || pendingEnable }, 'settings')
+  const toggleAutomatic = () => {
+    setNotice(null)
+    if (pendingEnable) {
+      setPendingEnable(false)
+    } else if (!saved.enabled && (saved.version === 0 || hasChanges || !composerValid)) {
+      setPendingEnable(true)
+    } else {
+      void persist(
+        { ...saved, executionDeviceId: draft.executionDeviceId, enabled: !saved.enabled },
+        'automatic'
+      )
+    }
+  }
   const editor = (
     <>
       <div className="p-4">
         <button
           type="button"
           role="switch"
-          aria-checked={draft.enabled}
-          aria-label={t('standIn.auto')}
+          aria-checked={saved.enabled}
+          aria-busy={saving}
+          aria-label={t('standIn.auto_label')}
           data-testid="stand-in-auto"
-          disabled={saving || !canConfigure || !loaded}
-          onClick={() => setDraft(current => ({ ...current, enabled: !current.enabled }))}
-          className={`flex w-full items-center justify-between gap-4 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-40 ${draft.enabled ? 'mb-3' : ''}`}
+          disabled={
+            saving ||
+            !canConfigure ||
+            !loaded ||
+            (!saved.enabled && saved.version > 0 && !composerValid)
+          }
+          onClick={toggleAutomatic}
+          className="flex w-full items-center justify-between gap-4 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-40"
         >
           <span className="min-w-0">
-            <span className="text-sm font-medium text-text-primary">{t('standIn.auto')}</span>
+            <span className="text-sm font-medium text-text-primary">{t('standIn.auto_label')}</span>
             <span className="mt-1 block text-xs text-text-muted">
               {t('standIn.auto_description')}
             </span>
           </span>
           <span
             aria-hidden="true"
-            className={`inline-flex h-6 w-10 shrink-0 items-center rounded-full p-0.5 transition-colors ${draft.enabled ? 'bg-text-primary' : 'bg-border'}`}
+            className={`inline-flex h-6 w-10 shrink-0 items-center rounded-full p-0.5 transition-colors ${saved.enabled ? 'bg-text-primary' : 'bg-border'}`}
           >
             <span
-              className={`h-5 w-5 rounded-full bg-background shadow-sm transition-transform ${draft.enabled ? 'translate-x-4' : ''}`}
+              className={`h-5 w-5 rounded-full bg-background shadow-sm transition-transform ${saved.enabled ? 'translate-x-4' : ''}`}
             />
           </span>
         </button>
-        {draft.enabled && sameProjectProfiles.some(row => row.id && row.id !== 'default') && (
+        {pendingEnable && (
+          <p
+            role="status"
+            data-testid="stand-in-enable-notice"
+            className="mt-2 text-xs text-text-muted"
+          >
+            {t(
+              saved.version === 0 ? 'standIn.configure_before_enable' : 'standIn.save_before_enable'
+            )}
+          </p>
+        )}
+        <h3 className="mb-3 mt-4 border-t border-border pt-4 text-sm font-medium">
+          {t('standIn.settings')}
+        </h3>
+        {sameProjectProfiles.some(row => row.id && row.id !== 'default') && (
           <label className="mb-3 flex items-center gap-2 text-sm text-text-secondary">
             {t('standIn.existing_profile')}
             <select
@@ -320,7 +397,7 @@ export function StandInPopover({
             </select>
           </label>
         )}
-        {draft.enabled && reuseProfiles.length > 0 && (
+        {reuseProfiles.length > 0 && (
           <label className="mb-3 flex items-center gap-2 text-sm text-text-secondary">
             {t('standIn.copy_from')}
             <select
@@ -358,7 +435,7 @@ export function StandInPopover({
             </select>
           </label>
         )}
-        {draft.enabled && reuseNotice && (
+        {reuseNotice && (
           <p role="status" className="mb-3 text-xs text-text-muted">
             {t(agentMissing ? 'standIn.copy_agent_required' : 'standIn.copied')}
           </p>
@@ -368,7 +445,7 @@ export function StandInPopover({
           <p role="status" className="text-text-muted">
             {t('standIn.loading')}
           </p>
-        ) : draft.enabled ? (
+        ) : loaded ? (
           <>
             <StandInComposer
               draft={draft}
@@ -492,7 +569,7 @@ export function StandInPopover({
             </button>
           </div>
         )}
-        {(draft.enabled || saved.enabled || embedded || (loaded && hasChanges)) && (
+        {loaded && (
           <div className="mt-4 flex items-center justify-end gap-2">
             <button
               type="button"
@@ -500,6 +577,7 @@ export function StandInPopover({
               data-testid="stand-in-cancel"
               onClick={() => {
                 setDraft(saved)
+                setPendingEnable(false)
                 if (embedded) onCancel?.()
                 else setOpen(false)
               }}
@@ -515,12 +593,20 @@ export function StandInPopover({
                 loading ||
                 saving ||
                 !canConfigure ||
-                (draft.enabled && (!composerValid || !draft.executionDeviceId || selectionMissing))
+                !composerValid ||
+                !draft.executionDeviceId ||
+                selectionMissing
               }
               onClick={() => void save(draft.prompt)}
               className="min-h-8 rounded-md bg-text-primary px-3 text-sm font-medium text-background disabled:opacity-40"
             >
-              {t(saving ? 'standIn.saving' : 'standIn.save')}
+              {t(
+                saving
+                  ? 'standIn.saving'
+                  : pendingEnable
+                    ? 'standIn.save_and_enable'
+                    : 'standIn.save'
+              )}
             </button>
           </div>
         )}
@@ -547,6 +633,7 @@ export function StandInPopover({
           deviceLoad.current += 1
           setOpen(next)
           setNotice(null)
+          setPendingEnable(false)
           if (next) {
             setLoading(true)
             setLoaded(false)
@@ -563,7 +650,7 @@ export function StandInPopover({
           title={t(saved.enabled ? 'standIn.enabled' : 'standIn.action_label')}
           className="relative z-10 inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-text-secondary hover:bg-muted"
         >
-          <StandInIcon enabled={open ? draft.enabled : saved.enabled} />
+          <StandInIcon enabled={saved.enabled} />
           <span>{t('standIn.action_label')}</span>
           {saved.enabled && (
             <span
@@ -584,7 +671,7 @@ export function StandInPopover({
           align="end"
           sideOffset={8}
           collisionPadding={12}
-          className={`z-popover max-w-[calc(100vw-24px)] rounded-xl border border-border bg-background text-sm text-text-primary shadow-lg ${draft.enabled || saved.enabled ? 'w-[560px]' : 'w-[360px]'}`}
+          className="z-popover max-h-[var(--radix-popover-content-available-height)] w-[560px] max-w-[calc(100vw-24px)] overflow-y-auto rounded-xl border border-border bg-background text-sm text-text-primary shadow-lg"
           data-testid="stand-in-settings"
           onEscapeKeyDown={event => {
             if (saving) event.preventDefault()
