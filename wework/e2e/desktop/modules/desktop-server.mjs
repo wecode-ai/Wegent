@@ -16,6 +16,7 @@ import {
   functionCall,
   json,
   latestModelInputText,
+  isReplyPredictionRequest,
   localModelSwitchCommand,
   localProtocolCase,
   localProtocolPatch,
@@ -2140,7 +2141,7 @@ class DesktopE2EServer {
       return
     }
 
-    if (latestModelInputText(body).includes('Predict one natural next USER message')) {
+    if (isReplyPredictionRequest(body)) {
       this.writeLocalAssistantMessage(response, { protocol }, JSON.stringify({ suggestion: null }))
       return
     }

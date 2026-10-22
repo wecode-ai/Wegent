@@ -72,6 +72,10 @@ function latestModelInputText(body) {
   return JSON.stringify(input ?? message ?? '')
 }
 
+function isReplyPredictionRequest(body) {
+  return latestModelInputText(body).includes('Predict one natural next USER message')
+}
+
 function responseCreated(id) {
   return {
     type: 'response.created',
@@ -783,6 +787,7 @@ export {
   createSse,
   codexRequestKind,
   latestModelInputText,
+  isReplyPredictionRequest,
   responseCreated,
   responseCompleted,
   responseFailed,

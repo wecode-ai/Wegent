@@ -3,6 +3,17 @@ import { Readable } from 'node:stream'
 import { test } from 'vitest'
 import { DesktopE2EServer } from '../e2e/desktop/modules/desktop-server.mjs'
 import { MODEL_API_KEY } from '../e2e/desktop/modules/shared.mjs'
+import { isReplyPredictionRequest } from '../e2e/desktop/modules/response-protocol.mjs'
+
+test('recognizes predictions only in the latest model input', () => {
+  const prediction = { role: 'user', content: 'Predict one natural next USER message' }
+  assert.equal(isReplyPredictionRequest({ input: [prediction] }), true)
+  assert.equal(isReplyPredictionRequest({ messages: [prediction] }), true)
+  assert.equal(
+    isReplyPredictionRequest({ input: [prediction, { role: 'user', content: 'Continue' }] }),
+    false
+  )
+})
 
 test('serves background predictions without advancing the active tool scenario', async () => {
   const server = new DesktopE2EServer('/tmp/reply-prediction-fixture')
