@@ -380,6 +380,7 @@ export function reduceChatDoneEvent({
     error: event.hasError ? event.errorMessage : existingMessage.error,
     messageId: event.messageId ?? existingMessage.messageId,
     sources: event.sources || existingMessage.sources,
+    contexts: event.contexts ?? existingMessage.contexts,
     result: mergedResult,
   })
 
