@@ -106,15 +106,6 @@ class MilvusState:
         )
         # Use an explicit Strong query: REST defaults do not carry the writer's
         # session timestamp, so stale reads cannot prove absence of side effects.
-        script = """import json, sys
-from pymilvus import MilvusClient
-request = json.load(sys.stdin)
-client = MilvusClient(uri=request.pop("uri"))
-try:
-    print(json.dumps(client.query(**request, consistency_level="Strong")))
-finally:
-    client.close()
-"""
         root = Path(__file__).resolve().parents[3]
         result = subprocess.run(
             [
@@ -124,8 +115,7 @@ finally:
                 str(root / "knowledge_runtime"),
                 "--no-sync",
                 "python",
-                "-c",
-                script,
+                str(root / "knowledge_runtime/tests/e2e/milvus_snapshot.py"),
             ],
             input=json.dumps(
                 {
