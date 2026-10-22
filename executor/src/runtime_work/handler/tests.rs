@@ -1160,6 +1160,9 @@ fn isolated_runtime_work_handler(label: &str) -> (RuntimeWorkRpcHandler, PathBuf
 #[path = "background_terminal_tests.rs"]
 mod background_terminal_tests;
 
+#[path = "streaming_transcript_tests.rs"]
+mod streaming_transcript_tests;
+
 #[test]
 fn applies_backend_connection_from_the_shared_snapshot() {
     let snapshot: Arc<Mutex<Option<ConnectionConfig>>> =
