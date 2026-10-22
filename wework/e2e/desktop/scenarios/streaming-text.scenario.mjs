@@ -1,3 +1,4 @@
+import { handleEmptyReplyPrediction } from '../modules/response-protocol.mjs'
 import {
   createMarkdownLinkChecks,
   MARKDOWN_LINKS_PROMPT,
@@ -321,6 +322,7 @@ export function createDesktopScenario({
       }
 
       const body = await readJson(request)
+      if (handleEmptyReplyPrediction(body, response)) return true
       const responseId = `wework-streaming-text-${Date.now()}`
       if (await transcriptIdentity.handleModelRequest(body, response, responseId)) return true
       const latestInput = latestModelInputText(body)
