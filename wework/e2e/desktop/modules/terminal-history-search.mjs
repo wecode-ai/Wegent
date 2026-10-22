@@ -80,27 +80,27 @@ export function terminalHistoryAssistantParts(index, fallbackText) {
   const text = terminal?.text ?? fallbackText
   if (index === 46) {
     return [
-      { text, phase: 'analysis' },
+      { text, phase: 'commentary' },
       { text, phase: 'final_answer' },
     ]
   }
   if (index === 47) {
     return [
       { text, phase: 'final_answer' },
-      { text, phase: 'analysis' },
+      { text, phase: 'commentary' },
       ...Array.from({ length: 60 }, (_, offset) => ({
         text: `Long completed turn context ${offset}`,
-        phase: 'analysis',
+        phase: 'commentary',
       })),
       { text: 'Long completed turn final tail', phase: 'final_answer' },
     ]
   }
   if (index === 48) {
     return [
-      { text, phase: 'analysis' },
+      { text, phase: 'commentary' },
       ...Array.from({ length: 60 }, (_, offset) => ({
         text: `Neighbor completed turn context ${offset}`,
-        phase: 'analysis',
+        phase: 'commentary',
       })),
       { text, phase: 'final_answer' },
     ]

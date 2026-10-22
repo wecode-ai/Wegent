@@ -22,24 +22,24 @@ const CASES = [
   {
     query: 'interrupted',
     matches: [
-      { name: 'cancelled', first: 0, index: 6, text: 'interrupted' },
-      { name: 'done-cancelled', first: 0, index: 0, text: 'interrupted' },
+      { name: 'cancelled', index: 6, text: 'interrupted' },
+      { name: 'done-cancelled', index: 0, text: 'interrupted' },
     ],
   },
   {
     query: ERROR_QUERY,
     matches: [
-      { name: 'failed', first: 0, index: 6, text: ERROR_BODY },
-      { name: 'done-failed', first: 0, index: 0, text: ERROR_BODY },
+      { name: 'failed', index: 6, text: ERROR_BODY },
+      { name: 'done-failed', index: 0, text: ERROR_BODY },
     ],
   },
   {
     query: GUIDANCE_QUERY,
-    matches: [{ name: 'guidance', first: 0, index: 0, text: GUIDANCE_BODY }],
+    matches: [{ name: 'guidance', index: 0, text: GUIDANCE_BODY }],
   },
   {
     query: DUPLICATE_QUERY,
-    matches: [{ name: 'duplicate', first: 0, index: 0, text: DUPLICATE_QUERY }],
+    matches: [{ name: 'duplicate', index: 0, text: DUPLICATE_QUERY }],
   },
 ]
 
@@ -153,7 +153,7 @@ export async function verifyCachedHistorySearch(
         await control.command('clickWhenEnabled', '[data-testid="conversation-find-next-button"]')
       }
       await waitForHistorySearchCount(control, `${index + 1} / ${matches.length}`, timeoutMs)
-      const messageId = `runtime-view:${turnId(match.name)}:${itemId(match.name, match.first)}`
+      const messageId = `runtime-view:${turnId(match.name)}:assistant`
       const content = `${ACTIVE_WORKBENCH_SELECTOR} [data-message-id="${messageId}"] [data-testid="assistant-message-content"]`
       await waitForHighlightedHistoryMatch(control, match.text, timeoutMs, content)
       assert.equal(
