@@ -8,7 +8,11 @@ from app.schemas.project_chat import ProjectChatMention
 from app.services.cloud_project_visibility import project_participant_ids
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.loop_items.access import can_view_item
-from app.services.notification_copy import comment_preview, mention_message
+from app.services.notification_copy import (
+    NotificationTarget,
+    comment_preview,
+    mention_message,
+)
 from app.services.notification_target import board_notification_target
 from app.services.wework_notifications import create_notification
 
@@ -42,11 +46,15 @@ def notify_project_chat_mentions(
         )
         if user_id != actor_user_id
     ]
-    for recipient_id in recipient_ids:
-        _require_issue_visibility(db, project, task_id, item, recipient_id)
+    if not recipient_ids:
+        return
+    targets = [
+        _authorized_mention_target(db, project, task_id, item, recipient_id)
+        for recipient_id in recipient_ids
+    ]
 
     preview = comment_preview(content)
-    target = board_notification_target(db, project, item)
+    target = targets[0]
     message = mention_message(
         actor_name=actor_name,
         preview=preview,
@@ -63,40 +71,42 @@ def notify_project_chat_mentions(
             title=message.title,
             body=message.body,
             project_id=str(project.id),
-            item_id=item.id if item is not None else None,
+            item_id=target.item_id,
             comment_id=message.comment_id,
             payload=message.payload,
         )
 
 
-def _require_issue_visibility(
+def _authorized_mention_target(
     db: Session,
     project: CloudProject,
     task_id: str | None,
     item: LoopItem | None,
     recipient_id: int,
-) -> None:
-    """Use the owning provider's read policy before exposing Issue previews."""
+) -> NotificationTarget:
+    """Resolve the owning provider's target after checking recipient access."""
 
     if task_id is None:
-        return
+        return board_notification_target(db, project, None)
     if project.task_provider in {"github", "gitlab"}:
         from app.services.loop_items.external_provider import (
             external_loop_item_provider,
         )
 
         try:
-            external_loop_item_provider.get(db, task_id, recipient_id)
+            return external_loop_item_provider.get_notification_target(
+                db, task_id, recipient_id
+            )
         except HTTPException as exc:
             if exc.status_code in {403, 404}:
                 raise HTTPException(
                     422, "Mentioned user cannot view this issue"
                 ) from exc
             raise
-        return
     access = require_cloud_project_role(db, int(project.id), recipient_id)
     if item is None or not can_view_item(db, access, item, recipient_id):
         raise HTTPException(422, "Mentioned user cannot view this issue")
+    return board_notification_target(db, project, item)
 
 
 def _mentioned_member_ids(

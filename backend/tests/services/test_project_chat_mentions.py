@@ -165,7 +165,11 @@ def test_cp14_external_issue_mentions_require_provider_visibility(
         )
         assert result.created
         test_db.expire_all()
-        assert test_db.query(WeworkNotification).one().user_id == recipient.id
+        notification = test_db.query(WeworkNotification).one()
+        assert notification.user_id == recipient.id
+        assert notification.payload["itemId"] == task_id
+        assert notification.payload["itemTitle"] == "Provider issue"
+        assert task_id in notification.url
         assert test_db.query(ProjectChatMessage).count() == 1 + int(reply)
         schedule.assert_called_once()
     else:

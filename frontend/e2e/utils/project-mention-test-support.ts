@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect, test as base } from '@playwright/test'
+import { execFile } from 'node:child_process'
+import { resolve } from 'node:path'
+import { promisify } from 'node:util'
 import type {
   ProjectChatClient,
   ProjectChatMessage,
@@ -9,10 +12,20 @@ import type {
 } from '../../../packages/chat-core/src/project-chat'
 import { createSocketClient } from '../../../packages/chat-core/src/socket'
 import { createApiClient, type ApiClient, type ApiResponse } from './api-client'
+import {
+  createExternalIssueHttpFixture,
+  type ExternalIssueProvider,
+} from './external-issue-http-fixture'
+
+const execFileAsync = promisify(execFile)
 
 interface Resource {
   id: string
   version: number
+}
+
+interface Project extends Resource {
+  project_key: string
 }
 
 interface User {
@@ -40,11 +53,15 @@ interface MentionFixture {
   actor: User
   recipient: User
   workspace: Resource
-  project: Resource
+  project: Project
   issue: Resource
   projectPath: string
   mention: ProjectChatMention
-  chat: () => MentionChat
+  chat: (as?: 'actor' | 'recipient') => MentionChat
+  external?: {
+    setAssignee: (userId: number) => void
+    createSiblingIssue: () => Promise<{ project: Project; issue: Resource }>
+  }
   messages: (taskId?: string) => Promise<ProjectChatMessage[]>
   inbox: (api?: ApiClient) => Promise<Notification[]>
   grant: (
@@ -111,6 +128,8 @@ function connectChat(token: string): MentionChat {
 interface MentionOptions {
   membershipMode: 'inherit' | 'restricted'
   issueSecurity: 'open' | 'related'
+  taskProvider: 'local' | ExternalIssueProvider
+  localIssueIndex: boolean
 }
 
 export async function apiData<T>(response: Promise<ApiResponse<T>>): Promise<T> {
@@ -123,7 +142,12 @@ export async function apiData<T>(response: Promise<ApiResponse<T>>): Promise<T> 
 export const test = base.extend<MentionOptions & { mentions: MentionFixture }>({
   membershipMode: ['inherit', { option: true }],
   issueSecurity: ['open', { option: true }],
-  mentions: async ({ page, request, membershipMode, issueSecurity }, use) => {
+  taskProvider: ['local', { option: true }],
+  localIssueIndex: [false, { option: true }],
+  mentions: async (
+    { page, request, membershipMode, issueSecurity, taskProvider, localIssueIndex },
+    use
+  ) => {
     const token = (await page.context().cookies()).find(
       cookie => cookie.name === 'auth_token'
     )?.value
@@ -133,15 +157,40 @@ export const test = base.extend<MentionOptions & { mentions: MentionFixture }>({
     const clients: MentionChat[] = []
     let recipient: User | undefined
     let workspace: Resource | undefined
-    let project: Resource | undefined
-    const chat = () => {
-      const client = connectChat(token)
+    const projects: Project[] = []
+    let provider: Awaited<ReturnType<typeof createExternalIssueHttpFixture>> | undefined
+    let recipientToken: string | undefined
+    const chat = (as: 'actor' | 'recipient' = 'actor') => {
+      const userToken = as === 'actor' ? token : recipientToken
+      if (!userToken) throw new Error('Mention recipient has not logged in')
+      const client = connectChat(userToken)
       clients.push(client)
       return client
     }
     const archive = async (path: string) => {
       const resource = await apiData(api.get<Resource>(path))
       expect((await api.delete(`${path}?version=${resource.version}`)).status).toBe(204)
+    }
+    const manageIndex = async (projectId: string, action: 'seed' | 'check' | 'cleanup') => {
+      if (!process.env.DATABASE_URL)
+        throw new Error('External Issue E2E requires the running service DATABASE_URL')
+      await execFileAsync(
+        'uv',
+        [
+          'run',
+          '--no-sync',
+          'python',
+          'tests/e2e/project_mention_index.py',
+          action,
+          projectId,
+          localIssueIndex ? 'present' : 'absent',
+        ],
+        {
+          cwd: resolve(__dirname, '../../../backend'),
+          env: { ...process.env, PYTHONPATH: '.:..' },
+          timeout: 15_000,
+        }
+      )
     }
 
     try {
@@ -155,29 +204,41 @@ export const test = base.extend<MentionOptions & { mentions: MentionFixture }>({
         })
       )
       const recipientApi = createApiClient(request)
-      await apiData(recipientApi.login(recipient.user_name, password, 1))
+      recipientToken = (await apiData(recipientApi.login(recipient.user_name, password, 1)))
+        .access_token
       workspace = await apiData(
         api.post<Resource>('/api/v1/workspaces', { name: `Mentions ${suffix}` })
       )
-      project = await apiData(
-        api.post<Resource>('/api/v1/cloud-projects', {
-          name: `Mentions ${suffix}`,
-          workspace_id: workspace.id,
-          membership_mode: membershipMode,
-          default_issue_security: issueSecurity,
-          task_provider: 'local',
-          visibility: 'private',
-        })
-      )
-      const projectId = project.id
       const workspaceId = workspace.id
       const recipientId = recipient.id
-      const issue = await apiData(
-        api.post<Resource>(`/api/v1/cloud-projects/${projectId}/loop-items`, {
-          title: `Mention Issue ${suffix}`,
-          notify_assignee: false,
-        })
-      )
+      if (taskProvider !== 'local')
+        provider = await createExternalIssueHttpFixture(taskProvider, actor.id, issueSecurity)
+      const createProject = async () => {
+        const project = await apiData(
+          api.post<Project>('/api/v1/cloud-projects', {
+            name: `Mentions ${crypto.randomUUID()}`,
+            workspace_id: workspaceId,
+            membership_mode: membershipMode,
+            default_issue_security: issueSecurity,
+            task_provider: taskProvider,
+            ...(provider ? { provider_config: provider.config } : {}),
+            visibility: 'private',
+          })
+        )
+        projects.push(project)
+        if (provider) await manageIndex(project.id, 'seed')
+        const issue = provider
+          ? { id: `${project.project_key}-1`, version: 1 }
+          : await apiData(
+              api.post<Resource>(`/api/v1/cloud-projects/${project.id}/loop-items`, {
+                title: `Mention Issue ${suffix}`,
+                notify_assignee: false,
+              })
+            )
+        return { project, issue }
+      }
+      const { project, issue } = await createProject()
+      const projectId = project.id
       await use({
         api,
         recipientApi,
@@ -189,6 +250,9 @@ export const test = base.extend<MentionOptions & { mentions: MentionFixture }>({
         projectPath: `/collaboration/workspaces/${workspaceId}/projects/${projectId}`,
         mention: { type: 'user', id: String(recipientId), label: recipient.user_name },
         chat,
+        ...(provider
+          ? { external: { setAssignee: provider.setAssignee, createSiblingIssue: createProject } }
+          : {}),
         messages: async taskId => {
           // A fresh connection reads committed history rather than an optimistic UI cache.
           const client = chat()
@@ -218,16 +282,31 @@ export const test = base.extend<MentionOptions & { mentions: MentionFixture }>({
           await apiData(api.put(`/api/admin/users/${recipientId}`, { is_active: active }))
         },
       })
+      if (provider) {
+        for (const project of projects) await manageIndex(project.id, 'check')
+        expect(
+          provider.requests.length,
+          'The real backend must call the provider HTTP mock'
+        ).toBeGreaterThan(0)
+        expect(provider.requests.every(request => request.status === 200)).toBe(true)
+      }
     } finally {
       clients.forEach(client => client.dispose())
       try {
-        if (project) await archive(`/api/v1/cloud-projects/${project.id}`)
+        for (const project of projects) {
+          if (provider) await manageIndex(project.id, 'cleanup')
+          await archive(`/api/v1/cloud-projects/${project.id}`)
+        }
       } finally {
         try {
           if (workspace) await archive(`/api/v1/workspaces/${workspace.id}`)
         } finally {
-          if (recipient)
-            expect((await api.delete(`/api/admin/users/${recipient.id}`)).status).toBe(204)
+          try {
+            if (recipient)
+              expect((await api.delete(`/api/admin/users/${recipient.id}`)).status).toBe(204)
+          } finally {
+            await provider?.close()
+          }
         }
       }
     }
