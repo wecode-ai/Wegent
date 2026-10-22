@@ -1668,17 +1668,10 @@ fn validate_record_worktree_identity(record: &ManagedWorktree, path: &Path) -> R
     } else {
         return Err("Managed worktree repository identity is unavailable".to_owned());
     };
-    let source_path = record
-        .source_path
-        .as_deref()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| path.to_path_buf());
-    validate_existing_worktree_identity(
-        &source_path,
-        path,
-        &record.worktree_id,
-        &expected_git_common_dir,
-    )
+    // An established worktree is independent of the directory it was created from.
+    // Keep validating its recorded repository identity, without requiring that
+    // original source worktree to still exist.
+    validate_existing_worktree_identity(path, path, &record.worktree_id, &expected_git_common_dir)
 }
 
 fn reconcile_worktree_state(
@@ -1714,11 +1707,22 @@ fn reconcile_worktree_state(
             });
             continue;
         }
-        if record.state == STATE_ACTIVE && path.exists() {
-            if let Err(error) = validate_record_worktree_identity(record, &path) {
-                record.state = STATE_FAILED.to_owned();
-                record.last_error = Some(error);
-                record.updated_at = now_ms();
+        if matches!(record.state.as_str(), STATE_ACTIVE | STATE_FAILED)
+            && !record.preparation_owned_path
+            && path.exists()
+        {
+            match validate_record_worktree_identity(record, &path) {
+                Ok(()) if record.state == STATE_FAILED => {
+                    record.state = STATE_ACTIVE.to_owned();
+                    record.last_error = None;
+                    record.updated_at = now_ms();
+                }
+                Err(error) => {
+                    record.state = STATE_FAILED.to_owned();
+                    record.last_error = Some(error);
+                    record.updated_at = now_ms();
+                }
+                _ => {}
             }
         }
     }
@@ -2933,7 +2937,7 @@ mod tests {
         ))
     }
 
-    fn run_git(path: &Path, args: &[&str]) {
+    pub(super) fn run_git(path: &Path, args: &[&str]) {
         let mut command = git_command();
         configure_git_common_dir(&mut command, path);
         command
@@ -3003,7 +3007,7 @@ mod tests {
         assert!(!worktree.exists());
     }
 
-    fn initialize_repository(path: &Path) {
+    pub(super) fn initialize_repository(path: &Path) {
         fs::create_dir_all(path).unwrap();
         run_git(path, &["init"]);
         run_git(path, &["config", "core.autocrlf", "false"]);
