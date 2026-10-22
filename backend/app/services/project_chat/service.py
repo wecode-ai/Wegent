@@ -970,6 +970,10 @@ class ProjectChatService:
                 mention.model_dump(by_alias=True) for mention in request.mentions
             ]
         }
+        if request.mentions and all(
+            mention.type == "user" for mention in request.mentions
+        ):
+            metadata["execution_dispatch"] = "comment_only"
         if request.model is not None:
             metadata["model"] = request.model
         reply = self._resolve_reply_context(
@@ -1001,6 +1005,7 @@ class ProjectChatService:
         notify_project_chat_mentions(
             db,
             project=project,
+            task_id=request.task_id,
             item=item,
             comment_id=message_id,
             actor_user_id=user_id,
@@ -2205,6 +2210,19 @@ class ProjectChatService:
                     status.HTTP_403_FORBIDDEN, "Insufficient permission"
                 )
             return project
+        if project.task_provider in {"github", "gitlab"}:
+            from app.services.loop_items.external_provider import (
+                external_loop_item_provider,
+            )
+
+            external_task = external_loop_item_provider.get(db, task_id, user_id)
+            if external_task["cloud_project_id"] != str(project.id):
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Project task not found")
+            if not has_permission(access.role, required_role):
+                raise HTTPException(
+                    status.HTTP_403_FORBIDDEN, "Insufficient permission"
+                )
+            return project
         task = (
             db.query(LoopItem)
             .filter(
@@ -2216,17 +2234,6 @@ class ProjectChatService:
             .first()
         )
         if task is None:
-            if project.task_provider in {"github", "gitlab"}:
-                from app.services.loop_items.external_provider import (
-                    external_loop_item_provider,
-                )
-
-                external_loop_item_provider.get(db, task_id, user_id)
-                if not has_permission(access.role, required_role):
-                    raise HTTPException(
-                        status.HTTP_403_FORBIDDEN, "Insufficient permission"
-                    )
-                return project
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Project task not found")
         if not can_view_item(db, access, task, user_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Project task not found")

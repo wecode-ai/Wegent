@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
+import { handleEmptyReplyPrediction } from '../modules/response-protocol.mjs'
 
 const WORKBENCH = '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const COMPOSER = `${WORKBENCH} [data-testid="chat-message-input"][contenteditable="true"]`
@@ -131,6 +132,7 @@ export function createDesktopScenario({
       const chunks = []
       for await (const chunk of request) chunks.push(chunk)
       const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      if (handleEmptyReplyPrediction(body, response)) return true
       const id = `wework-model-overload-${Date.now()}`
       response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
       response.write(sse([{ type: 'response.created', response: { id } }]))

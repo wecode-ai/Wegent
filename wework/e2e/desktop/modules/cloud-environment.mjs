@@ -568,6 +568,7 @@ class RealCloudEnvironment {
           this.backendEnv.RUST_LOG?.trim() || 'info',
           'brz_http_gateway::proxy=debug',
           'hyper::proto::h1::dispatch=debug',
+          'hyper::proto::h1::conn=debug',
         ].join(','),
       },
       stdio: ['ignore', 'pipe', 'pipe'],

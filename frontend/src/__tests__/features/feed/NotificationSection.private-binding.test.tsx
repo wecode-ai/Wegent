@@ -32,42 +32,49 @@ interface HarnessProps {
   availableChannels: NotificationChannelInfo[]
   onStartBinding: (channelId: number, bindPrivate: boolean, bindGroup: boolean) => Promise<void>
   onCancelBinding: (channelId: number) => Promise<void>
+  initialBindingConfigs?: NotificationChannelBindingConfig[]
 }
 
 function NotificationSectionHarness({
   availableChannels,
   onStartBinding,
   onCancelBinding,
+  initialBindingConfigs,
 }: HarnessProps) {
   const [devNotificationLevel, setDevNotificationLevel] = useState<NotificationLevel>('notify')
   const [devNotificationChannels, setDevNotificationChannels] = useState<number[]>([410])
   const [notificationWebhooks, setNotificationWebhooks] = useState<NotificationWebhook[]>([])
   const [channelBindingConfigs, setChannelBindingConfigs] = useState<
     NotificationChannelBindingConfig[]
-  >([
-    {
-      channel_id: 410,
-      bind_private: false,
-      bind_group: false,
-    },
-  ])
+  >(
+    initialBindingConfigs ?? [
+      {
+        channel_id: 410,
+        bind_private: false,
+        bind_group: false,
+      },
+    ]
+  )
 
   return (
-    <NotificationSection
-      devNotificationLevel={devNotificationLevel}
-      setDevNotificationLevel={setDevNotificationLevel}
-      devNotificationChannels={devNotificationChannels}
-      setDevNotificationChannels={setDevNotificationChannels}
-      devAvailableChannels={availableChannels}
-      devSettingsLoading={false}
-      notificationWebhooks={notificationWebhooks}
-      setNotificationWebhooks={setNotificationWebhooks}
-      channelBindingConfigs={channelBindingConfigs}
-      setChannelBindingConfigs={setChannelBindingConfigs}
-      onStartBinding={onStartBinding}
-      onCancelBinding={onCancelBinding}
-      bindingWaitingState={{}}
-    />
+    <>
+      <NotificationSection
+        devNotificationLevel={devNotificationLevel}
+        setDevNotificationLevel={setDevNotificationLevel}
+        devNotificationChannels={devNotificationChannels}
+        setDevNotificationChannels={setDevNotificationChannels}
+        devAvailableChannels={availableChannels}
+        devSettingsLoading={false}
+        notificationWebhooks={notificationWebhooks}
+        setNotificationWebhooks={setNotificationWebhooks}
+        channelBindingConfigs={channelBindingConfigs}
+        setChannelBindingConfigs={setChannelBindingConfigs}
+        onStartBinding={onStartBinding}
+        onCancelBinding={onCancelBinding}
+        bindingWaitingState={{}}
+      />
+      <output data-testid="binding-configs">{JSON.stringify(channelBindingConfigs)}</output>
+    </>
   )
 }
 
@@ -302,5 +309,91 @@ describe('NotificationSection private binding dialog', () => {
       'false'
     )
     expect(screen.getByTestId('group-delivery-title-410')).toHaveTextContent('未启用群聊')
+  })
+
+  test('preserves a trailing separator while editing mention user IDs', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <NotificationSectionHarness
+        availableChannels={[
+          {
+            id: 410,
+            name: '钉钉',
+            channel_type: 'dingtalk',
+            is_bound: true,
+          },
+        ]}
+        onStartBinding={jest.fn().mockResolvedValue(undefined)}
+        onCancelBinding={jest.fn().mockResolvedValue(undefined)}
+        initialBindingConfigs={[
+          {
+            channel_id: 410,
+            bind_private: true,
+            bind_group: true,
+            group_conversation_id: 'group-123',
+            group_name: '测试机器人',
+            group_mention_user_ids: [],
+          },
+        ]}
+      />
+    )
+
+    const input = screen.getByTestId('group-mention-users-410')
+    expect(input).toHaveClass('h-11')
+    expect(screen.getByText('示例：41068；群卡片会自动显示姓名并发送提醒')).toBe(
+      input.previousElementSibling
+    )
+
+    await user.type(input, 'user-1，')
+    expect(input).toHaveValue('user-1，')
+
+    await user.type(input, 'user-2, user-3，user-1,41068:陈波')
+    expect(input).toHaveValue('user-1，user-2, user-3，user-1,41068:陈波')
+
+    await user.tab()
+    const configs = JSON.parse(screen.getByTestId('binding-configs').textContent || '[]')
+    expect(configs[0].group_mention_user_ids).toEqual(['user-1', 'user-2', 'user-3', '41068:陈波'])
+  })
+
+  test('clears mention user IDs when group delivery is disabled', async () => {
+    const user = userEvent.setup()
+    const onCancelBinding = jest.fn().mockResolvedValue(undefined)
+
+    render(
+      <NotificationSectionHarness
+        availableChannels={[
+          {
+            id: 410,
+            name: '钉钉',
+            channel_type: 'dingtalk',
+            is_bound: true,
+          },
+        ]}
+        onStartBinding={jest.fn().mockResolvedValue(undefined)}
+        onCancelBinding={onCancelBinding}
+        initialBindingConfigs={[
+          {
+            channel_id: 410,
+            bind_private: true,
+            bind_group: true,
+            group_conversation_id: 'group-123',
+            group_name: '测试机器人',
+            group_mention_user_ids: ['user-1'],
+          },
+        ]}
+      />
+    )
+
+    await user.click(screen.getByRole('switch', { name: '已启用群聊' }))
+    await waitFor(() => {
+      expect(onCancelBinding).toHaveBeenCalledWith(410)
+    })
+
+    const configs = JSON.parse(screen.getByTestId('binding-configs').textContent || '[]')
+    expect(configs[0]).toMatchObject({
+      bind_group: false,
+      group_mention_user_ids: [],
+    })
   })
 })

@@ -160,6 +160,9 @@ function SharedTaskContent() {
         external_node_id: ctx.external_node_id ?? undefined,
         external_document_id: ctx.external_document_id ?? undefined,
         external_parent_id: ctx.external_parent_id ?? undefined,
+        // Conversation reference fields
+        task_id: ctx.task_id ?? undefined,
+        task_updated_at: ctx.task_updated_at ?? undefined,
         // External web content fields
         video_count: ctx.video_count,
         site: ctx.site,

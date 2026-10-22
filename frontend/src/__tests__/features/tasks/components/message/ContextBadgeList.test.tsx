@@ -8,6 +8,13 @@ import { render, screen } from '@testing-library/react'
 import { ContextBadgeList } from '@/features/tasks/components/message/ContextBadgeList'
 import type { SubtaskContextBrief } from '@/types/api'
 
+jest.mock('@/hooks/useTranslation', () => ({
+  useTranslation: () => ({
+    t: (key: string) => key,
+    i18n: { language: 'en' },
+  }),
+}))
+
 jest.mock('@/features/tasks/components/input/AttachmentPreview', () => ({
   __esModule: true,
   default: ({ attachment, compact }: { attachment: { filename: string }; compact: boolean }) => (
@@ -94,5 +101,24 @@ describe('ContextBadgeList', () => {
       '40'
     )
     expect(screen.queryByTestId('attachment-image_179_250_0.png')).not.toBeInTheDocument()
+  })
+
+  it('renders a previous task reference without exposing its transcript', () => {
+    render(
+      <ContextBadgeList
+        contexts={[
+          {
+            id: 91,
+            context_type: 'conversation',
+            name: 'Launch checklist',
+            status: 'ready',
+            task_id: 77,
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('conversation-reference-77')).toBeInTheDocument()
+    expect(screen.getByText('Launch checklist')).toBeInTheDocument()
   })
 })
