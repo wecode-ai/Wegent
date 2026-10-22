@@ -20,6 +20,7 @@ from app.services.chat.preprocessing.contexts import (
 )
 from app.services.chat.preprocessing.conversation_references import (
     _bounded_transcript,
+    build_conversation_reference_context,
     build_conversation_references_prompt,
     validate_conversation_references,
 )
@@ -241,6 +242,123 @@ def test_unavailable_reference_is_skipped_without_dropping_valid_ones(
 
     assert "Keep this transcript." in prompt
     assert "no longer available: 1" in prompt
+
+
+def _fork_task(
+    db: Session,
+    user: User,
+    *,
+    source_task_id: int,
+    after_message_id: int,
+) -> TaskResource:
+    task = TaskResource(
+        user_id=user.id,
+        kind="Task",
+        name="forked-conversation",
+        namespace="default",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Task",
+            "metadata": {"name": "forked-conversation", "namespace": "default"},
+            "spec": {
+                "title": "Forked conversation",
+                "prompt": "continue",
+                "teamRef": {"name": "team", "namespace": "default"},
+                "workspaceRef": {
+                    "name": "workspace-forked",
+                    "namespace": "default",
+                },
+                "fork": {
+                    "sourceTaskId": source_task_id,
+                    "afterMessageId": after_message_id,
+                    "rootTaskId": source_task_id,
+                },
+            },
+            "status": {"status": "COMPLETED"},
+        },
+        is_active=TaskResource.STATE_ACTIVE,
+    )
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+    return task
+
+
+def _in_memory_subtask(
+    subtask_id: int,
+    task_id: int,
+    user: User,
+    message_id: int,
+    role: SubtaskRole,
+    content: str,
+) -> Subtask:
+    return Subtask(
+        id=subtask_id,
+        task_id=task_id,
+        user_id=user.id,
+        team_id=1,
+        title=f"message-{message_id}",
+        role=role,
+        prompt=content if role == SubtaskRole.USER else None,
+        result={"value": content} if role == SubtaskRole.ASSISTANT else None,
+        message_id=message_id,
+        parent_id=max(message_id - 1, 0),
+        status=SubtaskStatus.COMPLETED,
+        progress=100,
+        bot_ids=[1],
+        created_at=datetime(2026, 1, 1),
+        updated_at=datetime(2026, 1, 1),
+    )
+
+
+def test_reference_inherits_fork_history_up_to_cutoff(
+    test_db: Session,
+    test_user: User,
+    monkeypatch,
+) -> None:
+    parent = _create_task(test_db, test_user, "Parent")
+    fork = _fork_task(
+        test_db,
+        test_user,
+        source_task_id=parent.id,
+        after_message_id=2,
+    )
+    inherited = [
+        _in_memory_subtask(1, parent.id, test_user, 1, SubtaskRole.USER, "parent ask"),
+        _in_memory_subtask(
+            2, parent.id, test_user, 2, SubtaskRole.ASSISTANT, "parent answer"
+        ),
+        _in_memory_subtask(
+            3, parent.id, test_user, 3, SubtaskRole.USER, "after the fork point"
+        ),
+    ]
+    monkeypatch.setattr(
+        "app.services.task_fork_history.subtask_store.list_by_task_ordered",
+        lambda db, task_id, owner_user_id=None: (
+            inherited if task_id == parent.id else []
+        ),
+    )
+
+    # A fork with no messages of its own must still validate: its content is
+    # the inherited history.
+    validate_conversation_references(
+        test_db,
+        contexts=[
+            SimpleNamespace(
+                type=ContextType.CONVERSATION.value,
+                data={"task_id": fork.id},
+            )
+        ],
+        user_id=test_user.id,
+    )
+
+    prompt = build_conversation_reference_context(
+        test_db, task_id=fork.id, user_id=test_user.id
+    )
+
+    assert "parent ask" in prompt
+    assert "parent answer" in prompt
+    assert "after the fork point" not in prompt
 
 
 def test_transcript_budget_counts_escaped_characters() -> None:

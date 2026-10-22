@@ -143,6 +143,85 @@ test.describe('Agent conversation regression', () => {
     expect(extractText(secondRequest.body)).toContain(firstPrompt)
   })
 
+  test('handoff mention injects the referenced task and keeps the bubble clean', async ({
+    page,
+    request,
+  }) => {
+    const sourceToken = makeContextToken('handoff_source')
+    const continuePrompt = `Continue the referenced handoff task ${sourceToken}`
+    const continueMarker = `HANDOFF_CONTINUE_OK_${sourceToken}`
+
+    await configureStreamRule(request, continuePrompt, continueMarker)
+
+    // A real previous task with content the reference must carry forward.
+    await openTaskPage(page, '/chat', chatShellTeam.id, 'chat')
+    await sendMessage(page, `Remember this handoff token: ${sourceToken}`)
+    const sourceTaskId = await waitForTaskId(page)
+    createdTaskIds.add(sourceTaskId)
+    await waitForBackendTerminal(request, sourceTaskId)
+
+    // A fresh chat references it through the `@` menu.
+    await openTaskPage(page, '/chat', chatShellTeam.id, 'chat')
+    const input = page.getByTestId('message-input')
+    await input.click()
+    await input.type('@')
+
+    const menu = page.getByTestId('mention-autocomplete')
+    await expect(menu).toBeVisible({ timeout: 10_000 })
+    const option = page.getByTestId(`mention-task-option-${sourceTaskId}`)
+    await expect(option).toBeVisible({ timeout: 10_000 })
+    await option.click()
+
+    // The composer shows a removable reference badge for the selected task.
+    await expect(page.locator(`[title*="${sourceToken}"]`)).toBeVisible({
+      timeout: 10_000,
+    })
+    await page
+      .getByRole('button', { name: /^Remove / })
+      .first()
+      .click()
+    await expect(page.locator(`[title*="${sourceToken}"]`)).toHaveCount(0)
+
+    // Selecting it again keeps the reference for the send.
+    await input.click()
+    await input.type('@')
+    await expect(page.getByTestId(`mention-task-option-${sourceTaskId}`)).toBeVisible({
+      timeout: 10_000,
+    })
+    await page.getByTestId(`mention-task-option-${sourceTaskId}`).click()
+
+    await input.fill(continuePrompt)
+    await page.getByTestId('send-button').click()
+
+    const targetTaskId = await waitForTaskId(page)
+    createdTaskIds.add(targetTaskId)
+    await waitForBackendTerminal(request, targetTaskId)
+
+    // The reference reaches the model as handoff context for this turn...
+    const handoffRequest = await waitForCapturedModelRequest(
+      request,
+      capture =>
+        capture.url.includes('/chat/completions') &&
+        extractText(capture.body).includes('<referenced_conversations focus="current">') &&
+        extractText(capture.body).includes(sourceToken) &&
+        extractText(capture.body).includes(continuePrompt),
+      'model request carrying the handoff reference'
+    )
+    expect(extractText(handoffRequest.body)).toContain(
+      'Continue from the final state in the transcript above'
+    )
+
+    // ...while the user's own bubble stays free of the transcript.
+    const conversation = page.getByTestId('messages-container')
+    await expect(conversation).toContainText(continuePrompt, {
+      timeout: RESPONSE_TIMEOUT_MS,
+    })
+    await expect(conversation).toContainText(continueMarker, {
+      timeout: RESPONSE_TIMEOUT_MS,
+    })
+    await expect(conversation).not.toContainText('<referenced_conversations')
+  })
+
   test('saved ClaudeCode agent executes once with inherited base capabilities', async ({
     page,
     request,

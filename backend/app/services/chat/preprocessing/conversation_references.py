@@ -16,8 +16,9 @@ from sqlalchemy.orm import Session
 from app.models.subtask import SubtaskRole, SubtaskStatus
 from app.models.subtask_context import ContextStatus, ContextType
 from app.models.task import TaskResource
+from app.services.chat.compaction_checkpoint import resolve_history_subtasks
 from app.services.prompt_draft.transcript import extract_assistant_turn_blocks
-from app.stores.tasks import subtask_store, task_access_store, task_store
+from app.stores.tasks import task_access_store, task_store
 from app.utils.prompt_utils import extract_display_prompt
 from shared.prompts.constants import (
     REFERENCED_CONVERSATIONS_CLOSE,
@@ -85,14 +86,7 @@ def validate_conversation_references(
             continue
         seen_task_ids.add(task_id)
         resolve_conversation_reference(db, task_id=task_id, user_id=user_id)
-        subtasks = subtask_store.list_by_task(
-            db,
-            task_id=task_id,
-            user_id=user_id,
-            access_store=task_access_store,
-            limit=MAX_REFERENCE_MESSAGES,
-            from_latest=True,
-        )
+        subtasks = _reference_history(db, task_id=task_id, user_id=user_id)
         if not _conversation_blocks(subtasks):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -115,13 +109,11 @@ def build_conversation_reference_context(
     the right state when a session and its reference disagree.
     """
     task, title = resolve_conversation_reference(db, task_id=task_id, user_id=user_id)
-    subtasks = subtask_store.list_by_task(
+    subtasks = _reference_history(
         db,
         task_id=task_id,
         user_id=user_id,
-        access_store=task_access_store,
         limit=MAX_REFERENCE_MESSAGES + 1,
-        from_latest=True,
     )
     window_omitted = max(0, len(subtasks) - MAX_REFERENCE_MESSAGES)
     if window_omitted:
@@ -164,6 +156,28 @@ def build_conversation_reference_context(
             ),
             REFERENCED_CONVERSATIONS_CLOSE,
         ]
+    )
+
+
+def _reference_history(
+    db: Session,
+    *,
+    task_id: int,
+    user_id: int,
+    limit: int = MAX_REFERENCE_MESSAGES,
+) -> list[Any]:
+    """Return the referenced task's visible history, including fork lineage.
+
+    A forked task inherits its ancestor's turns, so reading only the fork's
+    own rows would drop the history the user meant to continue (and would
+    report a freshly forked task as empty). The resolver applies the fork
+    cutoff, then ``limit`` keeps the newest entries.
+    """
+    return resolve_history_subtasks(
+        db=db,
+        task_id=task_id,
+        user_id=user_id,
+        limit=limit,
     )
 
 
