@@ -5193,7 +5193,7 @@
   },
   "notifications": {
     "stand_in_retry": "Retry",
-    "stand_in_identity": "My stand-in",
+    "stand_in_handling": "Handled by stand-in",
     "stand_in_delegate": "Delegate",
     "stand_in_assignment": "Assigned to you",
     "stand_in_running": "Working",

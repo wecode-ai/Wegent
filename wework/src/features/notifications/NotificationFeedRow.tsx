@@ -2,7 +2,6 @@ import { formatNotificationTime } from './notificationTime'
 import type { ReactNode } from 'react'
 import { AtSign, Bell, Bot, ClipboardCheck, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { StandInIcon } from '@/features/todo/StandInIcon'
 
 const KIND_ICONS: Record<string, LucideIcon> = {
   mention: AtSign,
@@ -15,6 +14,7 @@ export interface NotificationFeedRowProps {
   processing?: ReactNode
   event?: ReactNode
   avatarLabel?: string
+  badge?: ReactNode
   testId: string
   kind?: string
   title: string
@@ -43,9 +43,10 @@ export function NotificationFeedRow({
   processing,
   event,
   avatarLabel,
+  badge,
 }: NotificationFeedRowProps) {
   const time = formatNotificationTime(timestamp)
-  const KindIcon = kind === 'stand_in' ? StandInIcon : (KIND_ICONS[kind ?? ''] ?? Bell)
+  const KindIcon = KIND_ICONS[kind ?? ''] ?? Bell
   const taskOnly = kind === 'issue_dispatch_assignment' && !avatarLabel
   const timeLabel = time ? (
     <time
@@ -91,6 +92,7 @@ export function NotificationFeedRow({
               {unread && <span className="sr-only">{unreadLabel}：</span>}
               {title}
             </span>
+            {badge}
             {!event && !taskOnly && timeLabel}
           </span>
           {(event || (taskOnly && time)) && (

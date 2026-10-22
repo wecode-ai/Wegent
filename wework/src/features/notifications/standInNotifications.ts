@@ -5,7 +5,7 @@ import {
   runtimeTaskTrackingExecutionStatus,
   runtimeTaskSummaryTrackingExecutionStatus,
 } from '@/features/workbench/runtimeTaskLifecycle/projection'
-import { weworkTaskScheme } from './scheme'
+import { weworkIssueScheme } from './scheme'
 
 export interface StandInNotificationState {
   deviceId: string
@@ -35,7 +35,15 @@ export function standInOrigin(item: RuntimeTaskReminderItem) {
     origin.initiatedBy !== 'stand_in'
   )
     return null
-  return origin as Record<string, unknown>
+  const record = origin as Record<string, unknown>
+  if (
+    typeof record.cloudProjectId !== 'string' ||
+    !record.cloudProjectId.trim() ||
+    typeof record.loopItemId !== 'string' ||
+    !record.loopItemId.trim()
+  )
+    return null
+  return record as Record<string, unknown> & { cloudProjectId: string; loopItemId: string }
 }
 
 export function standInState(item: RuntimeTaskReminderItem): StandInNotificationState {
@@ -83,6 +91,11 @@ export function mergeStandInNotifications(
         notification.payload.humanAssignmentId === origin.humanAssignmentId
     )
     const state = standInState(item)
+    const url = weworkIssueScheme(
+      origin.cloudProjectId,
+      origin.loopItemId,
+      origin.projectStore === 'local' ? 'local' : 'backend'
+    )
     const notification: StandInNotification =
       index >= 0
         ? result[index]
@@ -91,12 +104,12 @@ export function mergeStandInNotifications(
             kind: 'issue_dispatch_assignment',
             title: item.task.title,
             body: '',
-            url: weworkTaskScheme(item.address),
+            url,
             created_at: new Date(runtimeTimestamp(item.task.createdAt)).toISOString(),
             read_at: 'read',
             payload: {
-              projectId: String(origin.cloudProjectId),
-              itemId: String(origin.loopItemId),
+              projectId: origin.cloudProjectId,
+              itemId: origin.loopItemId,
               humanAssignmentId: String(origin.humanAssignmentId),
               taskTitle: item.task.title,
               projectName: item.projectName,
@@ -106,7 +119,7 @@ export function mergeStandInNotifications(
     const merged = {
       ...notification,
       runtimeItem: item,
-      url: weworkTaskScheme(item.address),
+      url,
       payload: {
         ...notification.payload,
         projectName: notification.payload.projectName || item.projectName,
