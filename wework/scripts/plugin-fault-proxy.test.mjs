@@ -166,6 +166,40 @@ test(
   }
 )
 
+test(
+  'device acknowledgement pause holds real device bytes while downstream delivery stays live',
+  { timeout: 5000 },
+  async t => {
+    const { proxy, server } = await fixture(t)
+    let upstream
+    server.on('upgrade', (_request, socket) => {
+      upstream = socket
+      socket.write(
+        'HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n'
+      )
+    })
+    const client = connect(new URL(proxy.url).port, '127.0.0.1')
+    t.onTestFinished(() => client.destroy())
+    await once(client, 'connect')
+    const handshake = once(client, 'data')
+    client.write(
+      'GET /socket.io/?transport=websocket HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n'
+    )
+    await handshake
+    proxy.pauseDeviceAcknowledgements(true)
+    const chunks = []
+    upstream.on('data', chunk => chunks.push(chunk))
+    client.write('real-device-ack')
+    const delivery = once(client, 'data')
+    upstream.write('real-package-delivery')
+    assert.equal(String((await delivery)[0]), 'real-package-delivery')
+    assert.equal(chunks.length, 0)
+    const acknowledgement = once(upstream, 'data')
+    proxy.pauseDeviceAcknowledgements(false)
+    await acknowledgement
+    assert.equal(Buffer.concat(chunks).toString(), 'real-device-ack')
+  }
+)
 for (const fault of ['drop-response', 'hold-response']) {
   test(`native ${fault} assertions reject early and unscoped scans`, { timeout: 5000 }, async t => {
     const { assertNativeCatalogRequests, nativeCatalogFault, hasScopedNativeFault } =

@@ -119,12 +119,12 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       await capture('reply-03-original-request.png')
       await control.command('press', INPUT, { key: 'Enter' })
       await control.command('waitFor', PENDING, { text: '正在生成建议' })
-      await capture('reply-03b-generating-suggestion.png')
       await control.command('fill', INPUT, { value: '生成时我也能输入' })
       assert.equal(Number(await control.command('getElementCount', PENDING)), 0)
-      await control.command('fill', INPUT, { value: '' })
-      await control.command('waitFor', PENDING)
+      // Predictions abort after 30 seconds. Release the held response before
+      // slower parallel checkpoint work can turn this deliberate hold into a timeout.
       releasePrediction()
+      await control.command('fill', INPUT, { value: '' })
       await control.command('waitFor', GHOST, { text: SUGGESTION, timeoutMs: 30000 })
       assert.equal(Number(await control.command('getElementCount', PENDING)), 0)
       assert.equal(await control.command('getValue', INPUT), '')

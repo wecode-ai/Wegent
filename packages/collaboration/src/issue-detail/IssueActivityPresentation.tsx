@@ -93,6 +93,7 @@ export function IssueCommentComposer({
   onSubmit,
   sendLabel,
   sendTestId,
+  showSendLabel,
   ...attributes
 }: Omit<HTMLAttributes<HTMLFormElement>, "onSubmit"> & {
   input: ReactNode;
@@ -103,6 +104,7 @@ export function IssueCommentComposer({
   onSubmit: () => void;
   sendLabel: string;
   sendTestId: string;
+  showSendLabel?: boolean;
 }) {
   return (
     <form
@@ -122,9 +124,10 @@ export function IssueCommentComposer({
           data-testid={sendTestId}
           aria-label={sendLabel}
           title={sendLabel}
-          className="task-detail-comment-send"
+          className={`task-detail-comment-send${showSendLabel ? " has-label" : ""}`}
           disabled={!canSend}
         >
+          {showSendLabel ? sendLabel : null}
           <ArrowUp className="h-4 w-4" />
         </button>
       </div>

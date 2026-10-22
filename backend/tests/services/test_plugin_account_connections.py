@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.models.kind import Kind
 from app.schemas.plugin_account_auth import PluginCredentialWrite
 from app.services.plugin_account_connections import (
+    CONNECTION_KIND,
     CONNECTION_NAMESPACE,
     PluginAccountAuthError,
     PluginAccountConnectionService,
@@ -155,7 +156,16 @@ def test_enrollment_metadata_never_discloses_credentials(
     service, test_db, test_user, installed
 ):
     connection = enroll(service, test_db, test_user, installed)
-    row = test_db.query(Kind).filter(Kind.namespace == CONNECTION_NAMESPACE).one()
+    row = (
+        test_db.query(Kind)
+        .filter(
+            Kind.user_id == test_user.id,
+            Kind.kind == CONNECTION_KIND,
+            Kind.namespace == CONNECTION_NAMESPACE,
+            Kind.name == connection.id,
+        )
+        .one()
+    )
     assert "test-password" not in json.dumps(row.json)
     assert connection.revision == 1
     assert connection.device_ids == []
@@ -178,14 +188,14 @@ def test_owned_device_needs_explicit_grant(
 
 
 def test_other_user_cannot_read_list_or_grant(
-    service, test_db, test_user, installed, device
+    service, test_db, test_user, test_admin_user, installed, device
 ):
     connection = enroll(service, test_db, test_user, installed)
-    assert service.list_connections(test_db, user_id=test_user.id + 1) == []
+    assert service.list_connections(test_db, user_id=test_admin_user.id) == []
     with pytest.raises(PluginAccountAuthError, match="connection_not_found"):
         service.grant_device(
             test_db,
-            user_id=test_user.id + 1,
+            user_id=test_admin_user.id,
             connection_id=connection.id,
             device_id=device.name,
             expected_revision=1,
@@ -193,7 +203,7 @@ def test_other_user_cannot_read_list_or_grant(
     with pytest.raises(PluginAccountAuthError, match="connection_not_found"):
         service.read_for_device(
             test_db,
-            user_id=test_user.id + 1,
+            user_id=test_admin_user.id,
             connection_id=connection.id,
             device_id=device.name,
             installed_plugin_id=installed.id,
@@ -502,7 +512,7 @@ def test_invalid_native_credentials_do_not_consume_migration(
 
 
 def test_migration_cannot_be_consumed_by_another_user(
-    migrations, test_db, test_user, installed, device
+    migrations, test_db, test_user, test_admin_user, installed, device
 ):
     set_local_device(test_db, device)
     ticket = migrations.create(
@@ -511,7 +521,7 @@ def test_migration_cannot_be_consumed_by_another_user(
     with pytest.raises(PluginAccountAuthError, match="migration_expired"):
         migrations.consume(
             test_db,
-            user_id=test_user.id + 1000,
+            user_id=test_admin_user.id,
             device_id=device.name,
             request=native_enrollment(ticket),
         )
