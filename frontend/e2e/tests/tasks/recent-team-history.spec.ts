@@ -269,6 +269,7 @@ for (const target of ['teamId', 'teamName'] as const) {
       await page.goto(`/chat?${params}`, { waitUntil: 'domcontentloaded' })
       await expectPersistedSend(page, history, explicit, prompt)
       expect(sends).toHaveLength(1)
+      await expect(page).not.toHaveURL(/[?&](q|autoSend|teamId|teamName|teamNamespace)=/)
     } finally {
       const removed = await request.delete(
         `${MODEL_URL}/tool-scenarios?matchText=${encodeURIComponent(prompt)}`

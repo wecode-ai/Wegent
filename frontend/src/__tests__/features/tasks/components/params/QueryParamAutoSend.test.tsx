@@ -75,7 +75,20 @@ it('prefills immediately and sends through the latest callback after selection i
   advance()
   expect(initial.onSendMessage).not.toHaveBeenCalled()
   expect(sendWithFinalTeam).toHaveBeenCalledWith('hello')
-  expect(mockReplace).toHaveBeenCalledWith('/chat?projectId=3')
+  expect(mockReplace).not.toHaveBeenCalled()
+  // The send callback navigates using the query captured before auto-send.
+  setQuery('q=hello&autoSend=true&teamId=20&projectId=3&taskId=42')
+  rerender(
+    <QueryParamAutoSend
+      {...initial}
+      hasTaskId
+      isTeamSelectionReady
+      selectedTeam={recentTeam}
+      onSendMessage={sendWithFinalTeam}
+    />
+  )
+  expect(mockReplace).toHaveBeenCalledTimes(1)
+  expect(mockReplace).toHaveBeenCalledWith('/chat?projectId=3&taskId=42')
   advance(1000)
   expect(sendWithFinalTeam).toHaveBeenCalledTimes(1)
 })
@@ -88,6 +101,18 @@ it('does not send without a selected team even if readiness is true', () => {
   expect(initial.onSendMessage).not.toHaveBeenCalled()
   expect(mockReplace).toHaveBeenCalledTimes(1)
   expect(mockReplace).toHaveBeenCalledWith('/chat?projectId=3')
+})
+
+it('cleans the query when sending rejects without task navigation', async () => {
+  const initial = props({ onSendMessage: jest.fn().mockRejectedValue(new Error('Send failed')) })
+  await act(async () => {
+    render(<QueryParamAutoSend {...initial} />)
+  })
+
+  expect(initial.onSendMessage).toHaveBeenCalledTimes(1)
+  expect(mockReplace).toHaveBeenCalledWith('/chat?projectId=3')
+  advance(1000)
+  expect(initial.onSendMessage).toHaveBeenCalledTimes(1)
 })
 
 it.each(['teamId=20&teamName=default-team', 'teamName=recent-team&teamNamespace=default'])(

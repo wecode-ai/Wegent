@@ -44,8 +44,8 @@ interface QueryParamAutoSendProps {
  * - `q` content is always prefilled into the input box immediately on mount.
  * - Auto-send only happens when `autoSend=true` is present in the URL.
  * - Waits for WebSocket connection, teams loaded, and final team selection before sending.
- * - Clears `q`, `teamId`, `teamName`, `teamNamespace`, and `autoSend` from URL after sending (taskId is
- *   set by the normal send flow).
+ * - Clears `q`, `teamId`, `teamName`, `teamNamespace`, and `autoSend` after the normal send flow
+ *   commits taskId to the URL.
  * - Uses a ref guard to guarantee the message is sent at most once, even
  *   under React StrictMode double-render.
  */
@@ -65,6 +65,7 @@ export default function QueryParamAutoSend({
 
   // Guard: ensure we only process once per page load
   const processedRef = useRef(false)
+  const awaitingTaskNavigationRef = useRef(false)
   // Track if user manually interacted before auto-send fires
   const userInteractedRef = useRef(false)
 
@@ -146,6 +147,12 @@ export default function QueryParamAutoSend({
   }, [searchParams, hasTaskId])
 
   useEffect(() => {
+    // The send callback navigates with its captured search params. Clean up only
+    // after that navigation commits so it cannot restore the consumed parameters.
+    if (hasTaskId && awaitingTaskNavigationRef.current) {
+      awaitingTaskNavigationRef.current = false
+      clearQueryParams()
+    }
     // Already processed or user interacted
     if (processedRef.current) return
 
@@ -253,10 +260,11 @@ export default function QueryParamAutoSend({
         finishWithoutSending()
         return
       }
-      // Clean URL params before sending; the send handler will set taskId
       completed = true
-      clearQueryParams()
+      awaitingTaskNavigationRef.current = true
       onSendMessageRef.current(message).catch(() => {
+        awaitingTaskNavigationRef.current = false
+        clearQueryParams()
         // Error handling is done inside onSendMessage (toast etc.)
       })
     }
