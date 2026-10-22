@@ -37,6 +37,8 @@ Socket.IO 地址按以下优先级解析：用户在连接窗口显式输入的�
 
 本地 Wework 不渲染云端账号密码表单，也不调用 `/auth/login` 或 `/auth/admin-password/setup`。云端登录、OIDC 和管理员初始化都发生在云端 Wegent Web 授权页中。用户登录后必须明确点击“授权 Wework”，Backend 才会把一次性可领取的云端 JWT 写入授权会话；本地 Wework 领取成功后继续读取 `/users/me` 校验用户并保存云端连接状态。
 
+授权成功页显示 3 秒倒计时，结束后自动关闭页面；授权失败或取消时不启动倒计时。如果浏览器限制自动关闭，页面会提示手动关闭并返回 Wework。
+
 Backend 使用 `WEWORK_AUTHORIZE_BASE_URL` 生成授权页地址；未配置时复用 `FRONTEND_URL`。因此 API/Web 分离部署时必须显式配置 Web 根地址，Wework 客户端只打开 Backend 返回的完整 `authorize_url`，不自行推断网页版地址。
 
 连接底层 Socket.IO 关闭时，本机 executor 会立即清除已连接状态并启动现有重连流程，避免账户操作在等待心跳发现断连期间误以为后端可用。注册过程记录连接关闭代次，使用同一把锁发布就绪状态和处理关闭通知，避免注册完成覆盖刚发生的断连。旧连接的关闭回调不会影响新连接。
