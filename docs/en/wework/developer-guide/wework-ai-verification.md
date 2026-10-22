@@ -51,6 +51,8 @@ The `application-menu` desktop CI checkpoint covers item presence, visibility in
 
 The `refreshFromApplicationMenu` test control command waits for `/results` acknowledgement before activating the real native menu item, so renderer unload cannot lose the command result. A control-protocol unit test delays acknowledgement to verify this ordering.
 
+Settings preserves the active workspace tab in the background. **Work → Tasks / Project spaces** must reselect the target tab and restore its content route from settings, even when that tab is already active; ordinary workspace navigation still avoids redundant selection.
+
 ## Native context menus
 
 Electron does not create a WebContents context menu automatically. The Wework Electron main process listens for `context-menu` centrally and builds native menus for the main window, workspace windows, and auxiliary windows.
