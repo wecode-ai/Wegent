@@ -61,6 +61,7 @@ from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_item_status_history import write_status_change
 from app.services.loop_item_unread import advance_content_revision
 from app.services.loop_items.access import can_view_item
+from app.services.loop_items.change_requests import update_change_request_source
 from app.services.notification_copy import comment_preview
 from app.services.project_chat.mention_notification import (
     notify_project_chat_mentions,
@@ -1015,6 +1016,9 @@ class ProjectChatService:
         )
         if request.task_id:
             if item is not None:
+                item.metadata_json = update_change_request_source(
+                    item.metadata_json, f"activity:{row.message_id}", row.content
+                )
                 item.metadata_json = advance_content_revision(
                     item.metadata_json, actor_user_id=user_id
                 )
@@ -1250,6 +1254,7 @@ class ProjectChatService:
                 content = self._project_chat_final_text(data, payload)
                 if content is not None:
                     completed.content = content
+                    self._index_activity_change_requests(db, completed)
                 self._commit(db)
                 db.refresh(completed)
                 return self.to_view(completed, db=db), "snapshot"
@@ -1547,9 +1552,25 @@ class ProjectChatService:
             error=None if row.status == "completed" else error or content,
         )
         self._advance_task_to_review(db, row)
+        self._index_activity_change_requests(db, row)
         # DB-generated timestamps lose subsecond precision. Record the result
         # after its status transition so the activity preserves causal order.
         self._record_activity_timestamp(row)
+
+    def _index_activity_change_requests(
+        self, db: Session, row: ProjectChatMessage
+    ) -> None:
+        if not row.task_id:
+            return
+        item = db.get(LoopItem, row.task_id)
+        if item is None:
+            return
+        metadata = update_change_request_source(
+            item.metadata_json, f"activity:{row.message_id}", row.content
+        )
+        if metadata != item.metadata_json:
+            item.metadata_json = metadata
+            self._queue_loop_item_change(db, item)
 
     @staticmethod
     def _record_activity_timestamp(row: ProjectChatMessage) -> None:
@@ -1715,6 +1736,8 @@ class ProjectChatService:
                 existing.metadata_json = metadata
                 existing.status = message_status
             existing.message_type = "text"
+        if existing.status in PROJECT_CHAT_TERMINAL_RUN_STATUSES:
+            self._index_activity_change_requests(db, existing)
         self._commit(db)
         db.refresh(existing)
         return self.to_view(existing, db=db), "snapshot"

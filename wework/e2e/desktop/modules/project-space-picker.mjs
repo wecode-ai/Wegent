@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { reloadMainWindow } from './workspace-flows.mjs'
+import { reloadMainWindow, waitForWorkbenchTask } from './workspace-flows.mjs'
 
 const MENU = '[data-testid="work-item-context-menu"]'
 const OPTIONS = `${MENU} [role="option"]`
@@ -54,15 +54,22 @@ export function createProjectSpacePickerRegression({
   }
 
   async function openTask(control, address) {
-    await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-task"]', {
-      timeoutMs: workbenchReadyTimeoutMs,
+    await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-task"]', {
+      visible: true,
+      timeoutMs: uiTimeoutMs,
     })
+    await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
     const query = new URLSearchParams(address)
     await control.command('navigate', 'body', { value: `/runtime-tasks?${query}` })
     await control.command('waitFor', CHANGE, {
       visible: true,
       timeoutMs: workbenchReadyTimeoutMs,
     })
+    await waitForWorkbenchTask(
+      control,
+      address.taskId,
+      'The project picker task did not finish restoring after navigation'
+    )
     const state = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
     assert.equal(state.workbench?.currentRuntimeTask?.taskId, address.taskId)
   }

@@ -1026,10 +1026,6 @@ export interface WeworkWorkspaceRuntimePort {
     title: string,
     description: string,
   ): Promise<{ issue: CollaborationIssue }>;
-  updateTrackedTaskTitle(
-    task: WorkspaceRuntimeTaskAddress,
-    title: string,
-  ): Promise<CollaborationIssue | null>;
   reportExecutionLifecycle(
     projectId: string,
     executionId: number,

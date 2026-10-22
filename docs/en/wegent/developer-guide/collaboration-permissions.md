@@ -6,7 +6,7 @@ sidebar_position: 36
 
 Spaces define the administrative boundary. Projects inherit space membership by default. Resources participate through explicit use grants and project bindings. Lists and mutations share one server-side authorization policy. This document is a human-approved product contract, protected by tests.
 
-Project details reuse the project list's permission query and response construction (CP13), preserving inherited space roles and permission sources. Stand-in saves read project details to authorize execution, so details must not use the legacy query that reduces inherited roles to Viewer. The `stand-in-permissions` desktop E2E checkpoint covers successful saves by inherited administrators and members, Viewer denial, and restricted-project access boundaries; the shared desktop CI runs this checkpoint.
+Project details reuse the project list's permission query and response construction (CP13), preserving inherited space roles and permission sources. Personal stand-in settings are saved on the selected Executor. Saving and enabling do not query cloud permissions, agent catalogs, model catalogs or workspace readiness. Personal Issue tasks and stand-in tasks share the same Issue execution permission, without project device bindings or project environment initialization. The server still checks the current user’s execution permission when binding a cloud Issue. The CI-covered `stand-in-personal-task` desktop checkpoint verifies both manual and automatic tasks complete on the current device for an ordinary member with no device bindings.
 
 ```mermaid
 flowchart TD
@@ -25,7 +25,7 @@ flowchart TD
 
 The three administrative roles are administrator (`Maintainer`), member (`Developer`) and read-only member (`Viewer`). Ownership is a separate space relation. The read-only `Owner` response label is derived from that relation and cannot be assigned through membership APIs. Creating a project explicitly adds its creator as a project administrator; creator identity is audit information.
 
-The new project, parent-space grant and creator's administrator grant are written in one transaction. Insert the new project's parent grant directly instead of locking an absent grant, avoiding MySQL gap-lock deadlocks when independent spaces create projects concurrently. Existing-resource authorization restoration keeps its locking rules. The MySQL permission regression suite covers concurrent creation, the unique parent and use permission after creation.
+The new project, parent-space grant and creator's administrator grant are written in one transaction. Insert the new project's parent grant directly instead of locking an absent grant, avoiding MySQL gap-lock deadlocks when independent spaces create projects concurrently. Resource grants use an atomic insert or update by their unique resource/entity identity before locking the existing record, preserving the grant ID, approval history and outer transaction boundary. The MySQL permission regression suite covers concurrent project creation, concurrent authorization of distinct and identical resources, the unique parent and use permission after creation.
 
 | Space identity | Inherited project | Restricted project |
 | --- | --- | --- |
@@ -51,11 +51,11 @@ Space owners and administrators always administer child projects. For other user
 | CP08 | Project rosters include inherited and direct members, effective/direct roles and sources. Space inheritance stays read-only; project administrators can set or remove a direct project role for inherited members. |
 | CP09 | Enabled shared agents are visible to project readers; explicit private definitions remain creator-only for visibility and use; readiness problems have explicit states and reasons. |
 | CP10 | Resource use never grants source-definition editing or access to private credentials. |
-| CP11 | Agent and device use requires valid use authority and an enabled project binding; valid legacy installations retain authority only within their original project, without granting catalog or source-definition access. |
-| CP12 | Fixed, pooled and user-selected routing do not bypass project resource authorization. |
+| CP11 | Project dispatch requires valid Agent/device use authority and an enabled project binding; valid legacy installations retain original-project authority without granting catalog or source-definition access. Personal tasks and stand-ins using their own Executor do not require project device bindings. |
+| CP12 | Fixed, pooled and user-selected project dispatch does not bypass project resource authorization; personal tasks and stand-ins use the personal execution path. |
 | CP13 | Lists, details, creation, updates, assignment, comment execution, automation and claims use the same policy. |
 | CP14 | Issue reads check project access before open/related security; project administrators can read all child Issues. |
-| CP15 | Execution checks Issue access, execution capability, binding and resource grant. Snapshots are not durable authority. |
+| CP15 | Execution checks current Issue access and execution capability. Project dispatch also checks binding and resource grants; personal tasks and stand-ins do not require project device bindings. Snapshots are not durable authority. |
 | CP16 | Revocation prevents new dispatch and claims; running work requests cancellation and waits for Runtime confirmation. |
 | CP17 | Removing a space member revokes membership and all direct child-project grants; further guest access needs a new invitation. |
 | CP18 | Removing a space resource grant invalidates every child binding while preserving history and exposing the reason. |
@@ -68,7 +68,7 @@ Sharing delegates use, not source editing. Project administrators manage binding
 
 Personal tasks created from an Issue use the original project and Issue as their default context. They can explicitly target any project and Issue accessible to the current user through `wework_space` to read, update, assign or comment under that user's actual permissions. The conversation's starting context is not an additional access boundary; the server continues to authorize the target project and Issue. Accessing another project or Issue does not rebind the original session or deliveries. Dispatch executors remain restricted to their assigned Issue and execution tools; managers retain project-level management access. `executor/src/task_runtime/mcp/issue_access_tests.rs` covers same-project and cross-project local reads and writes, cloud reads, writes and comments, server read/write denials and unchanged default context. Existing MCP contract tests protect dispatch role boundaries.
 
-Queued work revalidates current permission at claim time. Device liveness, model readiness and capacity are execution conditions, not permission sources. All routing policies use the project's authorized device set.
+Queued work revalidates current permission at claim time. Device liveness, model readiness and capacity are execution conditions, not permission sources. Project dispatch routing policies use the project's authorized device set.
 
 Comment admission validates the actor's project, Issue and Agent use authority. Queue consumers prepare Runtime configuration, models and runner affinity; failures belong to the execution record. Pending intent grants no device access, and both preparation and claims revalidate resource authority. `test_queued_comment_execution.py` covers admission denial for Viewers, private definitions and revoked resources, plus revocation after admission, configuration failure, manual approval, offline claiming and replies to unclaimed sessions. These tests use isolated databases and synthetic execution state rather than a live Runtime.
 

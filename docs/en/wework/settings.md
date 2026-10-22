@@ -30,6 +30,21 @@ The preference stays on the current device. Switching modes automatically restar
 Core DSH runtime so the plugin state takes effect immediately. Mode controls the Git plugin, so it
 cannot be enabled or disabled separately from the plugin management page.
 
+## Archived conversations and worktree cleanup
+
+Deleting a conversation under **Settings → Archived conversations** first accepts the request.
+The owning device then removes its files and any managed worktree that no other task references
+in the background. A task disappearing from the list does not mean disk cleanup has finished.
+
+If background cleanup fails, the workbench shows an error and the archived page retains the reason
+and restores the task so you can retry after fixing the problem. Worktree management records are
+retained on failure. After restarting, the app resumes accepted cleanup that has not finished.
+**Settings → Worktrees** also shows failed records and their errors.
+
+A valid worktree is independent of the source directory used to create it. Removing that source
+directory does not prevent cleanup. If Git metadata is damaged or repository identity cannot be
+verified, cleanup preserves the directory and reports the reason so you can repair it and retry.
+
 ## Local device proxy
 
 Under **Settings → Proxy**, the local device proxy has three modes:

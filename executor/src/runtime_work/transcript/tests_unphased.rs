@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 use super::super::*;
 
 fn text_snapshot(turn_status: &str, phase: Option<&str>, response_item: bool) -> Value {

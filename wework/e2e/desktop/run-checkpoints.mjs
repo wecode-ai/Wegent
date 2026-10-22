@@ -26,6 +26,7 @@ const CHECKPOINT_RESOURCES = new Map([
   ['project-assignment-notification', ['macos-inspector-foreground']],
 ])
 const CHECKPOINT_SCENARIO_MODULES = {
+  'archived-worktree-cleanup': './scenarios/archived-worktree-cleanup.scenario.mjs',
   'plugin-toggle-persistence': './scenarios/plugin-toggle-persistence.scenario.mjs',
   'goal-state-sync': './scenarios/goal-output-identity.scenario.mjs',
   'collaboration-worktree-policy': './scenarios/collaboration-worktree-policy.scenario.mjs',
@@ -39,6 +40,9 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'plugin-account-auth-conversation': './scenarios/plugin-account-auth.scenario.mjs',
   'plugin-account-auth-github': './scenarios/plugin-account-auth.scenario.mjs',
 
+  'plugin-registration-coordination': './scenarios/plugin-uninstall-resilience.scenario.mjs',
+  'plugin-account-auth-coordination': './scenarios/plugin-account-auth.scenario.mjs',
+  'plugin-write-coordination': './scenarios/plugin-uninstall-resilience.scenario.mjs',
   'plugin-uninstall-lost-response': './scenarios/plugin-uninstall-resilience.scenario.mjs',
   'plugin-uninstall-unknown-result': './scenarios/plugin-uninstall-resilience.scenario.mjs',
   'plugin-uninstall-restart-recovery': './scenarios/plugin-uninstall-resilience.scenario.mjs',
@@ -50,6 +54,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'conversation-state': './scenarios/conversation-mention.scenario.mjs',
   'temporary-chat': './scenarios/temporary-chat.scenario.mjs',
   'embedded-browser': './scenarios/embedded-browser-agent.scenario.mjs',
+  'collaboration-issue-badges': './scenarios/collaboration-issue-badges.scenario.mjs',
   'change-request-status': './scenarios/change-request-status.scenario.mjs',
   'git-commit-generation': './scenarios/git-commit-generation.scenario.mjs',
   'claude-runtime': './scenarios/claude-runtime.scenario.mjs',
@@ -106,6 +111,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-group-onboarding': './scenarios/collaboration-group-onboarding.scenario.mjs',
   'collaboration-local-agent-dispatch':
     './scenarios/collaboration-local-agent-dispatch.scenario.mjs',
+  'stand-in-personal-task': './scenarios/stand-in-personal-task.scenario.mjs',
   'stand-in': './scenarios/stand-in.scenario.mjs',
   'stand-in-cloud': './scenarios/stand-in-cloud.scenario.mjs',
   'stand-in-permissions': './scenarios/stand-in-permissions.scenario.mjs',
@@ -151,6 +157,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  'archived-worktree-cleanup',
   'plugin-toggle-persistence',
   'streaming-content',
   'streaming-tools',
@@ -174,7 +181,10 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'plugin-account-auth-dws',
   'plugin-account-auth-conversation',
   'plugin-account-auth-github',
+  'plugin-account-auth-coordination',
 
+  'plugin-write-coordination',
+  'plugin-registration-coordination',
   'plugin-uninstall-lost-response',
   'plugin-uninstall-unknown-result',
   'plugin-uninstall-restart-recovery',
@@ -183,6 +193,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'plugin-composer-long-list',
   'codex-account-login',
   'cloud-space-mention',
+  'collaboration-issue-badges',
   'change-request-status',
   'git-commit-generation',
   'claude-runtime',
@@ -200,6 +211,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-first-use',
   'collaboration-group-onboarding',
   'collaboration-local-agent-dispatch',
+  'stand-in-personal-task',
   'stand-in',
   'stand-in-cloud',
   'stand-in-permissions',
