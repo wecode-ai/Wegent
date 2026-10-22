@@ -4891,10 +4891,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(
       container.querySelector('[data-testid="project-agent-mode-create"]'),
     ).toBeNull();
-    await change(
-      byTestId("project-agent-wegent-team") as HTMLSelectElement,
-      "12",
-    );
+    await click(byTestId("project-agent-option-12"));
     await click(byTestId("project-agent-wegent-create"));
     expect(api.workspaces?.addAgent).toHaveBeenCalledWith(workspace.id, {
       teamId: 12,

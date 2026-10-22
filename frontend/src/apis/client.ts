@@ -33,6 +33,18 @@ interface RequestOptions {
 
 // HTTP Client with interceptors
 class APIClient {
+  private cacheToken: string | null | undefined
+  private cacheScope = 0
+
+  getCacheScope(): unknown {
+    const token = getToken()
+    if (this.cacheToken !== token) {
+      this.cacheToken = token
+      this.cacheScope++
+    }
+    return `${this.getBaseURL()}:${this.cacheScope}`
+  }
+
   private baseURL: string
   private initialized: boolean = false
 

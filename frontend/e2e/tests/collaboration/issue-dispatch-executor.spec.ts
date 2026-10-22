@@ -177,9 +177,9 @@ test.describe('Collaboration group Executor coordination', () => {
     )
     const groupName = `Coordinate Group ${suffix}`
     const groupId = await createCollaborationGroup(page, groupName, {
-      agentIds: [leader.id, collector.id, reviewer.id],
+      agentIds: [leader, collector, reviewer].map(agent => String(agent.wegentTeamId)),
       humanId: '',
-      leader: { id: leader.id, type: 'agent' },
+      leader: { id: String(leader.wegentTeamId), type: 'agent' },
     })
 
     const clearManagerScenario = await configureIssueDispatchModelScenario(request, issueTitle, [

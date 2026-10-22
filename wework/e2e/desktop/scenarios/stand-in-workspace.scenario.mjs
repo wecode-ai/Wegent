@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
@@ -82,6 +84,24 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
         '[data-testid="stand-in-settings"] [data-testid="model-selector-button"]'
       )
       const modelKey = JSON.stringify([model.runtime, model.provider, model.model_id])
+      const modelSource =
+        model.provider === 'openai' ? 'model-source-local-chatgpt' : 'model-source-custom'
+      assert.equal(
+        await control.command(
+          'getElementCount',
+          `[data-testid="${modelSource}"] ${selector(`model-option-${modelKey}`)}`
+        ),
+        '1',
+        'The device model must appear under its local account source'
+      )
+      assert.equal(
+        await control.command(
+          'getElementCount',
+          `[data-testid="model-source-cloud"] ${selector(`model-option-${modelKey}`)}`
+        ),
+        '0',
+        'The device model must not appear under cloud models'
+      )
       await control.command('clickWhenEnabled', selector(`model-option-${modelKey}`))
       await control.command(
         'click',
@@ -123,6 +143,9 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
       assert.equal(saved.goalMode, false)
       assert.equal(saved.enabled, false)
       await control.command('click', `${CONTENT} [data-testid="collaboration-primary-home"]`)
+      await control.command('waitFor', '[data-testid="collaboration-issue-project-trigger"]', {
+        visible: true,
+      })
       await control.command('click', '[data-testid="collaboration-issue-project-trigger"]')
       await control.command('click', selector(`collaboration-issue-project-${project.id}`))
       await control.command('clickWhenEnabled', '[data-testid="issue-stand-in-select"]')
@@ -175,6 +198,40 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
       assert.equal(task?.status, 'done', JSON.stringify(task))
       assert.equal(task.workspaceKind, 'worktree')
       assert.notEqual(task.workspacePath, workspacePath)
+
+      const skillDirectory = join(workspacePath, '.agents', 'skills', 'stand-in-catalog')
+      await mkdir(skillDirectory, { recursive: true })
+      try {
+        await writeFile(
+          join(skillDirectory, 'SKILL.md'),
+          '---\nname: stand-in-catalog\ndescription: Verify the stand-in composer catalog.\n---\nInspect the current task.\n'
+        )
+        await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+        await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
+        await control.command('fill', '[data-testid="stand-in-prompt"]', {
+          value: `${MARKER}_UNSAVED /`,
+        })
+        await control.command(
+          'waitFor',
+          '[data-testid="slash-command-option-skill-stand-in-catalog"]'
+        )
+        await control.command('click', '[data-testid="slash-command-option-plugin-marketplace"]')
+        await control.command(
+          'waitFor',
+          '[data-testid="workspace-tab-select-fixed-task"][aria-selected="true"]'
+        )
+        await control.command('waitFor', `${CONTENT} [data-testid="plugins-page-content"]`)
+        await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+        await control.command('waitFor', `${CONTENT} [data-testid="collaboration-primary-home"]`)
+        assert.equal(
+          (await control.command('getValue', '[data-testid="stand-in-prompt"]')).trim(),
+          `${MARKER}_UNSAVED`
+        )
+        await control.command('click', '[data-testid="stand-in-cancel"]')
+      } finally {
+        await rm(skillDirectory, { recursive: true, force: true })
+      }
     },
   }
 }

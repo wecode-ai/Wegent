@@ -18,6 +18,11 @@ import {
   type KanbanEmptyState,
 } from "../kanban/KanbanBoard";
 import type { ProjectBoardGroupBy } from "./useProjectBoardState";
+import type {
+  ProjectBoardSort,
+  ProjectBoardSortLabels,
+} from "./projectBoardSorting";
+import { ProjectBoardColumnSortPicker } from "./ProjectBoardColumnSortPicker";
 
 function classNames(
   ...values: Array<string | false | null | undefined>
@@ -73,9 +78,11 @@ export interface ProjectBoardStatePort {
   groupBy: ProjectBoardGroupBy;
   groupFilter: string;
   query: string;
+  getColumnSort(columnKey: string): ProjectBoardSort;
   quickCreateStatus: string | null;
   scrollRef: React.RefObject<HTMLDivElement | null>;
   selectGroupBy(groupBy: ProjectBoardGroupBy): void;
+  selectColumnSort(columnKey: string, sortBy: ProjectBoardSort): void;
   setExternalGroupFilter(value: string): void;
   setExternalQuery(value: string): void;
   setGroupFilter(value: string): void;
@@ -166,6 +173,7 @@ export interface ProjectBoardBodyProps<TItem> {
   rootLabel: string;
   rootUnitLabel: string;
   searchPlaceholder: string;
+  sortLabels?: ProjectBoardSortLabels;
   saveGlobalDisabled: boolean;
   saveGlobalLabel: string;
   showQuickStart: boolean;
@@ -214,6 +222,7 @@ export function ProjectBoardBody<TItem>({
   rootLabel,
   rootUnitLabel,
   searchPlaceholder,
+  sortLabels,
   saveGlobalDisabled,
   saveGlobalLabel,
   showQuickStart,
@@ -476,9 +485,22 @@ export function ProjectBoardBody<TItem>({
                 : "w-[292px]"
             }
             getColumnDragHint={getColumnDragHint}
-            renderColumnHeaderActions={(column, items) =>
-              renderColumnHeaderActions?.(column, items, state)
-            }
+            renderColumnHeaderActions={(column, items) => (
+              <>
+                {renderColumnHeaderActions?.(column, items, state)}
+                {sortLabels && !isExternalBoard ? (
+                  <ProjectBoardColumnSortPicker
+                    columnKey={column.key}
+                    columnLabel={column.label}
+                    labels={sortLabels}
+                    value={state.getColumnSort(column.key)}
+                    onChange={(value) =>
+                      state.selectColumnSort(column.key, value)
+                    }
+                  />
+                ) : null}
+              </>
+            )}
             getItemKey={getItemKey}
             renderItem={(item, column) => renderItem(item, column, state)}
             renderItemsFooter={renderItemsFooter}

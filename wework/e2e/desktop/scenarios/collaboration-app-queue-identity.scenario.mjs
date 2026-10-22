@@ -75,6 +75,8 @@ export function createDesktopScenario({ modelResponseTimeoutMs, workbenchReadyTi
   async function singlePreview(control, testId, text) {
     const card = scoped(`[data-testid="cloud-todo-card-drop-${issue.id}"]`)
     const preview = `${card} [data-testid="cloud-todo-card-${testId}-${issue.id}"]`
+    await control.command('waitFor', preview, { text })
+    await control.command('scrollIntoView', preview)
     await control.command('waitFor', preview, { text, visible: true, stableMs: 500 })
     for (const selector of [
       `${card} [data-testid^="cloud-todo-card-task-summary-${issue.id}-"]`,

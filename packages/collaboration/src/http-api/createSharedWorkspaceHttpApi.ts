@@ -14,6 +14,7 @@ import {
 } from "../dto-mappers";
 import { filterClaudeCodeDevices } from "@wegent/chat-core/device-capabilities";
 import type { DeviceInfo } from "@wegent/chat-core/execution-project";
+import { getClientRequestCache } from "@wegent/chat-core/request-cache";
 import type {
   SharedCollaborationResourcesApi,
   SharedCollaborationWorkspacesApi,
@@ -32,6 +33,7 @@ import type {
 } from "../types";
 
 export interface SharedWorkspaceHttpTransport {
+  getCacheScope?(): unknown;
   get<T>(endpoint: string): Promise<T>;
   post<T>(endpoint: string, data?: unknown): Promise<T>;
   patch<T>(endpoint: string, data?: unknown): Promise<T>;
@@ -218,6 +220,15 @@ function mapProjectAgentDto(input: unknown): WorkspaceProjectAgent {
 export function createSharedWorkspaceHttpApi(
   transport: SharedWorkspaceHttpTransport,
 ): SharedWorkspaceHttpApi {
+  const cache = getClientRequestCache(transport);
+  const get = <T>(endpoint: string, maxAgeMs?: number) =>
+    cache.get(endpoint, () => transport.get<T>(endpoint), maxAgeMs);
+  const invalidateAgents = (projectId?: string) => {
+    if (projectId)
+      cache.invalidate(`/v1/cloud-projects/${encoded(projectId)}/chat-agents`);
+    cache.invalidate("/v1/workspaces/");
+    cache.invalidate("/v1/resources");
+  };
   return {
     workspaces: {
       async transferOwnership(workspaceId, input) {
@@ -306,7 +317,7 @@ export function createSharedWorkspaceHttpApi(
         );
       },
       async listAgents(workspaceId) {
-        const response = await transport.get<{ items: unknown[] }>(
+        const response = await get<{ items: unknown[] }>(
           `/v1/workspaces/${encoded(workspaceId)}/agents`,
         );
         return response.items.map((item) =>
@@ -314,17 +325,20 @@ export function createSharedWorkspaceHttpApi(
         );
       },
       async addAgent(workspaceId, input) {
-        return mapCollaborationOwnedAgentDto(
+        const result = mapCollaborationOwnedAgentDto(
           await transport.post(
             `/v1/workspaces/${encoded(workspaceId)}/agents`,
             workspaceHttpRequestBody({ teamId: input.teamId }),
           ),
         );
+        invalidateAgents();
+        return result;
       },
       async removeAgent(workspaceId, teamId) {
         await transport.delete(
           `/v1/workspaces/${encoded(workspaceId)}/agents/${encoded(teamId)}`,
         );
+        invalidateAgents();
       },
       async listCollaborationGroups(workspaceId) {
         const response = await transport.get<{ items: unknown[] }>(
@@ -413,9 +427,7 @@ export function createSharedWorkspaceHttpApi(
         },
       },
       async list() {
-        return mapCollaborationPlatformResourcesDto(
-          await transport.get("/v1/resources"),
-        );
+        return mapCollaborationPlatformResourcesDto(await get("/v1/resources"));
       },
       async removeAgent(agent) {
         if (agent.team_id == null) {
@@ -428,6 +440,7 @@ export function createSharedWorkspaceHttpApi(
         await transport.delete(
           `/teams/${encoded(agent.team_id)}?${query.toString()}`,
         );
+        invalidateAgents();
       },
     },
     gitRepositories: {
@@ -532,26 +545,31 @@ export function createSharedWorkspaceHttpApi(
     },
     agents: {
       async list(projectId, options) {
-        const response = await transport.get<unknown[]>(
+        const response = await get<unknown[]>(
           `/v1/cloud-projects/${encoded(projectId)}/chat-agents${options?.includeArchived ? "?include_archived=true" : ""}`,
+          options?.forceRefresh ? 0 : undefined,
         );
         return response.map(mapProjectAgentDto);
       },
       async create(projectId, input) {
-        return mapProjectAgentDto(
+        const agent = mapProjectAgentDto(
           await transport.post(
             `/v1/cloud-projects/${encoded(projectId)}/chat-agents`,
             workspaceHttpRequestBody(input),
           ),
         );
+        invalidateAgents(projectId);
+        return agent;
       },
       async update(projectId, agentId, input) {
-        return mapProjectAgentDto(
+        const agent = mapProjectAgentDto(
           await transport.patch(
             `/v1/cloud-projects/${encoded(projectId)}/chat-agents/${encoded(agentId)}`,
             workspaceHttpRequestBody(input),
           ),
         );
+        invalidateAgents(projectId);
+        return agent;
       },
     },
   };

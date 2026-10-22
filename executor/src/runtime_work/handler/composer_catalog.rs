@@ -7,30 +7,11 @@ use crate::local::plugin_catalog::list_wegent_store_plugins;
 
 impl RuntimeWorkRpcHandler {
     pub(super) async fn read_composer_catalog(&self, payload: Value) -> Result<Value, AppIpcError> {
-        let task_id = runtime_task_id(&payload)
-            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
-        let task = self.local_task_link(&task_id).ok_or_else(|| {
-            AppIpcError::new(
-                "task_not_found",
-                "Composer task was not found on this device",
-            )
-        })?;
-        if task.runtime != "codex" {
-            return Err(AppIpcError::new(
-                "unsupported_runtime",
-                "Plugin catalogs require a Codex task",
-            ));
-        }
-        if task.workspace_path.trim().is_empty() {
-            return Err(AppIpcError::new(
-                "missing_workspace",
-                "Composer task has no workspace",
-            ));
-        }
+        let scope = self.composer_catalog_scope(&payload)?;
         let force_refresh = bool_field(&payload, "forceRefresh").unwrap_or(false);
         let started_at = Instant::now();
         let result = read_catalog_snapshot(
-            &task,
+            &scope,
             force_refresh,
             |method, params| async move {
                 self.codex_app_server
@@ -53,19 +34,101 @@ impl RuntimeWorkRpcHandler {
         log_executor_event(
             "composer catalog read finished",
             &[
-                ("task_id", task_id),
+                ("task_id", scope.task_id.unwrap_or_default()),
                 ("success", result.is_ok().to_string()),
                 ("duration_ms", started_at.elapsed().as_millis().to_string()),
             ],
         );
         result
     }
+
+    fn composer_catalog_scope(&self, payload: &Value) -> Result<ComposerCatalogScope, AppIpcError> {
+        if payload.get("scope").and_then(Value::as_str) == Some("workspace") {
+            return workspace_catalog_scope(payload);
+        }
+        let task_id = runtime_task_id(payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let task = self.local_task_link(&task_id).ok_or_else(|| {
+            AppIpcError::new(
+                "task_not_found",
+                "Composer task was not found on this device",
+            )
+        })?;
+        if task.runtime != "codex" {
+            return Err(AppIpcError::new(
+                "unsupported_runtime",
+                "Plugin catalogs require a Codex task",
+            ));
+        }
+        if task.workspace_path.trim().is_empty() {
+            return Err(AppIpcError::new(
+                "missing_workspace",
+                "Composer task has no workspace",
+            ));
+        }
+        Ok(ComposerCatalogScope {
+            task_id: Some(task_id),
+            workspace_path: Some(task.workspace_path),
+            project_plugin_ids: task.project_plugin_ids,
+        })
+    }
+}
+
+struct ComposerCatalogScope {
+    task_id: Option<String>,
+    workspace_path: Option<String>,
+    project_plugin_ids: Vec<String>,
+}
+
+fn workspace_catalog_scope(payload: &Value) -> Result<ComposerCatalogScope, AppIpcError> {
+    if runtime_task_id(payload).is_some() {
+        return Err(AppIpcError::new(
+            "bad_request",
+            "Workspace scope cannot include a taskId",
+        ));
+    }
+    let path = match payload.get("workspacePath") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(path)) if !path.trim().is_empty() && Path::new(path).is_dir() => {
+            Some(path.clone())
+        }
+        _ => {
+            return Err(AppIpcError::new(
+                "missing_workspace",
+                "Composer workspace is unavailable",
+            ))
+        }
+    };
+    let index = crate::runtime_work::codex_global_state::CodexGlobalProjectIndex::load();
+    let plugins = path
+        .as_deref()
+        .and_then(|path| index.project_for_path(path))
+        .and_then(|project| project.ai_settings.as_ref())
+        .and_then(|settings| settings.get("plugins"))
+        .and_then(Value::as_array)
+        .map(|plugins| {
+            plugins
+                .iter()
+                .filter_map(|plugin| {
+                    plugin
+                        .get("pluginName")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(ComposerCatalogScope {
+        task_id: None,
+        workspace_path: path,
+        project_plugin_ids: plugins,
+    })
 }
 
 // Keep this read path independent of marketplace reconciliation and installation.
 // A catalog is only published after every required source has succeeded.
 async fn read_catalog_snapshot<Request, RequestFuture, StoreFuture>(
-    task: &RuntimeTaskLink,
+    scope: &ComposerCatalogScope,
     force_refresh: bool,
     mut request: Request,
     store: StoreFuture,
@@ -75,6 +138,7 @@ where
     RequestFuture: Future<Output = Result<Value, AppIpcError>>,
     StoreFuture: Future<Output = Result<Value, AppIpcError>>,
 {
+    let cwds: Vec<&str> = scope.workspace_path.as_deref().into_iter().collect();
     let mut apps = Vec::new();
     let mut cursor = Value::Null;
     let mut cursors = HashSet::new();
@@ -96,7 +160,7 @@ where
     }
     let installed = request(
         "plugin/installed",
-        json!({"cwds": [&task.workspace_path], "installSuggestionPluginNames": null}),
+        json!({"cwds": cwds, "installSuggestionPluginNames": null}),
     )
     .await?;
     let marketplaces = required_array(&installed, "marketplaces")?;
@@ -105,7 +169,7 @@ where
     }
     let skills = request(
         "skills/list",
-        json!({"cwds": [&task.workspace_path], "forceReload": force_refresh}),
+        json!({"cwds": cwds, "forceReload": force_refresh}),
     )
     .await?;
     let skill_entries = required_array(&skills, "data")?;
@@ -125,9 +189,10 @@ where
     let store = store.await?;
     required_array(&store, "plugins")?;
     Ok(json!({
-        "taskId": task.local_task_id,
-        "workspacePath": task.workspace_path,
-        "projectPluginIds": task.project_plugin_ids,
+        "taskId": scope.task_id,
+        "scope": if scope.task_id.is_some() { "task" } else { "workspace" },
+        "workspacePath": scope.workspace_path.as_deref().unwrap_or_default(),
+        "projectPluginIds": scope.project_plugin_ids,
         "apps": apps,
         "marketplaces": marketplaces,
         "skills": skill_entries,

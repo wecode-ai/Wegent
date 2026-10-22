@@ -92,9 +92,11 @@ export interface HttpRequestOptions {
   redirectOnUnauthorized?: boolean
   signal?: AbortSignal
   headers?: HeadersInit
+  cache?: RequestCache
 }
 
 export interface HttpClient {
+  getCacheScope?(): unknown
   get<T>(endpoint: string, options?: HttpRequestOptions): Promise<T>
   getBlob(endpoint: string): Promise<Blob>
   post<T>(endpoint: string, data?: unknown, options?: HttpRequestOptions): Promise<T>
@@ -152,6 +154,8 @@ async function parseError(response: Response): Promise<ApiError> {
 
 export function createHttpClient(options: HttpClientOptions): HttpClient {
   const getToken = options.getToken ?? defaultGetToken
+  let cacheToken: string | null | undefined
+  let cacheScope = 0
 
   async function fetchWithDiagnostics(
     endpoint: string,
@@ -258,10 +262,17 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
     requestOptions: HttpRequestOptions = {},
     selectionAttempted = false
   ): Promise<T> {
-    const diagnostics = await fetchWithDiagnostics(endpoint, init, {
-      token: getToken(),
-      signal: requestOptions.signal,
-    })
+    const diagnostics = await fetchWithDiagnostics(
+      endpoint,
+      {
+        ...init,
+        ...(requestOptions.cache ? { cache: requestOptions.cache } : {}),
+      },
+      {
+        token: getToken(),
+        signal: requestOptions.signal,
+      }
+    )
     const { response } = diagnostics
 
     if (!response.ok) {
@@ -326,6 +337,14 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
   }
 
   return {
+    getCacheScope() {
+      const token = getToken()
+      if (cacheToken !== token) {
+        cacheToken = token
+        cacheScope++
+      }
+      return cacheScope
+    },
     get,
     getBlob,
     post: (endpoint, data, requestOptions = {}) =>

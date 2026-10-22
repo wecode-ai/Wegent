@@ -27,7 +27,7 @@ const CHECKPOINT_RESOURCES = new Map([
 ])
 const CHECKPOINT_SCENARIO_MODULES = {
   'plugin-toggle-persistence': './scenarios/plugin-toggle-persistence.scenario.mjs',
-  'goal-state-sync': './scenarios/goal-state-sync.scenario.mjs',
+  'goal-state-sync': './scenarios/goal-output-identity.scenario.mjs',
   'collaboration-worktree-policy': './scenarios/collaboration-worktree-policy.scenario.mjs',
   'cloud-model-recovery': './scenarios/cloud-model-recovery.scenario.mjs',
   'task-model-deletion': './scenarios/task-model-deletion.scenario.mjs',
@@ -107,7 +107,10 @@ const CHECKPOINT_SCENARIO_MODULES = {
     './scenarios/collaboration-local-agent-dispatch.scenario.mjs',
   'stand-in': './scenarios/stand-in.scenario.mjs',
   'stand-in-cloud': './scenarios/stand-in-cloud.scenario.mjs',
+  'stand-in-permissions': './scenarios/stand-in-permissions.scenario.mjs',
   'stand-in-workspace': './scenarios/stand-in-workspace.scenario.mjs',
+  'stand-in-controls': './scenarios/stand-in-controls.scenario.mjs',
+  'stand-in-notifications': './scenarios/stand-in-notifications.scenario.mjs',
   'collaboration-remote-agent-dispatch':
     './scenarios/collaboration-remote-agent-dispatch.scenario.mjs',
   'collaboration-local-group-coordinate':
@@ -127,6 +130,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
     './scenarios/collaboration-issue-comment-notification.scenario.mjs',
   'collaboration-issue-mcp-comments': './scenarios/collaboration-issue-mcp-comments.scenario.mjs',
   'collaboration-issue-archive': './scenarios/collaboration-issue-archive.scenario.mjs',
+  'collaboration-board-sorting': './scenarios/collaboration-board-sorting.scenario.mjs',
+  'collaboration-board-move-recovery': './scenarios/collaboration-board-move-recovery.scenario.mjs',
   'plugin-development': './scenarios/plugin-development.scenario.mjs',
   'task-attachments': './scenarios/task-attachments.scenario.mjs',
   'drawing-attachment': './scenarios/drawing-attachment.scenario.mjs',
@@ -194,7 +199,10 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-local-agent-dispatch',
   'stand-in',
   'stand-in-cloud',
+  'stand-in-permissions',
   'stand-in-workspace',
+  'stand-in-controls',
+  'stand-in-notifications',
   'collaboration-remote-agent-dispatch',
   'collaboration-local-group-coordinate',
   'collaboration-remote-group-coordinate',
@@ -206,6 +214,8 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-issue-comment-notification',
   'collaboration-issue-mcp-comments',
   'collaboration-issue-archive',
+  'collaboration-board-sorting',
+  'collaboration-board-move-recovery',
   'plugin-development',
   'task-attachments',
   'drawing-attachment',
