@@ -19,7 +19,7 @@ from typing import Any, Callable, Dict, Optional
 import socketio
 
 from app.api.ws.events import ServerEvents
-from app.utils.client_payload_sanitizer import sanitize_client_payload
+from app.utils.client_payload_sanitizer import sanitize_client_result
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +143,7 @@ class WebPageSocketEmitter:
 
         # Include full result if provided (for executor tasks)
         if result is not None:
-            payload["result"] = sanitize_client_payload(result)
+            payload["result"] = sanitize_client_result(result)
 
         await self.sio.emit(
             ServerEvents.CHAT_CHUNK,
@@ -176,7 +176,7 @@ class WebPageSocketEmitter:
                 "task_id": task_id,
                 "subtask_id": subtask_id,
                 "offset": offset,
-                "result": sanitize_client_payload(result or {}),
+                "result": sanitize_client_result(result or {}),
                 "message_id": message_id,
             },
             room=f"task:{task_id}",

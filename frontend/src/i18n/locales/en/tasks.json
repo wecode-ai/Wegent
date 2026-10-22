@@ -2,6 +2,9 @@
   "access_denied_title": "Access Denied",
   "access_denied_description": "You don't have permission to access this task. It may have been deleted or you don't have the necessary permissions.",
   "access_denied_go_home": "Go Home",
+  "task_history_load_error_title": "Unable to load task messages",
+  "task_history_load_error_description": "The task history could not be loaded. Please try again.",
+  "task_history_load_error_retry": "Reload messages",
   "attachment": {
     "characters": "characters"
   },

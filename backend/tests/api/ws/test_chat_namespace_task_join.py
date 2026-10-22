@@ -113,6 +113,47 @@ async def test_wework_task_join_joins_wework_task_room() -> None:
 
 
 @pytest.mark.asyncio
+async def test_task_join_reports_history_load_failure() -> None:
+    namespace = ChatNamespace()
+    namespace.get_session = AsyncMock(return_value={"user_id": 1})
+    namespace._check_token_expiry = AsyncMock(return_value=False)
+    namespace.enter_room = AsyncMock()
+
+    with (
+        patch(
+            "app.api.ws.chat_namespace.can_access_task", AsyncMock(return_value=True)
+        ),
+        patch(
+            "app.api.ws.chat_namespace.run_sync_in_executor",
+            AsyncMock(side_effect=RuntimeError("database sort failed")),
+        ),
+    ):
+        result = await namespace.on_task_join(
+            "sid-1",
+            {"task_id": 101, "after_message_id": None},
+        )
+
+    assert result == {"error": "Unable to load task messages"}
+
+
+def test_task_join_history_budget_marks_oversized_results() -> None:
+    limited = chat_namespace._limit_task_join_subtasks(
+        [
+            {
+                "id": 1,
+                "result": {
+                    "value": "x" * (chat_namespace.TASK_JOIN_ACK_MAX_SUBTASK_BYTES + 1)
+                },
+            }
+        ]
+    )
+
+    assert limited is not None
+    assert limited[0]["result"]["truncated"] is True
+    assert limited[0]["result"]["truncation_reason"] == "task_join_ack_limit"
+
+
+@pytest.mark.asyncio
 async def test_chat_cancel_waits_for_runtime_ack_without_faking_terminal_state() -> (
     None
 ):

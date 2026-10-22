@@ -15,6 +15,7 @@ Business logic has been extracted to services/chat/ modules:
 """
 
 import asyncio
+import json
 import logging
 import uuid
 from datetime import datetime
@@ -87,7 +88,7 @@ from app.services.chat.trigger import (
 )
 from app.services.chat.wework_task_defaults import apply_wework_task_defaults
 from app.services.task_fork_history import task_fork_history_resolver
-from app.utils.client_payload_sanitizer import sanitize_client_payload
+from app.utils.client_payload_sanitizer import sanitize_client_result
 from app.utils.prompt_utils import extract_display_prompt
 from shared.telemetry.context import (
     set_request_context,
@@ -95,6 +96,53 @@ from shared.telemetry.context import (
 )
 
 logger = logging.getLogger(__name__)
+
+TASK_JOIN_ACK_MAX_SUBTASK_BYTES = 800 * 1024
+TASK_JOIN_HISTORY_TRUNCATION_NOTICE = (
+    "Message details are omitted because the task history exceeds the Socket.IO "
+    "response size limit."
+)
+
+
+def _subtask_payload_size(subtask: dict[str, Any]) -> int:
+    return len(json.dumps(subtask, ensure_ascii=False, default=str).encode("utf-8"))
+
+
+def _limit_task_join_subtasks(subtasks: Optional[list]) -> Optional[list]:
+    """Keep the complete task:join ACK below Socket.IO's payload limit."""
+    if subtasks is None:
+        return None
+
+    remaining_bytes = TASK_JOIN_ACK_MAX_SUBTASK_BYTES
+    limited_subtasks = []
+    for subtask in subtasks:
+        if not isinstance(subtask, dict):
+            continue
+
+        limited = dict(subtask)
+        size_bytes = _subtask_payload_size(limited)
+        if size_bytes > remaining_bytes and "result" in limited:
+            original_result = limited["result"]
+            original_size = _subtask_payload_size({"result": original_result})
+            limited["result"] = {
+                "value": TASK_JOIN_HISTORY_TRUNCATION_NOTICE,
+                "truncated": True,
+                "original_size_bytes": original_size,
+                "truncation_reason": "task_join_ack_limit",
+            }
+            size_bytes = _subtask_payload_size(limited)
+
+        if size_bytes > remaining_bytes:
+            logger.warning(
+                "[WS] task:join omitted subtask %s because ACK history budget is exhausted",
+                limited.get("id"),
+            )
+            continue
+
+        limited_subtasks.append(limited)
+        remaining_bytes -= size_bytes
+
+    return limited_subtasks
 
 
 def _get_retry_generate_params(user_subtask: Subtask) -> Optional[GenerateParams]:
@@ -710,6 +758,9 @@ class ChatNamespace(socketio.AsyncNamespace):
                 )
         except Exception as e:
             logger.exception(f"[WS] task:join error fetching subtasks: {e}")
+            return {"error": "Unable to load task messages"}
+
+        subtasks_dict = _limit_task_join_subtasks(subtasks_dict)
 
         # Check for active streaming
         logger.info(
@@ -2188,7 +2239,7 @@ def _fetch_subtasks_for_task_join(
                     "message_id": st.message_id,
                     "role": st.role.value,
                     "prompt": extract_display_prompt(st.prompt),
-                    "result": sanitize_client_payload(st.result),
+                    "result": sanitize_client_result(st.result),
                     "status": st.status.value,
                     "progress": st.progress,
                     "created_at": (

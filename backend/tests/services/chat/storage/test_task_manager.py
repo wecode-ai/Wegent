@@ -128,6 +128,31 @@ def test_database_handler_recomputes_task_status_from_subtask_store():
     db.query.assert_not_called()
 
 
+def test_database_handler_retries_task_status_finalization() -> None:
+    """A transient post-commit DB failure must not leave the task RUNNING."""
+    from app.services.chat.storage.db import (
+        DatabaseHandler,
+        TaskStatusUpdateResult,
+    )
+
+    handler = DatabaseHandler()
+    expected = TaskStatusUpdateResult()
+
+    with (
+        patch.object(
+            handler,
+            "_update_task_status_once",
+            side_effect=[RuntimeError("deadlock"), expected],
+        ) as update_once,
+        patch("app.services.chat.storage.db.time.sleep") as sleep,
+    ):
+        result = handler._update_task_status_sync(1385, changed_subtask_id=1861)
+
+    assert result is expected
+    assert update_once.call_count == 2
+    sleep.assert_called_once_with(0.1)
+
+
 def test_database_handler_auto_advance_uses_changed_subtask_status():
     """Pipeline auto-advance should be based on the subtask that just changed."""
     from app.services.chat.storage.db import DatabaseHandler
