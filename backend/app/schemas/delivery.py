@@ -134,6 +134,15 @@ class LoopItemRead(BaseModel):
     activity_sequence: int | None = Field(default=None, ge=0)
 
 
+class IssueBadge(BaseModel):
+    id: str
+    label: str
+    url: str = ""
+    icon: str = ""
+    tone: Literal["neutral", "success", "warning", "danger"] = "neutral"
+    tooltip: str = ""
+
+
 class LoopItemResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -183,6 +192,7 @@ class LoopItemResponse(BaseModel):
     can_edit: bool = True
     permissions: LoopItemPermissions = Field(default_factory=LoopItemPermissions)
     detail_loaded: bool = True
+    badges: list[IssueBadge] = Field(default_factory=list)
     content_revision: int = 1
     activity_read_sequence: int = 0
     is_unread: bool = False
@@ -262,6 +272,7 @@ class LoopItemResponse(BaseModel):
                 queued_at = metadata.get("queued_at")
             return {
                 **value,
+                "badges": value.get("badges", metadata.get("badges", [])),
                 "tags": _normalize_tags(metadata.get("tags")),
                 "ai_state": ai_state,
                 "execution_state": (

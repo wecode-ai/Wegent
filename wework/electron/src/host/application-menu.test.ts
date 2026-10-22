@@ -40,6 +40,7 @@ function createMenu(
 ) {
   let built: Menu | null = null
   const dispatch = vi.fn()
+  const reload = vi.fn()
   const menu = new ApplicationMenu({
     platform,
     appName: 'Wework',
@@ -51,7 +52,7 @@ function createMenu(
     targetWindow: () =>
       ({
         isDestroyed: () => false,
-        webContents: { id: 1 },
+        webContents: { id: 1, reload },
       }) as unknown as BrowserWindow,
     closeWindow,
     dispatch,
@@ -63,10 +64,27 @@ function createMenu(
     reportError: vi.fn(),
   })
   menu.setLanguage('en')
-  return { menu, built: () => built!, dispatch }
+  return { menu, built: () => built!, dispatch, reload }
 }
 
 describe('application menu model', () => {
+  test.each(['darwin', 'win32', 'linux'] as const)(
+    'refreshes the selected window from the View menu on %s',
+    platform => {
+      const { menu, built, reload, dispatch } = createMenu(platform)
+      menu.setCapabilities({})
+      const item = built().getMenuItemById('view.refresh')!
+      expect(item.label).toBe('Refresh')
+      expect(item.visible).toBe(true)
+      expect(item.accelerator).toBe('CommandOrControl+R')
+      expect(menu.activateForTesting('view.refresh', 'main')).toBe(true)
+      expect(reload).toHaveBeenCalledOnce()
+      expect(dispatch).not.toHaveBeenCalled()
+      menu.setLanguage('zh-CN')
+      expect(built().getMenuItemById('view.refresh')!.label).toBe('刷新')
+    }
+  )
+
   test('exposes every primary workbench surface with a stable id', () => {
     const { built } = createMenu()
     const ids = built().items.map(item => item.id)

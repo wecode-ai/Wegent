@@ -28,9 +28,9 @@ export function ApplicationMenuWorkspaceBridge({ pathname }: { pathname: string 
   // the host subscription stable across tab changes: re-subscribing during
   // dispatch would let the same menu event reach a freshly added handler and
   // repeat the action until the renderer exhausts itself.
-  const tabsRef = useRef(tabs)
+  const stateRef = useRef({ tabs, pathname })
   useEffect(() => {
-    tabsRef.current = tabs
+    stateRef.current = { tabs, pathname }
   })
 
   useEffect(
@@ -42,7 +42,7 @@ export function ApplicationMenuWorkspaceBridge({ pathname }: { pathname: string 
         ) {
           return
         }
-        const current = tabsRef.current
+        const { tabs: current, pathname: currentPathname } = stateRef.current
         const action = event.payload.action
         if (action === APPLICATION_MENU_ACTIONS.newTaskTab) {
           current.openTab('task')
@@ -56,10 +56,12 @@ export function ApplicationMenuWorkspaceBridge({ pathname }: { pathname: string 
         ) {
           const kind = action === APPLICATION_MENU_ACTIONS.openTasks ? 'task' : 'board'
           const existing = current.tabs.find(tab => tab.kind === kind)
-          // Re-selecting the active tab would repeat a synchronous navigation
-          // with no visible effect, so only switch when the tab is not active.
+          // Settings replaces the surface without changing the active tab, so
+          // re-select it to restore its workspace route when leaving settings.
           if (existing) {
-            if (existing.id !== current.activeTabId) current.selectTab(existing.id)
+            if (existing.id !== current.activeTabId || isSettingsRoute(currentPathname)) {
+              current.selectTab(existing.id)
+            }
           } else {
             current.openTab(kind)
           }
