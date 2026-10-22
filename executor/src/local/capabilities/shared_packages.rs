@@ -2,12 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use fs2::FileExt;
+use std::time::Instant;
 
 use super::*;
 use crate::services::workbench::{
     link_package, publish_plugin_archive, publish_skill_archive, verify_published_package,
     workbench_root, PackageKind,
 };
+
+#[path = "shared_plugin_runtime.rs"]
+mod runtime;
+
+pub(super) use runtime::runtime_copy_matches;
 
 pub(super) struct ActivationRevision;
 
@@ -409,12 +415,38 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
         spec: &PluginSyncSpec,
         manifest: &mut Value,
     ) -> Result<(), PluginSyncFailure> {
+        let started = Instant::now();
         let previous = manifest
             .get("plugins")
             .and_then(|plugins| plugins.get(&spec.key))
             .cloned();
         let mut installed_spec = spec.clone();
-        let store_path = if let Some(download) = &spec.download_path {
+        let root = self
+            .store
+            .shared_root()
+            .map_err(PluginSyncFailure::runtime_metadata)?;
+        // The server checksum, not a version label or signed download URL, is the
+        // authority for reuse. Unchecksummed URLs must still be downloaded.
+        let expected = spec.checksum.as_deref().or_else(|| {
+            if spec.download_path.is_none() {
+                previous.as_ref()?.get("checksum")?.as_str()
+            } else {
+                None
+            }
+        });
+        let verify_started = Instant::now();
+        let cached = expected.and_then(|checksum| {
+            verify_published_package(&root, PackageKind::Plugin, checksum).ok()
+        });
+        let verify_ms = verify_started.elapsed().as_millis();
+        let cache_hit = cached.is_some();
+        let mut download_ms = 0;
+        let mut download_bytes = 0;
+        let mut package_ms = 0;
+        let package = if let Some(package) = cached {
+            package
+        } else if let Some(download) = &spec.download_path {
+            let download_started = Instant::now();
             let bytes = self
                 .package_provider
                 .download_plugin(download)
@@ -422,10 +454,9 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
                 .map_err(|error| {
                     PluginSyncFailure::new("download", "PLUGIN_DOWNLOAD_FAILED", true, error)
                 })?;
-            let root = self
-                .store
-                .shared_root()
-                .map_err(PluginSyncFailure::runtime_metadata)?;
+            download_ms = download_started.elapsed().as_millis();
+            download_bytes = bytes.len();
+            let package_started = Instant::now();
             let package = publish_plugin_archive(&root, &bytes, spec.checksum.as_deref()).map_err(
                 |error| {
                     PluginSyncFailure::new(
@@ -436,46 +467,20 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
                     )
                 },
             )?;
-            installed_spec.checksum = Some(package.archive_hash);
-            package.path
+            package_ms = package_started.elapsed().as_millis();
+            package
         } else {
-            let checksum = previous
-                .as_ref()
-                .and_then(|entry| entry.get("checksum"))
-                .and_then(Value::as_str)
-                .ok_or_else(|| {
-                    PluginSyncFailure::new(
-                        "package",
-                        "PLUGIN_PACKAGE_UNAVAILABLE",
-                        true,
-                        CapabilitySyncError::invalid_payload(
-                            "Plugin has no verified package or download URL",
-                        ),
-                    )
-                })?;
-            if spec
-                .checksum
-                .as_deref()
-                .is_some_and(|expected| expected != checksum)
-            {
-                return Err(PluginSyncFailure::runtime_metadata(
-                    CapabilitySyncError::invalid_payload(
-                        "Changed plugin checksum requires a download URL",
-                    ),
-                ));
-            }
-            let root = self
-                .store
-                .shared_root()
-                .map_err(PluginSyncFailure::runtime_metadata)?;
-            let package = verify_published_package(&root, PackageKind::Plugin, checksum).map_err(
-                |error| {
-                    PluginSyncFailure::runtime_metadata(CapabilitySyncError::invalid_payload(error))
-                },
-            )?;
-            installed_spec.checksum = Some(package.archive_hash);
-            package.path
+            return Err(PluginSyncFailure::new(
+                "package",
+                "PLUGIN_PACKAGE_UNAVAILABLE",
+                true,
+                CapabilitySyncError::invalid_payload(
+                    "Plugin has no verified package or download URL",
+                ),
+            ));
         };
+        installed_spec.checksum = Some(package.archive_hash);
+        let store_path = package.path;
         for (path, field) in [
             (
                 self.store.plugin_runtime_link(&installed_spec),
@@ -493,429 +498,36 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
                 ));
             }
         }
-        self.store
-            .install_plugin_runtime_metadata(&installed_spec, &store_path, manifest)
-            .map_err(PluginSyncFailure::runtime_metadata)?;
+        let runtime_started = Instant::now();
+        let runtime_reused =
+            runtime::plugin_state_matches(&self.store, &installed_spec, &store_path, manifest)
+                .map_err(PluginSyncFailure::runtime_metadata)?;
+        if !runtime_reused {
+            self.store
+                .install_plugin_runtime_metadata(&installed_spec, &store_path, manifest)
+                .map_err(PluginSyncFailure::runtime_metadata)?;
+        }
+        crate::logging::log_executor_event(
+            "plugin_materialized",
+            &[
+                ("plugin", spec.key.clone()),
+                ("cache_hit", cache_hit.to_string()),
+                ("runtime_reused", runtime_reused.to_string()),
+                ("verify_ms", verify_ms.to_string()),
+                ("download_ms", download_ms.to_string()),
+                ("download_bytes", download_bytes.to_string()),
+                ("package_ms", package_ms.to_string()),
+                (
+                    "runtime_ms",
+                    runtime_started.elapsed().as_millis().to_string(),
+                ),
+                ("total_ms", started.elapsed().as_millis().to_string()),
+            ],
+        );
         Ok(())
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::{Cursor, Write};
-
-    #[derive(Clone)]
-    struct Packages {
-        skill: Vec<u8>,
-        plugin: Vec<u8>,
-    }
-
-    impl CapabilityPackageProvider for Packages {
-        fn stage_skill<'a>(
-            &'a self,
-            _spec: &'a SkillSyncSpec,
-            _target: &'a Path,
-        ) -> Pin<Box<dyn Future<Output = Result<(), CapabilitySyncError>> + Send + 'a>> {
-            Box::pin(async { panic!("shared sync must request archive bytes") })
-        }
-        fn download_skill<'a>(
-            &'a self,
-            _spec: &'a SkillSyncSpec,
-        ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, CapabilitySyncError>> + Send + 'a>>
-        {
-            Box::pin(async { Ok(self.skill.clone()) })
-        }
-        fn download_plugin<'a>(
-            &'a self,
-            _path: &'a str,
-        ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, CapabilitySyncError>> + Send + 'a>>
-        {
-            Box::pin(async { Ok(self.plugin.clone()) })
-        }
-    }
-
-    fn archive(entries: &[(&str, &str)]) -> Vec<u8> {
-        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
-        for (path, text) in entries {
-            writer
-                .start_file(*path, zip::write::FileOptions::default())
-                .unwrap();
-            writer.write_all(text.as_bytes()).unwrap();
-        }
-        writer.finish().unwrap().into_inner()
-    }
-
-    fn packages(version: &str) -> Packages {
-        Packages {
-            skill: archive(&[("SKILL.md", version)]),
-            plugin: archive(&[
-                (
-                    ".claude-plugin/plugin.json",
-                    "{\"name\":\"demo\",\"version\":\"1.0\"}",
-                ),
-                ("payload.txt", version),
-            ]),
-        }
-    }
-
-    fn store(root: &Path) -> GlobalCapabilityStore {
-        GlobalCapabilityStore::new(
-            root.join("state/manifest-v2.json"),
-            root.join("claude/skills"),
-        )
-        .with_plugins_dir(root.join("claude/plugins"))
-        .with_codex_skills_dir(root.join("codex/skills"))
-        .with_codex_plugins_dir(root.join("codex/plugins"))
-        .with_workbench_root(root.join("workbench"))
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn publication_lock_releases_with_a_retained_descriptor() {
-        let root = tempfile::tempdir().unwrap();
-        let store = store(root.path());
-        let publication = store.lock_shared_manifest().unwrap().unwrap();
-        // A concurrent fork can retain the same open file description.
-        let inherited = publication.0.try_clone().unwrap();
-        assert!(store.lock_shared_manifest().is_err());
-        drop(publication);
-        let next = store.lock_shared_manifest().unwrap().unwrap();
-        assert!(store.lock_shared_manifest().is_err());
-        drop(next);
-        drop(inherited);
-    }
-
-    #[tokio::test]
-    async fn shared_sync_keeps_legacy_manifest_unchanged() {
-        let root = tempfile::tempdir().unwrap();
-        let store = store(root.path());
-        let legacy = root.path().join("state/manifest.json");
-        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
-        let original = serde_json::to_vec(&default_manifest()).unwrap();
-        fs::write(&legacy, &original).unwrap();
-        let handler =
-            CapabilitySyncHandler::with_package_provider("", store.clone(), packages("v1"));
-        let result = handler
-            .apply_sync(json!({"skills":[{"name":"example","skill_id":1}]}))
-            .await
-            .unwrap();
-        assert_eq!(result["success"], true);
-        assert_eq!(fs::read(legacy).unwrap(), original);
-        assert_eq!(store.manifest.load().unwrap()["version"], 2);
-        assert!(store.manifest.load().unwrap()["skills"]["example"]["store_path"].is_string());
-    }
-
-    #[tokio::test]
-    async fn connector_generator_namespace_cannot_point_into_shared_packages() {
-        let root = tempfile::tempdir().unwrap();
-        let store = store(root.path());
-        let handler =
-            CapabilitySyncHandler::with_package_provider("", store.clone(), packages("v1"));
-        let result = handler
-            .apply_sync(json!({"skills":[{"name":"wegent-connector-demo","skill_id":1}]}))
-            .await
-            .unwrap();
-        assert_eq!(result["success"], false);
-        assert!(!store.skills_dir.join("wegent-connector-demo").exists());
-        assert!(!store
-            .codex_skills_dir
-            .join("wegent-connector-demo")
-            .exists());
-        assert!(!root.path().join("workbench/shared/skills").exists());
-    }
-
-    #[tokio::test]
-    async fn skill_updates_publish_new_hash_and_retain_old_package() {
-        let root = tempfile::tempdir().unwrap();
-        let store = store(root.path());
-        let payload = json!({"skills":[{"name":"example", "skill_id":1}]});
-        let first = CapabilitySyncHandler::with_package_provider("", store.clone(), packages("v1"));
-        assert_eq!(
-            first.apply_sync(payload.clone()).await.unwrap()["success"],
-            true
-        );
-        let old = store.manifest.load().unwrap()["skills"]["example"].clone();
-        let second =
-            CapabilitySyncHandler::with_package_provider("", store.clone(), packages("v2"));
-        assert_eq!(second.apply_sync(payload).await.unwrap()["success"], true);
-        let current = store.manifest.load().unwrap()["skills"]["example"].clone();
-        assert_ne!(old["store_path"], current["store_path"]);
-        assert_eq!(current["previous"]["store_path"], old["store_path"]);
-        assert_eq!(
-            fs::read_to_string(Path::new(old["store_path"].as_str().unwrap()).join("SKILL.md"))
-                .unwrap(),
-            "v1"
-        );
-        assert_eq!(
-            fs::read_to_string(store.codex_skills_dir.join("example/SKILL.md")).unwrap(),
-            "v2"
-        );
-        assert_eq!(
-            fs::read_link(store.skills_dir.join("example"))
-                .unwrap()
-                .is_relative(),
-            cfg!(unix)
-        );
-    }
-
-    #[tokio::test]
-    async fn wrong_skill_hash_preserves_current_entry() {
-        let root = tempfile::tempdir().unwrap();
-        let store = store(root.path());
-        let handler =
-            CapabilitySyncHandler::with_package_provider("", store.clone(), packages("v1"));
-        handler
-            .apply_sync(json!({"skills":[{"name":"example", "skill_id":1}]}))
-            .await
-            .unwrap();
-        let old = store.manifest.load().unwrap()["skills"]["example"].clone();
-        let result = handler
-            .apply_sync(
-                json!({"skills":[{"name":"example", "skill_id":1, "content_hash":"sha256:bad"}]}),
-            )
-            .await
-            .unwrap();
-        assert_eq!(result["success"], false);
-        assert_eq!(store.manifest.load().unwrap()["skills"]["example"], old);
-        assert_eq!(
-            fs::read_to_string(store.skills_dir.join("example/SKILL.md")).unwrap(),
-            "v1"
-        );
-    }
-
-    #[tokio::test]
-    async fn unmanaged_codex_skill_and_symlink_are_not_overwritten() {
-        let root = tempfile::tempdir().unwrap();
-        let store = store(root.path());
-        let target = store.codex_skills_dir.join("example");
-        fs::create_dir_all(&target).unwrap();
-        fs::write(target.join("SKILL.md"), "user").unwrap();
-        let handler =
-            CapabilitySyncHandler::with_package_provider("", store.clone(), packages("v1"));
-        let result = handler
-            .apply_sync(json!({"skills":[{"name":"example", "skill_id":1}]}))
-            .await
-            .unwrap();
-        assert_eq!(result["success"], false);
-        assert_eq!(fs::read_to_string(target.join("SKILL.md")).unwrap(), "user");
-        assert!(!root.path().join("workbench/shared/skills").exists());
-    }
-
-    #[tokio::test]
-    async fn plugin_caches_are_writable_copies_and_shared_packages_survive_removal() {
-        let root = tempfile::tempdir().unwrap();
-        let store = store(root.path());
-        let payload = json!({"scope":"plugins", "plugins":[{"name":"demo", "installed_plugin_id":1,
-            "marketplace":"wegent", "version":"1.0", "download_path":"/package"}]});
-        let handler =
-            CapabilitySyncHandler::with_package_provider("", store.clone(), packages("v1"));
-        assert_eq!(
-            handler.apply_sync(payload.clone()).await.unwrap()["success"],
-            true
-        );
-        let old = store.manifest.load().unwrap()["plugins"]["demo@wegent"].clone();
-        let shared = PathBuf::from(old["store_path"].as_str().unwrap());
-        let native = PathBuf::from(old["runtime"]["codex_link"].as_str().unwrap());
-        assert_eq!(native.file_name().unwrap(), "1.0");
-        assert!(!native.is_symlink());
-        assert!(native.join(".codex-plugin/plugin.json").exists());
-        assert!(!shared.join(".codex-plugin/plugin.json").exists());
-        fs::write(native.join("native-cache-only.txt"), "mutable").unwrap();
-        assert!(!shared.join("native-cache-only.txt").exists());
-        let claude_native = PathBuf::from(old["runtime"]["claude_link"].as_str().unwrap());
-        assert!(!claude_native.is_symlink());
-        fs::write(claude_native.join("native-cache-only.txt"), "mutable").unwrap();
-        assert!(!shared.join("native-cache-only.txt").exists());
-        let updated =
-            CapabilitySyncHandler::with_package_provider("", store.clone(), packages("v2"));
-        assert_eq!(
-            updated.apply_sync(payload.clone()).await.unwrap()["success"],
-            true
-        );
-        let current = store.manifest.load().unwrap()["plugins"]["demo@wegent"].clone();
-        assert_eq!(
-            old["runtime"]["codex_link"],
-            current["runtime"]["codex_link"]
-        );
-        assert_eq!(
-            fs::read_to_string(native.join("payload.txt")).unwrap(),
-            "v2"
-        );
-        assert_ne!(old["store_path"], current["store_path"]);
-        assert_eq!(
-            fs::read_to_string(shared.join("payload.txt")).unwrap(),
-            "v1"
-        );
-        updated
-            .apply_sync(json!({"scope":"plugins", "plugins":[]}))
-            .await
-            .unwrap();
-        assert!(shared.exists());
-        assert!(native.exists());
-        assert!(store.manifest.load().unwrap()["plugins"]
-            .as_object()
-            .unwrap()
-            .is_empty());
-        // A fresh handler must recover ownership from disk after uninstall/restart.
-        let reinstalled =
-            CapabilitySyncHandler::with_package_provider("", store.clone(), packages("v2"));
-        assert_eq!(
-            reinstalled.apply_sync(payload).await.unwrap()["success"],
-            true
-        );
-        assert_eq!(
-            fs::read_to_string(native.join("payload.txt")).unwrap(),
-            "v2"
-        );
-        assert_eq!(
-            fs::read_to_string(shared.join("payload.txt")).unwrap(),
-            "v1"
-        );
-    }
-
-    #[tokio::test]
-    async fn uninstall_remembers_runtime_ownership_from_existing_manifest() {
-        let root = tempfile::tempdir().unwrap();
-        let store = store(root.path());
-        let handler =
-            CapabilitySyncHandler::with_package_provider("", store.clone(), packages("v1"));
-        let payload = json!({"scope":"plugins", "plugins":[{"name":"demo", "installed_plugin_id":1,
-            "marketplace":"wegent", "version":"1.0", "download_path":"/package"}]});
-        assert_eq!(
-            handler.apply_sync(payload.clone()).await.unwrap()["success"],
-            true
-        );
-        let mut manifest = store.manifest.load().unwrap();
-        manifest
-            .as_object_mut()
-            .unwrap()
-            .remove("plugin_runtime_owners");
-        store.manifest.save(manifest).unwrap();
-        assert_eq!(
-            handler
-                .apply_sync(json!({"scope":"plugins", "plugins":[]}))
-                .await
-                .unwrap()["success"],
-            true
-        );
-        assert_eq!(handler.apply_sync(payload).await.unwrap()["success"], true);
-    }
-
-    #[tokio::test]
-    async fn unmanaged_plugin_cache_is_not_adopted_from_another_owner() {
-        for runtime in ["claude", "codex"] {
-            let root = tempfile::tempdir().unwrap();
-            let store = store(root.path());
-            let packages = packages("v1");
-            let package =
-                publish_plugin_archive(&root.path().join("workbench"), &packages.plugin, None)
-                    .unwrap();
-            let spec = PluginSyncSpec::from_value(&json!({"name":"demo", "installed_plugin_id":1,
-                "marketplace":"wegent", "version":"1.0", "download_path":"/package", "checksum":package.archive_hash})).unwrap();
-            let path = if runtime == "claude" {
-                store.plugin_runtime_link(&spec)
-            } else {
-                store.plugin_codex_link(&spec)
-            };
-            fs::create_dir_all(&path).unwrap();
-            fs::write(path.join("personal.txt"), "keep").unwrap();
-            let handler = CapabilitySyncHandler::with_package_provider("", store.clone(), packages);
-            for owner in [None, Some("another@wegent")] {
-                let mut manifest = default_manifest();
-                if let Some(owner) = owner {
-                    ensure_object_field(&mut manifest, "plugin_runtime_owners")
-                        .insert(path.to_string_lossy().into_owned(), json!(owner));
-                }
-                store.manifest.save(manifest).unwrap();
-                let result = handler.apply_sync(json!({"scope":"plugins", "plugins":[{"name":"demo",
-                    "installed_plugin_id":1, "marketplace":"wegent", "version":"1.0", "download_path":"/package"}]})).await.unwrap();
-                assert_eq!(result["success"], false);
-                assert_eq!(
-                    result["plugins"][0]["error_code"],
-                    "PLUGIN_RUNTIME_METADATA_FAILED"
-                );
-                assert_eq!(
-                    fs::read_to_string(path.join("personal.txt")).unwrap(),
-                    "keep"
-                );
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn sync_waits_for_execution_lease_before_changing_entry() {
-        let root = tempfile::tempdir().unwrap();
-        let store = store(root.path());
-        let handler =
-            CapabilitySyncHandler::with_package_provider("", store.clone(), packages("v1"));
-        let payload = json!({"skills":[{"name":"example", "skill_id":1}]});
-        let lease = crate::services::capability_activation::begin_execution().await;
-        assert!(tokio::time::timeout(
-            std::time::Duration::from_millis(20),
-            handler.apply_sync(payload.clone())
-        )
-        .await
-        .is_err());
-        assert!(!store.skills_dir.join("example").exists());
-        drop(lease);
-        assert_eq!(handler.apply_sync(payload).await.unwrap()["success"], true);
-    }
-
-    #[tokio::test]
-    async fn managed_directory_is_migrated_and_retained_outside_skill_discovery() {
-        let root = tempfile::tempdir().unwrap();
-        let store = store(root.path());
-        let old = store.skills_dir.join("example");
-        fs::create_dir_all(&old).unwrap();
-        fs::write(old.join("SKILL.md"), "legacy copy").unwrap();
-        store
-            .manifest
-            .save(json!({"skills":{"example":{
-                "managed":true, "name":"example", "skill_id":1,
-                "runtime":{"claude_link":old}
-            }}}))
-            .unwrap();
-        let handler =
-            CapabilitySyncHandler::with_package_provider("", store.clone(), packages("new"));
-        assert_eq!(
-            handler
-                .apply_sync(json!({"skills":[{"name":"example", "skill_id":1}]}))
-                .await
-                .unwrap()["success"],
-            true
-        );
-        assert_eq!(fs::read_to_string(old.join("SKILL.md")).unwrap(), "new");
-        let manifest = store.manifest.load().unwrap();
-        let recovery = PathBuf::from(
-            manifest["skills"]["example"]["recovery_paths"][0]
-                .as_str()
-                .unwrap(),
-        );
-        assert!(!recovery.starts_with(&store.skills_dir));
-        assert_eq!(
-            fs::read_to_string(recovery.join("SKILL.md")).unwrap(),
-            "legacy copy"
-        );
-    }
-
-    #[test]
-    fn failed_manifest_commit_restores_managed_directory() {
-        let root = tempfile::tempdir().unwrap();
-        let source = root.path().join("source");
-        let target = root.path().join("home/skills/example");
-        fs::create_dir_all(&source).unwrap();
-        fs::create_dir_all(&target).unwrap();
-        fs::write(source.join("SKILL.md"), "new").unwrap();
-        fs::write(target.join("SKILL.md"), "old").unwrap();
-        let error = switch_skill_links(&source, std::slice::from_ref(&target), |_| {
-            Err(CapabilitySyncError::invalid_payload(
-                "simulated manifest failure",
-            ))
-        })
-        .unwrap_err();
-        assert!(error.to_string().contains("simulated manifest failure"));
-        assert!(!target.is_symlink());
-        assert_eq!(fs::read_to_string(target.join("SKILL.md")).unwrap(), "old");
-    }
-}
+#[path = "shared_packages_tests.rs"]
+mod tests;

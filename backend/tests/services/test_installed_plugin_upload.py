@@ -810,15 +810,18 @@ async def test_ensure_builtin_plugin_without_device_syncs_online_devices(
         results=[],
     )
 
-    async def fake_sync_global(db, *, user_id, mode="replace"):
+    async def fake_sync_changed(
+        _service, db, *, user_id, installed_plugin_id, current_device_id
+    ):
         assert db is test_db
         assert user_id == test_user.id
-        assert mode == "replace"
+        assert installed_plugin_id > 0
+        assert current_device_id is None
         return sync_response
 
     monkeypatch.setattr(
-        "app.api.endpoints.installed_plugins.device_capability_sync_service.sync_user_global_capabilities",
-        fake_sync_global,
+        "app.services.device.plugin_change_sync.sync_changed_plugin_to_devices",
+        fake_sync_changed,
     )
 
     response = await ensure_builtin_plugin_installed(

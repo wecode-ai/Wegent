@@ -183,7 +183,8 @@ struct DeviceListResponse {
 ///
 /// The source model emits every known member, so `runtimeTaskCreate`,
 /// `interactiveSessions`, and `worktrees` are JSON null when the stored
-/// document omits them. `projectEditing` is omitted when unadvertised so verified
+/// document omits them. `pluginSync` is omitted unless a valid protocol is
+/// advertised. `projectEditing` is omitted when unadvertised so verified
 /// legacy runtimes retain their version contract. `extensions` carries the members a distribution
 /// registers through `register_runtime_feature_normalizer` (the source
 /// extension schema registers `desktop`); any other stored member is
@@ -197,6 +198,8 @@ pub struct RuntimeFeatures {
     pub worktrees: Option<RawJson>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_editing: Option<RuntimeProjectEditingFeatures>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin_sync: Option<RuntimePluginSyncFeatures>,
     #[serde(flatten)]
     pub extensions: serde_json::Map<String, serde_json::Value>,
 }
@@ -208,6 +211,12 @@ pub struct RuntimeProjectEditingFeatures {
     pub ai_settings: Option<bool>,
     pub default_project_space: Option<bool>,
     pub plugins: Option<bool>,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimePluginSyncFeatures {
+    pub protocol_version: i64,
 }
 
 /// The configured cloud device store's contribution to one listing entry:
@@ -306,6 +315,8 @@ struct RuntimeFeatureInput {
         deserialize_with = "present_project_editing"
     )]
     project_editing: Option<OpaqueJson>,
+    #[serde(rename = "pluginSync")]
+    plugin_sync: Option<OpaqueJson>,
 }
 
 fn present_project_editing<'de, D>(deserializer: D) -> Result<Option<OpaqueJson>, D::Error>
@@ -694,6 +705,8 @@ pub(crate) fn spec(row: &DeviceKindRow) -> DeviceSpecInput {
 ///   Optional defaults).
 /// - `projectEditing` is omitted when absent. Explicit malformed advertisements
 ///   retain a conservative object; only actual booleans authorize writes.
+/// - `pluginSync` preserves an explicit positive integer protocol version;
+///   absent or malformed advertisements never opt a legacy device in.
 /// - Any other stored key is dropped unless the distribution registers it as
 ///   an extension feature.
 fn project_runtime_features(info: &OnlineStateInput) -> Option<RuntimeFeatures> {
@@ -730,6 +743,18 @@ fn project_runtime_features(info: &OnlineStateInput) -> Option<RuntimeFeatures> 
             .project_editing
             .as_ref()
             .map(|value| project_editing_features(value, valid_header)),
+        plugin_sync: features
+            .plugin_sync
+            .as_ref()
+            .filter(|_| valid_header)
+            .and_then(|value| {
+                value
+                    .to_value()
+                    .get("protocolVersion")?
+                    .as_i64()
+                    .filter(|version| *version >= 1)
+                    .map(|protocol_version| RuntimePluginSyncFeatures { protocol_version })
+            }),
         extensions: serde_json::Map::new(),
     })
 }
@@ -1059,6 +1084,49 @@ mod tests {
     }
 
     #[test]
+    fn runtime_features_preserves_explicit_plugin_sync_protocol() {
+        let info = json!({
+            "runtime_features": {
+                "schemaVersion": 4,
+                "pluginSync": {"protocolVersion": 2, "unknown": true},
+            },
+        });
+        let projected =
+            crate::json_contract_tests::serialized(runtime_features(&info).unwrap()).unwrap();
+        assert_eq!(projected["pluginSync"], json!({"protocolVersion": 2}));
+    }
+
+    #[test]
+    fn runtime_features_omits_absent_and_malformed_plugin_sync_protocols() {
+        for advertisement in [
+            Value::Null,
+            json!("2"),
+            json!([]),
+            json!({}),
+            json!({"protocolVersion": "2"}),
+            json!({"protocolVersion": true}),
+            json!({"protocolVersion": 0}),
+        ] {
+            let info = json!({
+                "runtime_features": {
+                    "schemaVersion": 4,
+                    "pluginSync": advertisement,
+                    "projectEditing": {"plugins": false},
+                },
+            });
+            let projected =
+                crate::json_contract_tests::serialized(runtime_features(&info).unwrap()).unwrap();
+            assert!(projected.get("pluginSync").is_none());
+            assert_eq!(projected["projectEditing"]["plugins"], false);
+        }
+        let projected = crate::json_contract_tests::serialized(
+            runtime_features(&json!({"runtime_features": {"schemaVersion": 4}})).unwrap(),
+        )
+        .unwrap();
+        assert!(projected.get("pluginSync").is_none());
+    }
+
+    #[test]
     fn runtime_features_extensions_follow_the_known_members() {
         let features = RuntimeFeatures {
             schema_version: 4,
@@ -1066,6 +1134,7 @@ mod tests {
             interactive_sessions: None,
             worktrees: None,
             project_editing: None,
+            plugin_sync: None,
             extensions: std::iter::once((
                 "desktop".to_string(),
                 json!({

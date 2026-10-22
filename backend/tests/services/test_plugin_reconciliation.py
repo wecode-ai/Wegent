@@ -10,6 +10,12 @@ from app.services.device import plugin_reconciliation as module
 
 @pytest.fixture
 def reconciliation(monkeypatch):
+    monkeypatch.setattr(
+        module.device_capability_sync_service,
+        "supports_plugin_delta",
+        AsyncMock(return_value=False),
+    )
+
     @contextmanager
     def session():
         yield Mock()

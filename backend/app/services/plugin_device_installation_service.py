@@ -20,6 +20,7 @@ from app.schemas.device import (
     DeviceCapabilitySyncResult,
 )
 from app.schemas.installed_plugin import PluginDeviceReportItem
+from app.services.device.plugin_sync_protocol import lock_plugin_sync_state
 from app.services.device_service import device_service
 from app.services.plugin_device_identity import (
     plugin_device_id,
@@ -104,6 +105,9 @@ class PluginDeviceInstallationService:
         response: DeviceCapabilitySyncResponse,
     ) -> None:
         """Remove materialized rows only for devices that confirmed uninstall."""
+        if any(item.desired_plugin_snapshot is not None for item in response.results):
+            self.record_sync_response(db, user_id=user_id, response=response)
+            return
         successful_device_ids = {
             item.device_id for item in response.results if item.success
         }
@@ -128,6 +132,11 @@ class PluginDeviceInstallationService:
     ) -> None:
         for attempt in range(1, DEVICE_SYNC_WRITE_ATTEMPTS + 1):
             try:
+                if any(
+                    item.desired_plugin_snapshot is not None
+                    for item in response.results
+                ):
+                    lock_plugin_sync_state(db, user_id)
                 reconcile_plugin_device_rows(db, user_id)
                 for device_result in response.results:
                     self._record_device_sync_result(
@@ -156,6 +165,9 @@ class PluginDeviceInstallationService:
         response: DeviceCapabilitySyncResponse,
     ) -> None:
         """Persist one plugin sync without changing unrelated device rows."""
+        if any(item.desired_plugin_snapshot is not None for item in response.results):
+            self.record_sync_response(db, user_id=user_id, response=response)
+            return
         reconcile_plugin_device_rows(db, user_id)
         installed = next(
             (
@@ -241,11 +253,20 @@ class PluginDeviceInstallationService:
         *,
         reconcile: bool = True,
     ) -> None:
+        if reconcile and result.desired_plugin_snapshot is not None:
+            lock_plugin_sync_state(db, user_id)
         if reconcile:
             reconcile_plugin_device_rows(db, user_id)
         result = result.model_copy(
             update={"device_id": plugin_device_id(db, user_id, result.device_id)}
         )
+        if result.desired_plugin_snapshot is not None:
+            from app.services.device.plugin_sync_recording import (
+                record_versioned_result,
+            )
+
+            record_versioned_result(self, db, user_id, result)
+            return
         installs = self._desired_installs(db, user_id)
         desired_ids = {installed.id for installed in installs}
         self._record_removed_installs(db, user_id, result, desired_ids)

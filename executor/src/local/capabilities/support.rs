@@ -16,9 +16,10 @@ use zip::ZipArchive;
 
 use super::{CapabilitySyncError, PluginSyncSpec, DEFAULT_PLUGIN_MARKETPLACE, MANIFEST_VERSION};
 
-const CLAUDE_PLUGIN_MANIFEST_PATH: &str = ".claude-plugin/plugin.json";
-const CODEX_PLUGIN_MANIFEST_PATH: &str = ".codex-plugin/plugin.json";
-const PLUGIN_MANIFEST_PATHS: [&str; 2] = [CODEX_PLUGIN_MANIFEST_PATH, CLAUDE_PLUGIN_MANIFEST_PATH];
+pub(super) const CLAUDE_PLUGIN_MANIFEST_PATH: &str = ".claude-plugin/plugin.json";
+pub(super) const CODEX_PLUGIN_MANIFEST_PATH: &str = ".codex-plugin/plugin.json";
+pub(super) const PLUGIN_MANIFEST_PATHS: [&str; 2] =
+    [CODEX_PLUGIN_MANIFEST_PATH, CLAUDE_PLUGIN_MANIFEST_PATH];
 const MAX_PACKAGE_ENTRY_COUNT: usize = 10_000;
 const MAX_EXPANDED_PACKAGE_SIZE_BYTES: u64 = 200 * 1024 * 1024;
 const UNIX_FILE_TYPE_MASK: u32 = 0o170_000;
@@ -290,7 +291,7 @@ fn plugin_manifest_name(
     })
 }
 
-fn convert_plugin_manifest(manifest: &Value, for_claude: bool) -> Value {
+pub(super) fn convert_plugin_manifest(manifest: &Value, for_claude: bool) -> Value {
     let fields = if for_claude {
         CLAUDE_MANIFEST_FIELDS.as_slice()
     } else {
@@ -404,7 +405,7 @@ fn ensure_plugin_hook_executable(
 }
 
 #[cfg(unix)]
-fn is_plugin_hook_path(path: &Path) -> bool {
+pub(super) fn is_plugin_hook_path(path: &Path) -> bool {
     path.components().next().is_some_and(|component| {
         component
             .as_os_str()
@@ -531,6 +532,9 @@ pub(super) fn plugin_manifest_entry(
     }
     if let Some(id) = spec.cloud_plugin_id {
         entry.insert("cloud_plugin_id".to_owned(), json!(id));
+    }
+    if let Some(generation) = spec.sync_generation {
+        entry.insert("plugin_sync_generation".to_owned(), json!(generation));
     }
     entry.insert("marketplace".to_owned(), json!(spec.marketplace));
     entry.insert("enabled".to_owned(), json!(spec.enabled));
