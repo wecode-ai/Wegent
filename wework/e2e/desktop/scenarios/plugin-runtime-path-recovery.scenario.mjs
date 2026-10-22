@@ -38,6 +38,10 @@ import {
   selectTool,
 } from '../modules/response-protocol.mjs'
 import {
+  closeComposerPluginPicker,
+  openComposerPluginPicker,
+} from '../modules/conversation-layout.mjs'
+import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
   createSingleRootLocalProject,
@@ -164,14 +168,8 @@ export async function createDesktopScenario({
     await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
       timeoutMs: workbenchReadyTimeoutMs,
     })
-    // Focusing the composer with content first mirrors the known-good invoke flow.
-    await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: 'prime' })
-    await control.command('clickWhenEnabled', testId('composer-plugin-picker-button'))
-    await control.command('waitFor', testId('composer-plugin-picker'), {
-      timeoutMs: workbenchReadyTimeoutMs,
-    })
-    await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Escape' })
-    await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: '' })
+    await openComposerPluginPicker(control)
+    await closeComposerPluginPicker(control)
   }
 
   async function invoke(control, fixture, version, phase, { offline = false } = {}) {
