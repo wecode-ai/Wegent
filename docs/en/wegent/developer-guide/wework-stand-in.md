@@ -44,19 +44,19 @@ Focused tests cover durable versioned settings, independent tag rules, assignmen
 
 Use isolated Electron instances, projects, accounts, and Executor data. Cloud cases also start a real backend, database, and remote Executor. Each checkpoint establishes its own prerequisites and disables configurations before environment teardown. Actual results and failure evidence belong in the PR.
 
-| Case                   | Steps                                                           | Expected result                                                  |
-| ---------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Defaults and cancel    | Open settings, edit instructions, cancel                        | Disabled on the current device; edits discarded                  |
-| Independent settings   | Edit and save settings with automatic handling off              | Settings persist without enabling automatic handling             |
-| Immediate switch       | Enable a saved configuration, disable it, then cancel           | Switch persists immediately and cancellation does not undo it    |
-| Enable pending edits   | Edit settings, enable, then save and enable                     | Remains off until confirmation; activation uses the new settings |
-| Disable with a draft   | Edit an enabled configuration, disable, then continue editing   | Only automatic handling changes; draft and new version retained  |
-| Enable and reload      | Save, then reload                                               | Open eyes, sidebar mask, and selection bar persist               |
-| Automatic execution    | Assign new work after enabling; leave board                     | Ordinary Runtime task completes and remains linked               |
-| Exclusions and disable | Check historical, other-user, unassigned, and post-disable work | No execution; assignee unchanged                                 |
-| Version recovery       | Save a stale draft after an external update, reopen             | Conflict retains draft; reopen loads current version             |
-| Agent                  | Select a project Agent and assign work                          | Existing instructions and model reach native execution           |
-| Tag routing            | Configure review/docs rules and assign tagged work              | Each uses its own instructions; ambiguous work is skipped        |
-| Repeated polling       | Edit processed work and wait multiple polls                     | One linked task and model request per assignment                 |
-| Cloud device           | Select remote Executor, save, reopen                            | Configuration belongs to remote device; local remains disabled   |
-| Existing binding       | Enable matching rules on another device and wait multiple polls | Already-linked assignments are not recreated                     |
+| Case                   | Steps                                                           | Expected result                                                |
+| ---------------------- | --------------------------------------------------------------- | -------------------------------------------------------------- |
+| Defaults and cancel    | Open settings, edit instructions, cancel                        | Disabled on the current device; edits discarded                |
+| Independent settings   | Edit and save settings with automatic handling off              | Settings persist without enabling automatic handling           |
+| Draft selection        | Check or uncheck a saved configuration, then cancel             | Nothing persists; reopening shows the saved state              |
+| Enable pending edits   | Edit settings, check automatic handling, then save              | Execution stays off until Save, then uses the edited settings  |
+| Disable with a draft   | Edit an enabled configuration, uncheck, then save               | Disabled state and edited settings persist together            |
+| Enable and reload      | Save, then reload                                               | Open eyes, sidebar mask, and selection bar persist             |
+| Automatic execution    | Assign new work after enabling; leave board                     | Ordinary Runtime task completes and remains linked             |
+| Exclusions and disable | Check historical, other-user, unassigned, and post-disable work | No execution; assignee unchanged                               |
+| Version recovery       | Save a stale draft after an external update, reopen             | Conflict retains draft; reopen loads current version           |
+| Agent                  | Select a project Agent and assign work                          | Existing instructions and model reach native execution         |
+| Tag routing            | Configure review/docs rules and assign tagged work              | Each uses its own instructions; ambiguous work is skipped      |
+| Repeated polling       | Edit processed work and wait multiple polls                     | One linked task and model request per assignment               |
+| Cloud device           | Select remote Executor, save, reopen                            | Configuration belongs to remote device; local remains disabled |
+| Existing binding       | Enable matching rules on another device and wait multiple polls | Already-linked assignments are not recreated                   |
