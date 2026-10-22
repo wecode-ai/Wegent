@@ -54,7 +54,9 @@ export function createProjectSpacePickerRegression({
   }
 
   async function openTask(control, address) {
-    await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+    await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-task"]', {
+      timeoutMs: workbenchReadyTimeoutMs,
+    })
     const query = new URLSearchParams(address)
     await control.command('navigate', 'body', { value: `/runtime-tasks?${query}` })
     await control.command('waitFor', CHANGE, {
