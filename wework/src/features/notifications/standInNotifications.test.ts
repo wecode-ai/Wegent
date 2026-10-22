@@ -43,7 +43,7 @@ describe('stand-in notification projection', () => {
     const result = mergeStandInNotifications([assignment], [runtimeItem])
     expect(result).toHaveLength(1)
     expect(result[0].id).toBe('assignment')
-    expect(result[0].url).toBe('wework://tasks/device/task')
+    expect(result[0].url).toBe(assignment.url)
     expect(result[0].payload.standIn?.status).toBe('running')
     expect(assignment.url).toBe('wework://boards/12/issues/ISSUE-1')
     expect(assignment.payload).not.toHaveProperty('standIn')
@@ -74,7 +74,10 @@ describe('stand-in notification projection', () => {
         },
       },
     }
-    expect(mergeStandInNotifications([], [local])[0].synthetic).toBe(true)
+    const notification = mergeStandInNotifications([], [local])[0]
+    expect(notification.synthetic).toBe(true)
+    expect(notification.url).toBe('wework://boards/local/12/issues/ISSUE-1')
+    expect(mergeStandInNotifications([], [runtimeItem])[0].url).toBe(assignment.url)
     expect(
       mergeStandInNotifications(
         [],

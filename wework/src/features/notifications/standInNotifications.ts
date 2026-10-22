@@ -5,7 +5,7 @@ import {
   runtimeTaskTrackingExecutionStatus,
   runtimeTaskSummaryTrackingExecutionStatus,
 } from '@/features/workbench/runtimeTaskLifecycle/projection'
-import { weworkTaskScheme } from './scheme'
+import { weworkIssueScheme } from './scheme'
 
 export interface StandInNotificationState {
   deviceId: string
@@ -83,6 +83,11 @@ export function mergeStandInNotifications(
         notification.payload.humanAssignmentId === origin.humanAssignmentId
     )
     const state = standInState(item)
+    const url = weworkIssueScheme(
+      String(origin.cloudProjectId),
+      String(origin.loopItemId),
+      origin.projectStore === 'local' ? 'local' : 'backend'
+    )
     const notification: StandInNotification =
       index >= 0
         ? result[index]
@@ -91,7 +96,7 @@ export function mergeStandInNotifications(
             kind: 'issue_dispatch_assignment',
             title: item.task.title,
             body: '',
-            url: weworkTaskScheme(item.address),
+            url,
             created_at: new Date(runtimeTimestamp(item.task.createdAt)).toISOString(),
             read_at: 'read',
             payload: {
@@ -106,7 +111,7 @@ export function mergeStandInNotifications(
     const merged = {
       ...notification,
       runtimeItem: item,
-      url: weworkTaskScheme(item.address),
+      url,
       payload: {
         ...notification.payload,
         projectName: notification.payload.projectName || item.projectName,

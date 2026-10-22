@@ -5190,7 +5190,7 @@
   },
   "notifications": {
     "stand_in_retry": "重试",
-    "stand_in_identity": "我的替身",
+    "stand_in_handling": "替身处理",
     "stand_in_delegate": "交给替身",
     "stand_in_assignment": "分配给你",
     "stand_in_running": "处理中",
