@@ -1839,6 +1839,10 @@ flowchart LR
   `issue_dispatch_assignment` events
   belong to Collaboration; every other cloud kind belongs to Other notifications
   until given an explicit category in the product contract.
+- Make the full notification entry open its destination, including the icon,
+  padding, and empty space below the title. Inline actions and input controls
+  handle their own interaction without navigating. Paint hover backgrounds
+  behind content so text and icons retain their contrast.
 - Keep source-specific navigation and
   read operations: opening a task marks its lifecycle state read; opening a
   cloud entry acknowledges its server record. Opening the popover alone does not

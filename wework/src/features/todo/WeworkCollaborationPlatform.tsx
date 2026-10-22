@@ -37,6 +37,7 @@ import {
   type WorkspaceRuntimeTaskAddress,
   type WorkspaceTaskBinding,
 } from '@wegent/collaboration'
+import { MarkdownServicesProvider } from '@wegent/collaboration/markdown'
 import {
   DEFAULT_WORK_ITEM_PROJECT_ID,
   type CloudLoopItem,
@@ -45,6 +46,7 @@ import {
 } from '@/api/deliveries'
 import { loopItemLocalProject } from '@/api/localProjectAssociation'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useCollaborationMarkdownServices } from './useCollaborationMarkdownServices'
 import { AddCloudDeviceDialog } from '@/components/settings/AddCloudDeviceDialog'
 import { TransientNotice } from '@/components/common/TransientNotice'
 import { resolveDeviceResourceSettingsOptions } from './deviceResourceSettings'
@@ -110,6 +112,7 @@ import {
   type RuntimeTaskConversationStatus,
 } from './runtimeTaskConversationStatus'
 import { TodoEditor } from './TodoEditor'
+import { WeworkCollaborationEmbeddedBrowserHost } from './WeworkCollaborationEmbeddedBrowserHost'
 import { updateIssueWhenPersonalTaskStarts, workItemComposerReference } from './workItemTaskInput'
 import {
   loadProjectSpaceCodeWorkspacePreference,
@@ -294,6 +297,7 @@ export interface WeworkCollaborationPlatformProps {
   runtimeTaskLifecycle?: RuntimeTaskLifecycleStoreSnapshot
   services: WorkbenchServices
   startupActive?: boolean
+  workspaceActive?: boolean
   activeProjectRef?: RuntimeProjectSpaceRef | null
   defaultProjectRequested?: boolean
   focusedItemId?: string | null
@@ -1215,6 +1219,15 @@ export function WeworkSharedProject({
 }
 
 export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformProps) {
+  const markdownServices = useCollaborationMarkdownServices()
+  return (
+    <MarkdownServicesProvider value={markdownServices}>
+      <WeworkCollaborationPlatformContent {...props} />
+    </MarkdownServicesProvider>
+  )
+}
+
+function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformProps) {
   const { i18n, t } = useTranslation('common')
   const standInProjects = useStandInProjects(props.services, props.devices, Number(props.user.id))
   const cloudConnection = useOptionalCloudConnection()
@@ -1822,6 +1835,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
           )
         }}
       />
+      <WeworkCollaborationEmbeddedBrowserHost workspaceActive={props.workspaceActive ?? true} />
     </div>
   )
 }

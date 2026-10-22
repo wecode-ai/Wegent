@@ -340,8 +340,9 @@ function BrowserIssueDetail({
                 const access = await api.attachments.access(attachmentId);
                 window.open(access.url, "_blank", "noopener,noreferrer");
               },
-              renderActivity: ({ tasks }) => (
+              renderActivity: ({ tasks, commentAssignment }) => (
                 <IssueActivityPanel
+                  commentAssignment={commentAssignment}
                   api={api}
                   issue={issue}
                   project={project}

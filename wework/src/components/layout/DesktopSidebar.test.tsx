@@ -2006,6 +2006,51 @@ describe('DesktopSidebar', () => {
     )
   })
 
+  test('clears accepted async replies while the priority list still has its old snapshot', async () => {
+    const address = { deviceId: 'local-device', taskId: 'async-task', workspacePath: '/chat' }
+    const props = createSidebarProps({
+      projects: [],
+      runtimeWork: {
+        projects: [],
+        chats: [
+          {
+            deviceId: address.deviceId,
+            available: true,
+            workspacePath: address.workspacePath,
+            workspaceKind: 'chat',
+            tasks: [
+              {
+                taskId: address.taskId,
+                workspacePath: address.workspacePath,
+                workspaceKind: 'chat',
+                title: 'Async question',
+                runtime: 'codex',
+                status: 'done',
+                running: false,
+                interactionStatus: 'awaitingUserReply',
+              },
+            ],
+          },
+        ],
+        totalTasks: 1,
+      },
+    })
+    const store = new RuntimeTaskLifecycleStore('accepted-async-sidebar')
+    store.syncRuntimeWork(props.runtimeWork)
+    render(
+      <RuntimeTaskLifecycleProvider store={store}>
+        <DesktopSidebar {...props} />
+      </RuntimeTaskLifecycleProvider>
+    )
+    await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
+    expect(screen.getByTestId('runtime-local-task-waiting-async-task')).toBeInTheDocument()
+
+    act(() => store.userInputResponded(address))
+
+    expect(store.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(false)
+    expect(screen.queryByTestId('runtime-local-task-waiting-async-task')).not.toBeInTheDocument()
+  })
+
   test('matches Codex sidebar text emphasis levels', () => {
     renderSidebar({ onToggleSidebar: vi.fn() }, { status: 'disconnected', isConnected: false })
 

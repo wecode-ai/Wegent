@@ -405,15 +405,11 @@ fn transcript_canonical_turns(
             continue;
         }
 
-        match item_source {
-            TranscriptTurnItemSource::CodexItems => {
-                if let Some(runtime_items) = message.get("runtimeItems").and_then(Value::as_array) {
-                    items.extend(runtime_items.iter().cloned());
-                }
-            }
-            TranscriptTurnItemSource::CachedMessages => {
-                append_runtime_message_items(items, message);
-            }
+        // Cached provider messages retain the same item identities and order as live events.
+        if let Some(runtime_items) = message.get("runtimeItems").and_then(Value::as_array) {
+            items.extend(runtime_items.iter().cloned());
+        } else if matches!(item_source, TranscriptTurnItemSource::CachedMessages) {
+            append_runtime_message_items(items, message);
         }
     }
 
