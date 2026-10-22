@@ -2905,7 +2905,17 @@ export function TodoEditor(props: TodoEditorProps) {
               workspacePanel && "task-detail-workspace-panel",
             )}
           >
-            <div className={cn(twoColumn && "task-detail-left-inner")}>
+            <div
+              data-testid={
+                isCreate
+                  ? "cloud-todo-create-content"
+                  : "cloud-todo-detail-content"
+              }
+              className={cn(
+                twoColumn && "task-detail-left-inner",
+                fullScreen && !workspacePanel && "mx-auto w-full max-w-[768px]",
+              )}
+            >
               {twoColumn && item && !workspacePanel ? (
                 <div className="task-detail-id-row">
                   <span>{item.id}</span>
@@ -4275,60 +4285,86 @@ export function TodoEditor(props: TodoEditorProps) {
           <>
             {isCreate && extensions?.renderCreateOptions ? (
               <div className="shrink-0 border-t border-border px-5 py-3">
-                {extensions.renderCreateOptions({ saving })}
+                <div
+                  className={cn(
+                    fullScreen &&
+                      !workspacePanel &&
+                      "mx-auto w-full max-w-[768px]",
+                  )}
+                >
+                  {extensions.renderCreateOptions({ saving })}
+                </div>
               </div>
             ) : null}
-            <footer className="flex shrink-0 items-center gap-2 border-t border-border px-5 py-3">
-              <span className="text-xs text-text-muted">
-                {isCreate
-                  ? t(
-                      "todo.create_shortcut_hint",
-                      "ESC 关闭 · ⌘↵ 创建{{draft}}",
-                      {
-                        draft: hasDraftContent
-                          ? ` · ${t("todo.draft_saved", "草稿已保存")}`
-                          : "",
-                      },
-                    )
-                  : t("todo.save_shortcut_hint", "ESC 关闭 · ⌘↵ 保存")}
-              </span>
-              <span className="flex-1" />
-              {isCreate ? (
-                <>
-                  <button
-                    type="button"
-                    data-testid="cloud-todo-create-confirm"
-                    disabled={!createTitle || saving || scheduleRangeInvalid}
-                    onClick={() => void submitCreate()}
-                    className="h-8 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-50"
-                  >
-                    {saving
-                      ? t("todo.creating_issue", "正在创建…")
-                      : t("todo.create_issue", "创建任务")}
-                  </button>
-                </>
-              ) : (
-                <>
-                  {(editable || canAssign) && dirty && !assigneeChanged && (
+            <footer className="shrink-0 border-t border-border px-5 py-3">
+              <div
+                data-testid={
+                  isCreate
+                    ? "cloud-todo-create-footer"
+                    : "cloud-todo-detail-footer"
+                }
+                className={cn(
+                  "flex items-center gap-2",
+                  fullScreen &&
+                    !workspacePanel &&
+                    "mx-auto w-full max-w-[768px]",
+                )}
+              >
+                <span className="text-xs text-text-muted">
+                  {isCreate
+                    ? t(
+                        "todo.create_shortcut_hint",
+                        "ESC 关闭 · ⌘↵ 创建{{draft}}",
+                        {
+                          draft: hasDraftContent
+                            ? ` · ${t("todo.draft_saved", "草稿已保存")}`
+                            : "",
+                        },
+                      )
+                    : t("todo.save_shortcut_hint", "ESC 关闭 · ⌘↵ 保存")}
+                </span>
+                <span className="flex-1" />
+                {isCreate ? (
+                  <>
                     <button
                       type="button"
-                      data-testid="cloud-todo-save"
-                      disabled={!title.trim() || saving || scheduleRangeInvalid}
-                      onClick={() => void saveDetails()}
+                      data-testid="cloud-todo-create-confirm"
+                      disabled={!createTitle || saving || scheduleRangeInvalid}
+                      onClick={() => void submitCreate()}
                       className="h-8 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-50"
                     >
                       {saving
-                        ? t("todo.saving_issue", "正在保存…")
-                        : t("common.save", "保存")}
+                        ? t("todo.creating_issue", "正在创建…")
+                        : t("todo.create_issue", "创建任务")}
                     </button>
-                  )}
-                </>
-              )}
+                  </>
+                ) : (
+                  <>
+                    {(editable || canAssign) && dirty && !assigneeChanged && (
+                      <button
+                        type="button"
+                        data-testid="cloud-todo-save"
+                        disabled={
+                          !title.trim() || saving || scheduleRangeInvalid
+                        }
+                        onClick={() => void saveDetails()}
+                        className="h-8 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-50"
+                      >
+                        {saving
+                          ? t("todo.saving_issue", "正在保存…")
+                          : t("common.save", "保存")}
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
             </footer>
           </>
         ) : null}
       </section>
-      {!workspacePanel && assignmentChainOpen && item?.assignment_history?.length
+      {!workspacePanel &&
+      assignmentChainOpen &&
+      item?.assignment_history?.length
         ? (extensions?.renderAssignmentHistory?.({
             anchor: assignmentChainTriggerRef.current,
             entries: item.assignment_history,

@@ -922,11 +922,38 @@ async function verifyWorkspaceIssueCreation(control) {
   const createIssuePanel = `${createIssueDialog} [data-testid="cloud-todo-create-panel"]`
   const createIssueTitle = `${createIssueDialog} [data-testid="cloud-todo-title"]`
   const createIssueDescription = `${createIssueDialog} [data-testid="cloud-todo-detail-description"]`
+  const createIssueFullscreen = `${createIssueDialog} [data-testid="cloud-todo-create-fullscreen"]`
+  const createIssueContent = `${createIssueDialog} [data-testid="cloud-todo-create-content"]`
+  const createIssueFooter = `${createIssueDialog} [data-testid="cloud-todo-create-footer"]`
   await control.command('click', createIssueSelector)
   await control.command('waitFor', createIssuePanel, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('click', createIssueFullscreen)
+  await control.command('waitFor', `${createIssuePanel}.h-full`, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', createIssueContent, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getComputedStyleValue', createIssueContent, {
+      value: 'max-width',
+    }),
+    '768px',
+    'Fullscreen Issue content must use the centered reading column'
+  )
+  assert.equal(
+    await control.command('getComputedStyleValue', createIssueFooter, {
+      value: 'max-width',
+    }),
+    '768px',
+    'Fullscreen Issue footer must align with the content column'
+  )
+  await control.command('click', createIssueFullscreen)
   await control.command('fill', createIssueTitle, {
     value: issueTitle,
   })
