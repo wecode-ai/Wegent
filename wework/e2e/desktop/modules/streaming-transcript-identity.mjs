@@ -134,6 +134,19 @@ export function createStreamingTranscriptIdentityChecks({ uiTimeoutMs }) {
         await control.command('reloadMainWindow', 'body')
         await control.awaitReadyAfter(readyCount)
         await assertReply(control, row, PREFIX)
+        const restoredMessages = JSON.parse(
+          await control.command('getRuntimeConversationMessages', 'body', {
+            value: JSON.stringify(address),
+          })
+        )
+        const restored = restoredMessages.find(
+          message => message.turnId === turn.id && message.role === 'assistant'
+        )
+        assert.deepEqual(
+          restored.runtimeDisplayItems.map(item => item.id),
+          turn.items.filter(item => item.type !== 'user_message').map(item => item.id),
+          'Restoration changed native item identity or order in the renderer'
+        )
         const snapshot = JSON.parse(await control.command('snapshot', row))
         assert.equal(
           snapshot.text.split(PREFIX.trim()).length - 1,

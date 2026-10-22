@@ -14,6 +14,10 @@ This document records the state sources for the Wework chat path. The goal is to
 4. `useWorkbenchPaneSession` owns pane content such as messages and queued input, but reads all task and turn lifecycle facts from the Store.
 5. `runtimePaneStatus.ts` is a read-only projection from a lifecycle snapshot to existing pane presentation fields. It must not infer execution or turn state independently.
 
+Sidebar priority filtering also reads explicit `interactionStatus` through the
+lifecycle Store projection. A stale task-list snapshot must not override an
+accepted user reply in the view layer.
+
 ## Latest Turn Identity
 
 `turn.id` identifies the active turn and may be cleared after completion. `turn.latestId` retains the latest turn identity confirmed by runtime events, transcripts, or executor snapshots. Task-list refreshes, completion timestamp precision changes, and other metadata updates must not clear it. Reply predictions use `turn.latestId` as their request identity and wait until a real turn identity is available. Starting a new turn still invalidates the previous suggestion.
