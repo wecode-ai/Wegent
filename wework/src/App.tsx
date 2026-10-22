@@ -69,6 +69,7 @@ import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecu
 import { PluginAutoUpdateCoordinator } from '@/features/plugins/PluginAutoUpdateCoordinator'
 import { CloudModelCatalogSyncDialogHost } from '@/features/model-settings/cloudModelCatalogSync'
 import { cn } from '@/lib/utils'
+import { isSettingsRoute } from '@/lib/navigation'
 import { createLocalAppServices } from '@/api/local/localServices'
 import { createHttpClient } from '@/api/http'
 import { createRuntimeWorkApi } from '@/api/runtimeWork'
@@ -746,7 +747,11 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
           cloudWebUrl={cloudWebUrl}
           onOpenWeworkForAppshot={onOpenWeworkForAppshot}
           onWorkbenchStartupReadyChange={onWorkbenchStartupReadyChange}
-          tab={tab}
+          tab={
+            tab.id === workspaceTabs.activeTabId && isSettingsRoute(path)
+              ? { ...tab, contentRoute: `${path}${search}` }
+              : tab
+          }
           user={user}
         />
       ))}

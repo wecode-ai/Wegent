@@ -4164,6 +4164,8 @@
     "start_follow_up": "Start a new task"
   },
   "todo": {
+    "issue_badges_title": "Related information",
+    "issue_pr_loading": "Loading status…",
     "load_tag_catalog_failed": "Failed to load tag catalog",
     "my_work_human_filter": "Human tasks",
     "project_manager": "Project manager",

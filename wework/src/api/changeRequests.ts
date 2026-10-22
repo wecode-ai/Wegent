@@ -20,6 +20,7 @@ export interface TaskChangeRequestTarget {
   workspacePath: string
   remoteUrl: string
   branch: string
+  changeRequestUrl?: string
 }
 
 export interface TaskChangeRequestSnapshot {
@@ -360,18 +361,107 @@ export async function loadTaskChangeRequests(
   api: DeviceCommandApi,
   targets: TaskChangeRequestTarget[]
 ): Promise<TaskChangeRequestSnapshot[]> {
-  const groups = groupTargets(targets)
-  const results = await Promise.allSettled(groups.map(group => loadRepository(api, group)))
-  return results.flatMap((result, index) =>
-    result.status === 'fulfilled'
-      ? result.value
-      : groups[index].targets.map(target => ({
-          target,
-          changeRequest: null,
-          fetchedAt: new Date().toISOString(),
-          provider: groups[index].provider,
-          lookupState: 'error',
-          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-        }))
-  )
+  const linkedTargets = targets.filter(target => target.changeRequestUrl)
+  const groups = groupTargets(targets.filter(target => !target.changeRequestUrl))
+  const [linkedResults, results] = await Promise.all([
+    loadLinkedChangeRequests(api, linkedTargets),
+    Promise.allSettled(groups.map(group => loadRepository(api, group))),
+  ])
+  return [
+    ...linkedResults,
+    ...results.flatMap<TaskChangeRequestSnapshot>((result, index) =>
+      result.status === 'fulfilled'
+        ? result.value
+        : groups[index].targets.map(target => ({
+            target,
+            changeRequest: null,
+            fetchedAt: new Date().toISOString(),
+            provider: groups[index].provider,
+            lookupState: 'error',
+            error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+          }))
+    ),
+  ]
+}
+
+async function loadLinkedChangeRequests(
+  api: DeviceCommandApi,
+  targets: TaskChangeRequestTarget[]
+): Promise<TaskChangeRequestSnapshot[]> {
+  const results: TaskChangeRequestSnapshot[] = []
+  for (let offset = 0; offset < targets.length; offset += 4) {
+    results.push(
+      ...(await Promise.all(
+        targets.slice(offset, offset + 4).map(target => loadLinkedChangeRequest(api, target))
+      ))
+    )
+  }
+  return results
+}
+
+export function linkedChangeRequestTarget(
+  deviceId: string,
+  value: string
+): TaskChangeRequestTarget | null {
+  try {
+    const url = new URL(value)
+    if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) return null
+    const match =
+      url.pathname.match(/^(\/[^/]+\/[^/]+)\/pull\/([1-9]\d*)(?:\/.*)?$/) ??
+      url.pathname.match(/^(\/.+?)\/-\/merge_requests\/([1-9]\d*)(?:\/.*)?$/)
+    if (!match || !Number.isSafeInteger(Number(match[2]))) return null
+    const gitlab = url.pathname.includes('/-/merge_requests/')
+    const changeRequestUrl = `${url.origin}${match[1]}${gitlab ? '/-/merge_requests/' : '/pull/'}${match[2]}`
+    return {
+      deviceId,
+      taskId: changeRequestUrl,
+      workspacePath: '',
+      remoteUrl: `${url.origin}${match[1]}`,
+      branch: '',
+      changeRequestUrl,
+    }
+  } catch {
+    return null
+  }
+}
+
+async function loadLinkedChangeRequest(
+  api: DeviceCommandApi,
+  target: TaskChangeRequestTarget
+): Promise<TaskChangeRequestSnapshot> {
+  const provider = target.changeRequestUrl!.includes('/-/merge_requests/') ? 'gitlab' : 'github'
+  const base = {
+    target,
+    provider,
+    fetchedAt: new Date().toISOString(),
+    changeRequest: null,
+  } as const
+  try {
+    const response = await api.executeCommand(target.deviceId, {
+      command_key:
+        provider === 'github' ? 'git_github_pull_request_view' : 'git_gitlab_merge_request_view',
+      args:
+        provider === 'github'
+          ? [target.changeRequestUrl!]
+          : [target.changeRequestUrl!.split('/').at(-1)!, '--repo', target.remoteUrl],
+      timeout_seconds: 20,
+      max_output_bytes: 256 * 1024,
+    })
+    if (!response.success)
+      return {
+        ...base,
+        lookupState: classifyChangeRequestCommandError(response),
+        error: commandError(response),
+      }
+    const changeRequest = parseChangeRequest(provider, outputAsRecord(response.stdout))
+    if (!changeRequest)
+      return { ...base, lookupState: 'error', error: 'Invalid change request response' }
+    return { ...base, changeRequest, lookupState: 'found' }
+  } catch (error) {
+    return {
+      ...base,
+      lookupState: 'error',
+      error: error instanceof Error ? error.message : String(error),
+    }
+  }
 }

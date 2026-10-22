@@ -4161,6 +4161,8 @@
     "start_follow_up": "开启新任务"
   },
   "todo": {
+    "issue_badges_title": "关联信息",
+    "issue_pr_loading": "正在查询状态…",
     "load_tag_catalog_failed": "加载标签目录失败",
     "my_work_human_filter": "人工任务",
     "project_manager": "项目管理者",

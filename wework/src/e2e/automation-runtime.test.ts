@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { expandCompletedProcessing } from '../../e2e/desktop/modules/streaming-text-fixture.mjs'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
+import * as desktopHost from '@/api/dsh/desktopHost'
 import {
   fillDesktopControlElement,
   isWeworkAutomationEnabled,
@@ -95,6 +96,45 @@ describe('Electron desktop E2E automation', () => {
       }
     }
   )
+
+  test('acknowledges refresh before activating the native menu that unloads the renderer', async () => {
+    const activate = vi.spyOn(desktopHost, 'invokeDesktopHost').mockResolvedValue(true)
+    let acknowledgeResult!: (value: Response) => void
+    const acknowledgement = new Promise<Response>(resolve => {
+      acknowledgeResult = resolve
+    })
+    let polls = 0
+    const fetch = vi.fn((url: string) => {
+      if (url.includes('/commands?')) {
+        polls += 1
+        if (polls > 1) return new Promise<Response>(() => {})
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              id: 'menu-refresh',
+              action: 'refreshFromApplicationMenu',
+              selector: 'body',
+            })
+          )
+        )
+      }
+      if (url.endsWith('/results')) return acknowledgement
+      return Promise.resolve(new Response('{}'))
+    })
+    vi.stubGlobal('fetch', fetch)
+    const client = runDesktopControlClient('http://127.0.0.1:43111', 'main')
+
+    await vi.waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:43111/results', expect.anything())
+    )
+    expect(activate).not.toHaveBeenCalled()
+    acknowledgeResult(new Response('{}'))
+    await client
+    expect(activate).toHaveBeenCalledExactlyOnceWith('e2e.activateApplicationMenu', {
+      id: 'view.refresh',
+    })
+    expect(polls).toBe(1)
+  })
 
   test.each([false, true])(
     'expands processing without a cross-command read/click race (initially expanded: %s)',
