@@ -158,7 +158,7 @@ macOS 中需要争用原生桌面前台的 checkpoint 仍通过资源锁保持�
 长场景按独立行为拆成 checkpoint，而不是只调整分片：
 
 - `plugin-account-auth` 展开为密码同步、独占凭据迁移、OAuth、钉钉账号、对话扫码和 GitHub 六个 checkpoint。
-- `plugin-uninstall-resilience` 展开为响应丢失、结果未知、重启恢复和重装竞态四个 checkpoint。
+- `plugin-uninstall-resilience` 展开为写入争锁、响应丢失、结果未知、重启恢复和重装竞态五个 checkpoint。`plugin-write-coordination` 独立验证争锁期间 API 响应、提交后的 ACK 冲突及后续同步恢复；卸载恢复用例自行建立另一个仍有效的安装，覆盖目录刷新与待清理任务并存的情况。
 - `harness-apps` 展开为开发流程与安装运行生命周期两个 checkpoint。
 - `streaming-text` 展开为内容、工具详情、计时、滚动、消息顺序和子智能体六个 checkpoint。
 
