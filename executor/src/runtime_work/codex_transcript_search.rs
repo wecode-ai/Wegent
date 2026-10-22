@@ -170,6 +170,12 @@ async fn search_paginated_codex_transcript(
     user_content_by_client_id: &HashMap<String, String>,
 ) -> Result<Value, String> {
     let needle = query.trim().to_lowercase();
+    let search = CodexSearchQuery {
+        thread_id,
+        needle: &needle,
+        limit,
+        user_content_by_client_id,
+    };
     let mut matches = Vec::new();
     let mut cursor = None;
     let mut seen_cursors = HashSet::new();
@@ -199,7 +205,7 @@ async fn search_paginated_codex_transcript(
                 .ok_or_else(|| "Codex search turn page is missing its anchor".to_owned())?;
             let turn = load_search_turn_items(client, thread_id, turn.clone()).await?;
             let capped = search_turn_items(
-                thread_id,
+                &search,
                 &turn,
                 CodexSearchCursor {
                     turn_id,
@@ -208,9 +214,6 @@ async fn search_paginated_codex_transcript(
                     turn_offset,
                     reply_source_turn_id: None,
                 },
-                &needle,
-                limit,
-                user_content_by_client_id,
                 &mut reply_projection,
                 &mut matches,
             )?;
@@ -270,13 +273,17 @@ async fn load_search_turn_items(
     }
 }
 
+struct CodexSearchQuery<'a> {
+    thread_id: &'a str,
+    needle: &'a str,
+    limit: usize,
+    user_content_by_client_id: &'a HashMap<String, String>,
+}
+
 fn search_turn_items(
-    thread_id: &str,
+    search: &CodexSearchQuery<'_>,
     turn: &Value,
     mut position: CodexSearchCursor,
-    needle: &str,
-    limit: usize,
-    user_content_by_client_id: &HashMap<String, String>,
     reply_projection: &mut AsyncReplySearchProjection,
     matches: &mut Vec<Value>,
 ) -> Result<bool, String> {
@@ -303,12 +310,12 @@ fn search_turn_items(
         .collect();
     for (item_id, text) in codex_turn_search_sources(
         turn,
-        user_content_by_client_id,
-        Some(thread_id),
+        search.user_content_by_client_id,
+        Some(search.thread_id),
         reply_projection,
     ) {
         let text = text.to_lowercase();
-        if !text.contains(needle) {
+        if !text.contains(search.needle) {
             continue;
         }
         if !provider_item_ids.contains(&item_id) {
@@ -319,7 +326,7 @@ fn search_turn_items(
             .reply_source(&position.item_id)
             .map(ToOwned::to_owned);
         let anchor = search_cursor(&position)?;
-        for (occurrence, _) in text.match_indices(needle).enumerate() {
+        for (occurrence, _) in text.match_indices(search.needle).enumerate() {
             let mut matched = json!({
                 "turnId": position.turn_id, "itemId": position.item_id,
                 "occurrence": occurrence, "cursor": anchor,
@@ -331,7 +338,7 @@ fn search_turn_items(
                 matched["replyQuestions"] = json!(questions);
             }
             matches.push(matched);
-            if matches.len() >= limit {
+            if matches.len() >= search.limit {
                 return Ok(true);
             }
         }
@@ -770,7 +777,12 @@ mod tests {
         ]});
         let mut matches = Vec::new();
         let capped = search_turn_items(
-            "root-thread",
+            &CodexSearchQuery {
+                thread_id: "root-thread",
+                needle: "needle",
+                limit: 10,
+                user_content_by_client_id: &HashMap::new(),
+            },
             &turn,
             CodexSearchCursor {
                 turn_id: "turn-1".into(),
@@ -779,9 +791,6 @@ mod tests {
                 turn_offset: 0,
                 reply_source_turn_id: None,
             },
-            "needle",
-            10,
-            &HashMap::new(),
             &mut AsyncReplySearchProjection::default(),
             &mut matches,
         )
@@ -806,7 +815,12 @@ mod tests {
             ]});
             let mut matches = Vec::new();
             let error = search_turn_items(
-                "root-thread",
+                &CodexSearchQuery {
+                    thread_id: "root-thread",
+                    needle: "needle",
+                    limit: 10,
+                    user_content_by_client_id: &HashMap::new(),
+                },
                 &turn,
                 CodexSearchCursor {
                     turn_id: "turn-1".into(),
@@ -815,9 +829,6 @@ mod tests {
                     turn_offset: 0,
                     reply_source_turn_id: None,
                 },
-                "needle",
-                10,
-                &HashMap::new(),
                 &mut AsyncReplySearchProjection::default(),
                 &mut matches,
             )
@@ -842,7 +853,12 @@ mod tests {
         let mut matches = Vec::new();
         for turn in [&question, &reply] {
             search_turn_items(
-                "root-thread",
+                &CodexSearchQuery {
+                    thread_id: "root-thread",
+                    needle: "needle",
+                    limit: 10,
+                    user_content_by_client_id: &HashMap::new(),
+                },
                 turn,
                 CodexSearchCursor {
                     turn_id: turn["id"].as_str().unwrap().to_owned(),
@@ -851,9 +867,6 @@ mod tests {
                     turn_offset: 0,
                     reply_source_turn_id: None,
                 },
-                "needle",
-                10,
-                &HashMap::new(),
                 &mut projection,
                 &mut matches,
             )

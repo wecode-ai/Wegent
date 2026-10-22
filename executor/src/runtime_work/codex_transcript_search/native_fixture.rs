@@ -340,7 +340,6 @@ async fn native_async_reply_search_crosses_pages_and_hydrates_its_complete_quest
         .unwrap();
     }
     let binary = directory.path().join("async-reply-search-fixture");
-    let log = directory.path().join("requests.jsonl");
     let script = r#"#!/bin/sh
 while IFS= read -r line; do
   printf '%s\n' "$line" >> '__DIRECTORY__/requests.jsonl'

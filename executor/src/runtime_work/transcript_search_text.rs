@@ -120,7 +120,18 @@ pub(super) fn codex_turn_search_sources(
 ) -> Vec<(String, String)> {
     let mut turn = turn.clone();
     restore_search_user_content(&mut turn, user_content_by_client_id);
-    let messages = search_transcript_messages(&json!({"id": root_thread_id, "turns": [turn]}));
+    let mut messages = search_transcript_messages(&json!({"id": root_thread_id, "turns": [turn]}));
+    for message in messages
+        .iter_mut()
+        .filter(|message| message["role"] == "user")
+    {
+        let client_id =
+            string_field(message, "clientUserMessageId").or_else(|| string_field(message, "id"));
+        if let Some(content) = client_id.and_then(|id| user_content_by_client_id.get(&id)) {
+            // Empty UI bodies must also override provider-injected attachment text.
+            message["content"] = json!(content);
+        }
+    }
     projection.replies.clear();
     let source = turn["id"].as_str().unwrap_or_default();
     let user_texts = messages

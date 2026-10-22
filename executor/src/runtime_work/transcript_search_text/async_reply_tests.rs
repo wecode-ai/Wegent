@@ -131,3 +131,41 @@ fn async_reply_projection_keeps_provider_ids_across_native_turns() {
         );
     }
 }
+
+#[test]
+fn async_reply_empty_restored_user_body_preserves_pending_question() {
+    let mut projection = AsyncReplySearchProjection::default();
+    codex_turn_search_sources(
+        &json!({"id":"question-turn", "status":"completed", "items":[{
+            "id":"question", "type":"agentMessage", "phase":"final_answer",
+            "text":"fallback", "delivery":"async",
+            "questions":[{"title":"needle?", "options":["yes", "no"]}],
+        }]}),
+        &HashMap::new(),
+        None,
+        &mut projection,
+    );
+    let sources = codex_turn_search_sources(
+        &json!({"id":"reply-turn", "status":"completed", "items":[
+            {"id":"hidden-reply", "clientId":"hidden-client", "type":"userMessage",
+                "content":[{"type":"inputText", "text":"injected attachment needle"}]},
+            {"id":"actual-reply", "type":"userMessage",
+                "content":[{"type":"inputText", "text":"**answer**"}]},
+        ]}),
+        &HashMap::from([("hidden-client".into(), String::new())]),
+        None,
+        &mut projection,
+    );
+    assert_eq!(
+        sources,
+        vec![
+            ("hidden-reply".into(), String::new()),
+            ("actual-reply".into(), "needle?\n**answer**".into()),
+        ]
+    );
+    assert!(projection.reply_questions("hidden-reply").is_none());
+    assert_eq!(
+        projection.reply_source("actual-reply"),
+        Some("question-turn")
+    );
+}

@@ -101,13 +101,16 @@ fn search_reader(
         let mut selected_turn = None;
         let mut selected_items = Vec::new();
         let mut projection = AsyncReplySearchProjection::default();
+        let query = LegacySearchQuery {
+            needle: &needle,
+            limit,
+            user_content_by_client_id,
+        };
         let mut append = |index: usize, items: &[ProjectedText]| {
             append_turn_matches(
                 &metadata.turns[index],
                 items,
-                &needle,
-                limit,
-                user_content_by_client_id,
+                &query,
                 &mut projection,
                 &mut matches,
                 &mut total,
@@ -159,25 +162,30 @@ fn read_metadata(reader: impl BufRead) -> Result<LegacyProjection, String> {
     Ok(reducer)
 }
 
+struct LegacySearchQuery<'a> {
+    needle: &'a str,
+    limit: usize,
+    user_content_by_client_id: &'a HashMap<String, String>,
+}
+
 fn append_turn_matches(
     turn: &TurnMetadata,
     items: &[ProjectedText],
-    needle: &str,
-    limit: usize,
-    user_content_by_client_id: &HashMap<String, String>,
+    query: &LegacySearchQuery<'_>,
     projection: &mut AsyncReplySearchProjection,
     matches: &mut Vec<Value>,
     total: &mut usize,
 ) -> Result<(), String> {
     let native = turn.native_turn(items.iter().map(|item| item.native.clone()).collect());
-    let sources = codex_turn_search_sources(&native, user_content_by_client_id, None, projection)
-        .into_iter()
-        .collect::<HashMap<_, _>>();
+    let sources =
+        codex_turn_search_sources(&native, query.user_content_by_client_id, None, projection)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
     for item in items {
         let Some(text) = sources.get(&item.id) else {
             continue;
         };
-        let count = text.to_lowercase().match_indices(needle).count();
+        let count = text.to_lowercase().match_indices(query.needle).count();
         *total = total.saturating_add(count);
         let cursor = LegacySearchCursor {
             turn_id: turn.id.clone(),
@@ -187,7 +195,7 @@ fn append_turn_matches(
         };
         let encoded = serde_json::to_string(&cursor)
             .map_err(|error| format!("Cannot encode legacy search cursor: {error}"))?;
-        for occurrence in 0..count.min(limit.saturating_sub(matches.len())) {
+        for occurrence in 0..count.min(query.limit.saturating_sub(matches.len())) {
             let mut matched = json!({
                 "turnId": turn.id, "itemId": item.id,
                 "occurrence": occurrence, "cursor": format!("{CURSOR_PREFIX}{encoded}"),
