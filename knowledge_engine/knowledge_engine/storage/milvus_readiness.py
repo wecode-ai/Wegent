@@ -13,6 +13,7 @@ from pymilvus.client.prepare import Prepare
 from pymilvus.client.types import LoadState
 from pymilvus.client.utils import check_status
 from pymilvus.exceptions import MilvusException
+from pymilvus.grpc_gen import milvus_pb2
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,10 @@ def load_for_document_cleanup(client: MilvusClient, collection_name: str) -> Non
                     timeout = remaining_budget()
                     attempts += 1
                     status = stub.LoadCollection(
-                        Prepare.load_collection(collection_name, None), timeout=timeout
+                        milvus_pb2.LoadCollectionRequest(
+                            collection_name=collection_name
+                        ),
+                        timeout=timeout,
                     )
                     check_status(status)
                     load_requested = True

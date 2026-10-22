@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 from pymilvus import MilvusClient
 from pymilvus.client.grpc_handler import GrpcHandler
+from pymilvus.client.prepare import Prepare
 from pymilvus.client.types import LoadState
 from pymilvus.exceptions import MilvusException
 from pymilvus.grpc_gen import common_pb2, milvus_pb2
@@ -429,3 +430,45 @@ def test_cleanup_rejects_loaded_reply_after_deadline(
     assert caught.value is error
     cleanup_client.query.assert_not_called()
     cleanup_client.delete.assert_not_called()
+
+
+def test_cleanup_avoids_version_specific_load_request_builder(
+    cleanup_client: MagicMock,
+    clock: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The 2.4 SDK requires database and load options in its private builder."""
+
+    def legacy_load_request(
+        db_name: str,
+        collection_name: str,
+        replica_number: int,
+        refresh: bool,
+        resource_groups: list[str],
+        load_fields: list[str],
+        skip_load_dynamic_field: bool,
+    ) -> milvus_pb2.LoadCollectionRequest:
+        return milvus_pb2.LoadCollectionRequest(
+            db_name=db_name,
+            collection_name=collection_name,
+            replica_number=replica_number,
+            refresh=refresh,
+            resource_groups=resource_groups,
+            load_fields=load_fields,
+            skip_load_dynamic_field=skip_load_dynamic_field,
+        )
+
+    monkeypatch.setattr(Prepare, "load_collection", legacy_load_request)
+    cleanup_client.load_collection.side_effect = missing_index()
+    cleanup_client.query.return_value = []
+
+    result = make_backend().delete_document("kb_1", "doc_123")
+
+    assert result["status"] == "deleted"
+    stub = cleanup_client._get_connection.return_value._stub
+    request = stub.LoadCollection.call_args.args[0]
+    assert isinstance(request, milvus_pb2.LoadCollectionRequest)
+    assert request.collection_name == "test_kb_kb_1"
+    assert request.replica_number == 0
+    assert request.refresh is False
+    cleanup_client.delete.assert_called_once()
