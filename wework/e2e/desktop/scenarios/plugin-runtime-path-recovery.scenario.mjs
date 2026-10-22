@@ -157,6 +157,20 @@ export async function createDesktopScenario({
     })
   }
 
+  // The composer plugin list is renderer memory projected lazily on the first
+  // composer interaction; after a restart it stays empty until requested.
+  async function primeComposerApps(control) {
+    await control.command('click', testId('new-chat-button'))
+    await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+      timeoutMs: workbenchReadyTimeoutMs,
+    })
+    await control.command('clickWhenEnabled', testId('composer-plugin-picker-button'))
+    await control.command('waitFor', testId('composer-plugin-picker'), {
+      timeoutMs: workbenchReadyTimeoutMs,
+    })
+    await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Escape' })
+  }
+
   async function invoke(control, fixture, version, phase, { offline = false } = {}) {
     const value = await waitRuntime(fixture, version)
     const id = `recovery-${phase}-${fixture.slug}`
@@ -391,6 +405,7 @@ export async function createDesktopScenario({
     })
     await refresh(control, primary)
     await waitRuntime(blocked, '1.0.0')
+    await primeComposerApps(control)
     await assertSurfaces(control, primary, true, workbenchReadyTimeoutMs)
     await openPlugin(control, primary)
     await control.command('click', testId(`plugin-marketplace-row-${primary.pluginId}`))
@@ -444,6 +459,7 @@ export async function createDesktopScenario({
       undefined,
       'Restart revived an explicitly uninstalled plugin'
     )
+    await primeComposerApps(control)
     await assertSurfaces(control, primary, false, workbenchReadyTimeoutMs)
     await openPlugin(control, primary)
     await control.command(
