@@ -66,6 +66,40 @@ test('loads task context from its known binding without rediscovering the projec
 })
 
 describe('local delivery API', () => {
+  test('preserves persisted assignment history in board, detail, and assignment responses', async () => {
+    const assignmentHistory = [
+      {
+        by_user_id: 1,
+        to_type: 'user',
+        to_id: '2',
+        to_name: 'Grace',
+        action: 'assign',
+        at: '2026-10-20T00:00:00Z',
+      },
+    ]
+    const record = {
+      ...taskRecord,
+      metadata: { ...taskRecord.metadata, assignment_history: assignmentHistory },
+    }
+    const request = vi.fn(async (method: string) => {
+      if (method === 'todos.list') return [record]
+      if (method === 'todos.bindings.batch') return []
+      if (method === 'todos.get' || method === 'todos.update') return record
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    const board = await api.getBoardSnapshot(projectRecord.id)
+    expect(board.items[0].assignment_history).toEqual(assignmentHistory)
+    expect((await api.getLoopItem(record.id)).assignment_history).toEqual(assignmentHistory)
+    const updated = await api.assignLoopItem(projectRecord.id, record.id, {
+      version: record.version,
+      assigneeType: 'user',
+      assigneeId: '2',
+    })
+    expect(updated.assignment_history).toEqual(assignmentHistory)
+  })
+
   test('maps persisted local Issue status transitions into the detail model', async () => {
     const statusHistory = [
       {
@@ -232,6 +266,42 @@ describe('local delivery API', () => {
       project_id: 'project-1',
       task_id: 'LOCAL-1',
       activity_sequence: 17,
+    })
+  })
+
+  test('advances local content revisions with task changes while reads preserve the revision', async () => {
+    let record = {
+      ...taskRecord,
+      version: 3,
+      metadata: { ...taskRecord.metadata, is_unread: true },
+    }
+    const request = vi.fn(async (method: string) => {
+      if (method === 'todos.list') return [record]
+      if (method === 'todos.get') return record
+      if (method === 'todos.mark_read') {
+        record = { ...record, metadata: { ...record.metadata, is_unread: false } }
+        return record
+      }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    await expect(api.listLoopItems(projectRecord.id)).resolves.toMatchObject({
+      items: [{ content_revision: 3, is_unread: true }],
+    })
+    await expect(api.markLoopItemRead(record.id)).resolves.toMatchObject({
+      content_revision: 3,
+      is_unread: false,
+    })
+
+    record = { ...record, version: 4, metadata: { ...record.metadata, is_unread: true } }
+
+    await expect(api.listLoopItems(projectRecord.id)).resolves.toMatchObject({
+      items: [{ content_revision: 4, is_unread: true }],
+    })
+    await expect(api.getLoopItem(record.id)).resolves.toMatchObject({
+      content_revision: 4,
+      is_unread: true,
     })
   })
 

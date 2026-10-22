@@ -57,6 +57,7 @@ import {
   CollaborationSettings,
   CollaborationProjectViewShell,
   createProjectAiTeamSections,
+  mergeIssueReadConfirmation,
   ProjectAutomaticProcessing,
   ProjectBoardSettingsDialog,
   ProjectCollaborationGroups,
@@ -5336,6 +5337,26 @@ export function CloudTodoWorkspace({
                       ...task,
                       work_item_id: selectedItem.id,
                     })
+                  }}
+                  onRead={updated => {
+                    const confirmed =
+                      selectedItemProject?.location === 'cloud'
+                        ? (cloudWorkspace.commands.confirmIssueRead(
+                            updated as CollaborationIssue
+                          ) as CloudLoopItem)
+                        : updated
+                    const mergeRead = (item: LocatedLoopItem): LocatedLoopItem =>
+                      item.id === updated.id
+                        ? {
+                            ...mergeIssueReadConfirmation(item, confirmed),
+                            project_store: item.project_store,
+                          }
+                        : item
+                    if (selectedItemProject?.location === 'local') {
+                      setItems(current => current.map(mergeRead))
+                      setDetailItems(current => current.map(mergeRead))
+                    }
+                    setSelectedItem(current => (current ? mergeRead(current) : current))
                   }}
                   onUpdated={updated => {
                     const locatedUpdated = {

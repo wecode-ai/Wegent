@@ -7,6 +7,12 @@ import { useEffect, useMemo, useReducer, useRef } from "react";
 import { collectIssueSubtreeIds, removeIssueSubtree } from "../board";
 import { isIssueVersionConflict } from "../issue-detail/issueVersionConflict";
 import {
+  mergeIssueReadConfirmation,
+  mergeIssueReadState,
+  newestIssue,
+  type IssueReadProjection,
+} from "./issueReadState";
+import {
   mergePersistedBoardMove,
   type ProjectBoardPosition,
 } from "../project-board/useStandardCloudBoardController";
@@ -33,7 +39,7 @@ import type {
   CollaborationStatus,
 } from "../types";
 
-export interface CollaborationWorkspaceControllerState {
+export interface CollaborationWorkspaceControllerState extends IssueReadProjection {
   projects: CollaborationProject[];
   myWork: WorkspaceMyWorkItem[];
   projectItems: Record<string, CollaborationIssue[]>;
@@ -100,6 +106,7 @@ export interface CollaborationWorkspaceControllerCommands {
   getIssue(issueId: string): Promise<CollaborationIssue | null>;
   loadSelectedIssue(issueId: string): Promise<CollaborationIssue | null>;
   markIssueRead(issue: CollaborationIssue): Promise<CollaborationIssue | null>;
+  confirmIssueRead(issue: CollaborationIssue): CollaborationIssue;
   clearProject(): void;
   clearSelectedIssue(): void;
   createProject(
@@ -167,6 +174,7 @@ const unavailableCollaborationWorkspaceControllerCommands: CollaborationWorkspac
     getIssue: async () => null,
     loadSelectedIssue: async () => null,
     markIssueRead: async () => null,
+    confirmIssueRead: (issue) => issue,
     clearProject: () => undefined,
     clearSelectedIssue: () => undefined,
     createProject: async () => null,
@@ -265,6 +273,7 @@ export type CollaborationWorkspaceControllerAction =
       issue: CollaborationIssue;
       position?: ProjectBoardPosition;
     }
+  | { type: "issue-read"; issue: CollaborationIssue }
   | { type: "remove-issue"; issueId: string }
   | { type: "replace-attachments"; attachments: CollaborationAttachment[] }
   | { type: "replace-comments"; comments: CollaborationComment[] }
@@ -275,6 +284,7 @@ export type CollaborationWorkspaceControllerAction =
 
 export const initialCollaborationWorkspaceControllerState: CollaborationWorkspaceControllerState =
   {
+    confirmedIssueReads: {},
     projects: [],
     myWork: [],
     projectItems: {},
@@ -300,16 +310,18 @@ export const initialCollaborationWorkspaceControllerState: CollaborationWorkspac
     errorSource: null,
   };
 
-function newestIssue(
-  current: CollaborationIssue | null | undefined,
-  incoming: CollaborationIssue,
-): CollaborationIssue {
-  return current?.id === incoming.id && current.version > incoming.version
-    ? current
-    : incoming;
+export function collaborationWorkspaceControllerReducer(
+  state: CollaborationWorkspaceControllerState,
+  action: CollaborationWorkspaceControllerAction,
+): CollaborationWorkspaceControllerState {
+  return mergeIssueReadState(
+    state,
+    reduceWorkspaceState(state, action),
+    action.type === "issue-read" ? action.issue : undefined,
+  );
 }
 
-export function collaborationWorkspaceControllerReducer(
+function reduceWorkspaceState(
   state: CollaborationWorkspaceControllerState,
   action: CollaborationWorkspaceControllerAction,
 ): CollaborationWorkspaceControllerState {
@@ -605,10 +617,13 @@ export function collaborationWorkspaceControllerReducer(
           ],
         },
       };
-    case "replace-issue": {
+    case "replace-issue":
+    case "issue-read": {
+      const position =
+        action.type === "replace-issue" ? action.position : undefined;
       const replace = (items: CollaborationIssue[]) =>
-        action.position
-          ? mergePersistedBoardMove(items, action.issue, action.position)
+        position
+          ? mergePersistedBoardMove(items, action.issue, position)
           : items.map((item) =>
               item.id === action.issue.id
                 ? newestIssue(item, action.issue)
@@ -668,6 +683,7 @@ interface CommandEnvironment {
   getSelectedIssue(): CollaborationIssue | null;
   getExternalBoardState(): Pick<
     CollaborationWorkspaceControllerState,
+    | "confirmedIssueReads"
     | "project"
     | "issues"
     | "taskBindings"
@@ -905,6 +921,24 @@ export function createCollaborationWorkspaceControllerCommands({
     string,
     Promise<CollaborationIssue | null>
   >();
+  const confirmIssueRead = (
+    updated: CollaborationIssue,
+  ): CollaborationIssue => {
+    const state = getExternalBoardState();
+    const current = state.issues.find(
+      (candidate) => candidate.id === updated.id,
+    );
+    const selected = getSelectedIssue();
+    const latest =
+      selected?.id === updated.id ? newestIssue(current, selected) : current;
+    const resolved = mergeIssueReadConfirmation(
+      latest,
+      updated,
+      state.confirmedIssueReads[updated.id],
+    );
+    dispatch({ type: "issue-read", issue: updated });
+    return resolved;
+  };
   const markIssueRead = (
     issue: CollaborationIssue,
   ): Promise<CollaborationIssue | null> => {
@@ -913,33 +947,7 @@ export function createCollaborationWorkspaceControllerCommands({
     if (pending) return pending;
     const request = api.issues
       .markRead(issue.id)
-      .then((updated) => {
-        const current = getExternalBoardState().issues.find(
-          (candidate) => candidate.id === issue.id,
-        );
-        const selected = getSelectedIssue();
-        const latest =
-          selected?.id === issue.id &&
-          (!current || selected.version >= current.version)
-            ? selected
-            : current;
-        const resolved =
-          latest &&
-          (latest.version > updated.version ||
-            (latest.content_revision ?? 0) > (updated.content_revision ?? 0))
-            ? {
-                ...latest,
-                is_unread:
-                  (latest.content_revision ?? 0) >
-                  (updated.content_revision ?? 0)
-                    ? latest.is_unread
-                    : updated.is_unread,
-              }
-            : updated;
-        markProjectMutated(issue.cloud_project_id);
-        dispatch({ type: "replace-issue", issue: resolved });
-        return resolved;
-      })
+      .then(confirmIssueRead)
       .catch(() => {
         reportError(messages.saveFailed);
         return null;
@@ -1224,6 +1232,7 @@ export function createCollaborationWorkspaceControllerCommands({
       }
     },
     markIssueRead,
+    confirmIssueRead,
     async loadSelectedIssue(issueId) {
       const revision = ++selectedIssueLoadRevision;
       const attachmentsRevision = collectionRevision(
@@ -1512,6 +1521,43 @@ export function createCollaborationWorkspaceControllerCommands({
   };
 }
 
+interface ScopedWorkspaceState {
+  scope: object;
+  state: CollaborationWorkspaceControllerState;
+}
+
+type ScopedWorkspaceAction =
+  | {
+      type: "reset";
+      scope: object;
+      state: CollaborationWorkspaceControllerState;
+    }
+  | {
+      type: "workspace";
+      scope: object;
+      action: CollaborationWorkspaceControllerAction;
+    };
+
+function scopedWorkspaceReducer(
+  current: ScopedWorkspaceState,
+  action: ScopedWorkspaceAction,
+): ScopedWorkspaceState {
+  if (action.type === "reset") {
+    return {
+      scope: action.scope,
+      state: action.state,
+    };
+  }
+  if (action.scope !== current.scope) return current;
+  return {
+    ...current,
+    state: collaborationWorkspaceControllerReducer(
+      current.state,
+      action.action,
+    ),
+  };
+}
+
 export function useCollaborationWorkspaceController({
   api,
   location,
@@ -1528,14 +1574,33 @@ export function useCollaborationWorkspaceController({
   },
   notify,
 }: CollaborationWorkspaceControllerOptions): CollaborationWorkspaceController {
-  const [state, dispatch] = useReducer(
-    collaborationWorkspaceControllerReducer,
-    initialProject
-      ? {
-          ...initialCollaborationWorkspaceControllerState,
-          projects: [initialProject],
-        }
-      : initialCollaborationWorkspaceControllerState,
+  const scope = useMemo(() => ({ api }), [api]);
+  const initialState = useMemo(
+    () =>
+      initialProject
+        ? {
+            ...initialCollaborationWorkspaceControllerState,
+            projects: [initialProject],
+          }
+        : initialCollaborationWorkspaceControllerState,
+    [initialProject],
+  );
+  const [scopedState, scopedDispatch] = useReducer(scopedWorkspaceReducer, {
+    scope,
+    state: initialState,
+  });
+  const scopeChanged = scopedState.scope !== scope;
+  const nextScopeState = api
+    ? { ...scopedState.state, confirmedIssueReads: {} }
+    : initialCollaborationWorkspaceControllerState;
+  const state = scopeChanged ? nextScopeState : scopedState.state;
+  if (scopeChanged) {
+    scopedDispatch({ type: "reset", scope, state: nextScopeState });
+  }
+  const dispatch = useMemo(
+    () => (action: CollaborationWorkspaceControllerAction) =>
+      scopedDispatch({ type: "workspace", scope, action }),
+    [scope, scopedDispatch],
   );
   const selectedIssueRef = useRef(state.selectedIssue);
   const projectsRef = useRef(state.projects);
@@ -1578,7 +1643,7 @@ export function useCollaborationWorkspaceController({
       getExternalBoardOptions: () => externalBoardRef.current,
       notify: (message, kind) => notifyRef.current?.(message, kind),
     });
-  }, [api, messages, myWorkEnabled, preloadHomeSnapshots]);
+  }, [api, dispatch, messages, myWorkEnabled, preloadHomeSnapshots]);
 
   const loadBoardOnLocation = location.view !== "manage";
   const loadProjectSnapshotOnLocation =

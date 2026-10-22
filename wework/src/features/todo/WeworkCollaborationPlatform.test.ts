@@ -1388,6 +1388,101 @@ describe('Wework collaboration workspace API', () => {
     )
   })
 
+  it.each([
+    { destination: 'an Issue in the same project', projectId: 'project-a' },
+    { destination: 'an Issue in another project', projectId: 'project-b' },
+    {
+      destination: 'another comment in the same Issue',
+      projectId: 'project-a',
+      initialIssueId: 'notification-issue',
+      initialCommentId: 'previous-comment',
+    },
+    {
+      destination: 'a repeated notification for the same comment',
+      projectId: 'project-a',
+      initialIssueId: 'notification-issue',
+      initialCommentId: 'notification-comment',
+    },
+  ])(
+    'does not complete old board navigation after an external focus on $destination',
+    async route => {
+      const project = {
+        id: 'project-a',
+        name: 'Project A',
+        workspace_id: 'cloud-workspace',
+        project_store: 'backend',
+      }
+      const pendingProject = deferred<typeof project>()
+      const getProject = vi
+        .fn()
+        .mockResolvedValueOnce(project)
+        .mockImplementation((projectId: string) =>
+          projectId === project.id
+            ? pendingProject.promise
+            : Promise.resolve({ ...project, id: projectId })
+        )
+      const onActiveProjectChange = vi.fn()
+      const props = {
+        user: {
+          id: 1,
+          user_name: 'admin',
+          email: 'admin@example.com',
+        } as never,
+        localProjects: [],
+        services: {
+          sharedWorkspaceApi: {
+            projects: { get: getProject },
+          },
+        } as never,
+        activeProjectRef: {
+          projectStore: 'backend' as const,
+          projectId: project.id,
+        },
+        focusedItemId: route.initialIssueId,
+        focusedCommentId: route.initialCommentId,
+        focusedCommentRequestKey: route.initialCommentId ? 'previous-request' : undefined,
+        onActiveProjectChange,
+      }
+      const view = render(createElement(WeworkCollaborationPlatform, props))
+      await waitFor(() => expect(getProject).toHaveBeenCalledTimes(1))
+
+      await act(async () => {
+        screen.getByTestId('collaboration-platform-open-project-a').click()
+      })
+      expect(getProject).toHaveBeenCalledTimes(2)
+      expect(onActiveProjectChange).not.toHaveBeenCalled()
+
+      view.rerender(
+        createElement(WeworkCollaborationPlatform, {
+          ...props,
+          activeProjectRef: { ...props.activeProjectRef, projectId: route.projectId },
+          focusedItemId: 'notification-issue',
+          focusedCommentId: 'notification-comment',
+          focusedCommentRequestKey: 'notification-request',
+        })
+      )
+      await waitFor(() =>
+        expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
+          'data-issue-id',
+          'notification-issue'
+        )
+      )
+      expect(screen.getByTestId('collaboration-platform-location')).toHaveTextContent(
+        route.projectId
+      )
+
+      await act(async () => {
+        pendingProject.resolve(project)
+      })
+
+      expect(onActiveProjectChange).not.toHaveBeenCalled()
+      expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
+        'data-issue-id',
+        'notification-issue'
+      )
+    }
+  )
+
   it('maps shared board task bindings into the Issue drawer initial context', () => {
     expect(
       toWeworkIssueTaskBinding({

@@ -52,6 +52,7 @@ vi.mock("./project-board/projectBoardDnd", async (importOriginal) => ({
 }));
 
 import { CollaborationApp } from "./CollaborationApp";
+import { IssueDetail } from "./IssueDetail";
 import { CollaborationSettings } from "./CollaborationSettings";
 import { collaborationTestIds } from "./testIds";
 import {
@@ -194,6 +195,8 @@ function controllerWithProject(project: CollaborationProject) {
       reportError: vi.fn(),
       replaceProject: vi.fn(),
       markIssueRead: vi.fn().mockResolvedValue(null),
+      confirmIssueRead: vi.fn(),
+      replaceIssue: vi.fn(),
       updateProject: vi.fn().mockResolvedValue(project),
       updateIssue: vi.fn().mockResolvedValue(null),
     },
@@ -842,6 +845,18 @@ describe("CollaborationApp API boundary", () => {
         taskBindings: [selectedBinding],
       }),
     );
+    const read = { ...issue, is_unread: false };
+    renderIssueDetail.mock.calls[0][0].onRead(read);
+    expect(
+      controller.commands.confirmIssueRead,
+    ).toHaveBeenCalledExactlyOnceWith(read);
+    expect(controller.commands.replaceIssue).not.toHaveBeenCalled();
+
+    const app = CollaborationApp({ api: createApi(), host });
+    const detail = findByType(app, IssueDetail);
+    detail?.props.onRead(read);
+    expect(controller.commands.confirmIssueRead).toHaveBeenCalledTimes(2);
+    expect(controller.commands.replaceIssue).not.toHaveBeenCalled();
   });
 
   it("keeps Issue deletion hidden until the host enables it", () => {
