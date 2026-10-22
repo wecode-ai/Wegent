@@ -9,7 +9,7 @@ import {
 } from '../modules/shared.mjs'
 import {
   createSse,
-  isReplyPredictionRequest,
+  handleEmptyReplyPrediction,
   readRequestBody,
   streamingTextEvents,
 } from '../modules/response-protocol.mjs'
@@ -52,12 +52,7 @@ export function createDesktopScenario(options) {
         return false
       }
       const body = await readRequestBody(request)
-      if (isReplyPredictionRequest(body)) {
-        const stream = streamingTextEvents('goal-output-prediction', '{"suggestion":null}')
-        response.writeHead(200, { 'Content-Type': 'text/event-stream' })
-        response.end(createSse([...stream.start, ...stream.finish]))
-        return true
-      }
+      if (handleEmptyReplyPrediction(body, response)) return true
       assert.ok(JSON.stringify(body).includes(BASE), 'The native session lost its earlier history')
       const current = stage++
       if (current === 4) {

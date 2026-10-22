@@ -76,6 +76,20 @@ function isReplyPredictionRequest(body) {
   return latestModelInputText(body).includes('Predict one natural next USER message')
 }
 
+function handleEmptyReplyPrediction(body, response) {
+  if (!isReplyPredictionRequest(body)) return false
+  const id = 'desktop-e2e-reply-prediction'
+  response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+  response.end(
+    createSse([
+      responseCreated(id),
+      assistantMessage(JSON.stringify({ suggestion: null })),
+      responseCompleted(id),
+    ])
+  )
+  return true
+}
+
 function responseCreated(id) {
   return {
     type: 'response.created',
@@ -788,6 +802,7 @@ export {
   codexRequestKind,
   latestModelInputText,
   isReplyPredictionRequest,
+  handleEmptyReplyPrediction,
   responseCreated,
   responseCompleted,
   responseFailed,
