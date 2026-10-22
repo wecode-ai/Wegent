@@ -18,6 +18,19 @@ Sidebar priority filtering also reads explicit `interactionStatus` through the
 lifecycle Store projection. A stale task-list snapshot must not override an
 accepted user reply in the view layer.
 
+## New Conversations and Manual Sidebar Order
+
+Standalone conversations and project tasks share one ordering rule: when a manual
+order exists, new conversations absent from that order appear before ordered tasks,
+while ordered tasks retain their user-defined relative order. The executor returns
+`sidebarOrder` only for tasks included in the manual order. Refreshing or reloading
+the list must not append new conversations to the bottom. Model selection,
+reasoning effort, and prompt references do not change this rule.
+
+When a conversation is first dragged before another conversation, the persisted
+order must include both the moved conversation and its target. Otherwise, the
+target is treated as unordered and the drag result is lost.
+
 ## Latest Turn Identity
 
 `turn.id` identifies the active turn and may be cleared after completion. `turn.latestId` retains the latest turn identity confirmed by runtime events, transcripts, or executor snapshots. Task-list refreshes, completion timestamp precision changes, and other metadata updates must not clear it. Reply predictions use `turn.latestId` as their request identity and wait until a real turn identity is available. Starting a new turn still invalidates the previous suggestion.
