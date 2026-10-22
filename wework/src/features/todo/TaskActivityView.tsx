@@ -1,4 +1,7 @@
 import { IssueManagerEvent } from './IssueManagerEvent'
+import { IssueAssignmentEvent } from './IssueAssignmentEvent'
+import { issueActivityTimeline } from './issueActivityTimeline'
+import { useIssueActivityHistory } from './useIssueActivityHistory'
 import { issueActivityRole } from './issueActivityRole'
 import { useActivityExecutionBinding } from './useActivityExecutionStatus'
 import { useIssueActivityScroll } from '@wegent/collaboration/issue-detail/useIssueActivityScroll'
@@ -22,7 +25,6 @@ import {
   groupIssueActivityThreads,
   groupIssueTimelineThreads,
   createCollaborationTranslator,
-  compareIssueTimestamps,
   issueThreadActivityTimestamp,
   formatIssueTimestamp,
   IssueStatusHistoryList,
@@ -36,7 +38,7 @@ import { IssueActivityTools } from '@wegent/collaboration/issue-detail/IssueActi
 import { canApproveIssueExecution } from '@wegent/collaboration/issue-detail/activityApproval'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { createTaskCommentPreparer } from './prepareTaskComment'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type {
   ProjectChatClient,
   ProjectChatMention,
@@ -87,10 +89,12 @@ import { memberNameById } from './todoShared'
 import type { CloudProjectMember } from '@/api/deliveries'
 
 interface TaskActivityViewProps {
+  commentAssignment?: import('@wegent/collaboration').CommentAssignment
   client?: ProjectChatClient
   project: CloudProject
   task: CloudLoopItem
   currentUserId?: string | number
+  onTaskRead?: (task: CloudLoopItem) => void
   onTaskUpdated?: (task: CloudLoopItem) => void
   projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
   localProjects?: ProjectWithTasks[]
@@ -210,10 +214,12 @@ function isVersionConflict(cause: unknown): boolean {
 }
 
 export function TaskActivityView({
+  commentAssignment,
   client,
   project,
   task,
   currentUserId,
+  onTaskRead,
   onTaskUpdated,
   projectChatAgentApi,
   localProjects = [],
@@ -249,29 +255,12 @@ export function TaskActivityView({
     projectLocation === 'local'
       ? (services.projectSpaceApis?.local ?? services.deliveryApi)
       : (services.projectSpaceApis?.cloud ?? services.deliveryApi)
-  const [loadedStatusHistory, setLoadedStatusHistory] = useState<{
-    taskId: string
-    entries: SharedIssueStatusHistoryEntry[]
-  } | null>(null)
-  useEffect(() => {
-    if (!issueTimeline || statusHistory.length || !projectDeliveryApi?.getLoopItem) return
-    let active = true
-    void projectDeliveryApi.getLoopItem(task.id).then(
-      item => {
-        if (active) {
-          setLoadedStatusHistory({ taskId: task.id, entries: item.status_history ?? [] })
-        }
-      },
-      () => undefined
-    )
-    return () => {
-      active = false
-    }
-  }, [issueTimeline, projectDeliveryApi, statusHistory.length, task.id, task.status, task.version])
-  const activityStatusHistory =
-    statusHistory.length || loadedStatusHistory?.taskId !== task.id
-      ? statusHistory
-      : loadedStatusHistory.entries
+  const activityHistory = useIssueActivityHistory(
+    task,
+    statusHistory,
+    issueTimeline,
+    projectDeliveryApi
+  )
   const taskAiServices = useMemo(
     () => ({
       deliveryApi: projectDeliveryApi,
@@ -500,19 +489,32 @@ export function TaskActivityView({
   const [readError, setReadError] = useState<string | null>(null)
   const executionBinding = useActivityExecutionBinding(messages, executionDetail?.messageId)
   const compact = rail || linear
+  const readScope = useRef<object | null>(null)
+  useLayoutEffect(() => {
+    readScope.current = {}
+    return () => {
+      readScope.current = null
+    }
+  }, [currentUserId, project.id, projectDeliveryApi, task.id])
   const markActivityRead = useCallback(
     async (sequence: number) => {
-      if (!projectDeliveryApi) return
+      const scope = readScope.current
+      if (!projectDeliveryApi || !scope) return
       try {
         const updated = await projectDeliveryApi.markLoopItemRead(task.id, sequence)
+        if (readScope.current !== scope) {
+          throw new DOMException('Activity read scope changed', 'AbortError')
+        }
         setReadError(null)
-        onTaskUpdated?.(updated)
+        onTaskRead?.(updated)
       } catch (cause) {
-        setReadError(cause instanceof Error ? cause.message : t('workbench.save_failed'))
+        if (readScope.current === scope) {
+          setReadError(cause instanceof Error ? cause.message : t('workbench.save_failed'))
+        }
         throw cause
       }
     },
-    [onTaskUpdated, projectDeliveryApi, t, task.id]
+    [onTaskRead, projectDeliveryApi, t, task.id]
   )
   const { listRef, followCard, scrollTaskCommentsToBottom, revealCardBottom } =
     useIssueActivityScroll({
@@ -669,34 +671,16 @@ export function TaskActivityView({
         : groupIssueActivityThreads(threadMessages),
     [issueTimeline, threadMessages]
   )
-  const activityEntries = useMemo(() => {
-    const comments = commentCards.map((card, index) => ({
-      kind: 'comment' as const,
-      at: issueThreadActivityTimestamp(card),
-      index,
-      card,
-    }))
-    if (!issueTimeline) return comments
-    const creation =
-      task.created_at && !activityStatusHistory.some(entry => entry.trigger === 'create')
-        ? [{ kind: 'created' as const, at: task.created_at, index: -1 }]
-        : []
-    return [
-      ...creation,
-      ...activityStatusHistory.map((entry, index) => ({
-        kind: 'status' as const,
-        at: entry.at,
-        index,
-        entry,
-      })),
-      ...comments,
-    ].sort((left, right) => {
-      const delta = compareIssueTimestamps(left.at, right.at)
-      if (delta) return delta
-      const order = { created: 0, status: 1, comment: 2 }
-      return order[left.kind] - order[right.kind] || left.index - right.index
-    })
-  }, [activityStatusHistory, commentCards, issueTimeline, task.created_at])
+  const activityEntries = useMemo(
+    () =>
+      issueActivityTimeline({
+        cards: commentCards,
+        enabled: issueTimeline,
+        createdAt: task.created_at,
+        ...activityHistory,
+      }),
+    [activityHistory, commentCards, issueTimeline, task.created_at]
+  )
 
   function cardSessionActive(card: TaskReplyCard) {
     if (onStartHumanTaskFromReply && humanDispatchForCard(card)) return false
@@ -920,6 +904,7 @@ export function TaskActivityView({
   }
 
   async function sendNewComment(text: string, mentions: ProjectChatMention[]): Promise<boolean> {
+    let persisted = false
     const attachments = attachmentSelection.attachments
     if (!client || !text || sending) return false
     if (!attachmentSelection.isAttachmentReadyToSend) {
@@ -953,6 +938,7 @@ export function TaskActivityView({
           : {}),
       })
       followCard(message.messageId)
+      persisted = true
       setMessages(current => mergeProjectChatMessages(current, [message]))
       setNewCommentDraft('')
       attachmentSelection.resetAttachments()
@@ -995,29 +981,29 @@ export function TaskActivityView({
     } finally {
       setSending(false)
     }
-    return false
+    return persisted
   }
 
   async function submitTimelineComment(
     text: string,
     mentions: ProjectChatMention[]
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (!replyTarget) {
-      await sendNewComment(text, mentions)
-      return
+      return sendNewComment(text, mentions)
     }
     if (!attachmentSelection.isAttachmentReadyToSend) {
       setError(t('workbench.task_activity_attachment_uploading'))
-      return
+      return false
     }
     const result = await sendCardReply(replyTarget, text, mentions, attachmentSelection.attachments)
     if (!result.ok) {
       setError(result.error ?? t('workbench.project_chat_send_failed'))
-      return
+      return false
     }
     setReplyTarget(null)
     setNewCommentDraft('')
     attachmentSelection.resetAttachments()
+    return true
   }
 
   const renderActivityMessage = (
@@ -1160,6 +1146,7 @@ export function TaskActivityView({
                 </div>
               ) : null}
               <TaskCommentComposer
+                assignment={!replyTarget ? commentAssignment : undefined}
                 predictionAddress={
                   replyTarget && !replyHumanDispatch
                     ? boundCardSessionAddress(replyTarget, taskBindings)
@@ -1168,7 +1155,7 @@ export function TaskActivityView({
                 key={task.id}
                 value={newCommentDraft}
                 onChange={setNewCommentDraft}
-                onSubmit={(body, mentions) => void submitTimelineComment(body, mentions)}
+                onSubmit={submitTimelineComment}
                 disabled={!client}
                 sending={sending}
                 error={error ?? (!client ? t('workbench.project_chat_cloud_required') : null)}
@@ -1186,10 +1173,11 @@ export function TaskActivityView({
             <>
               {linear || client?.executeTaskComment ? (
                 <TaskCommentComposer
+                  assignment={commentAssignment}
                   key={task.id}
                   value={newCommentDraft}
                   onChange={setNewCommentDraft}
-                  onSubmit={(body, mentions) => void sendNewComment(body, mentions)}
+                  onSubmit={sendNewComment}
                   disabled={!client}
                   sending={sending}
                   error={error ?? (!client ? t('workbench.project_chat_cloud_required') : null)}
@@ -1268,6 +1256,16 @@ export function TaskActivityView({
                       />
                     </div>
                   </div>
+                )
+              }
+              if (activity.kind === 'assignment') {
+                return (
+                  <IssueAssignmentEvent
+                    key={`assignment-${activity.index}`}
+                    entry={activity.entry}
+                    index={activity.index}
+                    projectMembers={projectMembers}
+                  />
                 )
               }
               const card = activity.card

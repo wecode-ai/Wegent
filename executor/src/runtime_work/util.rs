@@ -534,14 +534,10 @@ pub(crate) fn item_id(item: &Value, prefix: &str) -> String {
 }
 
 pub(crate) fn extract_text(item: &Value) -> Option<String> {
-    if let Some(text) = string_field(item, "text") {
-        return Some(text);
-    }
-    if let Some(content) = string_field(item, "content") {
-        return Some(content);
-    }
-    if let Some(message) = string_field(item, "message") {
-        return Some(message);
+    for key in ["text", "content", "message"] {
+        if let Some(text) = raw_string_field(item, key).filter(|text| !text.is_empty()) {
+            return Some(text);
+        }
     }
     let text = item
         .get("content")

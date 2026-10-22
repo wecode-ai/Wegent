@@ -648,7 +648,6 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
         ESLINT_PID=$!
 
         TSC_PID=""
-        ELECTRON_TSC_PID=""
         TSC_EXIT=0
         ELECTRON_TSC_EXIT=0
 
@@ -661,8 +660,10 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
             CI=true pnpm --filter wework run prepare:electron > "$TEMP_DIR/wework_electron_install.log" 2>&1
             ELECTRON_INSTALL_EXIT=$?
             if [ "$ELECTRON_INSTALL_EXIT" -eq 0 ]; then
-                pnpm --dir wework/electron typecheck > "$TEMP_DIR/wework_electron_tsc.log" 2>&1 &
-                ELECTRON_TSC_PID=$!
+                # Both Electron package commands stage the same vendor directory.
+                # Finish typechecking before unit tests can replace those files.
+                pnpm --dir wework/electron typecheck > "$TEMP_DIR/wework_electron_tsc.log" 2>&1
+                ELECTRON_TSC_EXIT=$?
             else
                 ELECTRON_TSC_EXIT=$ELECTRON_INSTALL_EXIT
             fi
@@ -677,11 +678,6 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
         if [ -n "$TSC_PID" ]; then
             wait "$TSC_PID"
             TSC_EXIT=$?
-        fi
-
-        if [ -n "$ELECTRON_TSC_PID" ]; then
-            wait "$ELECTRON_TSC_PID"
-            ELECTRON_TSC_EXIT=$?
         fi
 
         wait "$WEWORK_TEST_PID"

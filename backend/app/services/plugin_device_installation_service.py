@@ -7,6 +7,7 @@
 import logging
 import time
 from datetime import datetime
+from functools import partial
 
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
@@ -25,6 +26,8 @@ from app.services.plugin_device_identity import (
     plugin_device_id,
     reconcile_plugin_device_rows,
 )
+from app.services.plugin_write_coordination import acquire_plugin_write_lock
+from app.services.plugin_write_operations import run_plugin_operation
 
 logger = logging.getLogger(__name__)
 
@@ -44,18 +47,64 @@ class PluginDeviceInstallationService:
         desired_release_id: int,
         reset_failures: bool = False,
     ) -> None:
-        """Materialize desired state for registered online and offline devices."""
-        reconcile_plugin_device_rows(db, user_id)
+        """Materialize devices after the authoritative install has committed."""
+        # Device enumeration may await online-status providers. Keep it outside
+        # the write lease, then re-read the account's desired state under it.
         devices = await device_service.get_all_devices(db, user_id)
-        device_ids: set[str] = set()
-        for device in devices:
-            device_id = self._device_id(device)
-            if not device_id or device_id in device_ids:
+        device_ids = [
+            device_id for device in devices if (device_id := self._device_id(device))
+        ]
+        # Enumeration must not leave a request transaction open during the write.
+        db.close()
+        await run_plugin_operation(
+            partial(
+                self._ensure_pending_for_devices,
+                user_id=user_id,
+                installed_kind_id=installed_kind_id,
+                desired_release_id=desired_release_id,
+                device_ids=device_ids,
+                reset_failures=reset_failures,
+            )
+        )
+
+    def _ensure_pending_for_devices(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        installed_kind_id: int,
+        desired_release_id: int,
+        device_ids: list[str],
+        reset_failures: bool,
+    ) -> None:
+        """Revalidate and materialize desired state inside one worker transaction."""
+        acquire_plugin_write_lock(db, user_id)
+        installed = (
+            db.query(Kind)
+            .filter_by(
+                id=installed_kind_id,
+                user_id=user_id,
+                kind="InstalledPlugin",
+                namespace="default",
+                is_active=True,
+            )
+            .populate_existing()
+            .first()
+        )
+        if installed is None:
+            db.commit()
+            return
+        current_release_id = installed.json.get("spec", {}).get("releaseId")
+        if current_release_id != desired_release_id:
+            db.commit()
+            return
+        reconcile_plugin_device_rows(db, user_id)
+        seen_device_ids: set[str] = set()
+        for submitted_device_id in device_ids:
+            device_id = plugin_device_id(db, user_id, submitted_device_id)
+            if not device_id or device_id in seen_device_ids:
                 continue
-            device_id = plugin_device_id(db, user_id, device_id)
-            if device_id in device_ids:
-                continue
-            device_ids.add(device_id)
+            seen_device_ids.add(device_id)
             row = self._device_row(db, installed_kind_id, device_id)
             if not row:
                 row = PluginDeviceInstallation(
@@ -80,6 +129,7 @@ class PluginDeviceInstallationService:
     def mark_uninstalling(
         self, db: Session, *, user_id: int, installed_kind_id: int, commit: bool = True
     ) -> None:
+        acquire_plugin_write_lock(db, user_id)
         rows = (
             db.query(PluginDeviceInstallation)
             .filter(
@@ -104,6 +154,22 @@ class PluginDeviceInstallationService:
         response: DeviceCapabilitySyncResponse,
     ) -> None:
         """Remove materialized rows only for devices that confirmed uninstall."""
+        acquire_plugin_write_lock(db, user_id)
+        installed = (
+            db.query(Kind)
+            .filter_by(
+                id=installed_kind_id,
+                user_id=user_id,
+                kind="InstalledPlugin",
+                namespace="default",
+                is_active=True,
+            )
+            .first()
+        )
+        if installed is not None:
+            # A reinstall committed during the remote uninstall round trip.
+            db.commit()
+            return
         successful_device_ids = {
             item.device_id for item in response.results if item.success
         }
@@ -117,7 +183,7 @@ class PluginDeviceInstallationService:
                 )
                 .delete(synchronize_session=False)
             )
-            db.commit()
+        db.commit()
 
     def record_sync_response(
         self,
@@ -166,6 +232,7 @@ class PluginDeviceInstallationService:
             None,
         )
         if installed is None:
+            db.commit()
             return
         for result in response.results:
             result = result.model_copy(
@@ -214,6 +281,7 @@ class PluginDeviceInstallationService:
             report.installedPluginId: report for report in reported_plugins
         }
         if not normalized_device_id or not reports_by_id:
+            db.commit()
             return []
         acknowledged_ids: list[int] = []
         for installed in self._desired_installs(db, user_id):
@@ -229,8 +297,7 @@ class PluginDeviceInstallationService:
                 reported_version=report.version,
             ):
                 acknowledged_ids.append(installed.id)
-        if acknowledged_ids:
-            db.commit()
+        db.commit()
         return acknowledged_ids
 
     def _record_device_sync_result(
@@ -248,12 +315,14 @@ class PluginDeviceInstallationService:
         )
         installs = self._desired_installs(db, user_id)
         desired_ids = {installed.id for installed in installs}
-        self._record_removed_installs(db, user_id, result, desired_ids)
         plugin_results = {
             int(item.id): item
             for item in result.plugins
             if item.id is not None and str(item.id).isdigit()
         }
+        self._record_removed_installs(
+            db, user_id, result, desired_ids, set(plugin_results)
+        )
         for installed in installs:
             self._record_desired_install(
                 db,
@@ -311,6 +380,7 @@ class PluginDeviceInstallationService:
         user_id: int,
         result: DeviceCapabilitySyncResult,
         desired_ids: set[int],
+        reported_ids: set[int],
     ) -> None:
         rows = (
             db.query(PluginDeviceInstallation)
@@ -321,7 +391,12 @@ class PluginDeviceInstallationService:
             .all()
         )
         for row in rows:
-            if row.installed_kind_id in desired_ids:
+            if (
+                row.installed_kind_id in desired_ids
+                or row.installed_kind_id in reported_ids
+            ):
+                # A reported item acknowledges an install attempt, including
+                # one sent before a newer uninstall created this cleanup row.
                 continue
             if result.success:
                 db.delete(row)
@@ -402,6 +477,7 @@ class PluginDeviceInstallationService:
         reconcile_plugin_device_rows(db, user_id)
         normalized_device_id = plugin_device_id(db, user_id, device_id)
         if not normalized_device_id:
+            db.commit()
             return 0
         changed = 0
         for installed in self._desired_installs(db, user_id):
@@ -436,6 +512,7 @@ class PluginDeviceInstallationService:
             None,
         )
         if not normalized_device_id or installed is None:
+            db.commit()
             return 0
         changed = self._ensure_desired_install_pending(
             db,

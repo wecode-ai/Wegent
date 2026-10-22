@@ -4,7 +4,7 @@
 
 //! Cloud-project reads and migration candidates.
 //!
-//! The selected project-list API and project execution-environment API use
+//! The selected project list, detail and execution-environment APIs use
 //! `collaboration_access` to enforce the approved CP contract. A single query
 //! resolves explicit and inherited grants, a unique active parent, provenance,
 //! and read-only public discovery. Historical creators receive no implicit grant.

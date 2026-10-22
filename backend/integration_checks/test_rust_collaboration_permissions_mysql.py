@@ -13,9 +13,9 @@ from app.models.kind import Kind
 from app.models.resource_member import ResourceMember
 from app.models.user import User
 from app.services.cloud_project_visibility import project_access_query
-from integration_checks.test_collaboration_permission_mysql import (  # noqa: F401
-    mysql_url,
-)
+from integration_checks import test_collaboration_permission_mysql as mysql_contract
+
+mysql_url = mysql_contract.mysql_url
 
 SQL = (
     Path(__file__).parents[2] / "backend-rs/src/cloud_projects/collaboration_access.sql"
@@ -122,6 +122,9 @@ def test_cp02_cp03_cp04_cp05_cp06_cp07_cp18_rust_catalog_mysql_policy(mysql_url)
             assert priorities(member.id) == {}
             # Space ownership supplies project governance without a member row.
             assert priorities(owner.id) == {"1001": 1}
+            owner_override = grant("CloudProject", 1001, "user", owner.id, "Viewer")
+            assert priorities(owner.id) == {"1001": 1}
+            db.delete(owner_override)
             for metadata in ({"publicId": "空间-public"}, {"publicId": None}, {}):
                 space.json = {"metadata": metadata}
                 assert priorities(owner.id) == {"1001": 1}
@@ -141,6 +144,22 @@ def test_cp02_cp03_cp04_cp05_cp06_cp07_cp18_rust_catalog_mysql_policy(mysql_url)
                 if direct_role:
                     grant("CloudProject", 1001, "user", member.id, direct_role)
                 actual = priorities(member.id)
+                role_priorities = {
+                    "Owner": 1,
+                    "Maintainer": 1,
+                    "Developer": 2,
+                    "Reporter": 4,
+                    "Viewer": 4,
+                }
+                if space_role in {"Owner", "Maintainer"}:
+                    expected = 1
+                elif direct_role:
+                    expected = role_priorities[direct_role]
+                elif mode == "inherit" and space_role:
+                    expected = role_priorities[space_role]
+                else:
+                    expected = None
+                assert actual == ({} if expected is None else {"1001": expected})
                 if (
                     mode == "restricted"
                     and space_role == "Developer"
@@ -153,6 +172,21 @@ def test_cp02_cp03_cp04_cp05_cp06_cp07_cp18_rust_catalog_mysql_policy(mysql_url)
             db.query(ResourceMember).filter(
                 ResourceMember.entity_type == "user"
             ).delete()
+            project_row.membership_mode = "inherit"
+            inherited = grant("Workspace", space.id, "user", member.id, "Developer")
+            override = grant("CloudProject", 1001, "user", member.id, "Viewer")
+            assert priorities(member.id) == {"1001": 4}
+            for invalid_status in ("pending", "rejected", "revoked"):
+                override.status = invalid_status
+                assert priorities(member.id) == {"1001": 2}
+            override.status = "approved"
+            override.role = "invalid"
+            assert priorities(member.id) == {"1001": 2}
+            override.role = "Viewer"
+            assert priorities(member.id) == {"1001": 4}
+            db.delete(override)
+            assert priorities(member.id) == {"1001": 2}
+            db.delete(inherited)
             public = grant(
                 "CloudProject", 1001, "authenticated_users", "*", "Developer"
             )

@@ -17,6 +17,7 @@ import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import { ReplyPredictionProvider } from '@/features/reply-predictions/ReplyPredictionProvider'
 
 export function TaskCommentComposer({
+  assignment,
   value,
   onChange,
   onSubmit,
@@ -31,9 +32,13 @@ export function TaskCommentComposer({
   placeholder,
   predictionAddress,
 }: {
+  assignment?: import('@wegent/collaboration').CommentAssignment
   value: string
   onChange: (value: string) => void
-  onSubmit: (body: string, mentions: ProjectChatMention[]) => void
+  onSubmit: (
+    body: string,
+    mentions: ProjectChatMention[]
+  ) => void | boolean | Promise<void | boolean>
   disabled: boolean
   sending: boolean
   error: string | null
@@ -56,6 +61,7 @@ export function TaskCommentComposer({
       }
     >
       <IssueMainCommentComposer
+        assignment={assignment}
         value={value}
         onChange={onChange}
         onSubmit={onSubmit}

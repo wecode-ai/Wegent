@@ -4,6 +4,7 @@
 
 import hashlib
 import re
+from copy import deepcopy
 from typing import Any, Dict, Optional
 
 from fastapi import HTTPException
@@ -26,8 +27,10 @@ from app.services.builtin_plugin_registry import (
     BUILTIN_PLUGIN_OWNER_ID,
     BUILTIN_PLUGINS_BY_NAME,
 )
+from app.services.plugin_kind_revision import replace_installed_kind
 from app.services.plugin_marketplace_identity import marketplace_name_for_visibility
 from app.services.plugin_package_parser import plugin_package_parser
+from app.services.plugin_write_coordination import acquire_plugin_write_lock
 
 
 class InstalledPluginService:
@@ -44,6 +47,7 @@ class InstalledPluginService:
     ) -> InstalledPlugin:
         parsed, package_bytes = plugin_package_parser.normalize_and_parse(package_bytes)
         file_hash = hashlib.sha256(package_bytes).hexdigest()
+        acquire_plugin_write_lock(db, user_id)
         existing = self._find_uploaded_plugin(
             db, user_id=user_id, plugin_key=parsed.name
         )
@@ -100,10 +104,12 @@ class InstalledPluginService:
         installed_id: int,
         request: InstalledPluginUpdateRequest,
     ) -> InstalledPlugin:
+        acquire_plugin_write_lock(db, user_id)
         row = self._get_active_installed_plugin(
             db, user_id=user_id, installed_id=installed_id
         )
-        spec = self._get_spec(row)
+        payload = deepcopy(row.json)
+        spec = payload["spec"]
         if request.enabled is not None:
             spec["enabled"] = request.enabled
         if request.componentStates is not None:
@@ -127,8 +133,7 @@ class InstalledPluginService:
                     detail="Automatic updates require a marketplace plugin",
                 )
             spec["updatePolicy"] = request.updatePolicy
-        row.json["spec"] = spec
-        flag_modified(row, "json")
+        replace_installed_kind(db, row, payload)
         db.commit()
         db.refresh(row)
         return self._kind_to_installed_plugin(row)
@@ -140,15 +145,15 @@ class InstalledPluginService:
         user_id: int,
         installed_id: int,
     ) -> None:
+        acquire_plugin_write_lock(db, user_id)
         row = self._get_active_installed_plugin(
             db, user_id=user_id, installed_id=installed_id
         )
-        spec = self._get_spec(row)
+        payload = deepcopy(row.json)
+        spec = payload["spec"]
         spec["enabled"] = False
         spec["installState"] = "uninstalled"
-        row.json["spec"] = spec
-        row.is_active = False
-        flag_modified(row, "json")
+        replace_installed_kind(db, row, payload, is_active=False)
         db.commit()
 
     def package_data_for_download(
@@ -303,6 +308,7 @@ class InstalledPluginService:
         marketplace_id: int,
         enabled: bool = True,
     ) -> InstalledPlugin:
+        acquire_plugin_write_lock(db, user_id)
         row = (
             db.query(Kind)
             .filter(
@@ -379,6 +385,7 @@ class InstalledPluginService:
         user_id: int,
         plugin_key: str,
     ) -> InstalledPlugin:
+        acquire_plugin_write_lock(db, user_id)
         row = self._find_marketplace_item(
             db,
             user_id=BUILTIN_PLUGIN_OWNER_ID,
@@ -425,7 +432,7 @@ class InstalledPluginService:
         marketplace_name: str | None = None,
     ) -> InstalledPlugin:
         package_ref = self._package_ref(row.id, file_hash, len(package_bytes))
-        row.json = self._build_payload(
+        payload = self._build_payload(
             name=parsed.name,
             parsed=parsed,
             package_ref=package_ref,
@@ -436,8 +443,7 @@ class InstalledPluginService:
             marketplace_id=marketplace_id,
             marketplace_name=marketplace_name,
         )
-        row.is_active = True
-        flag_modified(row, "json")
+        replace_installed_kind(db, row, payload, is_active=True)
         self._upsert_package(
             db,
             kind_id=row.id,
@@ -604,6 +610,7 @@ class InstalledPluginService:
             "kind": "InstalledPlugin",
             "metadata": {"name": self._safe_kind_name(name), "namespace": "default"},
             "spec": {
+                "revision": 1,
                 "source": source,
                 "displayName": parsed.displayName,
                 "description": parsed.description,

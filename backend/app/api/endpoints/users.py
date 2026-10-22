@@ -26,7 +26,7 @@ from app.schemas.quick_launch import (
 from app.schemas.subscription import NotificationChannelInfo
 from app.schemas.subtask_context import AttachmentDetailResponse
 from app.schemas.user import GitTokenOrderUpdate, UserCreate, UserInDB, UserUpdate
-from app.services.adapters.team_kinds import team_kinds_service
+from app.services.adapters.team_kinds import RecentTeamMode, team_kinds_service
 from app.services.auth import (
     extract_token_from_header,
     verify_task_token,
@@ -622,6 +622,8 @@ def _is_ready_attachment_context(context: object) -> bool:
 @trace_sync("get_user_recent_teams", "users.api")
 def get_user_recent_teams(
     is_code: bool = False,
+    include_fallback: bool = True,
+    mode: RecentTeamMode | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> list[QuickAccessTeam]:
@@ -630,6 +632,8 @@ def get_user_recent_teams(
         db,
         user_id=current_user.id,
         is_code=is_code,
+        include_fallback=include_fallback,
+        mode=mode,
     )
     return [_quick_access_team_from_data(team) for team in teams]
 

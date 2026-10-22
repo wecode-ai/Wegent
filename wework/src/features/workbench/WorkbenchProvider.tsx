@@ -114,6 +114,7 @@ import { useWorkbenchSkills } from './useWorkbenchSkills'
 import { useWorkbenchDataRefresh } from './useWorkbenchDataRefresh'
 import { useStableEvent } from './useStableEvent'
 import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
+import { reportArchivedCleanupFailure } from '@/components/settings/archivedConversationsSettingsState'
 import { useRuntimeTaskReminders } from './runtimeTaskReminders'
 import { CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME } from '@/features/model-settings/codexOfficialModels'
 import { WorkbenchContext, WorkbenchPaneContext } from './useWorkbench'
@@ -2049,11 +2050,18 @@ export function WorkbenchProvider({
   useEffect(
     () =>
       resolvedServices.chatStream.subscribe({
-        onRuntimeWorkChanged: () => {
+        onRuntimeWorkChanged: payload => {
+          if (payload.archiveCleanup?.errors.length) {
+            const { workspacePath, errors } = payload.archiveCleanup
+            reportArchivedCleanupFailure(
+              `${payload.deviceId ?? ''}\0${workspacePath}\0${payload.taskId}`,
+              t('workbench.archived_cleanup_partial_failed', { message: errors.join('; ') })
+            )
+          }
           void stableRefreshWorkLists()
         },
       }),
-    [resolvedServices.chatStream, stableRefreshWorkLists]
+    [resolvedServices.chatStream, stableRefreshWorkLists, t]
   )
   const syncRuntimeTaskSnapshot = useStableEvent((address: RuntimeTaskAddress) => {
     const expectedLifecycle = lifecycleStore.getTask(address)

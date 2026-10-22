@@ -2524,6 +2524,27 @@
   margin-top: 4px;
 }
 
+.task-detail-new-comment-actions > .task-detail-comment-assignee,
+.task-detail-new-comment-actions > .task-detail-comment-send.has-label {
+  width: auto;
+  min-width: 0;
+  gap: 6px;
+  padding: 0 8px;
+  border-radius: 8px;
+  font-size: var(--text-sm);
+}
+
+.task-detail-new-comment-actions > .task-detail-comment-assignee {
+  flex: 0 1 auto;
+  max-width: 50%;
+  color: rgb(var(--color-text-primary));
+}
+
+.task-detail-comment-assignee > span:first-child {
+  flex-shrink: 0;
+  color: rgb(var(--color-text-muted));
+}
+
 .task-detail-comment-settings {
   flex-wrap: wrap;
   margin-top: 8px;

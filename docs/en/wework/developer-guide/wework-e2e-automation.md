@@ -174,7 +174,7 @@ removing coverage or rerunning failures.
 Long scenarios are split into independent checkpoints as well as balanced shards:
 
 - `plugin-account-auth` expands into password sync, exclusive credential transfer, OAuth, DWS accounts, conversation QR, and GitHub checkpoints.
-- `plugin-uninstall-resilience` expands into lost response, unknown result, restart recovery, and reinstall race checkpoints.
+- `plugin-uninstall-resilience` expands into write coordination, lost response, unknown result, restart recovery, and reinstall race checkpoints. `plugin-write-coordination` independently checks API responsiveness during contention, post-commit ACK conflicts, and later sync recovery. Removal recovery checkpoints create another active installation so catalog refresh is tested alongside pending cleanup.
 - `harness-apps` expands into development and installation/runtime lifecycle checkpoints.
 - `streaming-text` expands into content, tool details, timers, scrolling, message order, and subagent checkpoints.
 
@@ -457,6 +457,13 @@ Core DSH binds port `0` directly and lets the OS assign its listening port.
 Electron reads the actual DSH address before probing the host, Executor, Terminal,
 and application endpoints. It does not discover a port by opening and closing a
 temporary listener, avoiding collisions during concurrent startup.
+
+Linux cloud-test services, including backends and databases, publish ports before
+startup. The shared allocator reads `/proc/sys/net/ipv4/ip_local_port_range` and
+selects bindable, unprivileged ports outside that kernel dynamic range. The port
+registry keeps parallel checkpoints separate, while excluding the dynamic range
+prevents Core DSH and other port `0` listeners from claiming ports during service
+initialization.
 
 Before upload, GitHub Actions repeats the cleanup and excludes
 `managed-components` at any depth from the Artifact path so a teardown failure

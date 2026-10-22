@@ -30,14 +30,14 @@ class PluginOAuthOperations:
         device_id: str,
         request: PluginNativeExecution,
     ) -> dict:
-        self.connections._lock_owner(db, user_id)
+        self.connections._coordinate_owner(db, user_id)
         package, connection, credential = self.execution.resolve(
             db, user_id=user_id, device_id=device_id, request=request
         )
         from app.services.plugin_auth_transfers import require_no_pending_transfer
 
-        connection_row = self.connections._get(db, user_id, connection.id, lock=True)
-        connection_spec = connection_row.json["spec"]
+        row = self.connections._get(db, user_id, connection.id)
+        connection_spec = row.json["spec"]
         require_no_pending_transfer(
             db,
             user_id,
@@ -58,12 +58,6 @@ class PluginOAuthOperations:
             or not payload["refresh_token"]
         ):
             raise PluginAccountAuthError("plugin_auth_reconnect_required", 409)
-        row = (
-            self.connections._query(db, user_id, connection.id)
-            .with_for_update()
-            .populate_existing()
-            .one()
-        )
         spec = dict(row.json["spec"])
         if spec["revision"] != connection.revision:
             raise PluginAccountAuthError("plugin_auth_revision_conflict", 409)
@@ -97,14 +91,8 @@ class PluginOAuthOperations:
     def finish(
         self, db: Session, *, user_id: int, device_id: str, request: PluginOAuthFinish
     ) -> dict:
-        row = (
-            self.connections._query(db, user_id, request.connection_id)
-            .with_for_update()
-            .populate_existing()
-            .first()
-        )
-        if row is None:
-            raise PluginAccountAuthError("plugin_auth_connection_not_found", 404)
+        self.connections._coordinate_owner(db, user_id)
+        row = self.connections._get(db, user_id, request.connection_id)
         spec = dict(row.json["spec"])
         operation = spec.get("oauthRefresh") or {}
         logical_id, binding = self.connections._device_binding(db, user_id, device_id)

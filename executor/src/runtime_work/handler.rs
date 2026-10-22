@@ -797,6 +797,14 @@ impl RuntimeThreadEventRoute {
 
 impl RuntimeWorkRpcHandler {
     pub fn new(device_id: impl Into<String>, codex_binary: impl Into<String>) -> Self {
+        Self::with_optional_event_sender(device_id, codex_binary, None)
+    }
+
+    fn with_optional_event_sender(
+        device_id: impl Into<String>,
+        codex_binary: impl Into<String>,
+        event_tx: Option<broadcast::Sender<Value>>,
+    ) -> Self {
         let codex_binary = codex_binary.into();
         let device_id = normalize_device_id(device_id.into());
         let (archived_delete_tx, archived_delete_rx) = mpsc::unbounded_channel();
@@ -869,7 +877,7 @@ impl RuntimeWorkRpcHandler {
             )),
             startup_recovery_deferred: Arc::new(AtomicBool::new(false)),
             bundled_plugin_marketplace_reconciliation: Arc::new(AsyncMutex::new(())),
-            event_tx: None,
+            event_tx,
             next_execution_id: Arc::new(AtomicU64::new(1)),
             task_send_gates: Arc::new(Mutex::new(HashMap::new())),
             turn_scheduler: Arc::new(Mutex::new(RuntimeTurnScheduler::new(
@@ -950,10 +958,7 @@ impl RuntimeWorkRpcHandler {
         codex_binary: impl Into<String>,
         event_tx: broadcast::Sender<Value>,
     ) -> Self {
-        let handler = Self {
-            event_tx: Some(event_tx),
-            ..Self::new(device_id, codex_binary)
-        };
+        let handler = Self::with_optional_event_sender(device_id, codex_binary, Some(event_tx));
         if let Some(sender) = handler.event_tx.clone() {
             crate::task_runtime::mcp_http::register_runtime_event_sender(sender.clone());
             handler.hook_service.set_event_sender(sender);

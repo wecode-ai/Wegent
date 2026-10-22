@@ -871,6 +871,78 @@ async fn app_runtime_archive_cleans_codex_threads_with_missing_rollout() {
 }
 
 #[tokio::test]
+async fn app_runtime_background_archive_cleanup_emits_completion_event() {
+    let _lock = env_lock().await;
+    for (delete_error, cleanup_succeeded) in [
+        (None, true),
+        (Some("thread not found: thread-1"), true),
+        (Some("no rollout found for thread id thread-1"), true),
+        (Some("thread not found: other-thread"), false),
+        (Some("failed to delete thread: permission denied"), false),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+        let _codex_home = set_temp_codex_home("archive-cleanup-event");
+        let fake_codex = write_fake_codex(&root.path().join("calls.jsonl"));
+        if let Some(message) = delete_error {
+            set_fake_codex_delete_error(&fake_codex, message);
+        }
+        let (event_tx, mut event_rx) = tokio::sync::broadcast::channel(64);
+        let handler = RuntimeWorkRpcHandler::with_event_sender(
+            "device-1",
+            fake_codex.display().to_string(),
+            event_tx,
+        );
+        let address = json!({"taskId": "thread-1", "workspacePath": "/tmp/project"});
+        for method in [
+            "runtime.tasks.archive",
+            "runtime.archived_conversations.delete",
+        ] {
+            let result = handler
+                .handle_runtime_rpc(json!({"method": method, "payload": address}))
+                .await
+                .unwrap();
+            assert_eq!(result["accepted"], true);
+        }
+        let event = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let event = event_rx.recv().await.unwrap();
+                if event["payload"]["data"]["archiveCleanup"].is_object() {
+                    break event;
+                }
+            }
+        })
+        .await
+        .expect("the background worker must publish its actual cleanup result");
+        assert_eq!(event["payload"]["deviceId"], "device-1");
+        assert_eq!(event["payload"]["taskId"], "thread-1");
+        assert_eq!(
+            event["payload"]["data"]["archiveCleanup"]["errors"]
+                .as_array()
+                .unwrap()
+                .is_empty(),
+            cleanup_succeeded,
+            "{delete_error:?}"
+        );
+        let archived = handler
+            .handle_runtime_rpc(
+                json!({"method": "runtime.archived_conversations.list", "payload": {}}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            archived["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["taskId"] == "thread-1"),
+            !cleanup_succeeded,
+            "{delete_error:?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn app_runtime_deletes_archived_codex_threads_through_app_server() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -1415,6 +1487,21 @@ done
         fs::set_permissions(&path, permissions).unwrap();
     }
     path
+}
+
+fn set_fake_codex_delete_error(path: &Path, message: &str) {
+    let mut script = fs::read_to_string(path).unwrap();
+    let branch = script
+        .find("    *'\"method\":\"thread/delete\"'*)")
+        .unwrap();
+    let response_start = branch + script[branch..].find('\n').unwrap() + 1;
+    let response_end = branch + script[branch..].find("      ;;").unwrap();
+    let error = json!({"code": -32000, "message": message});
+    script.replace_range(
+        response_start..response_end,
+        &format!("      printf '%s\\n' '{{\"id\":'\"$request_id\"',\"error\":{error}}}'\n"),
+    );
+    fs::write(path, script).unwrap();
 }
 
 fn write_fake_codex_missing_rollout_on_archive(log_path: &Path) -> PathBuf {

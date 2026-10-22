@@ -1,4 +1,5 @@
 import { createAccountAuthFixture } from '../modules/plugin-account-auth-fixture.mjs'
+import { verifyPluginAuthCoordination } from '../modules/plugin-auth-coordination.mjs'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
@@ -296,6 +297,22 @@ export async function createDesktopScenario({
         'Install required a second authorization'
       )
       const checks = new Map([
+        [
+          'plugin-account-auth-coordination',
+          () =>
+            verifyPluginAuthCoordination({
+              cloud,
+              control,
+              slug,
+              homePath,
+              installedId,
+              connectionFor,
+              signalAutomaticRetry,
+              reconcileMarker,
+              resultDir,
+              timeoutMs: workbenchReadyTimeoutMs,
+            }),
+        ],
         [
           'plugin-account-auth-password',
           async () => {

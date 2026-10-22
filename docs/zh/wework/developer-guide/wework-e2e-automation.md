@@ -158,7 +158,7 @@ macOS 中需要争用原生桌面前台的 checkpoint 仍通过资源锁保持�
 长场景按独立行为拆成 checkpoint，而不是只调整分片：
 
 - `plugin-account-auth` 展开为密码同步、独占凭据迁移、OAuth、钉钉账号、对话扫码和 GitHub 六个 checkpoint。
-- `plugin-uninstall-resilience` 展开为响应丢失、结果未知、重启恢复和重装竞态四个 checkpoint。
+- `plugin-uninstall-resilience` 展开为写入争锁、响应丢失、结果未知、重启恢复和重装竞态五个 checkpoint。`plugin-write-coordination` 独立验证争锁期间 API 响应、提交后的 ACK 冲突及后续同步恢复；卸载恢复用例自行建立另一个仍有效的安装，覆盖目录刷新与待清理任务并存的情况。
 - `harness-apps` 展开为开发流程与安装运行生命周期两个 checkpoint。
 - `streaming-text` 展开为内容、工具详情、计时、滚动、消息顺序和子智能体六个 checkpoint。
 
@@ -377,6 +377,11 @@ Executor 在创建 Tokio 运行时之前配置回环地址的 `NO_PROXY`，避�
 Core DSH 使用端口 `0` 直接绑定操作系统分配的端口。Electron 读取 DSH 的实际
 监听地址后再逐项验证 host、Executor、Terminal 和应用入口，不通过提前打开再关闭
 监听器探测端口，避免并行启动时其他服务抢占已探测的端口。
+
+Linux 云端测试的后端、数据库等服务需要在启动前公布端口。共享分配器读取
+`/proc/sys/net/ipv4/ip_local_port_range`，在内核动态端口范围之外选择可绑定的
+非特权端口，并通过端口注册目录隔离并行 checkpoint，避免服务初始化期间被
+Core DSH 等使用端口 `0` 的进程抢占。
 
 GitHub Actions 上传前会再次执行同样的清理，并在 Artifact 路径中排除
 任意深度的 `managed-components`，防止 teardown 失败时把主实例或插件开发子实例的
