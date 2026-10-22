@@ -21,9 +21,7 @@ use brz_json::{JsonProjection, OpaqueJson};
 use super::connection::{self, ConnectorConnection};
 use super::db::{self, KindRow, UserRow};
 use super::mcp::{self, UpstreamTool};
-use super::models::{
-    ConnectionResponse, InstalledApp, InstalledResponse, ToolSummary, connected_no_auth,
-};
+use super::models::{InstalledApp, InstalledResponse, ToolSummary, connected_no_auth};
 
 /// Runtime view of one connector app (`ConnectorApp` dataclass).
 #[derive(Debug)]
@@ -40,6 +38,7 @@ pub struct ConnectorApp {
     pub auth_type: String,
     pub transport: String,
     pub mcp_url: String,
+    pub tool_loading_mode: String,
     pub tool_allowlist: Vec<String>,
     /// `spec["providerHeadersEncrypted"]`; the administrator view decrypts it.
     pub provider_headers_encrypted: Option<String>,
@@ -85,6 +84,11 @@ struct AppSpec {
         deserialize_with = "brz_json::adapters::null_as_default"
     )]
     mcp_url: String,
+    #[serde(
+        rename = "toolLoadingMode",
+        deserialize_with = "brz_json::adapters::null_as_default"
+    )]
+    tool_loading_mode: String,
     #[serde(
         rename = "toolAllowlist",
         deserialize_with = "brz_json::adapters::null_as_default"
@@ -171,6 +175,11 @@ pub fn row_to_app(row: &KindRow) -> ConnectorApp {
             spec.transport
         },
         mcp_url: spec.mcp_url,
+        tool_loading_mode: if matches!(spec.tool_loading_mode.as_str(), "lazy" | "skill") {
+            "lazy".to_string()
+        } else {
+            "static".to_string()
+        },
         tool_allowlist: spec.tool_allowlist,
         provider_headers_encrypted: spec.provider_headers_encrypted.into_value(),
         forward_user_context_headers: spec
@@ -195,25 +204,6 @@ pub(crate) fn list_visible_apps<'a>(
         .filter(|app| app.enabled)
         .filter(|app| app.visibility == "all" || app.allowed_roles.contains(&user.users_role))
         .collect()
-}
-
-/// `user_response` connection view: `connector_connection_service.response`
-/// of the caller's stored connection, or the `auth_type == "none"` default
-/// that the source synthesizes without a lookup.
-pub(crate) async fn user_connection<M>(
-    mysql: &M,
-    app: &ConnectorApp,
-    user_id: i64,
-) -> MysqlResult<ConnectionResponse>
-where
-    M: Mysql,
-{
-    if app.auth_type == "none" {
-        return Ok(connected_no_auth());
-    }
-    let row = db::find_connector_connection(mysql, &app.slug, user_id).await?;
-    let connection = row.as_ref().map(ConnectorConnection::from_row);
-    Ok(connection::response(connection.as_ref()))
 }
 
 /// Whether the app is connected for the user (`_connected_apps`).
@@ -455,30 +445,67 @@ where
     }
 
     // The projection loop re-lists visible apps (a second identical query in
-    // the source) and keeps apps whose connection view is "connected".
+    // the source) and keeps apps whose connection view is "connected" or
+    // "expired"; expired apps stay visible with their cached tool summaries
+    // so users can see the integration exists and re-authorize it.
     let visible = list_visible_apps(apps, user);
     let mut items = Vec::new();
     for app in visible {
-        let connection = user_connection(mysql, app, user.users_id).await?;
-        if connection.status != "connected" {
-            continue;
+        let stored = if app.auth_type == "none" {
+            None
+        } else {
+            db::find_connector_connection(mysql, &app.slug, user.users_id)
+                .await?
+                .as_ref()
+                .map(ConnectorConnection::from_row)
+        };
+        let live_tools = tools_by_app.get(app.slug.as_str()).map(Vec::as_slice);
+        if let Some(item) = installed_app_projection(app, stored.as_ref(), live_tools) {
+            items.push(item);
         }
-        let app_tools = tools_by_app.get(app.slug.as_str());
-        let callable = app_tools.is_some_and(|tools| !tools.is_empty());
-        items.push(InstalledApp {
-            id: app.slug.clone(),
-            slug: app.slug.clone(),
-            name: app.name.clone(),
-            description: app.description.clone(),
-            icon_url: app.icon_url.clone(),
-            runtime_name: callable.then(|| app.name.clone()),
-            enabled: app.enabled,
-            callable,
-            connection,
-            tool_summaries: app_tools.map(|tools| tools.to_vec()).unwrap_or_default(),
-        });
     }
     Ok(InstalledResponse { apps: items })
+}
+
+/// Project one visible app into its installed entry, or `None` when the
+/// caller has neither a `connected` nor an `expired` authorization.
+///
+/// Live discovery wins over the connection's cached tool summaries; the cache
+/// keeps expired apps inspectable until the user re-authorizes.
+fn installed_app_projection(
+    app: &ConnectorApp,
+    stored: Option<&ConnectorConnection>,
+    live_tools: Option<&[ToolSummary]>,
+) -> Option<InstalledApp> {
+    let connection = if app.auth_type == "none" {
+        connected_no_auth()
+    } else {
+        connection::response(stored)
+    };
+    let connected = connection.status == "connected";
+    if !(connected || connection.status == "expired") {
+        return None;
+    }
+    let mut app_tools = live_tools.map(<[_]>::to_vec).unwrap_or_default();
+    if app_tools.is_empty()
+        && let Some(stored) = stored
+    {
+        app_tools = stored.tool_summaries.clone();
+    }
+    let callable = connected && !app_tools.is_empty();
+    Some(InstalledApp {
+        id: app.slug.clone(),
+        slug: app.slug.clone(),
+        name: app.name.clone(),
+        description: app.description.clone(),
+        icon_url: app.icon_url.clone(),
+        runtime_name: (!app_tools.is_empty()).then(|| app.name.clone()),
+        enabled: app.enabled,
+        callable,
+        connection,
+        tool_loading_mode: app.tool_loading_mode.clone(),
+        tool_summaries: app_tools,
+    })
 }
 
 #[cfg(test)]
@@ -557,6 +584,7 @@ mod tests {
         assert_eq!(app.auth_type, "none");
         assert_eq!(app.transport, "streamable-http");
         assert_eq!(app.mcp_url, TEST_MCP_URL);
+        assert_eq!(app.tool_loading_mode, "static");
         assert_eq!(app.visibility, "all");
         assert!(app.enabled);
         assert_eq!(app.icon_url, None);
@@ -572,7 +600,33 @@ mod tests {
         assert_eq!(app.name, "bare");
         assert_eq!(app.description, "");
         assert_eq!(app.mcp_url, "");
+        assert_eq!(app.tool_loading_mode, "static");
         assert!(app.enabled);
+    }
+
+    #[test]
+    fn row_to_app_reads_lazy_loading_mode_and_legacy_values() {
+        let row = app_row(
+            1,
+            "lazy",
+            serde_json::json!({"toolLoadingMode": "lazy", "authType": "none"}),
+        );
+        let app = row_to_app(&row);
+        assert_eq!(app.tool_loading_mode, "lazy");
+
+        let legacy = app_row(
+            2,
+            "legacy",
+            serde_json::json!({"toolLoadingMode": "skill", "authType": "none"}),
+        );
+        assert_eq!(row_to_app(&legacy).tool_loading_mode, "lazy");
+
+        let legacy_static = app_row(
+            3,
+            "legacy-static",
+            serde_json::json!({"toolLoadingMode": "direct", "authType": "none"}),
+        );
+        assert_eq!(row_to_app(&legacy_static).tool_loading_mode, "static");
     }
 
     #[test]
@@ -600,29 +654,90 @@ mod tests {
         assert_eq!(slugs, vec!["on"]);
     }
 
-    #[tokio::test]
-    async fn user_connection_requires_no_auth_for_connected() {
-        let mysql = crate::sql_test_support::KindQueryCapture::default();
-        let none = app_row(1, "a", serde_json::json!({"authType": "none"}));
-        let oauth = app_row(2, "b", serde_json::json!({"authType": "oauth2"}));
+    #[test]
+    fn expired_connection_stays_visible_with_cached_tools() {
+        let app = row_to_app(&app_row(
+            9,
+            "dingtalk",
+            serde_json::json!({"authType": "oauth2", "transport": "streamable-http"}),
+        ));
+        let stored = ConnectorConnection {
+            status: "connected".to_string(),
+            external_account_name: None,
+            granted_scopes: Vec::new(),
+            // A past expiry turns the stored "connected" view into "expired".
+            expires_at: Some(chrono::NaiveDateTime::default()),
+            access_token_encrypted: String::new(),
+            tool_summaries: vec![ToolSummary {
+                name: "dingtalk__list_bases".to_string(),
+                title: None,
+                description: String::new(),
+                raw_tool_name: Some("list_bases".to_string()),
+            }],
+            tools_discovered_at: None,
+            last_error: None,
+        };
+
+        let item = installed_app_projection(&app, Some(&stored), None).unwrap();
+
+        assert_eq!(item.connection.status, "expired");
+        assert!(!item.callable);
+        assert_eq!(item.connection.tool_count, 1);
+        assert_eq!(item.runtime_name.as_deref(), Some("dingtalk"));
+        assert_eq!(item.tool_summaries.len(), 1);
         assert_eq!(
-            user_connection(&mysql, &row_to_app(&none), 83)
-                .await
-                .unwrap()
-                .status,
-            "connected"
+            item.tool_summaries[0].raw_tool_name.as_deref(),
+            Some("list_bases")
         );
+    }
+
+    #[test]
+    fn live_tools_win_over_the_connection_cache() {
+        let app = row_to_app(&app_row(
+            9,
+            "dingtalk",
+            serde_json::json!({"authType": "oauth2", "transport": "streamable-http"}),
+        ));
+        let stored = ConnectorConnection {
+            status: "connected".to_string(),
+            external_account_name: None,
+            granted_scopes: Vec::new(),
+            expires_at: None,
+            access_token_encrypted: String::new(),
+            tool_summaries: vec![ToolSummary {
+                name: "dingtalk__cached".to_string(),
+                title: None,
+                description: String::new(),
+                raw_tool_name: Some("cached".to_string()),
+            }],
+            tools_discovered_at: None,
+            last_error: None,
+        };
+        let live = vec![ToolSummary {
+            name: "dingtalk__live".to_string(),
+            title: None,
+            description: String::new(),
+            raw_tool_name: Some("live".to_string()),
+        }];
+
+        let item = installed_app_projection(&app, Some(&stored), Some(&live)).unwrap();
+
+        assert!(item.callable);
         assert_eq!(
-            user_connection(&mysql, &row_to_app(&oauth), 83)
-                .await
-                .unwrap()
-                .status,
-            "disconnected"
+            item.tool_summaries[0].raw_tool_name.as_deref(),
+            Some("live")
         );
-        // Only the authorized app needs a stored connection lookup.
-        assert_eq!(mysql.queries().len(), 1);
-        assert!(mysql.queries()[0].sql.contains("ConnectorConnection"));
-        assert_eq!(mysql.queries()[0].args, 2);
+    }
+
+    #[test]
+    fn disconnected_apps_are_not_projected() {
+        let app = row_to_app(&app_row(
+            9,
+            "dingtalk",
+            serde_json::json!({"authType": "oauth2", "transport": "streamable-http"}),
+        ));
+
+        assert!(installed_app_projection(&app, None, None).is_none());
     }
 
     #[tokio::test]
@@ -638,7 +753,10 @@ mod tests {
                 .await
                 .unwrap()
         );
+        // Only the authorized app needs a stored connection lookup.
         assert_eq!(mysql.queries().len(), 1);
+        assert!(mysql.queries()[0].sql.contains("ConnectorConnection"));
+        assert_eq!(mysql.queries()[0].args, 2);
     }
 
     #[tokio::test]
