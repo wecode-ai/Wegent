@@ -173,14 +173,10 @@ test.describe('Agent conversation regression', () => {
     await option.click()
 
     // The composer shows a removable reference badge for the selected task.
-    await expect(page.locator(`[title*="${sourceToken}"]`)).toBeVisible({
-      timeout: 10_000,
-    })
-    await page
-      .getByRole('button', { name: /^Remove / })
-      .first()
-      .click()
-    await expect(page.locator(`[title*="${sourceToken}"]`)).toHaveCount(0)
+    const referenceBadge = page.getByTestId(`conversation-reference-${sourceTaskId}`)
+    await expect(referenceBadge).toBeVisible({ timeout: 10_000 })
+    await page.getByTestId(`conversation-reference-${sourceTaskId}`).getByRole('button').click()
+    await expect(referenceBadge).toHaveCount(0)
 
     // Selecting it again keeps the reference for the send.
     await input.click()
