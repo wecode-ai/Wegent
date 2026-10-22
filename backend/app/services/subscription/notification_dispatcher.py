@@ -43,6 +43,65 @@ MESSAGER_KIND = "Messager"
 # Attachment URL pattern for link conversion
 ATTACHMENT_URL_PATTERN = r"/api/attachments/(\d+)/download"
 
+# Mention display names are stable for the lifetime of the process.
+_DINGTALK_MENTION_NAME_CACHE: Dict[str, str] = {}
+
+
+async def _lookup_dingtalk_mention_name(db: Session, user_id: str) -> str:
+    """Resolve a DingTalk staff ID to the user's display name."""
+    from app.core.config import settings
+    from app.models.user import User
+
+    user = (
+        db.query(User).filter(User.user_name == user_id, User.is_active == True).first()
+    )
+    if not user or not user.email or not settings.DINGTALK_USER_INFO_URL:
+        return ""
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.post(
+                settings.DINGTALK_USER_INFO_URL,
+                headers={"Content-Type": "application/json"},
+                json={"emails": [user.email]},
+            )
+            response.raise_for_status()
+            users = response.json()
+    except Exception as exc:
+        logger.warning(
+            "[SubscriptionNotificationDispatcher] Failed to resolve DingTalk "
+            "mention name for staffId=%s: %s",
+            user_id,
+            exc,
+        )
+        return ""
+
+    if not users:
+        return ""
+    return str(users[0].get("NAME") or "").strip()
+
+
+async def _resolve_dingtalk_mention_user_ids(
+    db: Session, values: Optional[List[str]]
+) -> List[str]:
+    """Attach display names to DingTalk mention IDs for card rendering."""
+    resolved: List[str] = []
+    for value in values or []:
+        raw = value.strip()
+        if not raw:
+            continue
+        staff_id, separator, _ = raw.partition(":")
+        lookup_id = (
+            staff_id.strip() if separator and staff_id.strip().isdigit() else raw
+        )
+        if lookup_id not in _DINGTALK_MENTION_NAME_CACHE:
+            _DINGTALK_MENTION_NAME_CACHE[lookup_id] = (
+                await _lookup_dingtalk_mention_name(db, lookup_id)
+            )
+        name = _DINGTALK_MENTION_NAME_CACHE[lookup_id]
+        resolved.append(f"{lookup_id}:{name}" if name else lookup_id)
+    return resolved
+
 
 def _convert_to_frontend_attachment_url(attachment_id: str | int) -> str:
     """Convert attachment ID to frontend download URL."""
@@ -420,6 +479,11 @@ class SubscriptionNotificationDispatcher:
                 client_id=client_id,
                 client_secret=client_secret,
             )
+            resolved_mentions = group_mention_user_ids
+            if send_group and group_conversation_id and group_mention_user_ids:
+                resolved_mentions = await _resolve_dingtalk_mention_user_ids(
+                    db, group_mention_user_ids
+                )
 
             # Check if AI card template is configured
             card_template_id = config.get("card_template_id")
@@ -473,7 +537,7 @@ class SubscriptionNotificationDispatcher:
                         status="",
                         enable_streaming=False,
                         open_space_id=group_open_space_id,
-                        mention_user_ids=group_mention_user_ids,
+                        mention_user_ids=resolved_mentions,
                     )
                     logger.info(
                         f"[_send_dingtalk_notification] Group AI card result: {group_result}"

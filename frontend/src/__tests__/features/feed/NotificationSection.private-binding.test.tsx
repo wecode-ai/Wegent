@@ -341,7 +341,7 @@ describe('NotificationSection private binding dialog', () => {
 
     const input = screen.getByTestId('group-mention-users-410')
     expect(input).toHaveClass('h-11')
-    expect(screen.getByText('示例：41068:陈波；群卡片会显示 @陈波 并发送提醒')).toBe(
+    expect(screen.getByText('示例：41068；群卡片会自动显示姓名并发送提醒')).toBe(
       input.previousElementSibling
     )
 

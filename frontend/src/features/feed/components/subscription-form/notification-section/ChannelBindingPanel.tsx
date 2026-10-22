@@ -260,7 +260,7 @@ export function ChannelBindingPanel({
               <p className="text-xs text-text-muted">
                 {t(
                   'notification_settings.group_mention_users_hint',
-                  '示例：41068:陈波；群卡片会显示 @陈波 并发送提醒'
+                  '示例：41068；群卡片会自动显示姓名并发送提醒'
                 )}
               </p>
               <Input
@@ -280,7 +280,7 @@ export function ChannelBindingPanel({
                 }}
                 placeholder={t(
                   'notification_settings.group_mention_users_placeholder',
-                  '输入 staffId，可选 staffId:昵称，多个用中文或英文逗号分隔'
+                  '输入钉钉 staffId，多个用中文或英文逗号分隔'
                 )}
               />
             </div>
