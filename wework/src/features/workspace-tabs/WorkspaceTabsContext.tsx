@@ -150,13 +150,16 @@ function loadPersistedTabs(
     }
   }
 
-  const kind = inferWorkspaceTabKind(pathname)
   const defaultTabs =
     fixedTabs.length > 0
       ? fixedTabs
       : (['task', 'board', 'agent'] as const).map(defaultKind =>
           createWorkspaceTab(defaultKind, labels)
         )
+  if (isSettingsRoute(pathname)) {
+    return { tabs: defaultTabs, activeTabId: defaultTabs[0].id, closedTabs: [] }
+  }
+  const kind = inferWorkspaceTabKind(pathname)
   const matchingDefault = defaultTabs.find(tab => tab.kind === kind)
   const routeTab = createWorkspaceTab(kind, labels, {
     id: location.tabId ?? matchingDefault?.id,
@@ -183,6 +186,7 @@ function workspaceTabsReducer(
 ): WorkspaceTabsState {
   switch (action.type) {
     case 'routeChanged': {
+      if (isSettingsRoute(action.pathname)) return state
       const location = parseWorkspaceLocation(action.pathname, action.search)
       const requested = location.tabId
         ? state.tabs.find(tab => tab.id === location.tabId)

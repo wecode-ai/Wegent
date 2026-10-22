@@ -53,6 +53,8 @@ The `refreshFromApplicationMenu` test control command waits for `/results` ackno
 
 Settings preserves the active workspace tab in the background. **Work → Tasks / Project spaces** must reselect the target tab and restore its content route from settings, even when that tab is already active; ordinary workspace navigation still avoids redundant selection.
 
+Settings routes never overwrite a workspace tab's kind or content route. Reloading settings initializes ordinary workspace tabs while the application route continues to display settings, so returning to a workspace cannot reopen settings.
+
 ## Native context menus
 
 Electron does not create a WebContents context menu automatically. The Wework Electron main process listens for `context-menu` centrally and builds native menus for the main window, workspace windows, and auxiliary windows.
