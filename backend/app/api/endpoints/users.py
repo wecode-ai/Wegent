@@ -16,37 +16,22 @@ from app.models.subtask_context import ContextStatus, ContextType
 from app.models.system_config import SystemConfig
 from app.models.user import User
 from app.schemas.admin import (
-    ChatSloganItem,
-    ChatTipItem,
-    QuickAccessResponse,
     QuickAccessTeam,
-    WelcomeConfigResponse,
 )
-from app.schemas.git_credentials import GitAccountSyncSummary
 from app.schemas.quick_launch import (
-    QuickLaunchFavoriteAgent,
     QuickLaunchFunctionConfig,
-    QuickLaunchFunctionResponse,
     QuickLaunchPreparePresetRequest,
     QuickLaunchPreparePresetResponse,
-    QuickLaunchResponse,
-    input_presets_from_phrases,
-    normalize_quick_phrases,
 )
 from app.schemas.subscription import NotificationChannelInfo
 from app.schemas.subtask_context import AttachmentDetailResponse
 from app.schemas.user import GitTokenOrderUpdate, UserCreate, UserInDB, UserUpdate
 from app.services.adapters.team_kinds import team_kinds_service
 from app.services.auth import (
-    create_task_token,
     extract_token_from_header,
     verify_task_token,
 )
 from app.services.context import context_service
-from app.services.device.git_credentials import (
-    DeviceGitCredentialResolutionError,
-    build_git_account_sync_summary,
-)
 from app.services.kind import kind_service
 from app.services.subscription.notification_service import (
     subscription_notification_service,
@@ -58,7 +43,7 @@ from app.services.user_runtime_config import (
     UserRuntimeConfigSyncError,
     user_runtime_config_service,
 )
-from shared.telemetry.decorators import trace_async, trace_sync
+from shared.telemetry.decorators import trace_sync
 from shared.utils.crypto import encrypt_sensitive_data_with_embedded_iv
 
 router = APIRouter()
@@ -156,14 +141,6 @@ class WegentRuntimeUserResponse(BaseModel):
     user: str
 
 
-class WegentRuntimeAuthTokenResponse(BaseModel):
-    """Task-token credentials for WeWork skill runtime clients."""
-
-    auth_token: str
-    token_type: str = "bearer"
-    expires_in: int
-
-
 @router.get("/features", response_model=FeatureFlags)
 async def get_feature_flags(
     _current_user: User = Depends(security.get_current_user),
@@ -221,27 +198,6 @@ async def read_wegent_runtime_user(
         user=encrypt_sensitive_data_with_embedded_iv(
             json.dumps(payload, ensure_ascii=False)
         )
-    )
-
-
-# MIGRATION-CANDIDATE(api="POST /api/users/me/wegent-runtime-token"): remove after final confirmation.
-# @router.post("/me/wegent-runtime-token", response_model=WegentRuntimeAuthTokenResponse)
-@trace_async("create_wegent_runtime_auth_token", "users.api")
-async def create_wegent_runtime_auth_token(
-    current_user: User = Depends(security.get_current_user),
-) -> WegentRuntimeAuthTokenResponse:
-    """Return a task token that WeWork local Skills can use with Wegent runtime APIs."""
-
-    expires_delta_minutes = 1440
-    return WegentRuntimeAuthTokenResponse(
-        auth_token=create_task_token(
-            task_id=0,
-            subtask_id=0,
-            user_id=current_user.id,
-            user_name=current_user.user_name,
-            expires_delta_minutes=expires_delta_minutes,
-        ),
-        expires_in=expires_delta_minutes * 60,
     )
 
 
@@ -432,33 +388,6 @@ async def import_user_runtime_auth_json_from_device(
         ) from exc
 
 
-# MIGRATION-CANDIDATE(api="GET /api/users/me/mcps/providers/:provider_id/services"): remove after final confirmation.
-# @router.get(
-#     "/me/mcps/providers/{provider_id}/services",
-#     response_model=list[MCPProviderServiceConfigResponse],
-# )
-async def list_mcp_provider_services(
-    provider_id: str,
-    current_user: User = Depends(security.get_current_user),
-):
-    """List MCP provider services merged with the current user's configuration."""
-    if not user_mcp_service.has_provider_services(
-        current_user.preferences,
-        provider_id,
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Unsupported MCP provider: {provider_id}",
-        )
-
-    return [
-        MCPProviderServiceConfigResponse(**service)
-        for service in user_mcp_service.list_provider_service_configs(
-            current_user.preferences, provider_id
-        )
-    ]
-
-
 @router.get(
     "/me/mcps/providers/{provider_id}/services/{service_id}",
     response_model=MCPProviderServiceConfigResponse,
@@ -595,25 +524,6 @@ async def reorder_git_tokens(
     )
 
 
-# MIGRATION-CANDIDATE(api="GET /api/users/me/git-accounts/sync-summary"): remove after final confirmation.
-# @router.get(
-#     "/me/git-accounts/sync-summary",
-#     response_model=GitAccountSyncSummary,
-# )
-async def get_git_account_sync_summary(
-    current_user: User = Depends(security.get_current_user),
-) -> GitAccountSyncSummary:
-    """Return ordered Git account metadata without returning credentials."""
-
-    try:
-        return GitAccountSyncSummary(**build_git_account_sync_summary(current_user))
-    except DeviceGitCredentialResolutionError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
-        ) from exc
-
-
 @router.post("", response_model=UserInDB, status_code=status.HTTP_201_CREATED)
 def create_user(
     user_create: UserCreate,
@@ -649,66 +559,6 @@ def _get_system_config_value(db: Session, key: str) -> tuple[int, dict]:
     return config.version, config.config_value or {}
 
 
-def _get_user_preferences(current_user: User) -> dict:
-    preferences = {}
-    if current_user.preferences:
-        try:
-            preferences = json.loads(current_user.preferences)
-        except (json.JSONDecodeError, TypeError):
-            preferences = {}
-    return preferences if isinstance(preferences, dict) else {}
-
-
-def _get_user_quick_access_config(current_user: User) -> dict:
-    quick_access_config = _get_user_preferences(current_user).get("quick_access")
-    return quick_access_config if isinstance(quick_access_config, dict) else {}
-
-
-def _get_user_quick_access_team_ids(current_user: User) -> list[int]:
-    quick_access_config = _get_user_quick_access_config(current_user)
-    return quick_access_config.get("teams", [])
-
-
-def _get_team_recommended_mode(team_data: dict) -> str:
-    spec = team_data.get("spec", {})
-    bind_mode = spec.get("bind_mode")
-    if isinstance(bind_mode, list):
-        has_chat = "chat" in bind_mode
-        has_code = "code" in bind_mode
-        if has_chat and has_code:
-            return "both"
-        if has_code:
-            return "code"
-        return "chat"
-
-    recommended_mode = team_data.get("recommended_mode") or spec.get("recommended_mode")
-    return recommended_mode if recommended_mode in {"chat", "code", "both"} else "both"
-
-
-def _build_favorite_agent(team_id: int) -> Optional[QuickLaunchFavoriteAgent]:
-    team_data = kind_service.get_team_by_id(team_id)
-    if not team_data:
-        return None
-
-    metadata = team_data.get("metadata", {})
-    spec = team_data.get("spec", {})
-    title = metadata.get("displayName") or metadata.get("name", f"Team {team_id}")
-
-    return QuickLaunchFavoriteAgent(
-        id=team_data.get("id", team_id),
-        team_id=team_data.get("id", team_id),
-        name=metadata.get("name", f"team-{team_id}"),
-        title=title,
-        description=spec.get("description"),
-        icon=spec.get("icon"),
-        bind_mode=spec.get("bind_mode") or [],
-        recommended_mode=_get_team_recommended_mode(team_data),
-        agent_type=team_data.get("agent_type"),
-        quick_phrases=normalize_quick_phrases(spec.get("quick_phrases")),
-        input_presets=input_presets_from_phrases(spec.get("quick_phrases")),
-    )
-
-
 def _quick_access_team_from_data(team: dict) -> QuickAccessTeam:
     return QuickAccessTeam(
         id=int(team["id"]),
@@ -717,32 +567,6 @@ def _quick_access_team_from_data(team: dict) -> QuickAccessTeam:
         is_system=int(team.get("user_id") or 0) == 0,
         recommended_mode=team.get("recommended_mode") or "both",
         agent_type=team.get("agent_type"),
-    )
-
-
-def _build_system_function(
-    config: QuickLaunchFunctionConfig,
-) -> Optional[QuickLaunchFunctionResponse]:
-    if not config.enabled:
-        return None
-
-    team_data = kind_service.get_team_by_id(config.team_id)
-    if not team_data:
-        return None
-
-    metadata = team_data.get("metadata", {})
-    spec = team_data.get("spec", {})
-    capability = spec.get("capability") or {}
-    function_data = config.model_dump()
-    function_data["description"] = (
-        config.description or capability.get("description") or spec.get("description")
-    )
-    function_data["icon"] = config.icon or capability.get("icon") or spec.get("icon")
-    return QuickLaunchFunctionResponse(
-        **function_data,
-        name=metadata.get("name", f"team-{config.team_id}"),
-        bind_mode=spec.get("bind_mode") or [],
-        recommended_mode=_get_team_recommended_mode(team_data),
     )
 
 
@@ -794,87 +618,6 @@ def _is_ready_attachment_context(context: object) -> bool:
     )
 
 
-# MIGRATION-CANDIDATE(api="GET /api/users/quick-access"): remove after final confirmation.
-# @router.get("/quick-access", response_model=QuickAccessResponse)
-async def get_user_quick_access(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-):
-    """
-    Get user's quick access teams merged with system recommendations.
-    User favorites are returned before system recommendations.
-    """
-    # Get system config
-    system_config = (
-        db.query(SystemConfig)
-        .filter(SystemConfig.config_key == QUICK_ACCESS_CONFIG_KEY)
-        .first()
-    )
-    system_version = system_config.version if system_config else 0
-    system_team_ids = (
-        system_config.config_value.get("teams", [])
-        if system_config and system_config.config_value
-        else []
-    )
-
-    # Get user preferences
-    quick_access_config = _get_user_quick_access_config(current_user)
-    user_version = quick_access_config.get("version")
-    user_team_ids = quick_access_config.get("teams", [])
-    # Keep version comparison for clients that need migration state.
-    show_system_recommended = user_version is None or user_version < system_version
-
-    # Build teams list
-    result_teams = []
-    seen_team_ids = set()
-
-    # Helper function to get team info
-    def get_team_info(team_id: int, is_system: bool) -> Optional[QuickAccessTeam]:
-        # Get team from Kind service
-        team_data = kind_service.get_team_by_id(team_id)
-        if not team_data:
-            return None
-
-        # Extract recommended_mode from spec if available
-        spec = team_data.get("spec", {})
-        metadata = team_data.get("metadata", {})
-        recommended_mode = spec.get("recommended_mode", "both")
-        name = metadata.get("name", f"Team {team_id}")
-
-        return QuickAccessTeam(
-            id=team_data.get("id", team_id),
-            name=name,
-            display_name=metadata.get("displayName"),
-            is_system=is_system,
-            recommended_mode=recommended_mode,
-            agent_type=team_data.get("agent_type"),
-        )
-
-    # Respect the saved quick access order, then append unsorted system teams.
-    system_team_id_set = set(system_team_ids)
-    for team_id in user_team_ids:
-        if team_id not in seen_team_ids:
-            team_info = get_team_info(team_id, is_system=team_id in system_team_id_set)
-            if team_info:
-                result_teams.append(team_info)
-                seen_team_ids.add(team_id)
-
-    for team_id in system_team_ids:
-        if team_id not in seen_team_ids:
-            team_info = get_team_info(team_id, is_system=True)
-            if team_info:
-                result_teams.append(team_info)
-                seen_team_ids.add(team_id)
-
-    return QuickAccessResponse(
-        system_version=system_version,
-        system_team_ids=system_team_ids,
-        user_version=user_version,
-        show_system_recommended=show_system_recommended,
-        teams=result_teams,
-    )
-
-
 @router.get("/recent-teams", response_model=list[QuickAccessTeam])
 @trace_sync("get_user_recent_teams", "users.api")
 def get_user_recent_teams(
@@ -889,42 +632,6 @@ def get_user_recent_teams(
         is_code=is_code,
     )
     return [_quick_access_team_from_data(team) for team in teams]
-
-
-# MIGRATION-CANDIDATE(api="GET /api/users/quick-launch"): remove after final confirmation.
-# @router.get("/quick-launch", response_model=QuickLaunchResponse)
-async def get_user_quick_launch(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-):
-    """
-    Get homepage launchers split into system functions and user favorite agents.
-    """
-    _, function_config = _get_system_config_value(db, QUICK_LAUNCH_FUNCTIONS_CONFIG_KEY)
-    raw_functions = function_config.get("functions", [])
-    function_configs = _load_quick_launch_function_configs(raw_functions)
-    system_functions = [
-        function
-        for function in (
-            _build_system_function(config)
-            for config in sorted(function_configs, key=lambda item: item.order)
-        )
-        if function is not None
-    ]
-
-    favorite_agents = [
-        agent
-        for agent in (
-            _build_favorite_agent(team_id)
-            for team_id in _get_user_quick_access_team_ids(current_user)
-        )
-        if agent is not None
-    ]
-
-    return QuickLaunchResponse(
-        system_functions=system_functions,
-        favorite_agents=favorite_agents,
-    )
 
 
 @router.post(
@@ -1077,61 +784,6 @@ DEFAULT_SLOGAN_TIPS_CONFIG = {
 ADMIN_SETUP_CONFIG_KEY = "admin_setup_completed"
 
 
-# MIGRATION-CANDIDATE(api="GET /api/users/welcome-config"): remove after final confirmation.
-# @router.get("/welcome-config", response_model=WelcomeConfigResponse)
-async def get_welcome_config(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-):
-    """
-    Get welcome configuration (slogans and tips) for the chat page.
-    This is a public endpoint for logged-in users.
-
-    For admin users, also returns admin_setup_completed status.
-    """
-    config = (
-        db.query(SystemConfig)
-        .filter(SystemConfig.config_key == CHAT_SLOGAN_TIPS_CONFIG_KEY)
-        .first()
-    )
-
-    # Check admin setup status for admin users
-    admin_setup_completed = None
-    if current_user.role == "admin":
-        setup_config = (
-            db.query(SystemConfig)
-            .filter(SystemConfig.config_key == ADMIN_SETUP_CONFIG_KEY)
-            .first()
-        )
-        if setup_config and setup_config.config_value:
-            admin_setup_completed = setup_config.config_value.get("completed", False)
-        else:
-            admin_setup_completed = False
-
-    if not config:
-        # Return default configuration
-        return WelcomeConfigResponse(
-            slogans=[
-                ChatSloganItem(**s) for s in DEFAULT_SLOGAN_TIPS_CONFIG["slogans"]
-            ],
-            tips=[ChatTipItem(**tip) for tip in DEFAULT_SLOGAN_TIPS_CONFIG["tips"]],
-            admin_setup_completed=admin_setup_completed,
-        )
-
-    config_value = config.config_value or {}
-    return WelcomeConfigResponse(
-        slogans=[
-            ChatSloganItem(**s)
-            for s in config_value.get("slogans", DEFAULT_SLOGAN_TIPS_CONFIG["slogans"])
-        ],
-        tips=[
-            ChatTipItem(**tip)
-            for tip in config_value.get("tips", DEFAULT_SLOGAN_TIPS_CONFIG["tips"])
-        ],
-        admin_setup_completed=admin_setup_completed,
-    )
-
-
 class UserSearchItem(BaseModel):
     """User search result item"""
 
@@ -1148,58 +800,6 @@ class SearchUsersResponse(BaseModel):
 
 
 # ==================== Default Teams Configuration ====================
-
-
-class DefaultTeamConfig(BaseModel):
-    """Default team configuration for a single mode"""
-
-    name: str
-    namespace: str
-
-
-class DefaultTeamsResponse(BaseModel):
-    """Response model for default teams configuration"""
-
-    wework: Optional[DefaultTeamConfig] = None
-    chat: Optional[DefaultTeamConfig] = None
-    code: Optional[DefaultTeamConfig] = None
-    knowledge: Optional[DefaultTeamConfig] = None
-    task: Optional[DefaultTeamConfig] = None
-
-
-def parse_default_team_config(config_value: str) -> Optional[DefaultTeamConfig]:
-    """Parse default team config from environment variable format 'name#namespace'"""
-    if not config_value or not config_value.strip():
-        return None
-
-    parts = config_value.strip().split("#", 1)
-    name = parts[0].strip()
-    namespace = parts[1].strip() if len(parts) > 1 else "default"
-
-    if not name:
-        return None
-
-    return DefaultTeamConfig(name=name, namespace=namespace)
-
-
-# MIGRATION-CANDIDATE(api="GET /api/users/default-teams"): remove after final confirmation.
-# @router.get("/default-teams", response_model=DefaultTeamsResponse)
-async def get_default_teams(
-    _current_user: User = Depends(security.get_current_user),  # noqa: ARG001
-):
-    """
-    Get default team configuration for each mode (chat, code, knowledge, task).
-    These are system-level configurations from environment variables.
-    """
-    from app.core.config import settings
-
-    return DefaultTeamsResponse(
-        wework=parse_default_team_config(settings.DEFAULT_TEAM_WEWORK),
-        chat=parse_default_team_config(settings.DEFAULT_TEAM_CHAT),
-        code=parse_default_team_config(settings.DEFAULT_TEAM_CODE),
-        knowledge=parse_default_team_config(settings.DEFAULT_TEAM_KNOWLEDGE),
-        task=parse_default_team_config(settings.DEFAULT_TEAM_TASK),
-    )
 
 
 # ==================== User Search ====================

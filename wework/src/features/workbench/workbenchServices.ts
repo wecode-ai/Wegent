@@ -156,6 +156,7 @@ export interface LocalDecisionRouterApi {
 }
 
 export interface WorkbenchServices {
+  standInApi?: import('@/api/standIn').StandInExecutorApi
   /** Read the current healthy local IPC identity, independently of the device catalog. */
   getLocalRuntimeSidebarIdentity?: () => Promise<LocalRuntimeSidebarIdentity | null>
   agentResourceApi?: ReturnType<typeof createAgentResourceApi>

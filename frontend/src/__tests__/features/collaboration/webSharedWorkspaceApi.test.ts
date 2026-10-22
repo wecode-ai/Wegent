@@ -20,6 +20,22 @@ function createClient() {
 }
 
 describe('createWebSharedWorkspaceApi', () => {
+  it('bypasses browser caching so newer board snapshots can overtake pending reads', async () => {
+    const client = createClient()
+    client.get.mockResolvedValue({ items: [], members: [], agents: [], task_bindings: [] })
+    const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
+
+    await expect(api.issues.getBoardSnapshot('project/1')).resolves.toEqual({
+      items: [],
+      members: [],
+      agents: [],
+      taskBindings: [],
+    })
+    expect(client.get).toHaveBeenCalledWith('/v1/cloud-projects/project%2F1/board-snapshot', {
+      cache: 'no-store',
+    })
+  })
+
   it.each(['public', 'user', 'group'] as const)(
     'preserves %s model identity when creating and updating runtime profiles',
     async modelType => {
@@ -201,11 +217,13 @@ describe('createWebSharedWorkspaceApi', () => {
       assigneeType: 'team',
       assigneeId: '9',
       notifyAssignee: false,
+      position: { beforeItemId: null },
     })
     expect(client.patch).toHaveBeenCalledWith('/v1/loop-items/issue-1', {
       version: 1,
       assignee_team_id: 9,
       notify_assignee: false,
+      position: { beforeItemId: null },
     })
     expect(() =>
       api.issues.assign('11', 'issue-1', {
@@ -218,8 +236,8 @@ describe('createWebSharedWorkspaceApi', () => {
 
   it('builds the shared automation execution and plugin catalogs from Web APIs', async () => {
     const client = createClient()
-    client.get
-      .mockResolvedValueOnce({
+    const responses: Record<string, unknown> = {
+      '/v1/cloud-projects/project-1/execution-environments': {
         items: [
           {
             device_id: 21,
@@ -236,22 +254,23 @@ describe('createWebSharedWorkspaceApi', () => {
             kind: 'cloud_host',
           },
         ],
-      })
-      .mockResolvedValueOnce({
-        data: [
-          {
-            name: 'gpt-web',
-            displayName: 'GPT Web',
-            type: 'public',
-            namespace: 'default',
-            resourceUserId: 0,
-            config: { reasoning_effort: 'high', ignored: true },
-            isActive: true,
-            modelCategoryType: 'llm',
-          },
-        ],
-      })
-      .mockResolvedValueOnce([
+      },
+      '/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework':
+        {
+          data: [
+            {
+              name: 'gpt-web',
+              displayName: 'GPT Web',
+              type: 'public',
+              namespace: 'default',
+              resourceUserId: 0,
+              config: { reasoning_effort: 'high', ignored: true },
+              isActive: true,
+              modelCategoryType: 'llm',
+            },
+          ],
+        },
+      '/v1/runtime-profiles': [
         {
           id: 'profile-cloud',
           name: 'Cloud GPT',
@@ -263,8 +282,8 @@ describe('createWebSharedWorkspaceApi', () => {
           status: 'active',
           version: 2,
         },
-      ])
-      .mockResolvedValueOnce({
+      ],
+      '/plugins/installed?device_id=device-cloud': {
         items: [
           {
             metadata: { name: 'plugin-github' },
@@ -279,7 +298,12 @@ describe('createWebSharedWorkspaceApi', () => {
             },
           },
         ],
-      })
+      },
+    }
+    client.get.mockImplementation(async endpoint => {
+      if (!(endpoint in responses)) throw new Error(`Unexpected endpoint: ${endpoint}`)
+      return responses[endpoint] as never
+    })
     const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
 
     await expect(api.automationExecutionCatalog!.load('project-1')).resolves.toEqual({
@@ -327,6 +351,10 @@ describe('createWebSharedWorkspaceApi', () => {
       },
     ])
     expect(client.get).toHaveBeenCalledWith('/v1/cloud-projects/project-1/execution-environments')
+    expect(client.get).toHaveBeenCalledWith(
+      '/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework',
+      { signal: expect.any(AbortSignal) }
+    )
     expect(client.get).toHaveBeenCalledWith('/plugins/installed?device_id=device-cloud')
   })
 

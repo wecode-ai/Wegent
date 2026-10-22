@@ -9,6 +9,8 @@
 //! (`'task'`), and execution/binding (`'execution'`) rows.
 use crate::board_snapshot::repository::ProjectRow as BoardProjectRow;
 use crate::cloud_projects::{LOOP_ITEMS_COLUMNS, ProjectListRow};
+use crate::device_identity::owned_device_identity_ids;
+use crate::sql_support::StatementArg;
 use brz_json::JsonProjection;
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 use chrono::NaiveDateTime;
@@ -54,8 +56,6 @@ pub struct ItemMetadata {
     pub queued_at: Option<serde_json::Value>,
     pub ai_state: Option<serde_json::Value>,
     pub tags: Option<serde_json::Value>,
-    /// `metadata["human_work"]` read by `human_issue_work_service.view`.
-    pub human_work: Option<serde_json::Value>,
     /// External-source markers that disable the direct-human view.
     pub external_index: Option<serde_json::Value>,
     pub external_shadow: Option<serde_json::Value>,
@@ -164,7 +164,7 @@ pub struct CloudContextBindingRow {
     #[mysql(rename = "loop_items_task_title")]
     pub task_title: Option<String>,
     #[mysql(rename = "loop_items_backend_task_id")]
-    pub backend_task_id: i64,
+    pub backend_task_id: Option<i64>,
     #[mysql(rename = "loop_items_linked_by_user_id")]
     pub linked_by_user_id: i32,
     #[mysql(rename = "loop_items_linked_at")]
@@ -252,6 +252,21 @@ const CLOUD_CONTEXT_COLUMNS: &str = "loop_items.id AS loop_items_id, \
      loop_items.completed_at AS loop_items_completed_at, \
      loop_items.delivered_at AS loop_items_delivered_at, \
      loop_items.deleted_at AS loop_items_deleted_at";
+
+fn cloud_context_binding_statement(
+    user_id: i32,
+    device_ids: &[String],
+    task_id: &str,
+) -> (String, Vec<StatementArg>) {
+    let placeholders = vec!["?"; device_ids.len()].join(", ");
+    let sql = include_str!("cloud_context_binding.sql")
+        .replace("{columns}", CLOUD_CONTEXT_COLUMNS)
+        .replace("{device_ids}", &placeholders);
+    let mut args = vec![StatementArg::Int(i64::from(user_id))];
+    args.extend(device_ids.iter().cloned().map(StatementArg::Str));
+    args.push(StatementArg::Str(task_id.to_owned()));
+    (sql, args)
+}
 
 /// `db.get(LoopItem, item_id)` row: the source's full 60-column labeled
 /// `loop_items` projection (`resource_type='task'`). The typed row consumes
@@ -620,7 +635,7 @@ impl<'a, M: Mysql> LoopItemRepository<'a, M> {
     }
 
     /// `LoopItemService.find_cloud_context`: the active runtime-task binding
-    /// for `(task_user_id, device_id, task_id)`. `Ok(None)` maps to the
+    /// for `(task_user_id, owned device identity, task_id)`. `Ok(None)` maps to the
     /// `Cloud context not found` 404.
     ///
     /// The projection mirrors the source SQLAlchemy `db.query(LoopItemTaskBinding)`
@@ -635,20 +650,10 @@ impl<'a, M: Mysql> LoopItemRepository<'a, M> {
         device_id: &str,
         task_id: &str,
     ) -> MysqlResult<Option<CloudContextBindingRow>> {
-        self.mysql
-            .fetch_optional(
-                &format!(
-                    "SELECT {CLOUD_CONTEXT_COLUMNS} \nFROM loop_items \n\
-                     WHERE loop_items.task_user_id = ? \
-                     AND loop_items.device_id = ? \
-                     AND loop_items.task_id = ? \
-                     AND (loop_items.unlinked_at IS NULL OR loop_items.unlinked_at IN \
-                         ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) \
-                     AND loop_items.resource_type IN ('execution') \n LIMIT 1",
-                ),
-                (user_id, device_id, task_id),
-            )
-            .await
+        let device_ids =
+            owned_device_identity_ids(self.mysql, i64::from(user_id), device_id).await?;
+        let (sql, args) = cloud_context_binding_statement(user_id, &device_ids, task_id);
+        self.mysql.fetch_optional(sql, args).await
     }
 
     /// `db.get(LoopItem, item_id)` (`find_cloud_context`'s item lookup and
@@ -752,6 +757,24 @@ impl<'a, M: Mysql> LoopItemRepository<'a, M> {
             .await
     }
 
+    /// Manager activities, newest first, for the current round's human identity.
+    pub async fn item_activity_metadata(
+        &self,
+        project_id: &str,
+        item_id: &str,
+    ) -> MysqlResult<Vec<ItemActivityMetadataRow>> {
+        self.mysql
+            .fetch_all(
+                "SELECT project_chat_messages.metadata AS activity_metadata \
+                 FROM project_chat_messages \
+                 WHERE project_chat_messages.project_id = ? \
+                 AND project_chat_messages.task_id = ? \
+                 ORDER BY project_chat_messages.created_at DESC, project_chat_messages.id DESC",
+                (project_id, item_id),
+            )
+            .await
+    }
+
     /// `access.is_related_item`: whether one item is related to the caller
     /// through ownership, assignment, an active runtime-task binding, a
     /// collaborator row, or an owned project agent.
@@ -844,6 +867,13 @@ impl<'a, M: Mysql> LoopItemRepository<'a, M> {
             )
             .await
     }
+}
+
+/// Raw activity metadata preserves the Python guards for malformed manager plans.
+#[derive(Debug, FromMysqlRow)]
+pub struct ItemActivityMetadataRow {
+    #[mysql(rename = "activity_metadata")]
+    pub metadata: Option<Json<serde_json::Value>>,
 }
 
 /// `ProjectChatMessage` projection consumed by `_present_cached_ai_state`.

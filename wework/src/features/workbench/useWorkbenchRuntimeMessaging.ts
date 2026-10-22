@@ -81,6 +81,7 @@ import {
 import type { WorkbenchRuntimeTasks } from './useWorkbenchRuntimeTasks'
 import {
   applyRuntimeConversationAction,
+  beginRuntimeConversationOperation,
   removeRuntimeConversationTurn,
 } from './runtimeConversationCache'
 import { findFileChangesBySubtaskId } from './runtimePaneMessages'
@@ -414,8 +415,10 @@ export function useWorkbenchRuntimeMessaging({
 
   const sendRuntimePaneMessage = useCallback(
     async (request: RuntimeSendRequest, options?: RuntimePaneActionOptions): Promise<boolean> => {
-      if (blockRuntimeSendForUnavailableModel(request.address, options)) return false
-
+      const operation = options?.isCurrent
+        ? null
+        : beginRuntimeConversationOperation(request.address)
+      const isCurrent = options?.isCurrent ?? operation!.isCurrent
       let sendRequested = false
       const isRequestUserInputResponse = Boolean(
         request.requestUserInputResponse ?? request.request_user_input_response
@@ -427,19 +430,23 @@ export function useWorkbenchRuntimeMessaging({
             clientUserMessageId: optimisticUserMessage.id,
           }
         : request
-      if (optimisticUserMessage) {
-        applyRuntimeConversationAction(request.address, {
-          type: 'user_added',
-          message: optimisticUserMessage,
-        })
-      }
       try {
+        if (!isCurrent()) return false
+        if (blockRuntimeSendForUnavailableModel(request.address, options)) return false
+        if (optimisticUserMessage) {
+          applyRuntimeConversationAction(request.address, {
+            type: 'user_added',
+            message: optimisticUserMessage,
+          })
+        }
         const outboundRequest = await prepareRuntimeSendRequest(outboundRequestWithClientId)
+        if (!isCurrent()) return false
         if (!options?.silentBusyRetry && !isRequestUserInputResponse) {
           lifecycleStore.sendRequested(outboundRequest.address)
           sendRequested = true
         }
         const response = await executorClient.runtime.sendRuntimeMessage(outboundRequest)
+        if (!isCurrent()) return false
         if (!response.accepted) {
           throw new Error(response.error || '发送失败')
         }
@@ -462,8 +469,9 @@ export function useWorkbenchRuntimeMessaging({
             error: error instanceof Error ? error.message : String(error),
           })
         }
-        return true
+        return isCurrent()
       } catch (error) {
+        if (!isCurrent()) return false
         if (optimisticUserMessage) {
           removeRuntimeConversationTurn(request.address, {
             clientUserMessageId: optimisticUserMessage.id,
@@ -488,6 +496,7 @@ export function useWorkbenchRuntimeMessaging({
             })
           }
         }
+        if (!isCurrent()) return false
         if (!options?.silentBusyRetry) {
           console.warn('[Wework] Runtime send failed', {
             taskId: request.address.taskId,
@@ -499,6 +508,8 @@ export function useWorkbenchRuntimeMessaging({
         }
         reportError(runtimeSendError(error, '发送失败'), options)
         return false
+      } finally {
+        operation?.dispose()
       }
     },
     [
@@ -774,7 +785,14 @@ export function useWorkbenchRuntimeMessaging({
           return false
         }
         lifecycleStore.stopRequested(address)
-        await refreshWorkLists()
+        try {
+          await refreshWorkLists()
+        } catch (error) {
+          console.warn('[Wework] Runtime cancellation accepted but work list refresh failed', {
+            taskId: address.taskId,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        }
         return true
       } catch (error) {
         reportError(

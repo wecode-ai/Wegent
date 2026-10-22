@@ -275,6 +275,7 @@ describe('TaskActivityView', () => {
     approveLoopItemRun.mockReset()
     rejectLoopItemRun.mockReset()
     importLoopItemAttachments.mockReset()
+    importLoopItemAttachments.mockResolvedValue([])
     uploadLocalAttachmentToCloud.mockReset()
     cancelCloudAutomationRun.mockReset()
     listModels.mockReset()
@@ -2145,6 +2146,317 @@ describe('TaskActivityView', () => {
         expect(onStartHumanTaskFromReply).not.toHaveBeenCalled()
       }
       expect(client.executeTaskComment).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([
+    { reply: false, local: true },
+    { reply: true, local: true },
+    { reply: false, local: false },
+    { reply: true, local: false },
+  ])(
+    'persists cloud comment images before executing the comment (%j)',
+    async ({ reply, local }) => {
+      const user = userEvent.setup()
+      const attachment: Attachment = {
+        id: local ? -42 : 42,
+        filename: 'evidence.png',
+        file_size: 24,
+        mime_type: 'image/png',
+        status: 'ready',
+        file_extension: 'png',
+        created_at: '2026-10-20T00:00:00Z',
+        ...(local
+          ? {
+              local_path: 'C:\\workspace\\evidence.png',
+              local_preview_url: 'local-attachment://evidence.png',
+            }
+          : {}),
+      }
+      attachmentSelectionMock.attachments = [attachment]
+      uploadLocalAttachmentToCloud.mockResolvedValue({ ...attachment, id: 42 })
+      importLoopItemAttachments.mockResolvedValue([
+        { display_name: 'evidence.png', markdown: '![evidence.png](/attachments/image)' },
+      ])
+      const messages = reply ? [{ ...userMessage, rootMessageId: null }] : []
+      const client = humanAssignmentClient(messages)
+      client.send = vi.fn(async input => ({
+        ...userMessage,
+        messageId: 'image-comment',
+        sequenceNumber: 3,
+        content: input.text,
+      }))
+      client.executeTaskComment = vi.fn(async request => {
+        if (request.attachmentIds?.some(id => id <= 0))
+          throw new Error('An attachment is unavailable or belongs to another user')
+        return []
+      })
+      render(
+        <TaskActivityView
+          client={client}
+          currentUserId={1}
+          project={{ id: '11', name: 'Cloud', location: 'cloud' } as never}
+          task={{ id: 'WEG-1', title: 'Image comment', status: 'inbox', version: 1 } as never}
+          issueTimeline
+          linear
+        />
+      )
+      if (reply)
+        await user.click(await screen.findByTestId('cloud-task-activity-reply-toggle-message-1'))
+      await user.type(screen.getByTestId('cloud-task-activity-composer'), 'See image')
+      await user.click(sendButtonFor('cloud-task-activity-composer'))
+
+      await waitFor(() =>
+        expect(client.executeTaskComment).toHaveBeenCalledWith({
+          projectId: '11',
+          taskId: 'WEG-1',
+          triggerMessageId: 'image-comment',
+          attachmentIds: [42],
+        })
+      )
+      expect(client.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: 'See image\n\n![evidence.png](/attachments/image)',
+          replyToMessageId: reply ? 'message-1' : null,
+        })
+      )
+      expect(importLoopItemAttachments).toHaveBeenCalledOnce()
+      expect(importLoopItemAttachments).toHaveBeenCalledWith('WEG-1', [
+        expect.objectContaining({ id: 42, filename: 'evidence.png' }),
+      ])
+      expect(importLoopItemAttachments.mock.calls[0][1][0]).not.toHaveProperty('local_path')
+      expect(importLoopItemAttachments.mock.calls[0][1][0]).not.toHaveProperty('local_preview_url')
+      expect(importLoopItemAttachments.mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(client.send).mock.invocationCallOrder[0]
+      )
+      if (local) expect(uploadLocalAttachmentToCloud).toHaveBeenCalledWith(attachment)
+      else expect(uploadLocalAttachmentToCloud).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([
+    { reply: false, failure: 'upload' },
+    { reply: true, failure: 'upload' },
+    { reply: false, failure: 'import' },
+    { reply: true, failure: 'import' },
+  ])(
+    'keeps a cloud image comment when attachment preparation fails (%j)',
+    async ({ reply, failure }) => {
+      const user = userEvent.setup()
+      const attachment: Attachment = {
+        id: -42,
+        filename: 'evidence.png',
+        file_size: 24,
+        mime_type: 'image/png',
+        status: 'ready',
+        file_extension: 'png',
+        created_at: '2026-10-20T00:00:00Z',
+        local_path: 'C:\\workspace\\evidence.png',
+      }
+      attachmentSelectionMock.attachments = [attachment]
+      uploadLocalAttachmentToCloud.mockResolvedValue({ ...attachment, id: 42 })
+      if (failure === 'upload')
+        uploadLocalAttachmentToCloud.mockRejectedValue(new Error('Upload unavailable'))
+      else importLoopItemAttachments.mockRejectedValue(new Error('Import unavailable'))
+      const messages = reply ? [{ ...userMessage, rootMessageId: null }] : []
+      const client = humanAssignmentClient(messages)
+      client.send = vi.fn(async () => ({ ...userMessage, messageId: 'image-comment' }))
+      client.executeTaskComment = vi.fn(async () => [])
+      render(
+        <TaskActivityView
+          client={client}
+          currentUserId={1}
+          project={{ id: '11', name: 'Cloud', location: 'cloud' } as never}
+          task={{ id: 'WEG-1', title: 'Image comment', status: 'inbox', version: 1 } as never}
+          issueTimeline
+          linear
+        />
+      )
+      if (reply)
+        await user.click(await screen.findByTestId('cloud-task-activity-reply-toggle-message-1'))
+      await user.type(screen.getByTestId('cloud-task-activity-composer'), 'See image')
+      await user.click(sendButtonFor('cloud-task-activity-composer'))
+
+      const error = failure === 'upload' ? 'Upload unavailable' : 'Import unavailable'
+      if (reply)
+        await waitFor(() =>
+          expect(
+            replyQueueStoreMock.value!.get('task-activity:cloud:11:WEG-1:message-1')[0]
+          ).toMatchObject({
+            content: 'See image',
+            attachments: [expect.objectContaining({ id: -42 })],
+            status: 'failed',
+            error,
+          })
+        )
+      else {
+        await screen.findByText(error)
+        expect(screen.getByTestId('cloud-task-activity-composer')).toHaveTextContent('See image')
+        expect(attachmentSelectionMock.resetAttachments).not.toHaveBeenCalled()
+      }
+      expect(client.send).not.toHaveBeenCalled()
+      expect(client.executeTaskComment).not.toHaveBeenCalled()
+
+      uploadLocalAttachmentToCloud.mockResolvedValue({ ...attachment, id: 42 })
+      importLoopItemAttachments.mockResolvedValue([
+        { display_name: 'evidence.png', markdown: '![evidence.png](/attachments/image)' },
+      ])
+      if (reply) {
+        act(() => {
+          replyQueueStoreMock.value!.update('task-activity:cloud:11:WEG-1:message-1', current =>
+            current.map(message => ({ ...message, status: 'queued' }))
+          )
+        })
+      } else await user.click(sendButtonFor('cloud-task-activity-composer'))
+      await waitFor(() => expect(client.executeTaskComment).toHaveBeenCalledOnce())
+      expect(client.send).toHaveBeenCalledOnce()
+      expect(client.send).toHaveBeenCalledWith(
+        expect.objectContaining({ text: 'See image\n\n![evidence.png](/attachments/image)' })
+      )
+      expect(client.executeTaskComment).toHaveBeenCalledWith(
+        expect.objectContaining({ attachmentIds: [42] })
+      )
+    }
+  )
+
+  it.each([false, true])(
+    'reuses uploaded images after cloud comment persistence fails (reply=%s)',
+    async reply => {
+      const user = userEvent.setup()
+      const attachment: Attachment = {
+        id: -42,
+        filename: 'evidence.png',
+        file_size: 24,
+        mime_type: 'image/png',
+        status: 'ready',
+        file_extension: 'png',
+        created_at: '2026-10-20T00:00:00Z',
+        local_path: 'C:\\workspace\\evidence.png',
+      }
+      attachmentSelectionMock.attachments = [attachment]
+      let nextCloudId = 42
+      uploadLocalAttachmentToCloud.mockImplementation(async () => ({
+        ...attachment,
+        id: nextCloudId++,
+      }))
+      importLoopItemAttachments.mockResolvedValue([
+        { display_name: 'evidence.png', markdown: '![evidence.png](/attachments/image)' },
+      ])
+      const messages = reply ? [{ ...userMessage, rootMessageId: null }] : []
+      const client = humanAssignmentClient(messages)
+      const savedComments: string[] = []
+      client.send = vi
+        .fn(async input => {
+          savedComments.push(input.text)
+          return { ...userMessage, messageId: 'image-comment', content: input.text }
+        })
+        .mockRejectedValueOnce(new Error('Comment save unavailable'))
+      client.executeTaskComment = vi.fn(async () => [])
+      render(
+        <TaskActivityView
+          client={client}
+          currentUserId={1}
+          project={{ id: '11', name: 'Cloud', location: 'cloud' } as never}
+          task={{ id: 'WEG-1', title: 'Image comment', status: 'inbox', version: 1 } as never}
+          issueTimeline
+          linear
+        />
+      )
+      if (reply)
+        await user.click(await screen.findByTestId('cloud-task-activity-reply-toggle-message-1'))
+      await user.type(screen.getByTestId('cloud-task-activity-composer'), 'See image')
+      await user.click(sendButtonFor('cloud-task-activity-composer'))
+
+      if (reply)
+        await waitFor(() =>
+          expect(
+            replyQueueStoreMock.value!.get('task-activity:cloud:11:WEG-1:message-1')[0]
+          ).toMatchObject({ content: 'See image', status: 'failed' })
+        )
+      else {
+        await screen.findByText('Comment save unavailable')
+        expect(screen.getByTestId('cloud-task-activity-composer')).toHaveTextContent('See image')
+      }
+      expect(savedComments).toEqual([])
+      expect(client.executeTaskComment).not.toHaveBeenCalled()
+
+      if (reply)
+        act(() => {
+          replyQueueStoreMock.value!.update('task-activity:cloud:11:WEG-1:message-1', current =>
+            current.map(message => ({ ...message, status: 'queued' }))
+          )
+        })
+      else await user.click(sendButtonFor('cloud-task-activity-composer'))
+
+      await waitFor(() => expect(client.executeTaskComment).toHaveBeenCalledOnce())
+      expect(savedComments).toEqual(['See image\n\n![evidence.png](/attachments/image)'])
+      expect(uploadLocalAttachmentToCloud).toHaveBeenCalledOnce()
+      expect(importLoopItemAttachments).toHaveBeenCalledTimes(2)
+      for (const [, attachments] of importLoopItemAttachments.mock.calls)
+        expect(attachments).toEqual([expect.objectContaining({ id: 42 })])
+      expect(client.executeTaskComment).toHaveBeenCalledWith(
+        expect.objectContaining({ attachmentIds: [42] })
+      )
+    }
+  )
+
+  it.each([false, true])(
+    'keeps local comment attachments on the local runtime (reply=%s)',
+    async reply => {
+      const user = userEvent.setup()
+      const attachment: Attachment = {
+        id: -42,
+        filename: 'evidence.png',
+        file_size: 24,
+        mime_type: 'image/png',
+        status: 'ready',
+        file_extension: 'png',
+        created_at: '2026-10-20T00:00:00Z',
+        local_path: 'C:\\workspace\\evidence.png',
+      }
+      attachmentSelectionMock.attachments = [attachment]
+      const messages = reply ? [{ ...userMessage, rootMessageId: null }] : []
+      const client = humanAssignmentClient(messages)
+      client.send = vi.fn(async input => ({
+        ...userMessage,
+        messageId: 'local-image-comment',
+        content: input.text,
+      }))
+      client.startAgentResponse = vi.fn(async () => agentMessage)
+      client.failAgentResponse = vi.fn()
+      createProjectRuntimeTask.mockResolvedValue({ deviceId: 'device-1', taskId: 'local-runtime' })
+      render(
+        <TaskActivityView
+          client={client}
+          currentUserId={1}
+          project={{ id: '11', name: 'Local', location: 'local' } as never}
+          task={
+            {
+              id: 'WEG-1',
+              title: 'Local image comment',
+              status: 'inbox',
+              version: 1,
+              assignee_agent_id: '12',
+            } as never
+          }
+          issueTimeline
+          linear
+        />
+      )
+      if (reply)
+        await user.click(await screen.findByTestId('cloud-task-activity-reply-toggle-message-1'))
+      await user.type(screen.getByTestId('cloud-task-activity-composer'), 'Local image')
+      await user.click(sendButtonFor('cloud-task-activity-composer'))
+
+      await waitFor(() =>
+        expect(createProjectRuntimeTask).toHaveBeenCalledWith(
+          'Local image',
+          expect.objectContaining({ attachments: [attachment] })
+        )
+      )
+      expect(client.send).toHaveBeenCalledWith(expect.objectContaining({ text: 'Local image' }))
+      expect(uploadLocalAttachmentToCloud).not.toHaveBeenCalled()
+      expect(importLoopItemAttachments).toHaveBeenCalledWith('WEG-1', [attachment])
     }
   )
 

@@ -16,6 +16,8 @@ Local projects from Tasks appear automatically under Local workspace. Reloading 
 
 The Executor stores local ownership; the backend stores cloud ownership. A collaboration group owner is a project group reference, not a resource-library Agent's Team ID. Assigning it does not automatically execute the group's workflow.
 
+When a project has no execution environment, the New Issue page and creation dialog show no environment notice. You can still create and handle Issues manually. Offline devices and failed environment checks retain their notices and configuration, viewing, or retry actions.
+
 ## Change an existing Issue's owner
 
 After selecting or clearing an owner in Issue details, select **Save assignment** beside the owner. The header does not show a duplicate save action. Saving also submits other pending detail edits. If saving fails, the draft and save action remain available for correction and resubmission.
@@ -24,15 +26,11 @@ The `collaboration-local-agent-dispatch` desktop regression checks that the owne
 
 ## Work on an Issue assigned to me
 
-When a native cloud project Issue is assigned directly to one member, they can open it from **Collaboration → Inbox** or the project board. Wework sends a desktop notification when another member assigns it. This workflow does not apply to external task sources or Issues owned by robots or collaboration groups.
+Open an assigned native cloud Issue from Inbox or its project board. Wework sends a desktop notification when another member assigns it.
 
-1. Select **Start work** to move the Issue to **In progress**. The only required input is **Work result**; comments and attachments remain optional.
-2. If useful, select **Ask AI for help** to create a linked task. AI produces a draft but never submits the Issue for you. Select **Use draft**, then check and edit the result.
-3. Select **Submit for review** and confirm. The Issue moves to **Pending review**, and the result is saved in the project conversation. You can also fill in the result directly without using AI.
-4. The original assigner can find the Issue under **Inbox** and choose **Accept work** or **Request changes**. A reason is needed only when requesting changes. If the original assigner cannot review, a project Owner or Maintainer can do so.
-5. Acceptance moves the Issue to **Completed**. Requested changes return it to **In progress** so the assignee can revise the existing result and submit again.
+Users with editing permission can start, complete, or restart an Issue directly through the detail status selector or board dragging. Status changes require no additional information or submission form. Communicate progress, results, and feedback through comments, replies, and attachments. Status history records each change.
 
-These actions record status history and project activity and notify the relevant members. Reassignment clears the previous review result. Use these actions to advance the status of human-owned work. **Human processing** in Project settings explains the workflow, reviewer, and AI draft behavior; it does not introduce another set of rules to fill in.
+For AI assistance, use **New task** in Issue details to create a linked task. The task retains its assignment binding. View its Delivery from the linked task; AI does not change the Issue status on the person's behalf.
 
 ## Start a collaboration-group task from the activity timeline
 
@@ -69,6 +67,8 @@ Cloud fixtures are archived by the checkpoint cleanup. Local fixtures live only 
 ## Web project views
 
 Projects support Board, Calendar, Gantt, Table, Files, and Project settings. Calendar and Gantt selections persist in the URL across reloads and opening or closing Issue details. Project board cards and their drag previews display no unread dot or unread highlight.
+
+Each lane on a native project board has a **Sort by** control in its header. Lanes default to highest priority first. Combine ascending or descending rules for priority, creation time, and update time, then move rules up or down or remove them. Rules apply from top to bottom: each subsequent rule breaks ties, and manual order breaks any remaining ties. Choose **Manual order** to reorder cards within status, priority, assignee, or tag lanes, or insert a card into another lane at a specific position. Non-status lanes can mix Issues with different statuses; reordering within a lane preserves status, assignee, and tags. Manual positions use the project’s shared order across groupings. Preferences are saved in the current browser by user, project, grouping, and lane, restore separately after reloads or account switches, and do not affect other members. Drop onto the blank space at the end of a lane to append a card. Group fields and position are saved together; a failed save commits neither. Changes to different lane preferences in multiple tabs are retained independently and synchronized to open boards.
 
 The collaboration sidebar no longer includes My Work or Run Center. Their former URLs return to collaboration home. Open Issues that need action or review from Inbox or the project board.
 

@@ -1,6 +1,6 @@
 import * as fs from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 import { migrateWorkbenchDesktopData } from './workbench-desktop-data.js'
@@ -25,13 +25,20 @@ afterEach(() => {
 function fixture(platform: NodeJS.Platform = 'win32') {
   const source = join(root, 'appData/app')
   const desktop = join(root, 'workbench/wework/app')
-  const logs = join(source, 'logs')
+  const name = 'Test Wework'
+  const logs = platform === 'darwin' ? join(root, 'Library', 'Logs', name) : join(source, 'logs')
   let singletonHeld = false
   let migrationHeld = false
   let singletonPath = ''
   const additionalData = { workspaceOpenRequest: { path: 'synthetic-workspace' } }
   const app = {
-    getPath: vi.fn(() => logs),
+    getName: vi.fn(() => name),
+    getPath: vi.fn((name: string) => {
+      if (name === 'home') return root
+      expect(name).toBe('logs')
+      fs.mkdirSync(logs, { recursive: true })
+      return logs
+    }),
     setPath: vi.fn((_name: string, path: string) => {
       singletonPath = path
     }),
@@ -194,6 +201,98 @@ test.each(['darwin', 'linux'] as const)(
   }
 )
 
+test.each(['missing', 'missing-parent', 'empty'])(
+  'macOS startup restores a %s legacy log directory after cleanup',
+  async state => {
+    const input = fixture('darwin')
+    const first = await initializeWorkbenchDesktopData(input.options)
+    fs.writeFileSync(join(first!.logs, 'app.log'), 'retained-log')
+    fs.writeFileSync(join(first!.userData, 'preferences.json'), 'retained-preferences')
+    const identity = fs.statSync(first!.logs, { bigint: true })
+    const journalPath = join(input.desktop, 'migrations/desktop-electron-logs-v1.json')
+    const journal = fs.readFileSync(journalPath, 'utf8')
+    input.app.releaseSingleInstanceLock()
+    fs.unlinkSync(input.logs)
+    if (state === 'empty') fs.mkdirSync(input.logs)
+    else if (state === 'missing-parent') fs.rmdirSync(dirname(input.logs))
+
+    for (let launch = 0; launch < 2; launch++) {
+      const result = await initializeWorkbenchDesktopData(input.options)
+
+      expect(result).toEqual(first)
+      expect(fs.realpathSync(input.logs)).toBe(result!.logs)
+      expect(fs.statSync(result!.logs, { bigint: true }).ino).toBe(identity.ino)
+      expect(fs.readFileSync(join(result!.logs, 'app.log'), 'utf8')).toBe('retained-log')
+      expect(fs.readFileSync(join(result!.userData, 'preferences.json'), 'utf8')).toBe(
+        'retained-preferences'
+      )
+      expect(fs.readFileSync(journalPath, 'utf8')).toBe(journal)
+      expect(input.app.getPath).not.toHaveBeenCalledWith('logs')
+      expect(input.singletonHeld()).toBe(true)
+      input.app.releaseSingleInstanceLock()
+    }
+  }
+)
+
+test.each([
+  'nonempty-source',
+  'file-source',
+  'redirected-source',
+  'missing-target',
+  'replaced-target',
+  'missing-journal',
+  'invalid-journal',
+  'mismatched-journal',
+])('macOS log recovery refuses %s without changing data', async state => {
+  const input = fixture('darwin')
+  const first = await initializeWorkbenchDesktopData(input.options)
+  fs.writeFileSync(join(first!.logs, 'app.log'), 'retained-log')
+  input.app.releaseSingleInstanceLock()
+  fs.unlinkSync(input.logs)
+  fs.mkdirSync(input.logs)
+  const journalPath = join(input.desktop, 'migrations/desktop-electron-logs-v1.json')
+  let retainedLogs = first!.logs
+  let independentLogs = input.logs
+  if (state === 'nonempty-source') {
+    fs.writeFileSync(join(input.logs, 'independent.log'), 'independent-log')
+  } else if (state === 'file-source' || state === 'redirected-source') {
+    fs.rmdirSync(input.logs)
+    if (state === 'file-source') fs.writeFileSync(input.logs, 'independent-file')
+    else {
+      independentLogs = join(root, 'independent-logs')
+      fs.mkdirSync(independentLogs)
+      fs.writeFileSync(join(independentLogs, 'independent.log'), 'independent-log')
+      fs.symlinkSync(independentLogs, input.logs, 'junction')
+    }
+  } else if (state === 'missing-target' || state === 'replaced-target') {
+    retainedLogs = `${first!.logs}.retained`
+    fs.renameSync(first!.logs, retainedLogs)
+    if (state === 'replaced-target') fs.mkdirSync(first!.logs)
+  } else if (state === 'missing-journal') fs.unlinkSync(journalPath)
+  else if (state === 'invalid-journal') fs.writeFileSync(journalPath, 'invalid JSON')
+  else {
+    const journal = JSON.parse(fs.readFileSync(journalPath, 'utf8'))
+    journal.source = join(root, 'unexpected-logs')
+    fs.writeFileSync(journalPath, JSON.stringify(journal))
+  }
+  const sourceIdentity = fs.lstatSync(input.logs, { bigint: true }).ino
+  const journal = fs.existsSync(journalPath) ? fs.readFileSync(journalPath, 'utf8') : undefined
+
+  await expect(initializeWorkbenchDesktopData(input.options)).rejects.toThrow()
+
+  expect(fs.lstatSync(input.logs, { bigint: true }).ino).toBe(sourceIdentity)
+  expect(fs.readFileSync(join(retainedLogs, 'app.log'), 'utf8')).toBe('retained-log')
+  expect(fs.existsSync(journalPath) ? fs.readFileSync(journalPath, 'utf8') : undefined).toBe(
+    journal
+  )
+  if (state === 'nonempty-source' || state === 'redirected-source')
+    expect(fs.readFileSync(join(independentLogs, 'independent.log'), 'utf8')).toBe(
+      'independent-log'
+    )
+  if (state === 'file-source') expect(fs.readFileSync(input.logs, 'utf8')).toBe('independent-file')
+  expect(input.singletonHeld()).toBe(false)
+})
+
 test.each(['recreated-source', 'replaced-target', 'dangling-bridge', 'invalid-journal'])(
   'startup and restarts preserve user data with a %s updater cache',
   async state => {
@@ -230,21 +329,27 @@ test.each(['recreated-source', 'replaced-target', 'dangling-bridge', 'invalid-jo
   }
 )
 
-test('persistent user-data conflicts still stop startup', async () => {
-  const input = fixture('darwin')
-  const result = await initializeWorkbenchDesktopData(input.options)
-  input.app.releaseSingleInstanceLock()
-  fs.unlinkSync(input.source)
-  fs.mkdirSync(input.source)
-  fs.writeFileSync(join(input.source, 'preferences.json'), 'independent-preferences')
+test.each(['empty', 'nonempty'])(
+  'persistent %s user-data conflicts still stop startup',
+  async state => {
+    const input = fixture('darwin')
+    const result = await initializeWorkbenchDesktopData(input.options)
+    input.app.releaseSingleInstanceLock()
+    fs.unlinkSync(input.source)
+    fs.mkdirSync(input.source)
+    if (state === 'nonempty')
+      fs.writeFileSync(join(input.source, 'preferences.json'), 'independent-preferences')
 
-  await expect(initializeWorkbenchDesktopData(input.options)).rejects.toThrow(
-    'Application data migration conflict'
-  )
+    await expect(initializeWorkbenchDesktopData(input.options)).rejects.toThrow(
+      'Application data migration conflict'
+    )
 
-  expect(fs.readFileSync(join(input.source, 'preferences.json'), 'utf8')).toBe(
-    'independent-preferences'
-  )
-  expect(fs.statSync(result!.userData).isDirectory()).toBe(true)
-  expect(input.singletonHeld()).toBe(false)
-})
+    if (state === 'nonempty')
+      expect(fs.readFileSync(join(input.source, 'preferences.json'), 'utf8')).toBe(
+        'independent-preferences'
+      )
+    else expect(fs.readdirSync(input.source)).toEqual([])
+    expect(fs.statSync(result!.userData).isDirectory()).toBe(true)
+    expect(input.singletonHeld()).toBe(false)
+  }
+)

@@ -32,6 +32,21 @@ import {
 import { sha256Hex } from '@/api/fileHash'
 export const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
 
+async function loadWorkspaceCatalog<T>(catalog: string, request: Promise<T>): Promise<T> {
+  try {
+    return await request
+  } catch (error) {
+    console.error(
+      '[Wework] Local workspace catalog failed',
+      JSON.stringify({
+        catalog,
+        reason: error instanceof Error ? error.message : String(error),
+      })
+    )
+    throw error
+  }
+}
+
 function assertValidCollaborationGroup(
   leader: CollaborationGroup['leader'],
   members: CollaborationGroup['members'],
@@ -248,10 +263,13 @@ export function createLocalWorkspaceApi(
   }
   const workspace = async (): Promise<CollaborationWorkspace> => {
     const [items, environments, agents, backingProject] = await Promise.all([
-      projects(),
-      executionEnvironments(),
-      localAgentResources(),
-      delivery.projects.get(DEFAULT_WORK_ITEM_PROJECT_ID),
+      loadWorkspaceCatalog('projects', projects()),
+      loadWorkspaceCatalog('execution-environments', executionEnvironments()),
+      loadWorkspaceCatalog('agents', localAgentResources()),
+      loadWorkspaceCatalog(
+        'workspace-settings',
+        delivery.projects.get(DEFAULT_WORK_ITEM_PROJECT_ID)
+      ),
     ])
     const now = new Date().toISOString()
     return {
@@ -292,8 +310,12 @@ export function createLocalWorkspaceApi(
     },
   ]
   const projectAgentApi = detailServices?.localProjectChatAgentApi
-  const listProjectAgents = async (projectId: string) =>
-    (await projectAgentApi?.list(projectId))?.map(agent => ({
+  const listProjectAgents = async (projectId: string, options?: { forceRefresh?: boolean }) =>
+    (
+      await (options?.forceRefresh
+        ? projectAgentApi?.list(projectId, { forceRefresh: true })
+        : projectAgentApi?.list(projectId))
+    )?.map(agent => ({
       ...agent,
       agent_id: agent.name,
       deletable: !isDefaultLocalAgent(agent),
@@ -301,9 +323,16 @@ export function createLocalWorkspaceApi(
       name: agent.displayName || agent.name,
     })) ?? []
   const projectChatClient = detailServices?.projectChatClient
-  const localAgentResources = async () => {
+  const localAgentResources = async (
+    _workspaceId?: string,
+    options?: { forceRefresh?: boolean }
+  ) => {
     const listedAgents = projectAgentApi
-      ? await projectAgentApi.list(DEFAULT_WORK_ITEM_PROJECT_ID).catch(error => {
+      ? await (
+          options?.forceRefresh
+            ? projectAgentApi.list(DEFAULT_WORK_ITEM_PROJECT_ID, { forceRefresh: true })
+            : projectAgentApi.list(DEFAULT_WORK_ITEM_PROJECT_ID)
+        ).catch(error => {
           console.warn('[Wework] Failed to list local Agents', error)
           return []
         })
@@ -393,7 +422,7 @@ export function createLocalWorkspaceApi(
   }
   const validateRunnerSelections = async (projectId: string, rules: WorkspaceAutomationRule[]) => {
     if (!projectAgentApi) return
-    const agents = await projectAgentApi.list(projectId)
+    const agents = await projectAgentApi.list(projectId, { forceRefresh: true })
     const groups = await projectCollaborationGroups(projectId)
     const environments = await projectAgentApi.listRunnerEnvironments(projectId)
     const cloudModels = await projectAgentApi.listModels()
@@ -732,7 +761,7 @@ export function createLocalWorkspaceApi(
           }),
           update: async (projectId, agentId, input) => {
             if (input.status === 'archived') {
-              const existing = (await projectAgentApi.list(projectId)).find(
+              const existing = (await projectAgentApi.list(projectId, { forceRefresh: true })).find(
                 agent => agent.id === agentId
               )
               if (existing && isDefaultLocalAgent(existing)) {

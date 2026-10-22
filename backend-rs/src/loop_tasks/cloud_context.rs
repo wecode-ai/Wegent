@@ -243,8 +243,8 @@ fn normalize_empty_text(value: Option<&str>) -> Option<String> {
 }
 
 /// `normalize_empty_task_id`: `0` becomes `None` (source field validator).
-fn normalize_backend_task_id(value: i64) -> Option<i64> {
-    (value != 0).then_some(value)
+fn normalize_backend_task_id(value: Option<i64>) -> Option<i64> {
+    value.filter(|id| *id != 0)
 }
 
 /// pydantic naive-datetime serialization: `YYYY-MM-DDTHH:MM:SS` plus
@@ -272,9 +272,10 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_zero_backend_task_id() {
-        assert_eq!(normalize_backend_task_id(0), None);
-        assert_eq!(normalize_backend_task_id(7), Some(7));
+    fn normalizes_null_and_zero_backend_task_ids() {
+        assert_eq!(normalize_backend_task_id(None), None);
+        assert_eq!(normalize_backend_task_id(Some(0)), None);
+        assert_eq!(normalize_backend_task_id(Some(7)), Some(7));
     }
 
     #[test]

@@ -386,6 +386,12 @@ async def build_execution_request(
                 )
         activate_provider_native_knowledge(request, provider_skills)
 
+        # A selected source can activate an already-resolved, non-preloaded Skill.
+        from app.services.execution.provider_guidance import (
+            apply_provider_configuration_guidance,
+        )
+
+        apply_provider_configuration_guidance(request)
         return request
 
     finally:

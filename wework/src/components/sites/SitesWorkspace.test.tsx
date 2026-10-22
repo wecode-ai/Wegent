@@ -89,6 +89,7 @@ function createApi(items: SiteListItem[] = [unpublishedSite]): SitesApi {
             'delete',
             'configure_environment',
             'manage_access',
+            'view_analytics',
           ],
           create: {
             plugin_name: 'wegent-sites',
@@ -150,6 +151,15 @@ function createApi(items: SiteListItem[] = [unpublishedSite]): SitesApi {
       created_by: 'testuser',
       created_at: '2026-09-02T08:00:00Z',
     }),
+    getSiteAnalytics: vi.fn().mockResolvedValue({
+      project_id: 'site-1',
+      timezone: 'Asia/Shanghai',
+      start_date: '2026-10-01',
+      end_date: '2026-10-01',
+      totals: { pv: 4, uv: 2 },
+      daily: [{ date: '2026-10-01', pv: 4, uv: 2 }],
+      queried_at: '2026-10-01T08:00:00Z',
+    }),
     listCollaborators: vi.fn().mockResolvedValue({ items: [] }),
     addCollaborator: vi.fn().mockImplementation((_siteid: string, subject: string) =>
       Promise.resolve({
@@ -185,6 +195,29 @@ function createApi(items: SiteListItem[] = [unpublishedSite]): SitesApi {
 }
 
 describe('SitesWorkspace', () => {
+  test.each(['owner', 'collaborator'] as const)(
+    'opens analytics for a %s from the site menu',
+    async role => {
+      const api = createApi([{ ...unpublishedSite, access_role: role }])
+      render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
+      await userEvent.click(await screen.findByTestId('site-more-site-1'))
+      await userEvent.click(screen.getByTestId('site-analytics-menu-item-site-1'))
+      expect(await screen.findByTestId('site-analytics-totals')).toHaveTextContent('4')
+      expect(api.getSiteAnalytics).toHaveBeenCalledTimes(1)
+      await userEvent.click(screen.getByTestId('site-analytics-close'))
+      expect(screen.queryByTestId('site-analytics-dialog')).not.toBeInTheDocument()
+    }
+  )
+  test('does not expose analytics when the Backend omits the capability', async () => {
+    const api = createApi()
+    vi.mocked(api.listApplicationTypes).mockResolvedValue({
+      items: [{ app_type: 'web', enabled: true, order: 10, capabilities: ['edit'] }],
+    })
+    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
+    await userEvent.click(await screen.findByTestId('site-more-site-1'))
+    expect(screen.queryByTestId('site-analytics-menu-item-site-1')).not.toBeInTheDocument()
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     window.history.replaceState({}, '', '/sites')

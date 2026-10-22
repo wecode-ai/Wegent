@@ -109,6 +109,7 @@ import { useRuntimeTaskModelSelection } from './useRuntimeTaskModelSelection'
 import { useWorkbenchProjectActions } from './useWorkbenchProjectActions'
 import { useWorkbenchRuntimeMessaging } from './useWorkbenchRuntimeMessaging'
 import { useWorkbenchRuntimeTasks } from './useWorkbenchRuntimeTasks'
+import { logRuntimeQueueStage } from './runtimeQueueDiagnostics'
 import { useWorkbenchSkills } from './useWorkbenchSkills'
 import { useWorkbenchDataRefresh } from './useWorkbenchDataRefresh'
 import { useStableEvent } from './useStableEvent'
@@ -163,6 +164,7 @@ import {
   settleRuntimeConversationGuidance,
   syncRuntimeConversationDeviceAliases,
 } from './runtimeConversationCache'
+import { getRuntimeConversationQueueController } from './runtimeConversationQueueController'
 import {
   applyModelContextWindowOverride,
   findModelForSelection,
@@ -372,6 +374,8 @@ export function WorkbenchProvider({
     runtimeWork: state.runtimeWork,
     lifecycleStore,
     lifecycleSnapshot,
+    standInApi: resolvedServices.standInApi,
+    runtimeApi: resolvedServices.runtimeWorkApi,
   })
   const currentContextUsage = state.currentRuntimeTask
     ? contextUsageByRuntimeTask[runtimeConversationKey(state.currentRuntimeTask)]
@@ -2286,12 +2290,26 @@ export function WorkbenchProvider({
   const stableRenameRuntimeTask = useStableEvent(runtimeTasks.renameRuntimeTask)
   const stableArchiveRuntimeTask = useStableEvent(runtimeTasks.archiveRuntimeTask)
   const stableCancelRuntimeTask = useStableEvent(async (address: RuntimeTaskAddress) => {
-    const response = await executorClient.runtime.cancelRuntimeTask(address)
-    if (!response.accepted) {
-      throw new Error(response.error || t('workbench.runtime_task_cancel_failed'))
+    logRuntimeQueueStage(address, 'queue-stop-requested', { source: 'execution-action' })
+    const restoreQueue = getRuntimeConversationQueueController(address).pauseForCancellation()
+    let accepted: boolean | null = null
+    try {
+      const response = await executorClient.runtime.cancelRuntimeTask(address)
+      accepted = response.accepted
+      if (!response.accepted) {
+        throw new Error(response.error || t('workbench.runtime_task_cancel_failed'))
+      }
+      await notifyMainRuntimeWorkChanged(address)
+      await refreshWorkLists()
+    } catch (error) {
+      if (accepted !== true) restoreQueue()
+      throw error
+    } finally {
+      logRuntimeQueueStage(address, 'queue-stop-result', {
+        source: 'execution-action',
+        accepted,
+      })
     }
-    await notifyMainRuntimeWorkChanged(address)
-    await refreshWorkLists()
   })
   const stableForceStartRuntimeTask = useStableEvent(async (address: RuntimeTaskAddress) => {
     const response = await executorClient.runtime.forceStartRuntimeTask(address)

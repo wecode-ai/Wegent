@@ -236,34 +236,37 @@ describe("collaboration workspace controller", () => {
     expect(api.issues.getBoardSnapshot).toHaveBeenCalledTimes(2);
   });
 
-  it("invalidates an in-flight board read after an external Issue change", async () => {
-    state = { ...state, projects: [project] };
-    const { api, commands } = createController();
-    const previous = {
-      items: [issue],
-      members: [],
-      agents: [],
-      taskBindings: [],
-    };
-    const reassigned = { ...issue, version: 3, assignee_user_id: 1 };
-    const updated = { ...previous, items: [reassigned] };
-    const pending = deferred<typeof previous>();
-    vi.mocked(api.issues.getBoardSnapshot)
-      .mockReturnValueOnce(pending.promise)
-      .mockResolvedValueOnce(updated);
+  it.each(["reassignment", "restore"])(
+    "invalidates an in-flight board read after %s",
+    async (change) => {
+      state = { ...state, projects: [project] };
+      const { api, commands } = createController();
+      const previous = {
+        items: change === "restore" ? [] : [issue],
+        members: [],
+        agents: [],
+        taskBindings: [],
+      };
+      const reassigned = { ...issue, version: 3, assignee_user_id: 1 };
+      const updated = { ...previous, items: [reassigned] };
+      const pending = deferred<typeof previous>();
+      vi.mocked(api.issues.getBoardSnapshot)
+        .mockReturnValueOnce(pending.promise)
+        .mockResolvedValueOnce(updated);
 
-    const oldRefresh = commands.loadProjectSnapshot(project.id);
-    const changedRefresh = commands.loadProjectSnapshot(project.id, {
-      invalidate: true,
-    });
-    expect(api.issues.getBoardSnapshot).toHaveBeenCalledTimes(2);
-    await changedRefresh;
-    expect(state.projectItems[project.id]).toEqual([reassigned]);
+      const oldRefresh = commands.loadProjectSnapshot(project.id);
+      const changedRefresh = commands.loadProjectSnapshot(project.id, {
+        invalidate: true,
+      });
+      expect(api.issues.getBoardSnapshot).toHaveBeenCalledTimes(2);
+      await changedRefresh;
+      expect(state.projectItems[project.id]).toEqual([reassigned]);
 
-    pending.resolve(previous);
-    await oldRefresh;
-    expect(state.projectItems[project.id]).toEqual([reassigned]);
-  });
+      pending.resolve(previous);
+      await oldRefresh;
+      expect(state.projectItems[project.id]).toEqual([reassigned]);
+    },
+  );
 
   it("keeps a successful project catalog when My Work fails", async () => {
     const api = createApi();
@@ -1120,162 +1123,162 @@ describe("collaboration workspace controller", () => {
     expect(state.comments).toEqual([]);
   });
 
-  it("reloads the board and reports a conflict after a reorder version conflict", async () => {
+  it("reloads the board and reports a conflict after an atomic position conflict", async () => {
     const api = createApi();
-    api.issues.update = vi
-      .fn()
-      .mockResolvedValue({ ...issue, status: "completed", version: 2 });
-    api.issues.reorder = vi
-      .fn()
-      .mockRejectedValue({ code: "version_conflict" });
+    api.issues.update = vi.fn().mockRejectedValue({ code: "version_conflict" });
     const { commands, notify } = createController(api);
-    const optimisticIssue = { ...issue, status: "completed" };
-
-    await commands.reorderIssue({
-      issue,
+    await commands.updateIssue(issue.id, {
+      version: issue.version,
       status: "completed",
-      laneIds: [issue.id],
-      optimisticItems: [optimisticIssue],
+      position: { beforeItemId: null },
     });
-
     expect(api.issues.getBoardSnapshot).toHaveBeenCalledWith(project.id);
     expect(state.issues).toEqual([issue]);
     expect(state.error).toBe("conflict");
     expect(notify).toHaveBeenCalledWith("conflict", "error");
-    expect(actions.at(-1)).toEqual({
-      type: "error",
-      value: "conflict",
-      source: "conflict",
-    });
+    expect(api.issues.reorder).not.toHaveBeenCalled();
   });
 
-  it("moves an issue into its target status before reordering that lane", async () => {
+  it.each(
+    ["update", "assign"].flatMap((kind) =>
+      [false, true].map((hidden) => ({ kind, hidden })),
+    ),
+  )(
+    "keeps committed ranks when $kind refresh fails and recovers (hidden=$hidden)",
+    async ({ kind, hidden }) => {
+      const siblings = [
+        issue,
+        { ...issue, id: "issue-2", sort_order: hidden ? 2 : 1 },
+        { ...issue, id: "issue-3", sort_order: hidden ? 4 : 2 },
+      ];
+      const saved = {
+        ...issue,
+        sort_order: hidden ? 3 : 1,
+        version: 2,
+        updated_at: "2026-10-21T00:00:00Z",
+      };
+      state = {
+        ...state,
+        project,
+        projects: [project],
+        issues: siblings,
+        projectItems: { [project.id]: siblings },
+      };
+      const api = createApi();
+      api.issues.update = vi.fn().mockResolvedValue(saved);
+      api.issues.assign = vi.fn().mockResolvedValue(saved);
+      api.issues.getBoardSnapshot = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("offline"));
+      const { commands } = createController(api);
+      if (kind === "update") {
+        await commands.updateIssue(issue.id, {
+          version: 1,
+          position: { beforeItemId: "issue-3" },
+        });
+      } else {
+        await commands.assignIssue(project.id, issue.id, {
+          version: 1,
+          assigneeType: "user",
+          assigneeId: "1",
+          notifyAssignee: false,
+          position: { beforeItemId: "issue-3" },
+        });
+      }
+      await expect(
+        commands.loadProjectSnapshot(project.id, {
+          invalidate: true,
+          throwOnError: true,
+        }),
+      ).rejects.toThrow("load failed");
+      const ranks = () =>
+        state.issues
+          .slice()
+          .sort((a, b) => a.sort_order - b.sort_order)
+          .map((item) => [item.id, item.sort_order]);
+      expect(ranks()).toEqual([
+        ["issue-2", hidden ? 1 : 0],
+        [issue.id, hidden ? 3 : 1],
+        ["issue-3", hidden ? 4 : 2],
+      ]);
+      expect(state.projectItems[project.id]).toEqual(state.issues);
+      expect(state.errorSource).toBe("load");
+      api.issues.getBoardSnapshot = vi.fn().mockResolvedValue({
+        items: state.issues.map((item) => ({ ...item, version: 2 })),
+        members: [],
+        agents: [],
+        taskBindings: [],
+      });
+      await commands.loadProjectSnapshot(project.id, { invalidate: true });
+      expect(ranks()).toEqual([
+        ["issue-2", hidden ? 1 : 0],
+        [issue.id, hidden ? 3 : 1],
+        ["issue-3", hidden ? 4 : 2],
+      ]);
+      expect(state.error).toBeNull();
+    },
+  );
+
+  it("passes fields and position through one update and reloads all sibling ranks", async () => {
     const api = createApi();
-    const movedIssue = { ...issue, status: "completed", version: 2 };
-    api.issues.update = vi.fn().mockResolvedValue(movedIssue);
-    api.issues.reorder = vi.fn().mockResolvedValue([movedIssue]);
-    const { commands } = createController(api);
-
-    await commands.reorderIssue({
-      issue,
-      status: "completed",
-      laneIds: [issue.id],
-      optimisticItems: [movedIssue],
+    const saved = { ...issue, sort_order: 1, status: "completed", version: 7 };
+    api.issues.update = vi.fn().mockResolvedValue(saved);
+    api.issues.getBoardSnapshot = vi.fn().mockResolvedValue({
+      items: [saved],
+      members: [],
+      agents: [],
+      taskBindings: [],
     });
-
-    expect(api.issues.update).toHaveBeenCalledWith(issue.id, {
+    const { commands } = createController(api);
+    const input = {
       version: issue.version,
       status: "completed",
-    });
-    expect(api.issues.update.mock.invocationCallOrder[0]).toBeLessThan(
-      api.issues.reorder.mock.invocationCallOrder[0],
-    );
-    expect(api.issues.reorder).toHaveBeenCalledWith(project.id, {
-      parentId: null,
-      status: "completed",
-      issueIds: [issue.id],
-    });
-    expect(state.issues).toEqual([movedIssue]);
+      position: { beforeItemId: null },
+    };
+    await expect(commands.updateIssue(issue.id, input)).resolves.toEqual(saved);
+    await commands.loadProjectSnapshot(project.id, { invalidate: true });
+    expect(api.issues.update).toHaveBeenCalledWith(issue.id, input);
+    expect(api.issues.reorder).not.toHaveBeenCalled();
+    expect(state.projectItems[project.id]).toEqual([saved]);
   });
 
-  it("does not let an older reorder snapshot erase fields returned by the mutation", async () => {
+  it("does not let an older refresh erase fields returned by a position mutation", async () => {
     const api = createApi();
-    const movedIssue = {
-      ...issue,
-      status: "completed",
-      version: 2,
-      workflow: {
-        version: 1,
-        definition_version: 1,
-        stage_mode: "dag" as const,
-        advancement_policy: "manual" as const,
-        nodes: [],
-      },
-    };
-    api.issues.reorder = vi.fn().mockResolvedValue([
-      {
-        ...issue,
-        status: "completed",
-        version: 1,
-      },
-    ]);
-    const { commands } = createController(api);
-
-    await commands.reorderIssue({
-      issue: movedIssue,
-      status: "completed",
-      laneIds: [issue.id],
-      optimisticItems: [movedIssue],
-    });
-
-    expect(state.issues).toEqual([movedIssue]);
-  });
-
-  it("does not let an older reorder response revert another issue moved concurrently", async () => {
-    const secondIssue: CollaborationIssue = {
-      ...issue,
-      id: "issue-2",
-      sequence_number: 2,
-      title: "Second issue",
-      sort_order: 1,
-    };
-    const movedIssue = {
-      ...issue,
-      status: "completed",
-      version: 2,
-    };
-    const concurrentlyMovedIssue = {
-      ...secondIssue,
-      status: "completed",
-      version: 2,
-    };
-    const reorderResponse = deferred<CollaborationIssue[]>();
+    const saved = { ...issue, title: "Saved", status: "completed", version: 3 };
     state = {
       ...state,
-      projects: [project],
       project,
-      issues: [issue, secondIssue],
-      projectItems: { [project.id]: [issue, secondIssue] },
+      issues: [issue],
+      projectItems: { [project.id]: [issue] },
     };
-    const api = createApi();
-    api.issues.reorder = vi.fn(() => reorderResponse.promise);
+    api.issues.update = vi.fn().mockResolvedValue(saved);
     const { commands } = createController(api);
-
-    const reorder = commands.reorderIssue({
-      issue: movedIssue,
-      status: "completed",
-      laneIds: [movedIssue.id],
-      optimisticItems: [movedIssue, secondIssue],
+    await commands.updateIssue(issue.id, {
+      version: 1,
+      position: { beforeItemId: null },
     });
-    commands.replaceIssue(concurrentlyMovedIssue);
-    reorderResponse.resolve([{ ...movedIssue, version: 3 }]);
-    await reorder;
-
-    expect(state.issues).toEqual([
-      { ...movedIssue, version: 3 },
-      concurrentlyMovedIssue,
-    ]);
-    expect(state.projectItems[project.id]).toEqual(state.issues);
+    await commands.loadProjectSnapshot(project.id, { invalidate: true });
+    expect(state.projectItems[project.id]).toEqual([saved]);
   });
 
-  it("merges queued reorder responses against reducer state", () => {
-    const secondIssue: CollaborationIssue = {
+  it("merges refreshed ranks against concurrently updated issue versions", async () => {
+    const secondIssue = {
       ...issue,
       id: "issue-2",
       sequence_number: 2,
-      title: "Second issue",
       sort_order: 1,
     };
-    const acknowledgedIssue = {
+    const acknowledged = {
       ...issue,
-      title: "Server acknowledged",
-      status: "completed",
+      title: "Saved",
+      sort_order: 1,
       version: 3,
     };
-    const staleIssue = {
-      ...issue,
+    const concurrent = {
+      ...secondIssue,
+      sort_order: 0,
       status: "completed",
-      version: 2,
+      version: 4,
     };
     state = {
       ...state,
@@ -1284,21 +1287,22 @@ describe("collaboration workspace controller", () => {
       issues: [issue, secondIssue],
       projectItems: { [project.id]: [issue, secondIssue] },
     };
-
     state = collaborationWorkspaceControllerReducer(state, {
-      type: "merge-reorder-issues",
-      issues: [acknowledgedIssue, secondIssue],
+      type: "replace-issue",
+      issue: concurrent,
     });
     state = collaborationWorkspaceControllerReducer(state, {
-      type: "merge-reorder-issues",
-      issues: [staleIssue, { ...secondIssue, status: "completed", version: 2 }],
+      type: "project-snapshot-loaded",
+      projectId: project.id,
+      snapshot: {
+        items: [acknowledged, secondIssue],
+        members: [],
+        agents: [],
+        taskBindings: [],
+      },
     });
-
-    expect(state.issues).toEqual([
-      acknowledgedIssue,
-      { ...secondIssue, status: "completed", version: 2 },
-    ]);
-    expect(state.projectItems[project.id]).toEqual(state.issues);
+    expect(state.projectItems[project.id]).toEqual([acknowledged, concurrent]);
+    expect(state.issues).toEqual(state.projectItems[project.id]);
   });
 
   it("keeps the mutated project in the catalog used by background refreshes", async () => {

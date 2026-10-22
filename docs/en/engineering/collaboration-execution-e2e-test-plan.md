@@ -404,15 +404,14 @@ Additional scenario:
 
 - A user who is not assigned may still proactively enter an Issue and create a Task.
 - Proactive participation must not fabricate an “assigned to me” notification or assignment event.
-- Starting a private Task for an Issue already in review or completed must not
-  move the Issue back to in progress.
-- Start work in the human-processing panel is a separate explicit action:
-  reassigning an in-review or completed Issue preserves its status and clears
-  the previous human submission. Only the new assignee's Start work action
-  moves it to in progress. The former assignee cannot start, and a submitted or
-  accepted result under the current assignment cannot be started again.
-  `project-assignment-notification` covers reassignment after acceptance and
-  explicit start without making an AI request.
+- Starting a private Task may move an Issue from in review to in progress;
+  completed Issues retain their completed status.
+- Users with edit permission start, complete, and reopen Issues directly through
+  the status selector or board drag without a result form. Comments and attachments
+  carry work communication.
+- `project-assignment-notification` covers creating a Task directly from pending,
+  binding the complete current assignment identity, projecting progress from real
+  Task delivery, reassignment after completion, direct status changes, and comments.
 
 #### Current-computer regression for human AI assistance
 
@@ -421,16 +420,16 @@ CI checkpoint: `collaboration-issue-task-discovery`.
 Prerequisites: isolated Electron, real Backend, MySQL, Redis, Codex, and two online
 APP executors; replace only the model upstream. Create two projects with initialized
 environments on the current computer and the other APP respectively. Assign an Issue
-in each project to the current user and explicitly start work; require
-`human_work.can_submit` to be true.
+in each project to the current user and set it to in progress through an ordinary
+status update. Require `human_task_binding.assignmentId` to match the assignment.
 
 Steps and assertions:
 
 1. Open project execution settings and wait for the real device catalog and ready environment.
-2. Open the Issue, click AI assistance, and send the prefilled request for a draft suggestion.
+2. Open the Issue, click Create Task, and send a request containing the original Issue reference.
 3. Wait for a model reply through real Codex; a binding or visible composer does not prove execution.
 4. Require exactly one task binding on the current computer, independent of the other APP environment.
-5. Require the Issue to remain in progress; assistance must not submit or accept human work.
+5. Require the Issue to remain in progress; finishing a private task must not change its shared status.
 6. Repeat for both environments, then close the conversation and Issue.
 
 Boundary: the other executor is online, its environment is initialized, and the catalog
