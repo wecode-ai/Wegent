@@ -100,7 +100,7 @@ Wework 在请求进入跨进程或跨服务边界时生成 request ID，并在�
 
 ### Executor 启动环境与 Codex Home 初始化
 
-Git worktree 会话设置 `PNPM_CONFIG_IGNORE_SCRIPTS=true` 和 `PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false`，复用 pnpm 内容缓存，但将虚拟依赖目录保留在工作树内。全局虚拟仓库的真实路径会让 TypeScript 向用户主目录查找类型，可能混入另一版本的 React。Wework 的 TypeScript 配置还将 `react` 和 `react/*` 绑定到自身的 `@types/react`，让共享 JSON 等工作树包目录外的输入也使用同一套类型。已有工作树切换此设置后，需运行 `PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false pnpm install --frozen-lockfile` 重建依赖链接；执行器更新后的新会话会自动使用该设置。
+Git worktree 会话设置 `PNPM_CONFIG_IGNORE_SCRIPTS=true` 和 `PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false`，复用 pnpm 内容缓存，但将虚拟依赖目录保留在工作树内。全局虚拟仓库的真实路径会让 TypeScript 向用户主目录查找类型，可能混入另一版本的 React。Wework 的 TypeScript 配置还将 `react` 和 `react/*` 绑定到自身的 `@types/react`，让共享 JSON 等工作树包目录外的输入也使用同一套类型。已有工作树切换此设置后，需运行 `PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false pnpm install --frozen-lockfile` 重建依赖链接；PowerShell 使用 `$env:PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE='false'; pnpm install --frozen-lockfile`。执行器更新后的新会话会自动使用该设置。
 
 共享插件包按内容哈希保存并保留旧包；Codex 原生缓存目录使用插件清单中的版本号。不能给该缓存版本追加哈希，否则 Codex 原生安装会清理该目录并使工作台保存的路径失效。插件认证 SDK 从 Executor 的 `capabilities/manifest-v2.json` 解析当前安装身份，不能读取迁移后残留的旧清单。
 
