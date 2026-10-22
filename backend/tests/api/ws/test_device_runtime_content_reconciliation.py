@@ -52,14 +52,37 @@ def managed_run(test_db, test_user):
         device_id=execution.runtime_device_id,
         runtime_task_id=execution.runtime_task_id,
         event_name="response.created",
-        payload={"eventSeq": 1, "data": {}},
+        payload={"eventSeq": 1, "subtaskId": "turn-1", "data": {}},
         owner_user_id=test_user.id,
     )
     activity = loop_item_execution_service._linked_activity(test_db, execution)
-    activity.trigger_message_id = "trigger-1"
+    activity.trigger_message_id = ""
     activity.content = "MODEL_CONT"
     test_db.commit()
     return task, execution, activity
+
+
+def test_response_created_binds_runtime_turn_for_snapshot_reconciliation(
+    test_db, test_user, managed_run
+):
+    _, execution, activity = managed_run
+    assert activity.metadata_json["runtime_turn_id"] == "turn-1"
+    snapshot = report(
+        deviceId=execution.runtime_device_id,
+        taskId=execution.runtime_task_id,
+        completeHistory=False,
+    )
+    snapshot.turns[0].user_message_ids = []
+
+    changed = reconcile_execution_snapshot(
+        test_db, user_id=test_user.id, snapshot=snapshot
+    )
+
+    assert len(changed) == 1
+    test_db.expire_all()
+    assert execution.status == "completed"
+    assert activity.status == "completed"
+    assert activity.metadata_json["runtime_turn_id"] == "turn-1"
 
 
 @pytest.mark.parametrize("order", ["snapshot_first", "event_first", "during_lock"])

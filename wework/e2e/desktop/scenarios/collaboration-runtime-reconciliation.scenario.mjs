@@ -288,7 +288,8 @@ export async function createDesktopScenario({
   async function settleInOrder(testCase, snapshot) {
     const submit = () => emit('wework:project_chat:execution:snapshot', snapshot)
     if (testCase.order === 'snapshot-first') {
-      await submit()
+      const applied = await submit()
+      assert.equal(applied.length, 1, 'The terminal snapshot did not reconcile its bound activity')
       const state = await rows(testCase)
       assert.equal(state.executions[0].status, 'completed')
       assert.equal(state.activities[0].status, 'completed')
