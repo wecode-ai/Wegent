@@ -10,7 +10,10 @@ import json
 from fnmatch import fnmatch
 
 from app.models.kind import Kind
-from app.schemas.subscription import NotificationLevel
+from app.schemas.subscription import (
+    NotificationChannelBindingConfig,
+    NotificationLevel,
+)
 from app.services.subscription.notification_service import (
     subscription_notification_service,
 )
@@ -338,3 +341,46 @@ def test_update_developer_settings_clears_mentions_without_group(test_db, test_u
     assert persisted is not None
     binding = persisted.json["_internal"]["notification_channel_bindings"]["123"]
     assert binding["group_mention_user_ids"] == []
+
+
+def test_update_developer_settings_preserves_omitted_mentions(test_db, test_user):
+    """Older clients that omit mention IDs keep the stored mention list."""
+    subscription = _create_subscription_kind(
+        test_db, owner_user_id=test_user.id, subscription_id=1007
+    )
+    subscription_notification_service.update_developer_settings(
+        test_db,
+        subscription_id=subscription.id,
+        user_id=test_user.id,
+        notification_level=NotificationLevel.NOTIFY,
+        notification_channel_ids=[123],
+        channel_binding_configs=[
+            {
+                "channel_id": 123,
+                "bind_private": True,
+                "bind_group": True,
+                "group_conversation_id": "conversation-123",
+                "group_name": "测试机器人",
+                "group_mention_user_ids": ["user-1"],
+            }
+        ],
+    )
+
+    updated = subscription_notification_service.update_developer_settings(
+        test_db,
+        subscription_id=subscription.id,
+        user_id=test_user.id,
+        notification_level=NotificationLevel.NOTIFY,
+        notification_channel_ids=[123],
+        channel_binding_configs=[
+            NotificationChannelBindingConfig(
+                channel_id=123,
+                bind_private=True,
+                bind_group=True,
+                group_conversation_id="conversation-123",
+                group_name="测试机器人",
+            )
+        ],
+    )
+
+    assert updated.channel_binding_configs[0].group_mention_user_ids == ["user-1"]

@@ -122,11 +122,14 @@ async def _resolve_dingtalk_mention_user_ids(
         lookup_id = (
             staff_id.strip() if separator and staff_id.strip().isdigit() else raw
         )
-        if lookup_id not in _DINGTALK_MENTION_NAME_CACHE:
-            _DINGTALK_MENTION_NAME_CACHE[lookup_id] = (
-                await _lookup_dingtalk_mention_name(db, lookup_id)
-            )
-        name = _DINGTALK_MENTION_NAME_CACHE[lookup_id]
+        if not lookup_id.isdigit():
+            resolved.append(lookup_id)
+            continue
+        name = _DINGTALK_MENTION_NAME_CACHE.get(lookup_id, "")
+        if not name:
+            name = await _lookup_dingtalk_mention_name(db, lookup_id)
+            if name:
+                _DINGTALK_MENTION_NAME_CACHE[lookup_id] = name
         resolved.append(f"{lookup_id}:{name}" if name else lookup_id)
     return resolved
 
@@ -168,6 +171,7 @@ def _convert_attachment_links_to_public(message: str) -> str:
 
     # Find all attachment URLs and replace with public share URLs
     def replace_url(match: re.Match) -> str:
+        """Replace one attachment URL with a public share URL."""
         attachment_id = int(match.group(1))
 
         # Generate public share token for this attachment
@@ -509,9 +513,16 @@ class SubscriptionNotificationDispatcher:
             )
             resolved_mentions = group_mention_user_ids
             if send_group and group_conversation_id and group_mention_user_ids:
-                resolved_mentions = await _resolve_dingtalk_mention_user_ids(
-                    db, group_mention_user_ids
-                )
+                try:
+                    resolved_mentions = await _resolve_dingtalk_mention_user_ids(
+                        db, group_mention_user_ids
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "[SubscriptionNotificationDispatcher] Mention name "
+                        "resolution failed, using raw IDs: %s",
+                        exc,
+                    )
 
             # Check if AI card template is configured
             card_template_id = config.get("card_template_id")
@@ -1297,6 +1308,7 @@ class SubscriptionNotificationDispatcher:
 
         # Find all attachment URLs and replace with public share URLs
         def replace_url(match: re.Match) -> str:
+            """Replace one attachment URL with a public share URL."""
             attachment_id = int(match.group(1))
 
             # Generate public share token for this attachment

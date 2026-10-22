@@ -713,6 +713,7 @@ class AICardSession:
         user_id: str,
         card_template_id: str,
     ):
+        """Bind one streaming card session to its sender and card identity."""
         self._sender = sender
         self._out_track_id = out_track_id
         self._user_id = user_id

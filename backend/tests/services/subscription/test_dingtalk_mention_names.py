@@ -24,6 +24,27 @@ async def test_resolve_dingtalk_mention_user_ids_appends_display_names(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_resolve_dingtalk_mention_user_ids_skips_non_numeric_ids(monkeypatch):
+    calls = []
+
+    async def fake_lookup(_db, user_id):
+        calls.append(user_id)
+        return ""
+
+    monkeypatch.setattr(
+        notification_dispatcher, "_lookup_dingtalk_mention_name", fake_lookup
+    )
+    notification_dispatcher._DINGTALK_MENTION_NAME_CACHE.clear()
+
+    resolved = await notification_dispatcher._resolve_dingtalk_mention_user_ids(
+        None, ["user-1", "999", "999"]
+    )
+
+    assert resolved == ["user-1", "999", "999"]
+    assert calls == ["999", "999"]
+
+
+@pytest.mark.asyncio
 async def test_lookup_dingtalk_mention_name_queries_user_info(monkeypatch):
     class FakeQuery:
         def filter(self, *_args, **_kwargs):

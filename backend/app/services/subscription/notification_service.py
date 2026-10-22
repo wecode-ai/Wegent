@@ -358,12 +358,25 @@ class SubscriptionNotificationService:
             json_data = deepcopy(subscription.json or {})
             internal = json_data.get("_internal", {})
             channel_binding_map: Dict[str, Any] = {}
+            existing_binding_map = internal.get("notification_channel_bindings", {})
             for item in channel_binding_configs:
+                explicit_fields = set(getattr(item, "model_fields_set", set()))
                 if hasattr(item, "model_dump"):
                     item_data = item.model_dump()
                 else:
                     item_data = dict(item)
                 channel_id = str(item_data["channel_id"])
+                existing_binding = existing_binding_map.get(channel_id, {})
+                if (
+                    hasattr(item, "model_dump")
+                    and "group_mention_user_ids" not in explicit_fields
+                ) or (
+                    not hasattr(item, "model_dump")
+                    and "group_mention_user_ids" not in item_data
+                ):
+                    item_data["group_mention_user_ids"] = existing_binding.get(
+                        "group_mention_user_ids", []
+                    )
                 channel_binding_map[channel_id] = {
                     **_normalize_channel_binding_config(item_data),
                     "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -689,14 +702,17 @@ class SubscriptionNotificationService:
     def _get_binding_pending_key(
         self, *, user_id: int, channel_id: int, subscription_id: Optional[int] = None
     ) -> str:
+        """Return the Redis key for one pending channel binding."""
         if subscription_id is not None:
             return f"{BINDING_PENDING_PREFIX}{user_id}:{subscription_id}:{channel_id}"
         return f"{BINDING_PENDING_PREFIX}{user_id}:{channel_id}"
 
     def _get_binding_pending_index_key(self, *, user_id: int) -> str:
+        """Return the Redis index key for a user's pending binding."""
         return f"{BINDING_PENDING_INDEX_PREFIX}{user_id}"
 
     def _get_redis_client(self):
+        """Create a Redis client for binding-session state."""
         return redis.from_url(settings.REDIS_URL, decode_responses=True)
 
     def _get_subscription_channel_binding_configs(
@@ -719,6 +735,7 @@ class SubscriptionNotificationService:
     def _get_subscription_for_owner(
         self, db: Session, *, subscription_id: int, user_id: int
     ) -> Kind:
+        """Load a subscription and verify the caller owns it."""
         subscription = (
             db.query(Kind)
             .filter(
@@ -833,6 +850,7 @@ class SubscriptionNotificationService:
         bind_group: bool,
         subscription_id: Optional[int] = None,
     ) -> Dict[str, Any]:
+        """Create a pending binding session for a user and channel."""
         if not bind_private and not bind_group:
             raise ValueError("At least one binding target is required")
 
@@ -890,6 +908,7 @@ class SubscriptionNotificationService:
         channel_id: int,
         subscription_id: Optional[int] = None,
     ) -> Dict[str, Any]:
+        """Cancel a pending binding session."""
         # Subscription ownership check is optional (only when subscription_id is provided)
         if subscription_id is not None:
             self._get_subscription_for_owner(
@@ -932,6 +951,7 @@ class SubscriptionNotificationService:
         sender_staff_id: Optional[str],
         group_name: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """Complete a pending binding from an inbound DingTalk message."""
         index_key = self._get_binding_pending_index_key(user_id=user_id)
         redis_client = self._get_redis_client()
         try:
