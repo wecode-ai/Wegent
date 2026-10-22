@@ -26,6 +26,7 @@ const CHECKPOINT_RESOURCES = new Map([
   ['project-assignment-notification', ['macos-inspector-foreground']],
 ])
 const CHECKPOINT_SCENARIO_MODULES = {
+  'archived-worktree-cleanup': './scenarios/archived-worktree-cleanup.scenario.mjs',
   'plugin-toggle-persistence': './scenarios/plugin-toggle-persistence.scenario.mjs',
   'goal-state-sync': './scenarios/goal-output-identity.scenario.mjs',
   'collaboration-worktree-policy': './scenarios/collaboration-worktree-policy.scenario.mjs',
@@ -39,6 +40,9 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'plugin-account-auth-conversation': './scenarios/plugin-account-auth.scenario.mjs',
   'plugin-account-auth-github': './scenarios/plugin-account-auth.scenario.mjs',
 
+  'plugin-registration-coordination': './scenarios/plugin-uninstall-resilience.scenario.mjs',
+  'plugin-account-auth-coordination': './scenarios/plugin-account-auth.scenario.mjs',
+  'plugin-write-coordination': './scenarios/plugin-uninstall-resilience.scenario.mjs',
   'plugin-uninstall-lost-response': './scenarios/plugin-uninstall-resilience.scenario.mjs',
   'plugin-uninstall-unknown-result': './scenarios/plugin-uninstall-resilience.scenario.mjs',
   'plugin-uninstall-restart-recovery': './scenarios/plugin-uninstall-resilience.scenario.mjs',
@@ -94,6 +98,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'tray-lifecycle': './scenarios/tray-lifecycle.scenario.mjs',
   'project-automation': './scenarios/project-automation.scenario.mjs',
   'project-assignment-notification': './scenarios/project-assignment-notification.scenario.mjs',
+  'project-member-overrides': './scenarios/project-member-overrides.scenario.mjs',
   'offline-local-project-space': './scenarios/offline-local-project-space.scenario.mjs',
   'cloud-context-resilience': './scenarios/cloud-context-resilience.scenario.mjs',
   'cloud-login-proxy': './scenarios/cloud-login-proxy.scenario.mjs',
@@ -150,6 +155,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  'archived-worktree-cleanup',
   'plugin-toggle-persistence',
   'streaming-content',
   'streaming-tools',
@@ -173,7 +179,10 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'plugin-account-auth-dws',
   'plugin-account-auth-conversation',
   'plugin-account-auth-github',
+  'plugin-account-auth-coordination',
 
+  'plugin-write-coordination',
+  'plugin-registration-coordination',
   'plugin-uninstall-lost-response',
   'plugin-uninstall-unknown-result',
   'plugin-uninstall-restart-recovery',
@@ -223,6 +232,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'task-attachments',
   'drawing-attachment',
   'project-assignment-notification',
+  'project-member-overrides',
   'runtime-task-queue',
   'codex-invalid-launch-cwd',
   'executor-stream-recovery',

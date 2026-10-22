@@ -39,6 +39,7 @@ core_segments=(
   automation-lifecycle
   project-automation
   project-assignment-notification
+  project-member-overrides
   offline-local-project-space
   cloud-context-resilience
   cloud-login-proxy
@@ -84,6 +85,7 @@ core_segments=(
   conversation-state
   send-key-preference
   reply-predictions
+  archived-worktree-cleanup
   reply-prediction-auth
   model-settings
   codex-native-catalog
@@ -166,6 +168,9 @@ cloud_segments=(
   plugin-uninstall-unknown-result
   plugin-uninstall-restart-recovery
   plugin-uninstall-reinstall-race
+  plugin-write-coordination
+  plugin-registration-coordination
+  plugin-account-auth-coordination
   plugin-composer-long-list
   plugin-workspace-publication
   plugin-toggle-persistence
@@ -193,6 +198,7 @@ cloud_shards=(
   plugin-composer-long-list
   plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github
   plugin-uninstall-restart-recovery,plugin-uninstall-reinstall-race,plugin-toggle-persistence
+  plugin-write-coordination,plugin-registration-coordination,plugin-account-auth-coordination
 )
 # Group checkpoints by observed parallel CI duration while reusing the same
 # prebuilt application. Rendering runs apart from terminal/transcript workloads.
@@ -200,7 +206,7 @@ cloud_shards=(
 core_shards=(
   harness-app-development,harness-app-lifecycle,browser-annotation-design
   supervisor-lifecycle,remote-device-onboarding,core-task-flow
-  temporary-chat,local-file-preview,conversation-state,reply-predictions,reply-prediction-auth,model-settings,codex-native-catalog
+  temporary-chat,local-file-preview,conversation-state,reply-predictions,archived-worktree-cleanup,reply-prediction-auth,model-settings,codex-native-catalog
   goal-lifecycle,goal-state-sync,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,application-menu,dsh-owner-capture
   send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
   claude-runtime,workspace-tabs,task-attachments
@@ -209,7 +215,7 @@ core_shards=(
   project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,stand-in,stand-in-workspace,stand-in-controls,collaboration-local-group-coordinate,collaboration-human-round-resume
   resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-task-discovery,collaboration-app-queue-identity,collaboration-issue-archive,collaboration-board-sorting,collaboration-board-move-recovery,collaboration-local-group-cancellation
   workspace-attachments,automation-lifecycle,drawing-attachment
-  project-assignment-notification,priority-filter,collaboration-issue-comment-mention,collaboration-issue-assignment-activity,collaboration-issue-comment-attachments,stand-in-notifications
+  project-assignment-notification,project-member-overrides,priority-filter,collaboration-issue-comment-mention,collaboration-issue-assignment-activity,collaboration-issue-comment-attachments,stand-in-notifications
   transcript-sync,background-terminals
   runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification,collaboration-issue-mcp-comments,latest-conversation-history
@@ -353,6 +359,7 @@ select_account_auth_checkpoints() {
   select_target "cloud:plugin-account-auth-dws"
   select_target "cloud:plugin-account-auth-conversation"
   select_target "cloud:plugin-account-auth-github"
+  select_target "cloud:plugin-account-auth-coordination"
 }
 
 select_uninstall_checkpoints() {
@@ -360,6 +367,9 @@ select_uninstall_checkpoints() {
   select_target "cloud:plugin-uninstall-unknown-result"
   select_target "cloud:plugin-uninstall-restart-recovery"
   select_target "cloud:plugin-uninstall-reinstall-race"
+  select_target "cloud:plugin-write-coordination"
+  select_target "cloud:plugin-registration-coordination"
+  select_target "cloud:plugin-account-auth-coordination"
 }
 
 select_rendering_checkpoints() {
@@ -463,7 +473,8 @@ classify_wework_path() {
       select_target "cloud:cloud-device-lifecycle"
       return
       ;;
-    wework/e2e/desktop/modules/plugin-account-auth-fixture.mjs | \
+    wework/e2e/desktop/modules/plugin-auth-coordination.mjs | \
+      wework/e2e/desktop/modules/plugin-account-auth-fixture.mjs | \
       wework/src/components/plugins/PluginAccountConnections* | \
       wework/src/api/cloud/pluginAccountConnections* | \
       wework/e2e/desktop/modules/dws-account-auth.mjs | \
@@ -756,6 +767,10 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/project-assignment-notification.scenario.mjs)
       select_target "core:project-assignment-notification"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/project-member-overrides.scenario.mjs)
+      select_target "core:project-member-overrides"
       return
       ;;
     wework/e2e/desktop/scenarios/cloud-space-mention.scenario.mjs)
@@ -1268,6 +1283,41 @@ classify_path() {
   local path="$1"
 
   case "$path" in
+    backend/app/core/distributed_lock.py | \
+      backend/app/services/plugin_write_*.py | \
+      backend/app/services/plugin_kind_revision.py | \
+      backend/app/services/plugin_policy_revision.py)
+      select_account_auth_checkpoints
+      select_uninstall_checkpoints
+      select_target "cloud:plugin-auto-update"
+      ;;
+  esac
+
+  case "$path" in
+    backend/app/api/endpoints/cloud_projects.py | \
+      backend/app/api/endpoints/workspaces.py | \
+      backend/app/schemas/cloud_project.py | backend/app/schemas/workspace.py | \
+      backend/app/services/cloud_project_visibility.py | \
+      backend/app/services/cloud_projects/* | backend/app/services/workspaces/* | \
+      backend/app/services/collaboration_permissions.py | \
+      backend/app/services/collaboration_revocation.py | \
+      backend/app/services/issue_assignments.py | \
+      backend/tests/api/test_collaboration_permission_contract.py | \
+      backend/tests/api/test_cloud_project* | \
+      backend/tests/services/test_cloud_project* | \
+      backend/tests/services/test_loop_item_assignment.py | \
+      backend/tests/test_collaboration_permission_guard.py | \
+      backend/integration_checks/test_rust_collaboration_permissions_mysql.py | \
+      packages/collaboration/src/project-manage/* | \
+      packages/collaboration/src/CollaborationApp* | \
+      packages/collaboration/src/http-api/createSharedWorkspaceHttpApi* | \
+      packages/collaboration/src/ports/SharedWorkspaceApi* | \
+      packages/collaboration/src/types*)
+      select_target "core:project-member-overrides"
+      ;;
+  esac
+
+  case "$path" in
     packages/collaboration/src/controls/ModelSelector* | \
       packages/collaboration/src/controls/ModelPowerSlider* | \
       packages/collaboration/src/controls/model-selector-utils*)
@@ -1284,8 +1334,11 @@ classify_path() {
   case "$path" in
     backend/app/api/endpoints/installed_plugins.py | \
       backend/app/api/ws/device_namespace.py | \
+      backend/app/services/device/plugin_reconciliation.py | \
       backend/app/services/device/plugin_removal_sync.py | \
       backend/app/services/plugin_device_installation_service.py | \
+      backend/app/services/plugin_device_sync.py | \
+      backend/app/services/plugin_installation_operations.py | \
       backend/app/services/plugin_marketplace_service.py | \
       wework/src/api/pluginUninstall* | wework/src/api/plugins.ts | \
       wework/src/features/plugins/pluginInventory* | \
@@ -1313,6 +1366,11 @@ classify_path() {
       select_target "cloud:plugin-composer-long-list"
       ;;
     wework/e2e/desktop/scenarios/plugin-uninstall-resilience.scenario.mjs | \
+      wework/e2e/desktop/modules/plugin-registration-coordination.mjs | \
+      wework/e2e/desktop/support/registration-capabilities.py | \
+      wework/e2e/desktop/modules/plugin-write-coordination.mjs | \
+      wework/e2e/desktop/modules/plugin-write-lease.mjs | \
+      wework/e2e/desktop/support/plugin-write-lease.py | \
       wework/scripts/plugin-fault-proxy.test.mjs | \
       wework/e2e/desktop/modules/transport-fault-proxy*)
       select_uninstall_checkpoints

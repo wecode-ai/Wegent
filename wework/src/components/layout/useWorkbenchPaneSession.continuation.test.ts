@@ -28,6 +28,7 @@ import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 const mocks = vi.hoisted(() => ({
   context: {} as Record<string, unknown>,
   send: vi.fn(),
+  guide: vi.fn(),
   cancel: vi.fn(),
   setInput: vi.fn(),
   resetAttachments: vi.fn(),
@@ -63,6 +64,7 @@ let lifecycleStore: RuntimeTaskLifecycleStore
 beforeEach(() => {
   vi.clearAllMocks()
   mocks.send.mockResolvedValue(true)
+  mocks.guide.mockResolvedValue({ sent: true, turnId: 'answer-turn' })
   mocks.cancel.mockResolvedValue(true)
   lifecycleStore = new RuntimeTaskLifecycleStore('pane-continuation-test')
   lifecycleStore.syncRuntimeTask(address, {
@@ -92,6 +94,7 @@ beforeEach(() => {
       setComposerErrorForScope: mocks.setError,
     },
     sendRuntimePaneMessage: mocks.send,
+    sendRuntimePaneGuidance: mocks.guide,
     cancelRuntimePaneTask: mocks.cancel,
     getRuntimeGoal: vi.fn().mockResolvedValue({ accepted: false }),
     loadRuntimeTranscriptForPane: vi.fn().mockResolvedValue({ messages: [], turns: [] }),
@@ -186,6 +189,66 @@ describe('pane continuation without composer submission', () => {
     expect(pending).toMatchObject({ requestId: 0, interactionScope: 'current-turn' })
     expect(pending).not.toHaveProperty('response')
   })
+  test.each([
+    { running: false, accepted: true },
+    { running: false, accepted: false },
+    { running: true, accepted: true },
+    { running: true, accepted: false },
+  ])(
+    'updates async question waiting state only after an accepted reply (running=$running, accepted=$accepted)',
+    async ({ running, accepted }) => {
+      const { result } = await renderSession()
+      mocks.send.mockResolvedValue(accepted)
+      mocks.guide.mockResolvedValue({ sent: accepted, turnId: 'answer-turn' })
+      act(() => {
+        reconcileRuntimeConversationSnapshot(address, [
+          {
+            id: 'question-turn',
+            status: running ? 'streaming' : 'done',
+            items: [
+              {
+                id: 'async-question',
+                type: 'block',
+                block: {
+                  id: 'async-question',
+                  type: 'tool',
+                  toolName: 'request_user_input',
+                  status: 'done',
+                  createdAt: 1,
+                  renderPayload: {
+                    kind: 'request_user_input',
+                    requestId: 'async-question',
+                    delivery: 'async',
+                    questions: [{ id: 'direction', question: 'Which direction?' }],
+                  },
+                },
+              },
+            ],
+          },
+        ])
+        if (running) lifecycleStore.turnStarted(address, 'question-turn')
+        lifecycleStore.userInputRequested(address, 'async')
+      })
+      expect(lifecycleStore.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(true)
+
+      await act(async () => {
+        expect(
+          await result.current.sendRequestUserInputResponse({
+            requestId: 'async-question',
+            answers: { direction: { answers: ['Continue'] } },
+          })
+        ).toBe(accepted)
+      })
+
+      expect(lifecycleStore.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(!accepted)
+      const sender = running ? mocks.guide : mocks.send
+      expect(sender).toHaveBeenCalledWith(
+        expect.objectContaining({ address, message: 'Continue' }),
+        ...(running ? [] : [expect.any(Object)])
+      )
+      expectDraftPreserved(result.current)
+    }
+  )
 
   test.each([true, false])(
     'retains a form while terminal history arrives before its response acknowledgment (accepted=%s)',

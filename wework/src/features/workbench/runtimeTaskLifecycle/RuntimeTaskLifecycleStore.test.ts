@@ -1684,6 +1684,35 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.derived.isBusy).toBe(false)
   })
 
+  test('settles a recovered turn from an executor completion without task metadata', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.turnStarted(address, 'initial-turn')
+    store.turnSettled(address, 'initial-turn', 'succeeded')
+    store.executorSettled(address)
+    store.turnStarted(address, 'recovered-turn')
+
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: false,
+          status: 'done',
+          completedAt: 2000,
+          runtimeHandle: { lastTurnId: 'initial-turn' },
+        })
+      )
+    )
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.task).toMatchObject({
+      running: false,
+      status: 'done',
+      completedAt: 2000,
+    })
+    expect(snapshot?.execution.phase).toBe('idle')
+    expect(snapshot?.turn.phase).toBe('idle')
+    expect(snapshot?.derived.isBusy).toBe(false)
+  })
+
   test.each(['submitting', 'awaiting'] as const)(
     'retains a %s continuation when its predecessor history arrives',
     phase => {

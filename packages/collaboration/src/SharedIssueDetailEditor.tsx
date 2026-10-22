@@ -140,6 +140,7 @@ export interface SharedEditorTeam {
 }
 
 export interface SharedIssueDetailExtensionContext {
+  commentAssignment?: import("./issue-detail/useCommentAssignment").CommentAssignment;
   item: SharedEditorIssue;
   project: SharedEditorProject;
   editable: boolean;
@@ -2079,6 +2080,23 @@ export function TodoEditor(props: TodoEditorProps) {
           item,
           project: editProps.project,
           editable,
+          commentAssignment: canAssign
+            ? {
+                members: projectMembers,
+                assign: async (userId) => {
+                  if (!canAssign || saving)
+                    throw new Error(t("todo.saving", "保存中…"));
+                  const current = await editorPort.issues.get(item.id);
+                  if (current.assignee_user_id === userId) return;
+                  const updated = await persistAssignee(
+                    current,
+                    `user:${userId}`,
+                    true,
+                  );
+                  editProps.onUpdated(updated);
+                },
+              }
+            : undefined,
           tasks: effectiveTasks,
           deliveries,
           members: projectMembers,

@@ -345,7 +345,7 @@ fn parse_iso_time(value: &str) -> Option<Option<NaiveTime>> {
             let micros = match fraction {
                 Some(fraction) => {
                     let padded = format!("{fraction:0<3}");
-                    (padded[..3].parse::<u32>().ok()? * 1_000) as u32
+                    padded[..3].parse::<u32>().ok()? * 1_000
                 }
                 None => 0,
             };
