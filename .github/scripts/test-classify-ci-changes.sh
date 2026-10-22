@@ -647,7 +647,7 @@ done
 assert_desktop_case "shared collaboration package selects its desktop checkpoint" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-9","name":"Core / shard 9","segments":"collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,stand-in,stand-in-workspace,stand-in-controls,collaboration-local-group-coordinate,collaboration-human-round-resume"},{"id":"core-10","name":"Core / shard 10","segments":"collaboration-shared-core,collaboration-issue-archive,collaboration-board-sorting,collaboration-board-move-recovery,collaboration-local-group-cancellation"},{"id":"core-12","name":"Core / shard 12","segments":"project-assignment-notification,collaboration-issue-comment-mention,collaboration-issue-comment-attachments"},{"id":"core-15","name":"Core / shard 15","segments":"collaboration-issue-comment-notification"},{"id":"core-18","name":"Core / shard 18","segments":"collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-permissions"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-9","name":"Core / shard 9","segments":"collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,stand-in,stand-in-workspace,stand-in-controls,collaboration-local-group-coordinate,collaboration-human-round-resume"},{"id":"core-10","name":"Core / shard 10","segments":"collaboration-shared-core,collaboration-issue-archive,collaboration-board-sorting,collaboration-board-move-recovery,collaboration-local-group-cancellation"},{"id":"core-12","name":"Core / shard 12","segments":"project-assignment-notification,collaboration-issue-comment-mention,collaboration-issue-assignment-activity,collaboration-issue-comment-attachments"},{"id":"core-15","name":"Core / shard 15","segments":"collaboration-issue-comment-notification"},{"id":"core-18","name":"Core / shard 18","segments":"collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-permissions"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "packages/collaboration/src/CollaborationApp.tsx"
@@ -712,6 +712,28 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/collaboration-issue-comment-mention.scenario.mjs"
 
+for assignment_activity_path in \
+  "wework/e2e/desktop/scenarios/collaboration-issue-assignment-activity.scenario.mjs" \
+  "wework/src/features/todo/IssueAssignmentEvent.tsx" \
+  "wework/src/features/todo/assignmentHistoryLabels.ts" \
+  "wework/src/features/todo/issueActivityTimeline.ts" \
+  "wework/src/features/todo/useIssueActivityHistory.ts"; do
+  assert_desktop_case "assignment activity regression is invoked by core CI: $assignment_activity_path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-12","name":"Core / shard 12","segments":"collaboration-issue-assignment-activity"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+    "$assignment_activity_path"
+done
+
+assert_desktop_case "local assignment adapter changes include activity persistence coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-7","name":"Core / shard 7","segments":"task-status-sync,task-board-association,task-board-bulk-actions"},{"id":"core-9","name":"Core / shard 9","segments":"collaboration-local-group-coordinate,collaboration-human-round-resume"},{"id":"core-12","name":"Core / shard 12","segments":"collaboration-issue-assignment-activity"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/api/local/localDelivery.ts"
 assert_desktop_case "Issue comment image scenario is invoked by its core CI shard" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
@@ -877,7 +899,7 @@ wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","co
 wework_desktop_macos_inspector_e2e=true'
 full_desktop_expected="${full_desktop_expected/\"segments\":\"resilience\"/\"segments\":\"resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-task-discovery,collaboration-app-queue-identity,collaboration-issue-archive,collaboration-board-sorting,collaboration-board-move-recovery,collaboration-local-group-cancellation\"}"
 full_desktop_expected="${full_desktop_expected/\"segments\":\"project-automation\"/\"segments\":\"project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,stand-in,stand-in-workspace,stand-in-controls,collaboration-local-group-coordinate,collaboration-human-round-resume\"}"
-full_desktop_expected="${full_desktop_expected/\"segments\":\"project-assignment-notification,priority-filter\"/\"segments\":\"project-assignment-notification,priority-filter,collaboration-issue-comment-mention,collaboration-issue-comment-attachments,stand-in-notifications\"}"
+full_desktop_expected="${full_desktop_expected/\"segments\":\"project-assignment-notification,priority-filter\"/\"segments\":\"project-assignment-notification,priority-filter,collaboration-issue-comment-mention,collaboration-issue-assignment-activity,collaboration-issue-comment-attachments,stand-in-notifications\"}"
 full_desktop_expected="${full_desktop_expected/\"segments\":\"local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome\"/\"segments\":\"local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification,collaboration-issue-mcp-comments,latest-conversation-history\"}"
 full_desktop_expected="${full_desktop_expected/temporary-chat,local-file-preview,conversation-state,reply-predictions/temporary-chat,local-file-preview,conversation-state,reply-predictions,reply-prediction-auth,model-settings,codex-native-catalog}"
 full_desktop_expected="${full_desktop_expected/\"segments\":\"codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery\"/\"segments\":\"codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,model-overload-recovery\"}"
@@ -1278,6 +1300,26 @@ wework_desktop_cloud_e2e_matrix={"include":[]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/modules/dispatch-issue-boundary.mjs"
+
+assert_desktop_case "workspace Agent setup selects local and cloud dispatch coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-9","name":"Core / shard 9","segments":"collaboration-local-agent-dispatch"},{"id":"core-18","name":"Core / shard 18","segments":"collaboration-remote-agent-dispatch"}]}
+wework_desktop_cloud_e2e=false
+wework_desktop_cloud_e2e_matrix={"include":[]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/modules/workspace-agent-setup.mjs"
+
+assert_desktop_case "local assignee recovery stays in the dispatch CI checkpoint" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-9","name":"Core / shard 9","segments":"collaboration-local-agent-dispatch"}]}
+wework_desktop_cloud_e2e=false
+wework_desktop_cloud_e2e_matrix={"include":[]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/modules/local-issue-assignee-recovery.mjs"
 
 assert_desktop_case "MCP result parsing selects both real permission scenarios" \
   'wework_desktop_e2e=true

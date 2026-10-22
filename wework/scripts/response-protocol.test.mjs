@@ -13,6 +13,10 @@ import {
   selectMcpToolRequest,
   selectProgrammaticExec,
 } from '../e2e/desktop/modules/response-protocol.mjs'
+import {
+  longCodeStreamingEvents,
+  textDeltaEvents,
+} from '../e2e/desktop/modules/streaming-text-fixture.mjs'
 
 function searchResult(...tools) {
   return {
@@ -34,6 +38,24 @@ function functionTool(name) {
 }
 
 describe('responses stream fixtures', () => {
+  test('keeps long-code reasoning and final text in the same order through completion', () => {
+    const stream = longCodeStreamingEvents('long-code')
+    const started = stream.start.filter(event => event.type === 'response.output_item.added')
+    expect(started.map(event => event.output_index)).toEqual([0, 1])
+    expect(started.map(event => event.item.type)).toEqual(['reasoning', 'message'])
+    expect(textDeltaEvents(stream.itemId, 'code', 0, stream.outputIndex)[0]).toMatchObject({
+      item_id: started[1].item.id,
+      output_index: 1,
+    })
+    const completed = stream.finish.at(-1).response.output
+    expect(completed.map(item => item.id)).toEqual(started.map(event => event.item.id))
+    expect(completed.map(item => item.status)).toEqual(['completed', 'completed'])
+    expect(completed[1].phase).toBe('final_answer')
+    expect(
+      stream.finish.filter(event => 'output_index' in event).map(event => event.output_index)
+    ).toEqual([1, 1])
+  })
+
   test('completes tool items in the final response for Codex turn history', () => {
     const events = [
       responseCreated('response-1'),

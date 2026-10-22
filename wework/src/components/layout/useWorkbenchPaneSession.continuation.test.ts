@@ -222,7 +222,7 @@ describe('runtime input response delivery', () => {
     })
 
     await act(async () => {
-      expect(await result.current.sendRequestUserInputResponse(inputResponse)).toBe(true)
+      expect(await result.current.sendRequestUserInputResponse(inputResponse)).toBe(false)
     })
 
     expect(getRuntimeConversationMessages(address)).toEqual([])
@@ -230,6 +230,69 @@ describe('runtime input response delivery', () => {
 })
 
 describe('pane continuation without composer submission', () => {
+  test.each([true, false])(
+    'retains a form while terminal history arrives before its response acknowledgment (accepted=%s)',
+    async accepted => {
+      const { result } = await renderSession()
+      const response = { requestId: 2, answers: { audience: { answers: ['owner'] } } }
+      const terminal: RuntimeConversationTurn = {
+        id: 'elicitation-turn',
+        status: 'done',
+        items: [{ id: 'final', type: 'assistant_text', content: 'Complete' }],
+      }
+      act(() => {
+        reconcileRuntimeConversationSnapshot(address, [
+          {
+            ...terminal,
+            status: 'streaming',
+            items: [
+              {
+                id: 'request-user-input-2',
+                type: 'block',
+                block: {
+                  id: 'request-user-input-2',
+                  type: 'tool',
+                  toolName: 'request_user_input',
+                  status: 'pending',
+                  createdAt: 1,
+                  renderPayload: {
+                    kind: 'request_user_input',
+                    requestId: 2,
+                    questions: [{ id: 'audience', question: 'Access audience?' }],
+                  },
+                },
+              },
+            ],
+          },
+        ])
+      })
+      mocks.send.mockImplementation(async () => {
+        replaceRuntimeConversationSnapshot(address, [terminal])
+        return accepted
+      })
+
+      await act(async () => {
+        expect(await result.current.sendRequestUserInputResponse(response)).toBe(accepted)
+      })
+
+      const form = getRuntimeConversationMessages(address)
+        .flatMap(message => message.blocks ?? [])
+        .find(block => block.id === 'request-user-input-2')
+      expect(form).toBeDefined()
+      expect(form?.renderPayload).toMatchObject({
+        requestId: 2,
+        ...(accepted ? { response } : {}),
+      })
+      if (!accepted) expect(form?.renderPayload).not.toHaveProperty('response')
+      act(() => replaceRuntimeConversationSnapshot(address, [terminal]))
+      expect(
+        getRuntimeConversationMessages(address)
+          .flatMap(message => message.blocks ?? [])
+          .some(block => block.id === 'request-user-input-2')
+      ).toBe(accepted)
+    }
+  )
+
   test('continues the bound task with its model and leaves an unsent draft intact', async () => {
     const { result } = await renderSession()
 

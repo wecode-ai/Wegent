@@ -13,13 +13,11 @@ import type { HTMLAttributes, OlHTMLAttributes, ReactNode } from 'react'
 import { Folder, Link2 } from 'lucide-react'
 import { Streamdown } from 'streamdown'
 import { ComposerLinkChip } from './ComposerLinkChip'
-import { unescapeMarkdownReference } from '../composer/composerReference'
 import 'streamdown/styles.css'
 import {
   classifyMarkdownLink,
-  decodeMarkdownFilePath,
   isHtmlFilePath,
-  localMarkdownImagePath,
+  transformMarkdownUrl,
   type MarkdownLinkTarget,
 } from './assistantMarkdownLinks'
 import { AssistantMarkdownImage } from './AssistantMarkdownImage'
@@ -45,13 +43,7 @@ const ASSISTANT_MARKDOWN_LINK_CLASS = [
 const CODEX_PLAN_TAG_PATTERN = /<\/?\s*proposed_plan\s*>/gi
 const CONTENT_REFERENCE_CITATION_PATTERN = /\uE200cite\uE202[\s\S]*?\uE201/g
 const TRAILING_CONTENT_REFERENCE_CITATION_PATTERN = /\uE200cite(?:\uE202[\s\S]*)?$/
-const WEWORK_MARKDOWN_FILE_LINK_HOST = 'wework.local'
-const WEWORK_MARKDOWN_FILE_LINK_PATH = '/markdown-file'
-const WEWORK_MARKDOWN_FILE_LINK_PREFIX = `https://${WEWORK_MARKDOWN_FILE_LINK_HOST}${WEWORK_MARKDOWN_FILE_LINK_PATH}?path=`
-const WEWORK_MARKDOWN_IMAGE_PATH = '/markdown-image'
-const WEWORK_MARKDOWN_IMAGE_PREFIX = `https://${WEWORK_MARKDOWN_FILE_LINK_HOST}${WEWORK_MARKDOWN_IMAGE_PATH}?path=`
-const MARKDOWN_LINK_PATTERN = /(!?)\[((?:\\[^\r\n]|[^\]\\\r\n])+)\]\(((?:\\[^\r\n]|[^)\\\r\n])+)\)/g
-const tableMarkdownRehypePlugins = createTableMarkdownRehypePlugins(restoreLocalMarkdownLinks)
+const tableMarkdownRehypePlugins = createTableMarkdownRehypePlugins()
 const DIAGRAM_LANGUAGES = new Set(['mermaid', 'mmd', 'plantuml', 'puml'])
 const STREAMING_DIAGRAM_LANGUAGES = new Map([
   ['weworkstreamingmermaid', 'mermaid'],
@@ -236,15 +228,8 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
           {children}
         </td>
       ),
-      a: function MarkdownAnchor({
-        href: rawHref,
-        children,
-      }: {
-        href?: string
-        children?: ReactNode
-      }) {
+      a: function MarkdownAnchor({ href, children }: { href?: string; children?: ReactNode }) {
         const renderLink = useContext(MarkdownCustomLinkContext)
-        const href = decodeLocalMarkdownHref(rawHref)
         const text = reactNodeToText(children)
         const customLink = href ? renderLink?.(href, text) : undefined
         if (customLink !== undefined) return customLink
@@ -254,7 +239,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
           text &&
           text !== href &&
           getRecognizedLink(href)
-        if (isComposerLink && !href?.startsWith(WEWORK_MARKDOWN_FILE_LINK_PREFIX)) {
+        if (isComposerLink) {
           return <ComposerLinkChip payload={{ url: href, label: text }} />
         }
         return (
@@ -264,10 +249,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         )
       },
       img: ({ src, alt }: { src?: string | Blob; alt?: string }) => (
-        <AssistantMarkdownImage
-          src={typeof src === 'string' ? decodeLocalMarkdownImageSrc(src.trim()) : undefined}
-          alt={alt}
-        />
+        <AssistantMarkdownImage src={typeof src === 'string' ? src.trim() : undefined} alt={alt} />
       ),
     }),
     [headingClasses, openFile, variant, canOpenFile]
@@ -297,7 +279,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
                   controls={false}
                   linkSafety={{ enabled: false }}
                   lineNumbers={false}
-                  urlTransform={(url: string) => url}
+                  urlTransform={transformMarkdownUrl}
                   components={components}
                   rehypePlugins={tableMarkdownRehypePlugins}
                 >
@@ -316,12 +298,12 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
                 controls={false}
                 linkSafety={{ enabled: false }}
                 lineNumbers={false}
-                urlTransform={(url: string) => url}
+                urlTransform={transformMarkdownUrl}
                 components={components}
                 rehypePlugins={tableMarkdownRehypePlugins}
               >
                 {variant === 'user'
-                  ? encodeLocalMarkdownLinks(part.content)
+                  ? part.content
                   : prepareAssistantMarkdownContent(part.content, isStreaming)}
               </Streamdown>
             </MarkdownStreamingContext.Provider>
@@ -407,9 +389,7 @@ function areAssistantMarkdownPropsEqual(
 
 function prepareAssistantMarkdownContent(content: string, isStreaming = false): string {
   const normalizedContent = content.replace(CODEX_PLAN_TAG_PATTERN, '')
-  return encodeLocalMarkdownLinks(
-    isStreaming ? markUnclosedDiagramFence(normalizedContent) : normalizedContent
-  )
+  return isStreaming ? markUnclosedDiagramFence(normalizedContent) : normalizedContent
 }
 
 function markUnclosedDiagramFence(content: string): string {
@@ -459,97 +439,6 @@ export function stripUnsupportedContentReferenceCitations(content: string): stri
   return content
     .replace(CONTENT_REFERENCE_CITATION_PATTERN, '')
     .replace(TRAILING_CONTENT_REFERENCE_CITATION_PATTERN, '')
-}
-
-function splitMarkdownImageDestination(rawHref: string): {
-  destination: string
-  titleSuffix: string
-} {
-  const href = rawHref.trim()
-  if (href.startsWith('<')) {
-    const closingBracket = href.indexOf('>')
-    if (closingBracket > 0) {
-      return {
-        destination: href.slice(1, closingBracket),
-        titleSuffix: href.slice(closingBracket + 1),
-      }
-    }
-  }
-
-  const titledDestination = href.match(/^(.*?)(\s+(?:"[^"]*"|'[^']*'))$/)
-  return titledDestination
-    ? {
-        destination: titledDestination[1].trim(),
-        titleSuffix: titledDestination[2],
-      }
-    : { destination: href, titleSuffix: '' }
-}
-
-function encodeLocalMarkdownLinks(content: string): string {
-  return content.replace(MARKDOWN_LINK_PATTERN, (match, imageMarker, label, rawHref) => {
-    const href = unescapeMarkdownReference(String(rawHref).trim())
-    if (imageMarker) {
-      const { destination, titleSuffix } = splitMarkdownImageDestination(href)
-      const localPath = localMarkdownImagePath(destination)
-      return localPath
-        ? `![${label}](${WEWORK_MARKDOWN_IMAGE_PREFIX}${encodeURIComponent(localPath)}${titleSuffix})`
-        : match
-    }
-    const target = classifyMarkdownLink(href)
-    const internal =
-      /^(?:skill|plugin|app|cloud|wework-(?:conversation|issue|member|agent|group)|wegent-sites-project|wegent|folder|file):\/\//.test(
-        href
-      )
-    if (target.kind !== 'file' && !internal) return match
-    return `[${label}](${WEWORK_MARKDOWN_FILE_LINK_PREFIX}${encodeURIComponent(
-      internal ? href : decodeMarkdownFilePath(href)
-    )})`
-  })
-}
-
-function restoreLocalMarkdownLinks(content: string): string {
-  return content.replace(MARKDOWN_LINK_PATTERN, (match, imageMarker, label, rawHref) => {
-    const { destination, titleSuffix } = splitMarkdownImageDestination(String(rawHref))
-    const decoded = imageMarker
-      ? decodeLocalMarkdownImageSrc(destination)
-      : decodeLocalMarkdownHref(destination)
-    if (!decoded || decoded === destination) return match
-    const href = /\s/.test(decoded) ? `<${decoded}>` : decoded
-    return `${imageMarker}[${label}](${href}${titleSuffix})`
-  })
-}
-
-function decodeLocalMarkdownImageSrc(src: string): string {
-  try {
-    const url = new URL(src)
-    if (
-      url.protocol === 'https:' &&
-      url.hostname === WEWORK_MARKDOWN_FILE_LINK_HOST &&
-      url.pathname === WEWORK_MARKDOWN_IMAGE_PATH
-    ) {
-      return url.searchParams.get('path') ?? src
-    }
-  } catch {
-    return src
-  }
-  return src
-}
-
-function decodeLocalMarkdownHref(href?: string): string | undefined {
-  if (!href) return href
-  try {
-    const url = new URL(href)
-    if (
-      url.protocol === 'https:' &&
-      url.hostname === WEWORK_MARKDOWN_FILE_LINK_HOST &&
-      url.pathname === WEWORK_MARKDOWN_FILE_LINK_PATH
-    ) {
-      return url.searchParams.get('path') ?? href
-    }
-  } catch {
-    return href
-  }
-  return href
 }
 
 function reactNodeToText(node: ReactNode): string {
@@ -602,7 +491,7 @@ function AssistantMarkdownLink({
   children?: ReactNode
 }) {
   const { openExternalUrl, navigateTo, openHtmlFile } = useMarkdownServices()
-  const target = classifyMarkdownLink(decodeLocalMarkdownHref(href))
+  const target = classifyMarkdownLink(href)
   const icon =
     target.kind === 'file' ? (
       target.isDirectory ? (

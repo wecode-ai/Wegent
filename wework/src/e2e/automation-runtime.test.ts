@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
+import { expandCompletedProcessing } from '../../e2e/desktop/modules/streaming-text-fixture.mjs'
+import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import {
   fillDesktopControlElement,
   isWeworkAutomationEnabled,
@@ -12,6 +14,102 @@ afterEach(() => {
 })
 
 describe('Electron desktop E2E automation', () => {
+  test.each([false, true])(
+    'expands processing without a cross-command read/click race (initially expanded: %s)',
+    async initiallyExpanded => {
+      const root = document.createElement('div')
+      root.dataset.testid = 'desktop-workbench-main'
+      root.dataset.activeWorkbenchPane = 'true'
+      const final = document.createElement('button')
+      final.dataset.testid = 'final-processing-toggle'
+      final.setAttribute('aria-expanded', String(initiallyExpanded))
+      final.disabled = true
+      const summary = document.createElement('button')
+      summary.dataset.testid = 'processing-summary-toggle'
+      summary.setAttribute('aria-expanded', 'false')
+      const finalClicked = vi.fn(() => {
+        final.setAttribute('aria-expanded', 'true')
+        root.append(summary)
+      })
+      const summaryClicked = vi.fn(() => summary.setAttribute('aria-expanded', 'true'))
+      final.onclick = finalClicked
+      summary.onclick = summaryClicked
+      root.append(final)
+      if (initiallyExpanded) root.append(summary)
+      document.body.append(root)
+
+      const queued: DesktopControlCommand[] = []
+      const pending = new Map<
+        string,
+        {
+          command: DesktopControlCommand
+          resolve: (value: string) => void
+          reject: (error: Error) => void
+        }
+      >()
+      let deliver: ((response: Response) => void) | undefined
+      let sequence = 0
+      vi.stubGlobal('fetch', (url: string, options?: RequestInit) => {
+        if (url.includes('/commands?')) {
+          const next = queued.shift()
+          if (next) return Promise.resolve(new Response(JSON.stringify(next)))
+          return new Promise<Response>(resolve => {
+            deliver = resolve
+          })
+        }
+        if (url.endsWith('/results')) {
+          const result = JSON.parse(String(options?.body)) as {
+            id: string
+            ok: boolean
+            value?: string
+            error?: string
+          }
+          const operation = pending.get(result.id)!
+          pending.delete(result.id)
+          // Reproduce native recovery between the attribute response and the next click.
+          if (
+            operation.command.action === 'getAttribute' &&
+            operation.command.selector.includes('final-processing-toggle')
+          ) {
+            final.remove()
+          }
+          if (!result.ok) root.append(final)
+          if (result.ok) operation.resolve(result.value ?? '')
+          else operation.reject(new Error(result.error))
+        }
+        return Promise.resolve(new Response('{}'))
+      })
+      void runDesktopControlClient('http://127.0.0.1:43111', 'main')
+      const control = {
+        command: (action: string, selector: string, options: Partial<DesktopControlCommand> = {}) =>
+          new Promise<string>((resolve, reject) => {
+            const command = { id: String(++sequence), action, selector, ...options }
+            pending.set(command.id, { command, resolve, reject })
+            if (deliver) {
+              const send = deliver
+              deliver = undefined
+              send(new Response(JSON.stringify(command)))
+            } else queued.push(command)
+          }),
+      }
+      const enableFinal = window.setTimeout(() => {
+        final.disabled = false
+      }, 50)
+      try {
+        await expandCompletedProcessing(control, 1000)
+        expect(final).toBeInTheDocument()
+        expect(summary).toBeInTheDocument()
+        expect(final).toHaveAttribute('aria-expanded', 'true')
+        expect(summary).toHaveAttribute('aria-expanded', 'true')
+        expect(finalClicked).toHaveBeenCalledTimes(initiallyExpanded ? 0 : 1)
+        expect(summaryClicked).toHaveBeenCalledOnce()
+      } finally {
+        window.clearTimeout(enableFinal)
+        root.remove()
+      }
+    }
+  )
+
   test('stops frame sampling explicitly after the observed action completes', async () => {
     const root = document.createElement('div')
     root.dataset.testid = 'metrics-sampling-root'

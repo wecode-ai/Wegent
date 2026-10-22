@@ -171,11 +171,12 @@ export function responseCreated(id) {
   return { type: 'response.created', response: { id } }
 }
 
-export function responseCompleted(id) {
+export function responseCompleted(id, output) {
   return {
     type: 'response.completed',
     response: {
       id,
+      ...(output ? { output } : {}),
       usage: {
         input_tokens: 0,
         input_tokens_details: null,
@@ -277,16 +278,22 @@ export function reasoningEvents(itemId, text, deltaChunkSize = text.length) {
   ]
 }
 
-export function streamingEvents(id, completionText = COMPLETION_TEXT, phase = 'final_answer') {
+export function streamingEvents(
+  id,
+  completionText = COMPLETION_TEXT,
+  phase = 'final_answer',
+  outputIndex = 0
+) {
   const itemId = `${id}-message`
   const phaseFields = phase ? { phase } : {}
   return {
     itemId,
+    outputIndex,
     start: [
       responseCreated(id),
       {
         type: 'response.output_item.added',
-        output_index: 0,
+        output_index: outputIndex,
         item: {
           id: itemId,
           type: 'message',
@@ -299,7 +306,7 @@ export function streamingEvents(id, completionText = COMPLETION_TEXT, phase = 'f
       {
         type: 'response.content_part.added',
         item_id: itemId,
-        output_index: 0,
+        output_index: outputIndex,
         content_index: 0,
         part: { type: 'output_text', text: '', annotations: [] },
       },
@@ -308,13 +315,13 @@ export function streamingEvents(id, completionText = COMPLETION_TEXT, phase = 'f
       {
         type: 'response.output_text.done',
         item_id: itemId,
-        output_index: 0,
+        output_index: outputIndex,
         content_index: 0,
         text: completionText,
       },
       {
         type: 'response.output_item.done',
-        output_index: 0,
+        output_index: outputIndex,
         item: {
           id: itemId,
           type: 'message',
@@ -326,6 +333,17 @@ export function streamingEvents(id, completionText = COMPLETION_TEXT, phase = 'f
       },
       responseCompleted(id),
     ],
+  }
+}
+
+export function longCodeStreamingEvents(id) {
+  const reasoning = reasoningEvents('wework-long-code-reasoning', LONG_CODE_REASONING, 4)
+  const stream = streamingEvents(id, LONG_CODE_COMPLETION, 'final_answer', 1)
+  const output = [reasoning.at(-1).item, stream.finish.at(-2).item]
+  return {
+    ...stream,
+    start: [...stream.start.slice(0, 1), ...reasoning, ...stream.start.slice(1)],
+    finish: [...stream.finish.slice(0, -1), responseCompleted(id, output)],
   }
 }
 
@@ -430,12 +448,12 @@ export function reclassifiedCommentaryToolEvents(id, tool) {
   ]
 }
 
-export function textDeltaEvents(itemId, text, initialOffset = 0) {
+export function textDeltaEvents(itemId, text, initialOffset = 0, outputIndex = 0) {
   return [
     {
       type: 'response.output_text.delta',
       item_id: itemId,
-      output_index: 0,
+      output_index: outputIndex,
       content_index: 0,
       delta: text,
       offset: initialOffset,
@@ -699,17 +717,11 @@ export function processingDurationSeconds(text) {
 
 export async function expandCompletedProcessing(control, timeoutMs) {
   const finalToggle = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="final-processing-toggle"]`
-  await control.command('waitFor', finalToggle, { timeoutMs })
-  if ((await control.command('getAttribute', finalToggle, { value: 'aria-expanded' })) !== 'true') {
-    await control.command('click', finalToggle)
-  }
+  await control.command('setExpanded', finalToggle, { value: 'true', timeoutMs })
+  await control.command('waitFor', `${finalToggle}[aria-expanded="true"]`, { timeoutMs })
   const summaryToggle = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="processing-summary-toggle"]`
-  await control.command('waitFor', summaryToggle, { timeoutMs })
-  if (
-    (await control.command('getAttribute', summaryToggle, { value: 'aria-expanded' })) !== 'true'
-  ) {
-    await control.command('click', summaryToggle)
-  }
+  await control.command('setExpanded', summaryToggle, { value: 'true', timeoutMs })
+  await control.command('waitFor', `${summaryToggle}[aria-expanded="true"]`, { timeoutMs })
 }
 
 export async function completedToolDuration(control, timeoutMs) {
