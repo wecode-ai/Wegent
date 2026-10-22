@@ -45,6 +45,7 @@ ATTACHMENT_URL_PATTERN = r"/api/attachments/(\d+)/download"
 
 # Mention display names are stable for the lifetime of the process.
 _DINGTALK_MENTION_NAME_CACHE: Dict[str, str] = {}
+DINGTALK_MENTION_RESOLUTION_TIMEOUT_SECONDS = 5.0
 
 
 async def _lookup_employee_email(staff_id: str) -> str:
@@ -511,18 +512,6 @@ class SubscriptionNotificationDispatcher:
                 client_id=client_id,
                 client_secret=client_secret,
             )
-            resolved_mentions = group_mention_user_ids
-            if send_group and group_conversation_id and group_mention_user_ids:
-                try:
-                    resolved_mentions = await _resolve_dingtalk_mention_user_ids(
-                        db, group_mention_user_ids
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "[SubscriptionNotificationDispatcher] Mention name "
-                        "resolution failed, using raw IDs: %s",
-                        exc,
-                    )
 
             # Check if AI card template is configured
             card_template_id = config.get("card_template_id")
@@ -564,6 +553,21 @@ class SubscriptionNotificationDispatcher:
 
                 if send_group and group_conversation_id:
                     group_open_space_id = f"dtv1.card//IM_GROUP.{group_conversation_id}"
+                    group_mentions = group_mention_user_ids
+                    if group_mention_user_ids:
+                        try:
+                            group_mentions = await asyncio.wait_for(
+                                _resolve_dingtalk_mention_user_ids(
+                                    db, group_mention_user_ids
+                                ),
+                                timeout=DINGTALK_MENTION_RESOLUTION_TIMEOUT_SECONDS,
+                            )
+                        except Exception as exc:
+                            logger.warning(
+                                "[SubscriptionNotificationDispatcher] Mention name "
+                                "resolution failed, using raw IDs: %s",
+                                exc,
+                            )
                     logger.info(
                         f"[_send_dingtalk_notification] Sending group AI card to "
                         f"group_conversation_id={group_conversation_id}, open_space_id={group_open_space_id}"
@@ -576,7 +580,7 @@ class SubscriptionNotificationDispatcher:
                         status="",
                         enable_streaming=False,
                         open_space_id=group_open_space_id,
-                        mention_user_ids=resolved_mentions,
+                        mention_user_ids=group_mentions,
                     )
                     logger.info(
                         f"[_send_dingtalk_notification] Group AI card result: {group_result}"

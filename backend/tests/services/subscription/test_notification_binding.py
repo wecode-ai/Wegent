@@ -384,3 +384,46 @@ def test_update_developer_settings_preserves_omitted_mentions(test_db, test_user
     )
 
     assert updated.channel_binding_configs[0].group_mention_user_ids == ["user-1"]
+
+
+def test_update_developer_settings_clears_mentions_when_group_changes(
+    test_db, test_user
+):
+    """Changing the bound group must not inherit its predecessor's mentions."""
+    subscription = _create_subscription_kind(
+        test_db, owner_user_id=test_user.id, subscription_id=1008
+    )
+    subscription_notification_service.update_developer_settings(
+        test_db,
+        subscription_id=subscription.id,
+        user_id=test_user.id,
+        notification_level=NotificationLevel.NOTIFY,
+        notification_channel_ids=[123],
+        channel_binding_configs=[
+            {
+                "channel_id": 123,
+                "bind_private": True,
+                "bind_group": True,
+                "group_conversation_id": "conversation-123",
+                "group_mention_user_ids": ["user-1"],
+            }
+        ],
+    )
+
+    updated = subscription_notification_service.update_developer_settings(
+        test_db,
+        subscription_id=subscription.id,
+        user_id=test_user.id,
+        notification_level=NotificationLevel.NOTIFY,
+        notification_channel_ids=[123],
+        channel_binding_configs=[
+            NotificationChannelBindingConfig(
+                channel_id=123,
+                bind_private=True,
+                bind_group=True,
+                group_conversation_id="conversation-456",
+            )
+        ],
+    )
+
+    assert updated.channel_binding_configs[0].group_mention_user_ids == []
