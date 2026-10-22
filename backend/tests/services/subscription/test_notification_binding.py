@@ -269,12 +269,25 @@ def test_update_developer_settings_normalizes_group_mentions(test_db, test_user)
                 "bind_private": True,
                 "bind_group": True,
                 "group_conversation_id": "conversation-123",
-                "group_mention_user_ids": [" user-1 ", "user-1", "", None, 42],
+                "group_mention_user_ids": [
+                    " user-1 ",
+                    "user-1",
+                    " user-2，user-3 ",
+                    "user-4, user-2",
+                    "",
+                    None,
+                    42,
+                ],
             }
         ],
     )
 
-    assert updated.channel_binding_configs[0].group_mention_user_ids == ["user-1"]
+    assert updated.channel_binding_configs[0].group_mention_user_ids == [
+        "user-1",
+        "user-2",
+        "user-3",
+        "user-4",
+    ]
 
 
 def test_update_developer_settings_clears_mentions_without_group(test_db, test_user):

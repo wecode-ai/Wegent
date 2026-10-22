@@ -22,16 +22,21 @@ SUBSCRIPTION_MAX_TIMEOUT_SECONDS = 24 * 60 * 60
 
 
 def normalize_dingtalk_mention_user_ids(values: Iterable[Any]) -> List[str]:
-    """Return unique, trimmed DingTalk user IDs in their original order."""
+    """Return unique, trimmed DingTalk user IDs in their original order.
+
+    Accepts both English and Chinese comma separators so API clients can submit
+    a single comma-separated string inside the list.
+    """
     normalized: List[str] = []
     seen: set[str] = set()
     for value in values:
         if not isinstance(value, str):
             continue
-        user_id = value.strip()
-        if user_id and user_id not in seen:
-            seen.add(user_id)
-            normalized.append(user_id)
+        for item in value.replace("，", ",").split(","):
+            user_id = item.strip()
+            if user_id and user_id not in seen:
+                seen.add(user_id)
+                normalized.append(user_id)
     return normalized
 
 

@@ -29,7 +29,7 @@ const parseCommaSeparatedUserIds = (value: string): string[] =>
   Array.from(
     new Set(
       value
-        .split(',')
+        .split(/[,，]/)
         .map(item => item.trim())
         .filter(Boolean)
     )
@@ -257,6 +257,12 @@ export function ChannelBindingPanel({
               <Label htmlFor={`group-mention-users-${channelId}`}>
                 {t('notification_settings.group_mention_users', '@ 指定用户')}
               </Label>
+              <p className="text-xs text-text-muted">
+                {t(
+                  'notification_settings.group_mention_users_hint',
+                  '仅对群聊通知生效；支持中文逗号和英文逗号分隔多个 userId'
+                )}
+              </p>
               <Input
                 id={`group-mention-users-${channelId}`}
                 type="text"
@@ -274,15 +280,9 @@ export function ChannelBindingPanel({
                 }}
                 placeholder={t(
                   'notification_settings.group_mention_users_placeholder',
-                  '输入钉钉 userId，多个用英文逗号分隔'
+                  '输入钉钉 userId，多个用中文或英文逗号分隔'
                 )}
               />
-              <p className="text-xs text-text-muted">
-                {t(
-                  'notification_settings.group_mention_users_hint',
-                  '仅对群聊通知生效；使用英文逗号分隔多个 userId'
-                )}
-              </p>
             </div>
           )}
         </div>
