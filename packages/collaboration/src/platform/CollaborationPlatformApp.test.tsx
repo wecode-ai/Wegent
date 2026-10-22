@@ -2672,6 +2672,11 @@ describe("CollaborationPlatformApp real component flow", () => {
 
     expect(byTestId("collaboration-issue-home")).toBeTruthy();
     expect(
+      byTestId("collaboration-issue-home").getAttribute(
+        "data-execution-environment-readiness",
+      ),
+    ).toBe("unassigned");
+    expect(
       container.querySelector(
         '[data-testid="issue-execution-environment-notice"]',
       ),

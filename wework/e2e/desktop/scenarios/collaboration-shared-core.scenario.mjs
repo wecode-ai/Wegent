@@ -360,6 +360,12 @@ export function createDesktopScenario({
         await control.command('waitFor', scoped('[data-testid="collaboration-issue-workspace"]'), {
           timeoutMs: uiTimeoutMs,
         })
+        await control.command(
+          'waitFor',
+          scoped(
+            '[data-testid="collaboration-issue-home"][data-execution-environment-readiness="unassigned"]'
+          )
+        )
         assert.equal(
           Number(
             await control.command(
