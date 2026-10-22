@@ -1,3 +1,4 @@
+import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
 import { useStandInProjects } from './useStandInProjects'
 import { StandInIcon } from './StandInIcon'
 import { bindProjectStandInApi } from '@/api/standIn'
@@ -1213,7 +1214,14 @@ export function WeworkSharedProject({
                   display={display}
                   archiveDisabled={!onDelete}
                   progressDisplay={focused ? 'focused' : 'compact'}
-                  issueChangeRequestMonitor={issueChangeRequestMonitor}
+                  renderBadges={badges => (
+                    <IssueChangeRequestBadges
+                      badges={badges}
+                      monitor={issueChangeRequestMonitor}
+                      compact
+                      testId={`cloud-todo-card-badges-${issue.id}`}
+                    />
+                  )}
                 />
               </div>
             )

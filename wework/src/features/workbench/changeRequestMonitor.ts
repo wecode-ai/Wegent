@@ -90,6 +90,7 @@ export class ChangeRequestMonitor {
     { target: TaskChangeRequestTarget; references: number }
   >()
   private readonly listeners = new Set<() => void>()
+  private revision = 0
   private refreshPromise: Promise<void> | null = null
   private refreshTimer: number | null = null
   private refreshScheduled = false
@@ -123,6 +124,10 @@ export class ChangeRequestMonitor {
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
+  }
+
+  getRevision(): number {
+    return this.revision
   }
 
   getSnapshot(target: TaskChangeRequestTarget): TaskChangeRequestSnapshot | null {
@@ -159,6 +164,7 @@ export class ChangeRequestMonitor {
           changed = true
         }
         if (!changed) return
+        this.revision += 1
         writeCache(this.snapshots)
         this.listeners.forEach(listener => listener())
       })
@@ -212,8 +218,7 @@ export function getChangeRequestMonitor(api: DeviceCommandApi): ChangeRequestMon
 
 export function useTaskChangeRequest(
   monitor: ChangeRequestMonitor | null,
-  target: TaskChangeRequestTarget | null,
-  enabled = true
+  target: TaskChangeRequestTarget | null
 ): TaskChangeRequestSnapshot | null {
   const deviceId = target?.deviceId ?? null
   const taskId = target?.taskId ?? null
@@ -224,7 +229,6 @@ export function useTaskChangeRequest(
 
   useEffect(() => {
     if (
-      !enabled ||
       !monitor ||
       !deviceId ||
       !taskId ||
@@ -240,7 +244,7 @@ export function useTaskChangeRequest(
       branch: branch ?? '',
       ...(changeRequestUrl ? { changeRequestUrl } : {}),
     })
-  }, [branch, changeRequestUrl, deviceId, enabled, monitor, remoteUrl, taskId, workspacePath])
+  }, [branch, changeRequestUrl, deviceId, monitor, remoteUrl, taskId, workspacePath])
 
   return useSyncExternalStore(
     listener => monitor?.subscribe(listener) ?? (() => undefined),

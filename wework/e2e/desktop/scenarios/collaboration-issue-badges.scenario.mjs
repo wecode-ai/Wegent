@@ -101,11 +101,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         text: 'Also review',
       })
       assert.equal(
-        Number(
-          await control.command('getElementCount', scoped('[data-testid^="issue-pr-status-"]'))
+        await control.command(
+          'getAttribute',
+          scoped(`[data-testid="issue-badges"] [data-testid="issue-badge-${PR_URL}"]`),
+          { value: 'title' }
         ),
-        0,
-        'Disabled lookup still mounted a PR monitor'
+        '#4015',
+        'Disabled lookup must retain the saved badge without live enrichment'
       )
     },
   }

@@ -1201,7 +1201,8 @@ classify_wework_path() {
       ;;
 
     wework/e2e/desktop/scenarios/collaboration-issue-badges.scenario.mjs | \
-      wework/src/features/todo/IssueBadges*)
+      wework/src/features/todo/IssueBadges* | \
+      wework/src/features/change-requests/*)
       select_target "core:collaboration-issue-badges"
       return
       ;;

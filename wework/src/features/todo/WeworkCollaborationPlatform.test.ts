@@ -2230,7 +2230,7 @@ describe('Wework collaboration workspace API', () => {
       )
     )
     await waitFor(() =>
-      expect(screen.getByTestId('issue-pr-status-github-42')).toHaveAccessibleName(/已合并|Merged/)
+      expect(screen.getByTestId('issue-badge-pr-42')).toHaveAccessibleName(/已合并|Merged/)
     )
     expect(get).not.toHaveBeenCalled()
     expect(list).not.toHaveBeenCalled()

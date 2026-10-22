@@ -1,7 +1,8 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
 import type { CloudLoopItem } from '@/api/deliveries'
+import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
 import { ChangeRequestMonitor } from '@/features/workbench/changeRequestMonitor'
 import { CloudTodoBoardCard } from './CloudTodoBoardCard'
 
@@ -48,15 +49,17 @@ function observeVisibility() {
 
 describe('Issue board metadata badges', () => {
   it('does not discover links in historical content while rendering a card', () => {
-    observeVisibility()
     const executeCommand = vi.fn()
+    const monitor = new ChangeRequestMonitor({ executeCommand })
     render(
       <CloudTodoBoardCard
         item={{ ...item, badges: undefined, description: url }}
         onClick={vi.fn()}
         onArchive={vi.fn()}
         display={display}
-        issueChangeRequestMonitor={new ChangeRequestMonitor({ executeCommand })}
+        renderBadges={badges => (
+          <IssueChangeRequestBadges badges={badges} monitor={monitor} compact />
+        )}
       />
     )
     expect(screen.queryByTestId('cloud-todo-card-badges-issue-1')).not.toBeInTheDocument()
@@ -68,6 +71,7 @@ describe('Issue board metadata badges', () => {
     const executeCommand = vi
       .fn()
       .mockResolvedValue({ success: true, stdout: { number: 42, url, state: 'MERGED' } })
+    const monitor = new ChangeRequestMonitor({ executeCommand })
     const onClick = vi.fn()
     render(
       <CloudTodoBoardCard
@@ -75,18 +79,18 @@ describe('Issue board metadata badges', () => {
         onClick={onClick}
         onArchive={vi.fn()}
         display={display}
-        issueChangeRequestMonitor={new ChangeRequestMonitor({ executeCommand })}
+        renderBadges={badges => (
+          <IssueChangeRequestBadges badges={badges} monitor={monitor} compact />
+        )}
       />
     )
     expect(screen.getByText('#42')).toBeVisible()
     expect(executeCommand).not.toHaveBeenCalled()
     setVisible(true)
     await waitFor(() =>
-      expect(screen.getByTestId('issue-pr-status-github-42')).toHaveAccessibleName(/已合并|Merged/)
+      expect(screen.getByTestId('issue-badge-' + url)).toHaveAccessibleName(/已合并|Merged/)
     )
     expect(executeCommand).toHaveBeenCalledTimes(1)
-    fireEvent.click(screen.getByTestId('issue-pr-status-github-42'))
-    expect(onClick).not.toHaveBeenCalled()
     setVisible(false)
     expect(screen.getByText('#42')).toBeVisible()
   })
@@ -94,13 +98,16 @@ describe('Issue board metadata badges', () => {
   it('does not display or query badges without detail permission', () => {
     observeVisibility()
     const executeCommand = vi.fn()
+    const monitor = new ChangeRequestMonitor({ executeCommand })
     render(
       <CloudTodoBoardCard
         item={{ ...item, can_view_detail: false }}
         onClick={vi.fn()}
         onArchive={vi.fn()}
         display={display}
-        issueChangeRequestMonitor={new ChangeRequestMonitor({ executeCommand })}
+        renderBadges={badges => (
+          <IssueChangeRequestBadges badges={badges} monitor={monitor} compact />
+        )}
       />
     )
     expect(screen.queryByText('#42')).not.toBeInTheDocument()

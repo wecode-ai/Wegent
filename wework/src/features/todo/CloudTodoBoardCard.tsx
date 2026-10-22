@@ -6,7 +6,15 @@ import {
   createIssueBoardCardLabels,
   createCollaborationTranslator,
 } from '@wegent/collaboration'
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react'
+import type { CollaborationIssueBadge } from '@wegent/collaboration'
 import type { CloudLoopItem } from '@/api/deliveries'
 import { canEditProjectSpaceIssue } from './projectSpaceSelection'
 import type { TaskChangeRequestSnapshot, TaskChangeRequestTarget } from '@/api/changeRequests'
@@ -143,7 +151,7 @@ interface CloudTodoBoardCardProps {
   }
   progressDisplay?: BoardCardProgressDisplay
   changeRequestMonitor?: ChangeRequestMonitor | null
-  issueChangeRequestMonitor?: ChangeRequestMonitor | null
+  renderBadges?: (badges: CollaborationIssueBadge[]) => ReactNode
   onContinueChangeRequestRepair?: (
     binding: CloudTodoBoardTaskBinding,
     snapshot: TaskChangeRequestSnapshot
@@ -173,13 +181,10 @@ export function CloudTodoBoardCard({
   cardAction,
   progressDisplay = 'compact',
   changeRequestMonitor = null,
-  issueChangeRequestMonitor = changeRequestMonitor,
+  renderBadges,
   onContinueChangeRequestRepair,
 }: CloudTodoBoardCardProps) {
   const t = useBoardTranslate()
-  const [prVisible, setPrVisible] = useState(false)
-  const prEnabled =
-    Boolean(issueChangeRequestMonitor) && prVisible && item.can_view_detail !== false
   const editable = canEditProjectSpaceIssue(item)
   const hasActiveTask = isLoopItemExecutionActive(item)
   const taskBindingsByConversation = new Map<string, CloudTodoBoardTaskBinding>()
@@ -254,18 +259,17 @@ export function CloudTodoBoardCard({
       dragEnabled={editable && !dragDisabled}
       cardClassName="group/cloud-todo-card"
       onOpen={onClick}
-      onVisibilityChange={
-        issueChangeRequestMonitor && item.can_view_detail !== false ? setPrVisible : undefined
-      }
       summary={
         item.can_view_detail !== false && item.badges?.length ? (
-          <IssueBadges
-            badges={item.badges}
-            monitor={issueChangeRequestMonitor}
-            compact
-            active={prEnabled}
-            testId={`cloud-todo-card-badges-${item.id}`}
-          />
+          renderBadges ? (
+            renderBadges(item.badges)
+          ) : (
+            <IssueBadges
+              badges={item.badges}
+              compact
+              testId={`cloud-todo-card-badges-${item.id}`}
+            />
+          )
         ) : null
       }
       childrenAction={

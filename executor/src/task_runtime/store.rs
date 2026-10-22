@@ -719,6 +719,7 @@ impl LocalTaskStore {
             })
             .unwrap_or_default();
         let previous_parent_id = current.parent_id.clone();
+        let content_updated = input.title.is_some() || input.description.is_some();
         let title = input.title.or(current.title);
         let description = input.description.unwrap_or(current.description);
         let mut status = input.status.or_else(|| current.status.clone());
@@ -739,11 +740,13 @@ impl LocalTaskStore {
                 None
             };
         let mut metadata = current.metadata;
-        issue_badges::update_source(
-            &mut metadata,
-            "issue",
-            &format!("{}\n{}", title.as_deref().unwrap_or_default(), description),
-        );
+        if content_updated {
+            issue_badges::update_source(
+                &mut metadata,
+                "issue",
+                &format!("{}\n{}", title.as_deref().unwrap_or_default(), description),
+            );
+        }
         if let Some(group_id) = &input.assignee_group_id {
             metadata["collaboration_group"] = if group_id.is_some() {
                 selected_collaboration_group

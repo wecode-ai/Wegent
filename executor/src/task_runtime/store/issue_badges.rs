@@ -186,6 +186,31 @@ mod tests {
             store.get_task(&project.id, &task.id).unwrap().version,
             version
         );
+        {
+            let connection = store.connection().unwrap();
+            connection
+                .execute(
+                    "UPDATE loop_items SET metadata = '{}', description = ?1 WHERE id = ?2",
+                    params![url, task.id],
+                )
+                .unwrap();
+        }
+        drop(store);
+        let store = LocalTaskStore::open(&path).unwrap();
+        let task = store.get_task(&project.id, &task.id).unwrap();
+        assert!(task.metadata.get("badges").is_none());
+        let task = store
+            .update_task(
+                &project.id,
+                &task.id,
+                TaskUpdate {
+                    version: task.version,
+                    status: Some("pending".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(task.metadata.get("badges").is_none());
     }
 
     #[test]

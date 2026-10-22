@@ -52,7 +52,6 @@ export interface IssueBoardCardProps<T extends IssueBoardCardTask> extends Omit<
   goal?: { bindingId: string | number; objective: string } | null;
   /** Bind task data to IssueCardTaskSummary; card and popup markup stay shared. */
   renderTaskSummary?: (binding: T, compact: boolean) => ReactNode;
-  onVisibilityChange?: (visible: boolean) => void;
 }
 
 export function IssueBoardCard<T extends IssueBoardCardTask>({
@@ -74,7 +73,6 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
   goal,
   renderTaskSummary,
   summary,
-  onVisibilityChange,
   cardStyle,
   cardClassName,
   dragging: draggingOverride = false,
@@ -114,15 +112,6 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
   );
   const popupRef = useRef<HTMLDivElement>(null);
   const cardContainerRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const element = cardContainerRef.current;
-    if (!element || !onVisibilityChange) return;
-    const observer = new IntersectionObserver(([entry]) =>
-      onVisibilityChange(entry.isIntersecting),
-    );
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [onVisibilityChange]);
   const markReadRef = useRef(onMarkRead);
   useEffect(() => {
     markReadRef.current = onMarkRead;

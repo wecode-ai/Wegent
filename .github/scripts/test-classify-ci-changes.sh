@@ -895,6 +895,7 @@ wework_desktop_core_e2e=true
 wework_desktop_core_e2e_matrix={"include":[{"id":"core-7","name":"Core / shard 7","segments":"collaboration-issue-badges"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/features/change-requests/IssueChangeRequestBadges.tsx" \
   "wework/src/features/todo/IssueBadges.tsx" \
   "wework/e2e/desktop/scenarios/collaboration-issue-badges.scenario.mjs"
 

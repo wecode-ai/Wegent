@@ -1,3 +1,4 @@
+import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
 import { issueDraftFromText, RuntimeConfigurationProvider } from '@wegent/collaboration'
 import { useAssignmentNotificationChoice } from '@/features/notifications/useAssignmentNotificationChoice'
 import { runtimeTaskBindingAddress } from './runtimeTaskBindingAddress'
@@ -4959,7 +4960,14 @@ export function CloudTodoWorkspace({
                             archiveDisabled={isAITableProject}
                             progressDisplay={progressDisplay}
                             changeRequestMonitor={changeRequestMonitor}
-                            issueChangeRequestMonitor={issueChangeRequestMonitor}
+                            renderBadges={badges => (
+                              <IssueChangeRequestBadges
+                                badges={badges}
+                                monitor={issueChangeRequestMonitor}
+                                compact
+                                testId={`cloud-todo-card-badges-${item.id}`}
+                              />
+                            )}
                             onContinueChangeRequestRepair={
                               workbench ? continueChangeRequestRepair : undefined
                             }
