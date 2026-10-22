@@ -264,6 +264,22 @@ def test_transcript_drops_repeated_entries() -> None:
     assert omitted == 0
 
 
+def test_transcript_keeps_repeated_user_turns() -> None:
+    rendered, omitted = _bounded_transcript(
+        [
+            ("user", "next round"),
+            ("assistant", "970"),
+            ("user", "next round"),
+            ("assistant", "940"),
+        ],
+        max_chars=10_000,
+    )
+
+    assert rendered.count("[user]") == 2
+    assert "970" in rendered and "940" in rendered
+    assert omitted == 0
+
+
 def test_transcript_keeps_only_recent_tool_attempt_notes() -> None:
     attempts = [("assistant_attempt", f"attempt-{index}") for index in range(25)]
 

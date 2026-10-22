@@ -336,14 +336,19 @@ def _bounded_transcript(
 def _select_transcript_blocks(
     blocks: list[tuple[str, str]],
 ) -> list[tuple[str, str]]:
-    """Drop repeated entries and cap how many tool-attempt notes are kept."""
+    """Drop repeated replies and cap how many tool-attempt notes are kept.
+
+    Only assistant replies are deduplicated: repeated user messages (for
+    example a terse "next round" instruction) are part of the conversation's
+    turn structure and dropping them would leave their replies orphaned.
+    """
     seen: set[tuple[str, str]] = set()
     deduplicated: list[tuple[str, str]] = []
     for role, content in reversed(blocks):
-        key = (role, content)
-        if key in seen:
+        if role == "assistant" and content in seen:
             continue
-        seen.add(key)
+        if role == "assistant":
+            seen.add(content)
         deduplicated.append((role, content))
     deduplicated.reverse()
 
