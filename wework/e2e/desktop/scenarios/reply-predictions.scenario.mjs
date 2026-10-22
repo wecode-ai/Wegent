@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict'
-import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
+import {
+  createSingleRootLocalProject,
+  DEFAULT_STEP_TIMEOUT_MS,
+  selectE2EModel,
+  withTimeout,
+} from '../modules/shared.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 
 const ACTIVE = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -45,6 +50,10 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
   let conversationInstructions
   let conversationTools
   let releasePrediction
+  let predictionRequestReceived
+  const predictionStarted = new Promise(resolve => {
+    predictionRequestReceived = resolve
+  })
   const heldPrediction = new Promise(resolve => {
     releasePrediction = resolve
   })
@@ -83,6 +92,7 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
           !input.includes('originalGoal'),
           'Prediction rebuilt the conversation as a text summary'
         )
+        predictionRequestReceived()
         if (predictionRequests === 1) await heldPrediction
         complete(
           response,
@@ -120,11 +130,17 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       await capture('reply-03-original-request.png')
       await control.command('press', INPUT, { key: 'Enter' })
       await control.command('waitFor', PENDING, { text: '正在生成建议' })
+      await withTimeout(
+        predictionStarted,
+        DEFAULT_STEP_TIMEOUT_MS,
+        'The pending prediction did not reach the model server'
+      )
       await capture('reply-03b-generating-suggestion.png')
       await control.command('fill', INPUT, { value: '生成时我也能输入' })
       assert.equal(Number(await control.command('getElementCount', PENDING)), 0)
       await control.command('fill', INPUT, { value: '' })
       await control.command('waitFor', PENDING)
+      assert.equal(predictionRequests, 1, 'Task refresh restarted the pending prediction')
       releasePrediction()
       await control.command('waitFor', GHOST, { text: SUGGESTION, timeoutMs: 30000 })
       assert.equal(Number(await control.command('getElementCount', PENDING)), 0)
