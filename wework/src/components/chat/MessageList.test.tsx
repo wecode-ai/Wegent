@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { Attachment } from '@/types/api'
 import type { ProcessingBlock, RuntimeConversationTurn, WorkbenchMessage } from '@/types/workbench'
+import { projectRuntimeConversationTurns } from '@/features/workbench/runtimeConversationTurns'
 import { MessageList } from './MessageList'
 import { ScrollableMessageArea } from './ScrollableMessageArea'
 import { setPreferredWorkspaceOpener } from '@/lib/workspace-opener-preferences'
@@ -1321,26 +1322,33 @@ describe('MessageList', () => {
         (_, index) => `### Tail section ${index + 1}\n\n${'tail '.repeat(80)}\n`
       ),
     ].join('\n')
-    const streamingMessage = {
-      id: 'assistant-streamed-oversized-code',
-      role: 'assistant' as const,
+    const text: RuntimeConversationTurn['items'][number] = {
+      id: 'assistant-turn-1',
+      type: 'assistant_text',
       content,
-      status: 'streaming' as const,
       createdAt: '2026-09-21T10:00:00Z',
     }
+    const reasoning: RuntimeConversationTurn['items'][number] = {
+      id: 'native-reasoning',
+      type: 'block',
+      block: { id: 'native-reasoning', type: 'thinking', content: 'Plan', createdAt: 1 },
+    }
+    const turn: RuntimeConversationTurn = {
+      id: 'turn-1',
+      status: 'streaming',
+      items: [text, reasoning],
+    }
+    const streamingMessages = projectRuntimeConversationTurns([turn])
 
-    const { container, rerender } = render(<MessageList messages={[streamingMessage]} />)
+    const { container, rerender } = render(<MessageList messages={streamingMessages} />)
     const codeNode = container.querySelector('code')
     expect(codeNode).not.toBeNull()
 
     rerender(
       <MessageList
-        messages={[
-          {
-            ...streamingMessage,
-            status: 'done',
-          },
-        ]}
+        messages={projectRuntimeConversationTurns([
+          { ...turn, status: 'done', items: [reasoning, { ...text, id: 'native-final' }] },
+        ])}
       />
     )
 

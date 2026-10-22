@@ -10,13 +10,20 @@ import {
 } from '../modules/response-protocol.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { verifyExecutionActivityOrder } from '../modules/issue-execution-activity-order.mjs'
+import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { verifyLocalIssueAssigneeRecovery } from '../modules/local-issue-assignee-recovery.mjs'
 import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
   selectProjectRunnerModel,
-  selectCollaborationIssueAgent,
   waitForTestIdByText,
+  inCollaborationSidebar,
 } from '../modules/workspace-flows.mjs'
+import {
+  openWorkspaceAgentConfiguration,
+  selectWorkspaceIssueAgent,
+  waitForValue,
+} from '../modules/workspace-agent-setup.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const PROJECT = `本地单智能体调度-${process.pid}`
@@ -25,6 +32,8 @@ const ASSIGNED_TASK = `采集本地执行证据-${process.pid}`
 const RENAMED_ISSUE = `已重命名的验证事项-${process.pid}`
 const RESULT = `LOCAL_AGENT_RESULT_${process.pid}`
 const MARKER = `LOCAL_AGENT_DISPATCH_${process.pid}`
+const RECOVERY_MARKER = `LOCAL_ASSIGNEE_RECOVERY_${process.pid}`
+const RECOVERY_RESULT = `${RECOVERY_MARKER}_COMPLETED`
 const FOLLOW_UP_ONE = `继续核对执行环境-${process.pid}`
 const FOLLOW_UP_TWO = `再补充一项验证-${process.pid}`
 const FOLLOW_UP_ONE_RESULT = `LOCAL_AGENT_FOLLOW_UP_ONE_${process.pid}`
@@ -54,9 +63,17 @@ function advertisedToolNames(body) {
 }
 
 async function addLocalAgent(control, timeoutMs) {
-  await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
-
-  await control.command('click', scoped('[data-testid="collaboration-project-settings-agents"]'))
+  const projectNavId = await waitForTestIdByText(
+    control,
+    inCollaborationSidebar(
+      '[data-testid="collaboration-workspace-tree-wework-local-workspace"]',
+      CONTENT
+    ),
+    'collaboration-workspace-project-',
+    PROJECT,
+    timeoutMs
+  )
+  await openWorkspaceAgentConfiguration(control, CONTENT, 'wework-local-workspace')
   await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
     timeoutMs,
   })
@@ -69,6 +86,12 @@ async function addLocalAgent(control, timeoutMs) {
     existingAgents.includes('当前设备智能体'),
     'The current-device Agent must remain selectable'
   )
+  await control.command('fill', '[data-testid="project-agent-search"]', {
+    value: 'no-such-agent-e2e',
+  })
+  await control.command('waitFor', '[data-testid="project-agent-search-clear"]')
+  await control.command('click', '[data-testid="project-agent-search-clear"]')
+  await control.command('waitFor', '[data-testid="project-agent-wegent-team"]')
   await control.command('click', '[data-testid="project-agent-mode-create"]')
   await control.command('waitFor', '[data-testid="cloud-project-chat-agent-editor"]', { timeoutMs })
   await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
@@ -86,52 +109,43 @@ async function addLocalAgent(control, timeoutMs) {
     visible: false,
     timeoutMs,
   })
-  const agentRow = await waitForTestIdByText(
+  const sourceRow = await waitForTestIdByText(
     control,
     scoped('[data-testid="project-agent-list"]'),
     'project-agent-row-',
     AGENT,
     timeoutMs
   )
-  return agentRow.slice('project-agent-row-'.length)
+  await control.command(
+    'clickWhenEnabled',
+    inCollaborationSidebar(`[data-testid="${projectNavId}"]`, CONTENT)
+  )
+  return sourceRow.slice('project-agent-row-'.length)
 }
 
 async function createIssueAndAssignAgent(control, agentId, timeoutMs) {
-  await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
-  await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
+  await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-tab-board"]'), {
+    timeoutMs,
+  })
+  await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
     value: ASSIGNED_TASK,
   })
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
     value: `${MARKER}。只读取本地环境并返回 ${RESULT}，不得调用管理类工具。`,
   })
+  await selectWorkspaceIssueAgent(
+    control,
+    scoped('[data-testid="cloud-todo-create-assignee"]'),
+    agentId,
+    timeoutMs,
+    'create'
+  )
   await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-create-confirm"]'), {
     timeoutMs,
   })
   await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
     text: ASSIGNED_TASK,
-    timeoutMs,
-  })
-  await selectCollaborationIssueAgent(
-    control,
-    scoped('[data-testid="cloud-todo-detail-assignee"]'),
-    agentId,
-    timeoutMs
-  )
-  await control.command('waitFor', scoped('[data-testid="cloud-todo-save"]'), { text: '保存分配' })
-  assert.equal(
-    Number(await control.command('getElementCount', scoped('[data-testid="cloud-todo-save"]'))),
-    1,
-    'Assignment must expose exactly one save action next to its owner'
-  )
-  assert.equal(
-    Number(
-      await control.command('getElementCount', scoped('header [data-testid="cloud-todo-save"]'))
-    ),
-    0,
-    'Pending assignment must not require the header save action'
-  )
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
     timeoutMs,
   })
   await control.command('waitFor', scoped('[data-testid="cloud-todo-save"]'), {
@@ -141,6 +155,49 @@ async function createIssueAndAssignAgent(control, agentId, timeoutMs) {
     text: AGENT,
     timeoutMs,
   })
+  await control.command(
+    'waitFor',
+    scoped('[data-testid="cloud-todo-detail-assignee"][data-value^="agent:"]'),
+    {
+      visible: true,
+      timeoutMs,
+    }
+  )
+  const target = await control.command(
+    'getAttribute',
+    scoped('[data-testid="cloud-todo-detail-assignee"]'),
+    { value: 'data-value' }
+  )
+  assert.notEqual(
+    target,
+    `agent:${agentId}`,
+    'Assignment must persist a project binding distinct from the workspace source'
+  )
+  const rpc = (method, params) => requestExecutor(control, method, params, timeoutMs)
+  const project = (await rpc('projects.list', {})).find(candidate => candidate.name === PROJECT)
+  assert.ok(project, 'The local project fixture was not persisted')
+  const source = (await rpc('chat_agents.list', { project_id: 'default-work-items' })).find(
+    candidate => candidate.id === agentId
+  )
+  assert.ok(source, 'The workspace source fixture was not persisted')
+  const bindings = (await rpc('chat_agents.list', { project_id: project.id })).filter(
+    candidate => candidate.name === source.name && candidate.namespace === source.namespace
+  )
+  assert.equal(bindings.length, 1, 'Creating the assigned Issue must create exactly one binding')
+  assert.equal(target, `agent:${bindings[0].id}`)
+  const issues = await rpc('todos.list', { project_id: project.id })
+  assert.equal(issues.filter(candidate => candidate.title === ASSIGNED_TASK).length, 1)
+  const issue = issues.find(candidate => candidate.title === ASSIGNED_TASK)
+  assert.equal(issue.assignee_agent_id, bindings[0].id)
+  const runs = await waitForValue(
+    () => rpc('executions.list', { project_id: project.id, include_terminal: true }),
+    values => values.some(candidate => candidate.loop_item_id === issue.id),
+    'Creating the assigned local Issue did not persist an execution',
+    timeoutMs
+  )
+  assert.equal(runs.filter(candidate => candidate.loop_item_id === issue.id).length, 1)
+  assert.equal(runs.find(candidate => candidate.loop_item_id === issue.id).agent_id, bindings[0].id)
+  return { project, source }
 }
 
 async function waitForIssueStatus(control, expected, timeoutMs) {
@@ -248,6 +305,7 @@ export async function createDesktopScenario({
 }) {
   let active = false
   const modelRequests = []
+  const recoveryModelRequests = { create: 0, edit: 0 }
   const releaseRequests = new Map()
   let resolveModelStarted
   const modelStarted = new Promise(resolve => {
@@ -289,6 +347,17 @@ export async function createDesktopScenario({
         return true
       }
       const requestText = JSON.stringify(body)
+      if (requestText.includes(RECOVERY_MARKER)) {
+        const mode = requestText.includes(`${RECOVERY_MARKER}:create`) ? 'create' : 'edit'
+        recoveryModelRequests[mode] += 1
+        assert.equal(
+          recoveryModelRequests[mode],
+          1,
+          'Retrying assignment duplicated the recovery run'
+        )
+        writeEvents(response, responseId, [assistantMessage(RECOVERY_RESULT)])
+        return true
+      }
       if (!requestText.includes(MARKER)) {
         writeEvents(response, responseId, [])
         return true
@@ -341,7 +410,7 @@ export async function createDesktopScenario({
       await createLocalCollaborationProject(control, CONTENT, PROJECT)
       await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
       const agentId = await addLocalAgent(control, uiTimeoutMs)
-      await createIssueAndAssignAgent(control, agentId, uiTimeoutMs)
+      const fixture = await createIssueAndAssignAgent(control, agentId, uiTimeoutMs)
 
       await waitForModelRequest(modelStarted, modelResponseTimeoutMs)
       await waitForIssueStatus(control, 'in_progress', modelResponseTimeoutMs)
@@ -533,6 +602,18 @@ export async function createDesktopScenario({
         timeoutMs: modelResponseTimeoutMs,
       })
       await captureScreenshot(control, 'local-agent-dispatch-06-follow-ups-completed.png', CONTENT)
+      for (const mode of ['create', 'edit']) {
+        await verifyLocalIssueAssigneeRecovery(control, {
+          contentSelector: CONTENT,
+          ...fixture,
+          mode,
+          marker: `${RECOVERY_MARKER}:${mode}`,
+          completion: RECOVERY_RESULT,
+          timeoutMs: uiTimeoutMs,
+          executionTimeoutMs: modelResponseTimeoutMs,
+        })
+      }
+      assert.deepEqual(recoveryModelRequests, { create: 1, edit: 1 })
     },
 
     diagnostics() {
@@ -541,6 +622,7 @@ export async function createDesktopScenario({
         assignedTask: ASSIGNED_TASK,
         issue: RENAMED_ISSUE,
         modelRequests,
+        recoveryModelRequests,
         project: PROJECT,
       }
     },

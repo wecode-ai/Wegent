@@ -92,6 +92,8 @@ import { IssueSaveButton } from "./issue-detail/IssueSaveButton";
 import { localizeStandardStatuses } from "./i18n";
 import { ExecutionConfigurationNotice } from "./runtime-profile/ExecutionConfigurationNotice";
 import { useCollaborationPortalTheme } from "./theme";
+import { useIssueAssigneeResources } from "./issue-detail/useIssueAssigneeResources";
+import { useIssueCreation } from "./issue-detail/useIssueCreation";
 
 function cn(...values: Array<string | false | null | undefined>): string {
   return values.filter(Boolean).join(" ");
@@ -278,7 +280,7 @@ function isIssueAssigneeTarget(value: unknown): value is IssueAssigneeTarget {
   if (value === "") return true;
   if (typeof value !== "string") return false;
   if (/^user:\d+$/.test(value) || /^team:\d+$/.test(value)) return true;
-  return /^(agent|group):.+$/.test(value);
+  return /^(agent|group|resource):.+$/.test(value);
 }
 
 function todoDraftKey(
@@ -745,6 +747,7 @@ export function TodoEditor(props: TodoEditorProps) {
   const showPanelControls = props.showPanelControls !== false;
   const showFullscreenControl = props.showFullscreenControl !== false;
   const item = editProps?.item ?? null;
+  const creation = useIssueCreation(editorPort);
   const [securityBusy, setSecurityBusy] = useState(false);
   const isAITableEdit =
     item !== null && editProps?.project?.task_provider === "dingtalk_aitable";
@@ -893,6 +896,12 @@ export function TodoEditor(props: TodoEditorProps) {
   >({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const workspaceAgents = useIssueAssigneeResources(
+    editorPort,
+    project,
+    setSaveError,
+    item?.assignee_agent_id,
+  );
   const [tasksExpanded, setTasksExpanded] = useState(false);
   const [fullScreen, setFullScreen] = useState(false);
   const [assignmentChainOpen, setAssignmentChainOpen] = useState(false);
@@ -1209,6 +1218,7 @@ export function TodoEditor(props: TodoEditorProps) {
     editorPort,
     editItemId,
     editProjectId,
+    item?.assignee_agent_id,
     project?.collaboration_groups,
     props.loadTeams,
     props.taskRefreshKey,
@@ -1450,6 +1460,9 @@ export function TodoEditor(props: TodoEditorProps) {
   const assigneeAgent = projectAgents.find(
     (agent) => assigneeTarget === `agent:${agent.id}`,
   );
+  const assigneeResource = workspaceAgents.find(
+    (agent) => assigneeTarget === `resource:${agent.id}`,
+  );
   const assigneeTeam = wegentTeams.find(
     (team) => assigneeTarget === `team:${team.id}`,
   );
@@ -1461,6 +1474,7 @@ export function TodoEditor(props: TodoEditorProps) {
     assigneeTeam?.displayName ||
     assigneeTeam?.name ||
     assigneeAgent?.name ||
+    assigneeResource?.name ||
     assignee?.user_name ||
     (item && assigneeTarget && assigneeTarget === issueAssigneeTarget(item)
       ? assigneeTarget.startsWith("group:")
@@ -1541,28 +1555,19 @@ export function TodoEditor(props: TodoEditorProps) {
     const create = async (
       overrides: Partial<SharedIssueDetailCreateInput> = {},
     ): Promise<CloudLoopItem> => {
-      let created = await editorPort.issues.create(props.project.id, {
-        ...createInput,
-        ...overrides,
-      });
+      const target = await resolveAssigneeTarget(assigneeTarget);
+      const progress = await creation.create(
+        props.project.id,
+        { ...createInput, ...overrides },
+        Boolean(target),
+      );
+      let created = progress.issue;
       // Human ownership must be part of creation so task.created automation
       // cannot start AI work before a follow-up assignment reaches the server.
-      if (assigneeTarget && !hasHumanAssignee) {
-        created = assigneeTarget.startsWith("group:")
-          ? await editorPort.issues.update(created.id, {
-              version: created.version,
-              assignee_group_id: assigneeTarget.slice(6),
-            })
-          : await editorPort.issues.assign(props.project.id, created.id, {
-              version: created.version,
-              assigneeType: assigneeTarget.split(":", 1)[0] as
-                | "user"
-                | "agent"
-                | "team",
-              assigneeId: assigneeTarget.slice(assigneeTarget.indexOf(":") + 1),
-            });
+      if (progress.syncAssignee && target !== issueAssigneeTarget(created)) {
+        created = await persistAssignee(created, target, notifyAssignee);
       }
-      await uploadAttachments(created.id, pendingFiles);
+      await creation.upload(created.id, pendingFiles);
       if (draftKey) {
         localStorage.removeItem(draftKey);
         draftAttachmentStore.delete(draftKey);
@@ -1596,11 +1601,22 @@ export function TodoEditor(props: TodoEditorProps) {
     }
   }
 
+  async function resolveAssigneeTarget(
+    target: IssueAssigneeTarget,
+  ): Promise<IssueAssigneeTarget> {
+    if (!target.startsWith("resource:")) return target;
+    if (!project || !editorPort.agentResources)
+      throw new Error("Workspace Agent is not available");
+    const id = await editorPort.agentResources.bind(project, target.slice(9));
+    return `agent:${id}`;
+  }
+
   async function persistAssignee(
     source: CloudLoopItem,
-    target: IssueAssigneeTarget,
+    selectedTarget: IssueAssigneeTarget,
     shouldNotify: boolean,
   ): Promise<CloudLoopItem> {
+    const target = await resolveAssigneeTarget(selectedTarget);
     if (!target)
       return editorPort.issues.update(source.id, {
         version: source.version,
@@ -1656,6 +1672,7 @@ export function TodoEditor(props: TodoEditorProps) {
           assigneeTarget,
           notifyAssignee,
         );
+        setAssigneeTarget(issueAssigneeTarget(updated));
         props.onUpdated(updated);
         return;
       }
@@ -1708,6 +1725,7 @@ export function TodoEditor(props: TodoEditorProps) {
           assign: persistAssignee,
         },
       );
+      setAssigneeTarget(issueAssigneeTarget(updated));
       props.onUpdated(updated);
       if (readFirst) {
         setEditingContent(false);
@@ -2184,6 +2202,11 @@ export function TodoEditor(props: TodoEditorProps) {
           value: `agent:${agent.id}` as IssueAssigneeTarget,
           label: agent.name,
           group: t("todo.agents", "机器人"),
+        })),
+        ...workspaceAgents.map((agent) => ({
+          value: `resource:${agent.id}` as IssueAssigneeTarget,
+          label: agent.name,
+          group: t("todo.workspace_agents", "空间智能体"),
         })),
         ...wegentTeams
           .filter((team) =>

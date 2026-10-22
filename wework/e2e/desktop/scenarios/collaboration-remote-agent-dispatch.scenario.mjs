@@ -4,7 +4,14 @@ import { createDispatchIssueBoundaryRegression } from '../modules/dispatch-issue
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { verifyExecutionActivityOrder } from '../modules/issue-execution-activity-order.mjs'
 import { readProjectChatMessages } from '../modules/project-chat-snapshot.mjs'
-import { selectCloudAgentModel } from '../modules/workspace-flows.mjs'
+import {
+  createSharedWorkspaceAgent,
+  assertCreatedWorkspaceIssueAgent,
+  createAndAssignCloudIssue,
+  createWorkspaceAndProject,
+  verifyRevokedWorkspaceIssueAgent,
+  waitForValue,
+} from '../modules/workspace-agent-setup.mjs'
 import {
   assistantMessage,
   codexRequestKind,
@@ -27,11 +34,8 @@ import {
   resultDir,
 } from '../modules/shared.mjs'
 import {
-  openDirectProjectCreation,
-  openProjectAgentCreator,
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
-  selectCollaborationIssueAgent,
 } from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -101,18 +105,6 @@ async function requestJson(baseUrl, token, pathname, options = {}) {
   return body
 }
 
-async function waitForValue(load, predicate, message, timeoutMs) {
-  const deadline = Date.now() + timeoutMs
-  let latest = null
-  while (Date.now() < deadline) {
-    latest = await load()
-    const result = predicate(latest)
-    if (result) return result === true ? latest : result
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-  assert.fail(`${message}: ${JSON.stringify(latest)}`)
-}
-
 async function waitForPromise(promise, message, timeoutMs) {
   let timer
   try {
@@ -125,110 +117,6 @@ async function waitForPromise(promise, message, timeoutMs) {
   } finally {
     clearTimeout(timer)
   }
-}
-
-async function createWorkspaceAndProject(control, request, timeoutMs) {
-  await control.command('click', scoped('[data-testid="collaboration-workspace-create"]'))
-  await control.command('fill', scoped('[data-testid="collaboration-workspace-name-input"]'), {
-    value: WORKSPACE,
-  })
-  await control.command(
-    'clickWhenEnabled',
-    scoped('[data-testid="collaboration-workspace-create-confirm"]'),
-    { timeoutMs }
-  )
-  const workspace = await waitForValue(
-    async () => (await request('/api/v1/workspaces')).items,
-    items => items?.find(item => item.name === WORKSPACE),
-    'Wework UI did not persist the workspace',
-    timeoutMs
-  )
-
-  await control.command(
-    'waitFor',
-    scoped('[data-testid="collaboration-workspace-project-create"]'),
-    {
-      visible: true,
-      timeoutMs,
-    }
-  )
-  await openDirectProjectCreation(control, CONTENT)
-  await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {
-    value: PROJECT,
-  })
-  await control.command('click', scoped('[data-testid="collaboration-project-create-advanced"]'))
-  await control.command('click', scoped('[data-testid="cloud-project-task-provider-local"]'))
-  await control.command(
-    'clickWhenEnabled',
-    scoped('[data-testid="collaboration-project-create-confirm"]'),
-    { timeoutMs }
-  )
-  const project = await waitForValue(
-    async () => (await request(`/api/v1/workspaces/${workspace.id}/projects`)).items,
-    items => items?.find(item => item.name === PROJECT),
-    'Wework UI did not persist the project',
-    timeoutMs
-  )
-  await control.command('waitFor', scoped('[data-testid="collaboration-project-create-confirm"]'), {
-    visible: false,
-    timeoutMs,
-  })
-  await control.command('waitFor', scoped('[data-testid="collaboration-tab-board"]'), {
-    timeoutMs,
-  })
-  return project
-}
-
-async function createAgent(control, request, projectId, timeoutMs, environmentId) {
-  await control.command('click', scoped('[data-testid="collaboration-project-settings-agents"]'))
-  await openProjectAgentCreator(
-    control,
-    scoped('[data-testid="project-agent-add"]'),
-    timeoutMs,
-    'wework-agent-resource-creator'
-  )
-  await control.command('fill', '[data-testid="wework-agent-display-name"]', { value: AGENT })
-  await selectCloudAgentModel(control, request, MODEL, timeoutMs, environmentId)
-  await control.command('fill', '[data-testid="wework-agent-system-prompt"]', {
-    value: `${MARKER}。直接执行当前 Issue，不创建工作流、不调用负责人或协作小组。`,
-  })
-  await control.command('clickWhenEnabled', '[data-testid="wework-agent-resource-create"]', {
-    timeoutMs,
-  })
-  return waitForValue(
-    () => request(`/api/v1/cloud-projects/${projectId}/chat-agents`),
-    agents => agents.find(agent => agent.name === AGENT),
-    'Wework UI did not persist the agent',
-    timeoutMs
-  )
-}
-
-async function createAndAssignIssue(control, request, projectId, agent, timeoutMs, title = ISSUE) {
-  await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
-  await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
-  await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), { value: title })
-  await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
-    value: `${MARKER}。由单个智能体在远程 Executor 上完成并提交待确认。`,
-  })
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-create-confirm"]'), {
-    timeoutMs,
-  })
-  const issue = await waitForValue(
-    async () => (await request(`/api/v1/cloud-projects/${projectId}/loop-items`)).items,
-    items => items.find(item => item.title === title),
-    'Wework UI did not persist the Issue',
-    timeoutMs
-  )
-  await selectCollaborationIssueAgent(
-    control,
-    scoped('[data-testid="cloud-todo-detail-assignee"]'),
-    agent.id,
-    timeoutMs
-  )
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-    timeoutMs,
-  })
-  return issue
 }
 
 async function verifyUnconfiguredAssignment(
@@ -246,14 +134,14 @@ async function verifyUnconfiguredAssignment(
       visibility: 'public',
     }),
   })
-  const issue = await createAndAssignIssue(
-    control,
-    request,
+  const issue = await createAndAssignCloudIssue(control, request, {
+    contentSelector: CONTENT,
     projectId,
-    agent,
+    title: UNCONFIGURED_ISSUE,
+    description: `${MARKER}。由单个智能体在远程 Executor 上完成并提交待确认。`,
+    assigneeTarget: `agent:${agent.id}`,
     timeoutMs,
-    UNCONFIGURED_ISSUE
-  )
+  })
   await waitForValue(
     () => request(`/api/v1/loop-items/${issue.id}`),
     item => item.status === 'in_progress' && item.execution_state === 'waiting_runtime',
@@ -861,7 +749,12 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await selectCollaborationDomain(control, CONTENT, 'cloud')
-      project = await createWorkspaceAndProject(control, request, uiTimeoutMs)
+      project = await createWorkspaceAndProject(control, request, {
+        contentSelector: CONTENT,
+        workspaceName: WORKSPACE,
+        projectName: PROJECT,
+        timeoutMs: uiTimeoutMs,
+      })
       await verifyUnconfiguredAssignment(
         control,
         request,
@@ -882,8 +775,41 @@ export function createDesktopScenario({
         0,
         'Direct assignment must work with an authorized runner and no code repository'
       )
-      const agent = await createAgent(control, request, project.id, uiTimeoutMs, remoteDevice.id)
-      issue = await createAndAssignIssue(control, request, project.id, agent, uiTimeoutMs)
+      const source = await createSharedWorkspaceAgent(control, request, {
+        contentSelector: CONTENT,
+        project,
+        name: AGENT,
+        model: MODEL,
+        environmentId: remoteDevice.id,
+        systemPrompt: `${MARKER}。直接执行当前 Issue，不创建工作流、不调用负责人或协作小组。`,
+        timeoutMs: uiTimeoutMs,
+      })
+      issue = await createAndAssignCloudIssue(control, request, {
+        contentSelector: CONTENT,
+        projectId: project.id,
+        title: ISSUE,
+        description: `${MARKER}。由单个智能体在远程 Executor 上完成并提交待确认。`,
+        assigneeTarget: `resource:${source.id}`,
+        assignDuringCreate: true,
+        beforeSave: () =>
+          verifyRevokedWorkspaceIssueAgent(control, request, {
+            contentSelector: CONTENT,
+            project,
+            source,
+            title: ISSUE,
+            timeoutMs: uiTimeoutMs,
+          }),
+        timeoutMs: uiTimeoutMs,
+      })
+      const agent = await waitForValue(
+        () => request(`/api/v1/cloud-projects/${project.id}/chat-agents`),
+        agents =>
+          agents.find(
+            candidate => candidate.wegentTeamId === source.team_id && candidate.name === AGENT
+          ),
+        'Selecting the workspace Agent as Issue assignee did not persist a project binding',
+        uiTimeoutMs
+      )
 
       try {
         await waitForPromise(
@@ -953,6 +879,12 @@ export function createDesktopScenario({
         modelResponseTimeoutMs
       )
       assert.equal(String(persistedIssue.id), String(issue.id))
+      assert.equal(String(persistedIssue.assignee_agent_id), String(agent.id))
+      await assertCreatedWorkspaceIssueAgent(request, {
+        projectId: project.id,
+        source,
+        issue: persistedIssue,
+      })
       await control.command('waitFor', scoped('[data-testid="cloud-todo-detail-status"]'), {
         value: 'in_review',
         timeoutMs: uiTimeoutMs,

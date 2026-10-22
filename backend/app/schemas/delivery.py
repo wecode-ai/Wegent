@@ -18,6 +18,7 @@ from pydantic import (
 
 from app.schemas.cloud_project import SnowflakeId
 from app.schemas.issue_workflow import IssueWorkflowInstance, WorkflowExecutionConfig
+from app.schemas.loop_item_position import LoopItemPosition
 from app.schemas.runner_routing import RunnerSelection
 from app.schemas.runtime_work import RuntimeModelSelection
 from app.schemas.tagging import MAX_TAGS_PER_ITEM
@@ -70,6 +71,7 @@ class LoopItemCreate(BaseModel):
 
 
 class LoopItemUpdate(BaseModel):
+    position: LoopItemPosition | None = None
     runner_selection: RunnerSelection | None = None
     notify_assignee: bool = True
     version: int = Field(ge=1)
@@ -114,10 +116,10 @@ class LoopItemUpdate(BaseModel):
 
 
 class LoopItemReorder(BaseModel):
-    """Manual order of the TODOs inside one board lane (parent + status)."""
+    """Manual sibling order, optionally restricted to a status lane."""
 
     parent_id: str | None = Field(default=None, max_length=64)
-    status: str = Field(max_length=32)
+    status: str | None = Field(default=None, max_length=32)
     item_ids: list[str] = Field(min_length=1, max_length=1000)
 
 
