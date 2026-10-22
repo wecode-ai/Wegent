@@ -42,8 +42,6 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
   let active = false
   let normalRequests = 0
   let predictionRequests = 0
-  let latestPredictionRequest = 0
-  let suggestionsReturned = 0
   let conversationInstructions
   let conversationTools
   let releasePrediction
@@ -64,8 +62,6 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       const input = JSON.stringify(body.input ?? body.messages ?? [])
       if (input.includes('Predict one natural next USER message')) {
         predictionRequests += 1
-        const requestId = predictionRequests
-        latestPredictionRequest = requestId
         assert.equal(body.model, CONVERSATION_MODEL, 'Prediction changed the conversation model')
         assert.equal(
           body.instructions,
@@ -90,10 +86,7 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
         await heldPrediction
         // A draft edit can cancel the stale prediction before the next turn settles.
         if (response.destroyed || response.writableEnded) return true
-        const suggestion =
-          requestId === latestPredictionRequest && suggestionsReturned === 0 ? SUGGESTION : null
-        if (suggestion) suggestionsReturned += 1
-        complete(response, JSON.stringify({ suggestion }))
+        complete(response, JSON.stringify({ suggestion: SUGGESTION }))
         return true
       }
       if (!input.includes(INITIAL) && !input.includes(EDITED)) return false
