@@ -526,7 +526,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) 
 
       // Refresh must reload the window and restore an interactive workbench.
       const readyCountBeforeRefresh = control.readyCount
-      assert.equal(await activateMenuItem(control, 'view.refresh'), true)
+      await control.command('refreshFromApplicationMenu', 'body')
       await withTimeout(
         control.awaitReadyAfter(readyCountBeforeRefresh),
         WORKBENCH_READY_TIMEOUT_MS,

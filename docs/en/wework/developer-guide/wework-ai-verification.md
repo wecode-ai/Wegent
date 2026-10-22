@@ -49,6 +49,8 @@ After startup, the WebView calls `/ready` and then short-polls `/commands`. The 
 
 The `application-menu` desktop CI checkpoint covers item presence, visibility in settings, control-channel reconnection after refresh, route restoration, and working workspace navigation. Focused unit tests cover shortcuts on all three platforms, window reload, and English and Chinese labels.
 
+The `refreshFromApplicationMenu` test control command waits for `/results` acknowledgement before activating the real native menu item, so renderer unload cannot lose the command result. A control-protocol unit test delays acknowledgement to verify this ordering.
+
 ## Native context menus
 
 Electron does not create a WebContents context menu automatically. The Wework Electron main process listens for `context-menu` centrally and builds native menus for the main window, workspace windows, and auxiliary windows.
