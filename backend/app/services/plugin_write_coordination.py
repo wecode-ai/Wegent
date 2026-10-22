@@ -162,7 +162,20 @@ def _acquire_plugin_write_lock(
     except (RedisError, DistributedLockUnavailableError):
         raise PluginWriteError("plugin_write_unavailable") from None
     if not acquired:
+        logger.warning(
+            "Plugin write coordination rejected stage=acquire "
+            "user_id=%s session_id=%s operation=%s",
+            user_id,
+            id(db),
+            db.info.get("plugin_write_operation", "request"),
+        )
         raise PluginWriteError("plugin_write_busy")
+    logger.info(
+        "Plugin write lease acquired user_id=%s session_id=%s operation=%s",
+        user_id,
+        id(db),
+        db.info.get("plugin_write_operation", "request"),
+    )
     lease = _Lease(lock=lock)
     try:
         threading.Thread(target=lease.renew, daemon=True).start()
@@ -236,5 +249,13 @@ def _release_transaction(db: Session, transaction: SessionTransaction) -> None:
     if transaction.parent is not None:
         return
     db.info.pop(_SAVEPOINTS, None)
-    for lease in db.info.pop(_LEASES, {}).values():
+    for user_id, lease in db.info.pop(_LEASES, {}).items():
+        logger.info(
+            "Plugin write lease releasing user_id=%s session_id=%s "
+            "operation=%s held_ms=%d",
+            user_id,
+            id(db),
+            db.info.get("plugin_write_operation", "request"),
+            int((time.monotonic() - lease.started) * 1000),
+        )
         lease.release()

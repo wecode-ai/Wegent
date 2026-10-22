@@ -60,6 +60,15 @@ Python and the migrated Rust plugin writers use the same protocol:
 - Hold the lock until the outer database transaction commits, rolls back, or
   closes. Ending a savepoint does not release it.
 
+## Coordination diagnostics
+
+For `plugin_write_busy` diagnostics, correlate Backend lease acquisition, release,
+and contention logs by `user_id`, process-local `session_id`, and native
+`operation`. Release logs include `held_ms` to distinguish a long transaction
+from contention caused by an injected lease. Redis ownership tokens and plugin
+credentials are never logged. Contention retains the existing timeout budget
+without automatic retries.
+
 ## Business revisions and first-use policies
 
 Redis provides normal mutual exclusion; revision CAS on existing business records
