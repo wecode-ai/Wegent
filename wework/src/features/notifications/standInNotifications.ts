@@ -35,7 +35,15 @@ export function standInOrigin(item: RuntimeTaskReminderItem) {
     origin.initiatedBy !== 'stand_in'
   )
     return null
-  return origin as Record<string, unknown>
+  const record = origin as Record<string, unknown>
+  if (
+    typeof record.cloudProjectId !== 'string' ||
+    !record.cloudProjectId.trim() ||
+    typeof record.loopItemId !== 'string' ||
+    !record.loopItemId.trim()
+  )
+    return null
+  return record as Record<string, unknown> & { cloudProjectId: string; loopItemId: string }
 }
 
 export function standInState(item: RuntimeTaskReminderItem): StandInNotificationState {
@@ -84,8 +92,8 @@ export function mergeStandInNotifications(
     )
     const state = standInState(item)
     const url = weworkIssueScheme(
-      String(origin.cloudProjectId),
-      String(origin.loopItemId),
+      origin.cloudProjectId,
+      origin.loopItemId,
       origin.projectStore === 'local' ? 'local' : 'backend'
     )
     const notification: StandInNotification =
@@ -100,8 +108,8 @@ export function mergeStandInNotifications(
             created_at: new Date(runtimeTimestamp(item.task.createdAt)).toISOString(),
             read_at: 'read',
             payload: {
-              projectId: String(origin.cloudProjectId),
-              itemId: String(origin.loopItemId),
+              projectId: origin.cloudProjectId,
+              itemId: origin.loopItemId,
               humanAssignmentId: String(origin.humanAssignmentId),
               taskTitle: item.task.title,
               projectName: item.projectName,

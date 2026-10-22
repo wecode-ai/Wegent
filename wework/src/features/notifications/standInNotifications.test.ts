@@ -1,10 +1,32 @@
 import { describe, expect, it } from 'vitest'
-import { mergeStandInNotifications, standInState } from './standInNotifications'
+import { mergeStandInNotifications, standInOrigin, standInState } from './standInNotifications'
 
 import { assignment, runtimeItem } from './standInNotifications.fixtures'
 import { RuntimeTaskMachine } from '@/features/workbench/runtimeTaskLifecycle/RuntimeTaskMachine'
 
 describe('stand-in notification projection', () => {
+  it.each(
+    ['cloudProjectId', 'loopItemId'].flatMap(field =>
+      [undefined, null, '', '   ', 42].map(value => ({ field, value }))
+    )
+  )(
+    'rejects an origin with $field=$value instead of constructing an invalid Issue link',
+    ({ field, value }) => {
+      const item = {
+        ...runtimeItem,
+        task: {
+          ...runtimeItem.task,
+          runtimeHandle: {
+            origin: { ...(runtimeItem.task.runtimeHandle!.origin as object), [field]: value },
+          },
+        },
+      }
+      expect(standInOrigin(item)).toBeNull()
+      expect(mergeStandInNotifications([], [item])).toEqual([])
+      expect(mergeStandInNotifications([assignment], [item])).toEqual([assignment])
+    }
+  )
+
   it.each([
     ['succeeded', 'completed'],
     ['failed', 'failed'],
