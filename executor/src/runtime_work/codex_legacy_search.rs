@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use super::{
-    transcript_search_text::codex_turn_search_sources,
+    transcript_search_text::{codex_turn_search_sources, AsyncReplySearchProjection},
     util::{item_type, string_field},
 };
 
@@ -34,6 +34,8 @@ pub(super) struct LegacySearchCursor {
     turn_id: String,
     item_id: String,
     byte_offset: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reply_source_turn_id: Option<String>,
 }
 
 pub(super) fn is_legacy_search_cursor(cursor: &str) -> bool {
@@ -98,6 +100,7 @@ fn search_reader(
         reducer.capture_native = true;
         let mut selected_turn = None;
         let mut selected_items = Vec::new();
+        let mut projection = AsyncReplySearchProjection::default();
         let mut append = |index: usize, items: &[ProjectedText]| {
             append_turn_matches(
                 &metadata.turns[index],
@@ -105,6 +108,7 @@ fn search_reader(
                 &needle,
                 limit,
                 user_content_by_client_id,
+                &mut projection,
                 &mut matches,
                 &mut total,
             )
@@ -161,11 +165,12 @@ fn append_turn_matches(
     needle: &str,
     limit: usize,
     user_content_by_client_id: &HashMap<String, String>,
+    projection: &mut AsyncReplySearchProjection,
     matches: &mut Vec<Value>,
     total: &mut usize,
 ) -> Result<(), String> {
     let native = turn.native_turn(items.iter().map(|item| item.native.clone()).collect());
-    let sources = codex_turn_search_sources(&native, user_content_by_client_id, None)
+    let sources = codex_turn_search_sources(&native, user_content_by_client_id, None, projection)
         .into_iter()
         .collect::<HashMap<_, _>>();
     for item in items {
@@ -178,6 +183,7 @@ fn append_turn_matches(
             turn_id: turn.id.clone(),
             item_id: item.id.clone(),
             byte_offset: item.byte_offset,
+            reply_source_turn_id: projection.reply_source(&item.id).map(str::to_owned),
         };
         let encoded = serde_json::to_string(&cursor)
             .map_err(|error| format!("Cannot encode legacy search cursor: {error}"))?;
@@ -188,6 +194,9 @@ fn append_turn_matches(
             });
             if item.user {
                 matched["messageId"] = json!(item.client_id.as_ref().unwrap_or(&item.id));
+                if let Some(questions) = projection.reply_questions(&item.id) {
+                    matched["replyQuestions"] = json!(questions);
+                }
             }
             matches.push(matched);
         }

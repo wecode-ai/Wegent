@@ -46,6 +46,8 @@ struct SearchMatch {
     item_id: Option<String>,
     #[serde(default, alias = "turn_id", skip_serializing_if = "Option::is_none")]
     turn_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reply_questions: Option<Vec<String>>,
     occurrence: u64,
     cursor: String,
 }

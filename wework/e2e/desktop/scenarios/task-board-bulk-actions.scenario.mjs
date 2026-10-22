@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 
-import { DEFAULT_MODEL_ID, selectE2EModel } from '../modules/shared.mjs'
+import { DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, selectE2EModel } from '../modules/shared.mjs'
 import { waitForBlankConversation } from '../modules/memory-tool-flows.mjs'
 import {
   assistantMessage,
@@ -56,8 +56,7 @@ async function createCompletedTask(control, prompt, completion, timeoutMs) {
     timeoutMs,
   })
   await waitForBlankConversation(control, COMPOSER)
-  // Task board behavior depends on model identity, not the catalog's display name.
-  await selectE2EModel(control, DEFAULT_MODEL_ID, [])
+  await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
   await control.command('fill', COMPOSER, { value: prompt })
   await control.command('press', COMPOSER, { key: 'Enter' })
   await control.command('waitFor', `${ACTIVE_WORKBENCH} [data-testid="message-assistant"]`, {

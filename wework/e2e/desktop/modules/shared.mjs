@@ -1543,9 +1543,7 @@ async function selectE2EModel(
       'The model selector menu did not close after selecting the E2E model'
     )
   }
-  if (labels.length > 0) {
-    await waitForE2EModelLabel(control, labels, modelSelectorButton)
-  }
+  await waitForE2EModelLabel(control, labels, modelSelectorButton)
   if (expectedProviderId) {
     assert.equal(
       await control.command('getAttribute', modelSelectorButton, {

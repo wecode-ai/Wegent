@@ -5,7 +5,6 @@ import type {
   RuntimeTranscriptSearchMatch,
   RuntimeTranscriptSearchResponse,
 } from '@wegent/chat-core/runtime'
-import { resolveAsyncRequestUserInputReplies } from '@wegent/chat-core/runtime-user-input'
 import {
   isConversationDiagnosticsEnabled,
   recordConversationDiagnostic,
@@ -14,6 +13,7 @@ import { getPlatform } from '@/lib/platform'
 import { isImeComposingEvent } from '@/lib/ime'
 import {
   conversationMatchKey,
+  conversationReplyQuestions,
   conversationSearchText,
   deduplicateConversationSearchIndex,
   findConversationMatches,
@@ -63,7 +63,12 @@ function sameSearchResult(left: SearchResult, right: SearchResult) {
         conversationMatchKey(match) === conversationMatchKey(other) &&
         match.messageId === other.messageId &&
         match.occurrence === other.occurrence &&
-        match.cursor === other.cursor
+        match.cursor === other.cursor &&
+        match.replyQuestions?.length === other.replyQuestions?.length &&
+        (match.replyQuestions?.every(
+          (question, index) => question === other.replyQuestions?.[index]
+        ) ??
+          true)
       )
     })
   )
@@ -152,15 +157,18 @@ export function useConversationFind(
     if (!indexReady) return []
     return measureSearch('search-index', { messageCount: props.messages.length }, () => {
       const pageMessages = props.searchMessages ?? []
-      const replies = resolveAsyncRequestUserInputReplies([...pageMessages, ...props.messages])
+      const liveReplies = conversationReplyQuestions(props.messages)
+      const pageReplies = conversationReplyQuestions(pageMessages)
       return deduplicateConversationSearchIndex(
         [
-          ...props.messages.map(message => ({ message })),
+          ...props.messages.map(message => ({ message, source: undefined })),
           ...(onSearchTranscript
             ? []
             : pageMessages.map(message => ({ message, source: 'page' as const }))),
         ].map(({ message, ...source }) => {
-          const replyQuestions = replies.get(message.id)
+          const replyQuestions = (source.source === 'page' ? pageReplies : liveReplies).get(
+            message.id
+          )
           return {
             messageId: message.id,
             message,

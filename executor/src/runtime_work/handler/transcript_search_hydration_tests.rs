@@ -97,6 +97,51 @@ fn long_terminal_turn(turn_id: &str, first: &str, last: &str, status: &str) -> V
 }
 
 #[test]
+fn cached_async_reply_search_hydrates_distant_question_source_and_raw_answer() {
+    let mut card = assistant("question", "question-turn", "");
+    card["blocks"] = json!([{"id":"question-block", "type":"tool", "renderPayload":{
+        "kind":"request_user_input", "delivery":"async", "questions":[{"question":"needle needle?"}],
+    }}]);
+    let mut messages = vec![assistant("before", "before", "Other"), card];
+    messages.extend((0..8).map(|index| {
+        assistant(
+            &format!("context-{index}"),
+            &format!("context-turn-{index}"),
+            "Other",
+        )
+    }));
+    messages.push(json!({"id":"reply", "clientUserMessageId":"client-reply", "turnId":"reply-turn", "role":"user", "content":"**needle**"}));
+    messages.push(
+        json!({"id":"ordinary", "turnId":"ordinary-turn", "role":"user", "content":"**plain**"}),
+    );
+    let link = cached_link(messages);
+    let response = search_cached_transcript(&cached_search_messages(&link), "needle", 250);
+    assert_eq!(response["totalMatches"], 3);
+    for (index, matched) in response["matches"].as_array().unwrap().iter().enumerate() {
+        assert_eq!(matched["itemId"], "client-reply");
+        assert_eq!(matched["messageId"], "client-reply");
+        assert_eq!(matched["occurrence"], index);
+        assert_eq!(matched["replyQuestions"], json!(["needle needle?"]));
+        let page = hydrate_cursor(&link, matched["cursor"].as_str().unwrap(), 2, false);
+        assert!(message_ids(&page).contains(&"question"));
+        assert!(message_ids(&page).contains(&"reply"));
+        assert_eq!(
+            search_cached_transcript(page["messages"].as_array().unwrap(), "needle", 250),
+            response
+        );
+        assert_complete_page_turns(&link, &page);
+    }
+    assert_eq!(
+        search_cached_transcript(&cached_search_messages(&link), "**needle**", 250)["totalMatches"],
+        1
+    );
+    assert_eq!(
+        search_cached_transcript(&cached_search_messages(&link), "**plain**", 250)["totalMatches"],
+        0
+    );
+}
+
+#[test]
 fn cached_search_hydrates_complete_long_cancelled_and_failed_turns() {
     for (status, content, query, occurrence) in [
         ("cancelled", "interrupted", "interrupted", 0),

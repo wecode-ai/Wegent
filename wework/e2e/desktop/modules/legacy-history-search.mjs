@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { ACTIVE_WORKBENCH_SELECTOR } from './shared.mjs'
 import {
   TERMINAL_HISTORY_TURN_COUNT as LEGACY_TURN_COUNT,
+  assertAsyncHistoryUnloaded,
   verifyTerminalHistorySearch,
   waitForHighlightedHistoryMatch as waitForHighlightedSearchTarget,
   waitForHistorySearchCount,
@@ -47,6 +48,7 @@ export async function verifyLegacySearch(control, timeoutMs) {
     text: `Legacy search answer ${LEGACY_TURN_COUNT - 1}`,
   })
   const original = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).pane
+  await assertAsyncHistoryUnloaded(control)
   assert.doesNotMatch(
     await control.command('getText', '[data-testid="assistant-message-content"]'),
     /interrupted|TERMINAL_ERROR_BODY/
@@ -117,4 +119,5 @@ export async function verifyLegacySearch(control, timeoutMs) {
   }
   assert.deepEqual(restored.messageSummary, original.messageSummary, 'Search changed live messages')
   assert.equal(Number(await control.command('getElementCount', loadNewer)), 0)
+  await assertAsyncHistoryUnloaded(control)
 }

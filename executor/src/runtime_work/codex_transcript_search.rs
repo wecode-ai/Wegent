@@ -13,7 +13,7 @@ use super::{
     codex_transcript_page::{
         read_codex_thread_metadata, CodexTranscriptDirection, CodexTranscriptPage,
     },
-    transcript_search_text::codex_turn_search_sources,
+    transcript_search_text::{codex_turn_search_sources, AsyncReplySearchProjection},
     util::{item_type, string_field},
 };
 
@@ -98,6 +98,8 @@ pub(super) struct CodexSearchCursor {
     turn_cursor: String,
     #[serde(default)]
     turn_offset: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reply_source_turn_id: Option<String>,
 }
 
 pub(super) fn parse_search_cursor(cursor: &str) -> Result<Option<CodexSearchCursor>, String> {
@@ -171,6 +173,7 @@ async fn search_paginated_codex_transcript(
     let mut matches = Vec::new();
     let mut cursor = None;
     let mut seen_cursors = HashSet::new();
+    let mut reply_projection = AsyncReplySearchProjection::default();
     loop {
         let page = context_turn_page(
             client,
@@ -203,10 +206,12 @@ async fn search_paginated_codex_transcript(
                     item_id: String::new(),
                     turn_cursor: anchor.clone(),
                     turn_offset,
+                    reply_source_turn_id: None,
                 },
                 &needle,
                 limit,
                 user_content_by_client_id,
+                &mut reply_projection,
                 &mut matches,
             )?;
             if capped {
@@ -272,6 +277,7 @@ fn search_turn_items(
     needle: &str,
     limit: usize,
     user_content_by_client_id: &HashMap<String, String>,
+    reply_projection: &mut AsyncReplySearchProjection,
     matches: &mut Vec<Value>,
 ) -> Result<bool, String> {
     let provider_item_ids: HashSet<_> = turn
@@ -295,9 +301,12 @@ fn search_turn_items(
             Some((id, message_id))
         })
         .collect();
-    for (item_id, text) in
-        codex_turn_search_sources(turn, user_content_by_client_id, Some(thread_id))
-    {
+    for (item_id, text) in codex_turn_search_sources(
+        turn,
+        user_content_by_client_id,
+        Some(thread_id),
+        reply_projection,
+    ) {
         let text = text.to_lowercase();
         if !text.contains(needle) {
             continue;
@@ -306,6 +315,9 @@ fn search_turn_items(
             return Err("Codex search item is missing provider id".to_owned());
         }
         position.item_id = item_id;
+        position.reply_source_turn_id = reply_projection
+            .reply_source(&position.item_id)
+            .map(ToOwned::to_owned);
         let anchor = search_cursor(&position)?;
         for (occurrence, _) in text.match_indices(needle).enumerate() {
             let mut matched = json!({
@@ -314,6 +326,9 @@ fn search_turn_items(
             });
             if let Some(message_id) = user_message_ids.get(&position.item_id) {
                 matched["messageId"] = json!(message_id);
+            }
+            if let Some(questions) = reply_projection.reply_questions(&position.item_id) {
+                matched["replyQuestions"] = json!(questions);
             }
             matches.push(matched);
             if matches.len() >= limit {
@@ -384,13 +399,7 @@ pub(super) async fn load_search_match(
         .ok_or_else(|| "Persisted conversation search turn is no longer available".to_owned())?;
     let center = load_match_turn(client, &thread_id, turn, &cursor).await?;
     let (older_context, newer_context) = tokio::try_join!(
-        initial_context_side(
-            client,
-            &thread_id,
-            &cursor.turn_id,
-            &older_turns,
-            ContextDirection::Desc
-        ),
+        load_older_match_context(client, &thread_id, &cursor, &older_turns,),
         initial_context_side(
             client,
             &thread_id,
@@ -409,6 +418,90 @@ pub(super) async fn load_search_match(
         after_cursor: newer_context.1,
         prepend_item_turn_ids: HashSet::new(),
     })
+}
+
+async fn load_older_match_context(
+    client: &CodexAppServerClient,
+    thread_id: &str,
+    cursor: &CodexSearchCursor,
+    older_turns: &Value,
+) -> Result<(Vec<Value>, Option<String>), String> {
+    let Some(source_id) = cursor
+        .reply_source_turn_id
+        .as_deref()
+        .filter(|source| *source != cursor.turn_id)
+    else {
+        return initial_context_side(
+            client,
+            thread_id,
+            &cursor.turn_id,
+            older_turns,
+            ContextDirection::Desc,
+        )
+        .await;
+    };
+    // Keep the complete question-to-reply span so normal UI projection can
+    // associate the same question card with the matched user item.
+    let (mut turns, preceding_cursor) =
+        load_reply_question_span(client, thread_id, cursor, source_id, older_turns).await?;
+    turns.reverse();
+    let Some(preceding_cursor) = preceding_cursor else {
+        return Ok((turns, None));
+    };
+    let preceding = context_turn_page(
+        client,
+        thread_id,
+        Some(&preceding_cursor),
+        1,
+        ContextDirection::Desc,
+    )
+    .await?;
+    let (mut context, before) = initial_context_side(
+        client,
+        thread_id,
+        source_id,
+        &preceding,
+        ContextDirection::Desc,
+    )
+    .await?;
+    context.extend(turns);
+    Ok((context, before))
+}
+
+async fn load_reply_question_span(
+    client: &CodexAppServerClient,
+    thread_id: &str,
+    cursor: &CodexSearchCursor,
+    source_id: &str,
+    older_turns: &Value,
+) -> Result<(Vec<Value>, Option<String>), String> {
+    let mut page = older_turns.clone();
+    let mut turns = Vec::new();
+    let mut seen_cursors = HashSet::new();
+    loop {
+        let page_turns = page
+            .get("data")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "Codex search context turn page is missing data".to_owned())?;
+        for turn in page_turns {
+            let turn_id = string_field(turn, "id")
+                .ok_or_else(|| "Codex search context turn is missing id".to_owned())?;
+            if turn_id == cursor.turn_id {
+                continue;
+            }
+            turns.push(load_search_turn_items(client, thread_id, turn.clone()).await?);
+            if turn_id == source_id {
+                return Ok((turns, string_field(&page, "nextCursor")));
+            }
+        }
+        let next = string_field(&page, "nextCursor").ok_or_else(|| {
+            "Persisted conversation search question is no longer available".to_owned()
+        })?;
+        if !seen_cursors.insert(next.clone()) {
+            return Err("Codex search context returned a repeated turn cursor".to_owned());
+        }
+        page = context_turn_page(client, thread_id, Some(&next), 1, ContextDirection::Desc).await?;
+    }
 }
 
 async fn load_match_turn(
@@ -656,7 +749,12 @@ mod tests {
             {"id":"assistant", "type":"agentMessage", "text":"visible needle"},
         ]});
         assert_eq!(
-            codex_turn_search_sources(&turn, &HashMap::new(), Some("thread-1")),
+            codex_turn_search_sources(
+                &turn,
+                &HashMap::new(),
+                Some("thread-1"),
+                &mut AsyncReplySearchProjection::default(),
+            ),
             [
                 ("user".to_owned(), "Visible request".to_owned()),
                 ("assistant".to_owned(), "visible needle".to_owned()),
@@ -679,10 +777,12 @@ mod tests {
                 item_id: String::new(),
                 turn_cursor: "opaque-turn".into(),
                 turn_offset: 0,
+                reply_source_turn_id: None,
             },
             "needle",
             10,
             &HashMap::new(),
+            &mut AsyncReplySearchProjection::default(),
             &mut matches,
         )
         .unwrap();
@@ -713,15 +813,65 @@ mod tests {
                     item_id: String::new(),
                     turn_cursor: "opaque-turn".into(),
                     turn_offset: 0,
+                    reply_source_turn_id: None,
                 },
                 "needle",
                 10,
                 &HashMap::new(),
+                &mut AsyncReplySearchProjection::default(),
                 &mut matches,
             )
             .unwrap_err();
             assert_eq!(error, "Codex search item is missing provider id");
             assert!(matches.is_empty());
+        }
+    }
+
+    #[test]
+    fn native_async_reply_matches_keep_user_ids_and_projected_occurrences() {
+        let question = json!({"id":"question-turn", "status":"completed", "items":[
+            {"id":"question", "type":"agentMessage", "phase":"final_answer",
+             "delivery":"async", "questions":[{"title":"Choose needle", "options":["one","two"]}],
+             "text":"Question fallback"},
+        ]});
+        let reply = json!({"id":"reply-turn", "status":"completed", "items":[
+            {"id":"reply", "type":"userMessage", "clientId":"reply-client",
+             "content":[{"type":"text", "text":"**needle**"}]},
+        ]});
+        let mut projection = AsyncReplySearchProjection::default();
+        let mut matches = Vec::new();
+        for turn in [&question, &reply] {
+            search_turn_items(
+                "root-thread",
+                turn,
+                CodexSearchCursor {
+                    turn_id: turn["id"].as_str().unwrap().to_owned(),
+                    item_id: String::new(),
+                    turn_cursor: "opaque-turn".into(),
+                    turn_offset: 0,
+                    reply_source_turn_id: None,
+                },
+                "needle",
+                10,
+                &HashMap::new(),
+                &mut projection,
+                &mut matches,
+            )
+            .unwrap();
+        }
+        assert_eq!(matches.len(), 2);
+        for (occurrence, matched) in matches.iter().enumerate() {
+            assert_eq!(matched["itemId"], "reply");
+            assert_eq!(matched["messageId"], "reply-client");
+            assert_eq!(matched["occurrence"], occurrence);
+            assert_eq!(matched["replyQuestions"], json!(["Choose needle"]));
+            let cursor = parse_search_cursor(matched["cursor"].as_str().unwrap())
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                cursor.reply_source_turn_id.as_deref(),
+                Some("question-turn")
+            );
         }
     }
 
@@ -732,6 +882,7 @@ mod tests {
             item_id: "item-1".to_owned(),
             turn_cursor: "opaque-turn".to_owned(),
             turn_offset: 3,
+            reply_source_turn_id: Some("question-turn".to_owned()),
         })
         .unwrap();
         let parsed = parse_search_cursor(&cursor).unwrap().unwrap();
@@ -739,12 +890,17 @@ mod tests {
         assert_eq!(parsed.item_id, "item-1");
         assert_eq!(parsed.turn_cursor, "opaque-turn");
         assert_eq!(parsed.turn_offset, 3);
+        assert_eq!(
+            parsed.reply_source_turn_id.as_deref(),
+            Some("question-turn")
+        );
         let old = parse_search_cursor(
             "wework-codex-search:{\"turnId\":\"turn-1\",\"itemId\":\"item-1\",\"turnCursor\":\"opaque-turn\"}",
         )
         .unwrap()
         .unwrap();
         assert_eq!(old.turn_offset, 0);
+        assert!(old.reply_source_turn_id.is_none());
         assert!(parse_search_cursor("offset:10").unwrap().is_none());
         assert!(parse_search_cursor("wework-codex-search:invalid").is_err());
     }

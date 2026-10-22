@@ -269,6 +269,7 @@ done
         item_id: "match".to_owned(),
         turn_cursor: "search-page-anchor".to_owned(),
         turn_offset: 1,
+        reply_source_turn_id: None,
     };
     let error = load_search_match(&client, json!({"id":"thread-1"}), invalid)
         .await
@@ -280,6 +281,7 @@ done
         item_id: "match".to_owned(),
         turn_cursor: "search-page-anchor".to_owned(),
         turn_offset: SEARCH_PAGE_SIZE,
+        reply_source_turn_id: None,
     };
     assert!(
         resolve_search_turn_cursor(&client, "thread-1", &invalid_offset)
@@ -312,6 +314,188 @@ fn calls(log: &std::path::Path) -> Vec<Value> {
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect()
+}
+
+#[tokio::test]
+async fn native_async_reply_search_crosses_pages_and_hydrates_its_complete_question_span() {
+    let _environment = crate::agents::CodexLaunchEnvironment::new();
+    let directory = tempfile::tempdir().unwrap();
+    let mut question_items = vec![json!({
+        "id":"question", "type":"agentMessage", "phase":"final_answer", "delivery":"async",
+        "questions":[{"title":"Choose needle", "options":["one","two"]}],
+        "text":"Question fallback",
+    })];
+    question_items.extend((0..110).map(|index| json!({
+        "id":format!("question-padding-{index}"), "type":"commandExecution", "command":"echo wait",
+    })));
+    for (index, items) in question_items.chunks(SEARCH_PAGE_SIZE).enumerate() {
+        let data: Vec<_> = items
+            .iter()
+            .map(|item| json!({"turnId":"question-turn", "item":item}))
+            .collect();
+        fs::write(
+            directory.path().join(format!("question-{index}.json")),
+            json!({"data":data, "nextCursor":(index == 0).then_some("question-more")}).to_string(),
+        )
+        .unwrap();
+    }
+    let binary = directory.path().join("async-reply-search-fixture");
+    let log = directory.path().join("requests.jsonl");
+    let script = r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> '__DIRECTORY__/requests.jsonl'
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialized"'*) continue ;;
+    *'"method":"thread/read"'*) result='{"thread":{"id":"thread-async","historyMode":"paginated"}}' ;;
+    *'"method":"thread/turns/list"'*)
+      case "$line" in
+        *'"cursor":null'*) result='{"data":[{"id":"question-turn","status":"completed"},{"id":"bridge","status":"completed"}],"nextCursor":"scan-reply","backwardsCursor":"question-anchor"}' ;;
+        *'"cursor":"scan-reply"'*) result='{"data":[{"id":"reply-turn","status":"completed"}],"nextCursor":null,"backwardsCursor":"reply-anchor"}' ;;
+        *'"cursor":"reply-anchor"'*'"sortDirection":"desc"'*) result='{"data":[{"id":"reply-turn","status":"completed"},{"id":"bridge","status":"completed"}],"nextCursor":"question-context"}' ;;
+        *'"cursor":"reply-anchor"'*) result='{"data":[{"id":"reply-turn","status":"completed"},{"id":"newer","status":"completed"}],"nextCursor":"after-newer"}' ;;
+        *'"cursor":"question-context"'*) result='{"data":[{"id":"question-turn","status":"completed"}],"nextCursor":"before-question"}' ;;
+        *'"cursor":"before-question"'*) result='{"data":[{"id":"older","status":"completed"}],"nextCursor":"before-older"}' ;;
+        *'"cursor":"before-older"'*) result='{"data":[{"id":"oldest","status":"completed"}],"nextCursor":null}' ;;
+        *'"cursor":"after-newer"'*) result='{"data":[{"id":"newest","status":"completed"}],"nextCursor":null}' ;;
+        *) result='{"data":[],"nextCursor":null}' ;;
+      esac ;;
+    *'"method":"thread/items/list"'*)
+      case "$line" in
+        *'"cursor":"question-more"'*) result=$(cat '__DIRECTORY__/question-1.json') ;;
+        *'"turnId":"question-turn"'*) result=$(cat '__DIRECTORY__/question-0.json') ;;
+        *'"turnId":"reply-turn"'*) result='{"data":[{"turnId":"reply-turn","item":{"id":"reply","type":"userMessage","clientId":"reply-client","content":[{"type":"text","text":"**needle**"}]}}],"nextCursor":null}' ;;
+        *'"turnId":"bridge"'*) result='{"data":[{"turnId":"bridge","item":{"id":"waiting","type":"agentMessage","phase":"final_answer","text":"Waiting for your choice"}}],"nextCursor":null}' ;;
+        *'"cursor":"older-more"'*) result='{"data":[{"turnId":"older","item":{"id":"older-head","type":"agentMessage","text":"Earlier context"}}],"nextCursor":null}' ;;
+        *'"turnId":"older"'*) result='{"data":[{"turnId":"older","item":{"id":"older-tail","type":"agentMessage","text":"Prior context"}}],"nextCursor":"older-more"}' ;;
+        *'"turnId":"oldest"'*) result='{"data":[{"turnId":"oldest","item":{"id":"oldest-item","type":"agentMessage","text":"Oldest context"}}],"nextCursor":null}' ;;
+        *'"turnId":"newer"'*) result='{"data":[{"turnId":"newer","item":{"id":"newer-item","type":"agentMessage","text":"Newer context"}}],"nextCursor":null}' ;;
+        *'"turnId":"newest"'*) result='{"data":[{"turnId":"newest","item":{"id":"newest-item","type":"agentMessage","text":"Newest context"}}],"nextCursor":null}' ;;
+        *) result='{"data":[],"nextCursor":null}' ;;
+      esac ;;
+    *) result='{}' ;;
+  esac
+  printf '{"id":%s,"result":%s}\n' "$id" "$result"
+done
+"#;
+    fs::write(
+        &binary,
+        script.replace("__DIRECTORY__", &directory.path().to_string_lossy()),
+    )
+    .unwrap();
+    fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+    let request = serde_json::from_value(json!({
+        "user_name":"synthetic", "team_namespace":"default", "team_name":"search",
+        "team_id":12, "bot":[{"id":31,"shell_type":"Codex"}],
+    }))
+    .unwrap();
+    let client = CodexAppServerClient::new(binary.to_string_lossy())
+        .for_request(&request)
+        .unwrap();
+    for (query, expected_count) in [("needle", 2), ("**needle**", 1), ("Choose", 1)] {
+        let result = search_codex_transcript(
+            &client,
+            "thread-async",
+            query,
+            250,
+            &HashSet::new(),
+            &HashMap::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["totalMatches"], expected_count, "{query}");
+        for (occurrence, matched) in result["matches"].as_array().unwrap().iter().enumerate() {
+            assert_eq!(matched["itemId"], "reply");
+            assert_eq!(matched["messageId"], "reply-client");
+            assert_eq!(matched["occurrence"], occurrence);
+            assert_eq!(matched["replyQuestions"], json!(["Choose needle"]));
+        }
+        let cursor = parse_search_cursor(result["matches"][0]["cursor"].as_str().unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            cursor.reply_source_turn_id.as_deref(),
+            Some("question-turn")
+        );
+        let page = load_search_match(&client, json!({"id":"thread-async"}), cursor)
+            .await
+            .unwrap();
+        let turns = page.thread["turns"].as_array().unwrap();
+        let turn_ids: Vec<_> = turns
+            .iter()
+            .map(|turn| turn["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            turn_ids,
+            ["older", "question-turn", "bridge", "reply-turn", "newer"]
+        );
+        assert_eq!(turns[1]["items"], json!(question_items));
+        assert_eq!(turns[1]["itemsView"], "full");
+        assert_eq!(turns[3]["items"][0]["id"], "reply");
+        let mut projection = AsyncReplySearchProjection::default();
+        let projected: Vec<_> = turns
+            .iter()
+            .flat_map(|turn| {
+                codex_turn_search_sources(
+                    turn,
+                    &HashMap::new(),
+                    Some("thread-async"),
+                    &mut projection,
+                )
+            })
+            .collect();
+        let reply = projected.iter().find(|(id, _)| id == "reply").unwrap();
+        assert_eq!(reply.1, "Choose needle\n**needle**");
+        assert_eq!(
+            reply
+                .1
+                .to_lowercase()
+                .match_indices(&query.to_lowercase())
+                .count(),
+            expected_count
+        );
+        for (cursor, direction, first_id, next_id) in [
+            (
+                page.before_cursor.as_deref().unwrap(),
+                CodexTranscriptDirection::Descending,
+                "older",
+                Some("oldest"),
+            ),
+            (
+                page.after_cursor.as_deref().unwrap(),
+                CodexTranscriptDirection::Ascending,
+                "newest",
+                None,
+            ),
+        ] {
+            let first = load_context_page(
+                &client,
+                json!({"id":"thread-async"}),
+                parse_context_cursor(cursor).unwrap().unwrap(),
+                direction,
+            )
+            .await
+            .unwrap();
+            assert_eq!(first.thread["turns"][0]["id"], first_id);
+            if let Some(next_id) = next_id {
+                let next = load_context_page(
+                    &client,
+                    json!({"id":"thread-async"}),
+                    parse_context_cursor(first.before_cursor.as_deref().unwrap())
+                        .unwrap()
+                        .unwrap(),
+                    direction,
+                )
+                .await
+                .unwrap();
+                assert_eq!(next.thread["turns"][0]["id"], next_id);
+                assert!(next.before_cursor.is_none());
+            } else {
+                assert!(first.after_cursor.is_none());
+            }
+        }
+    }
+    client.restart().await;
 }
 
 #[tokio::test]
@@ -550,6 +734,7 @@ done
                 &page.thread["turns"][0],
                 &HashMap::new(),
                 Some(thread_id),
+                &mut AsyncReplySearchProjection::default(),
             );
             assert_eq!(
                 hydrated_sources,
@@ -558,6 +743,7 @@ done
                     "error":{"message":error}, "items":items}),
                     &HashMap::new(),
                     Some(thread_id),
+                    &mut AsyncReplySearchProjection::default(),
                 ),
                 "{thread_id}"
             );

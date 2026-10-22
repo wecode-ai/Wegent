@@ -3,12 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use crate::runtime_work::{
-    transcript::visible_user_request_content,
-    transcript_search_text::{
-        assistant_block_search_text, assistant_search_text, markdown_search_text,
-        strip_codex_ui_directives, visible_assistant_content,
-    },
+use crate::runtime_work::transcript_search_text::{
+    assistant_block_search_text, assistant_search_text, strip_codex_ui_directives,
+    visible_assistant_content, AsyncReplySearchProjection,
 };
 
 const MAX_TRANSCRIPT_SEARCH_MATCHES: usize = 250;
@@ -150,6 +147,13 @@ pub(super) fn cached_search_match_response(
         let start = index.saturating_sub(limit / 2);
         (start, start.saturating_add(limit).min(all_messages.len()))
     };
+    let start = if continuation.is_none() {
+        cached_reply_source_index(&all_messages, index)
+            .unwrap_or(start)
+            .min(start)
+    } else {
+        start
+    };
     let (start, end) = cached_search_complete_turn_window(&all_messages, start, end);
     let messages = all_messages[start..end].to_vec();
     let boundary_cursor = |message: Option<&Value>| {
@@ -181,6 +185,15 @@ pub(super) fn cached_search_match_response(
         turn_item_source: TranscriptTurnItemSource::CachedMessages,
         turn_navigation,
     })))
+}
+
+fn cached_reply_source_index(messages: &[Value], reply_index: usize) -> Option<usize> {
+    let mut projection = AsyncReplySearchProjection::default();
+    for message in &messages[..=reply_index] {
+        projection.message_text(message, message["id"].as_str().unwrap_or_default());
+    }
+    let source = projection.reply_source(messages[reply_index]["id"].as_str()?)?;
+    messages.iter().position(|message| message["id"] == source)
 }
 
 fn cached_search_complete_turn_window(
@@ -235,6 +248,7 @@ fn search_cached_transcript(messages: &[Value], query: &str, limit: usize) -> Va
     let segment_contents = cached_assistant_segment_contents(messages);
     let mut matches = Vec::new();
     let mut total = 0;
+    let mut projection = AsyncReplySearchProjection::default();
     for message in messages {
         let role = string_field(message, "role").unwrap_or_default();
         if !matches!(role.as_str(), "user" | "assistant") {
@@ -244,7 +258,10 @@ fn search_cached_transcript(messages: &[Value], query: &str, limit: usize) -> Va
         let Some(message_id) = string_field(message, "id") else {
             continue;
         };
-        for (item_id, text) in cached_message_search_sources(message, &role, &segment_contents) {
+        let user_text = projection.message_text(message, &message_id);
+        for (item_id, text) in
+            cached_message_search_sources(message, &role, &segment_contents, user_text)
+        {
             let count = text.to_lowercase().match_indices(needle.as_str()).count();
             total += count;
             for occurrence in 0..count.min(limit.saturating_sub(matches.len())) {
@@ -258,6 +275,9 @@ fn search_cached_transcript(messages: &[Value], query: &str, limit: usize) -> Va
                 }
                 if role == "user" {
                     item["messageId"] = json!(item_id);
+                    if let Some(questions) = projection.reply_questions(&message_id) {
+                        item["replyQuestions"] = json!(questions);
+                    }
                 }
                 matches.push(item);
             }
@@ -317,6 +337,7 @@ fn cached_message_search_sources(
     message: &Value,
     role: &str,
     segment_contents: &HashMap<String, Arc<str>>,
+    user_text: Option<String>,
 ) -> Vec<(String, String)> {
     let Some(message_id) = string_field(message, "id") else {
         return Vec::new();
@@ -326,10 +347,7 @@ fn cached_message_search_sources(
         let id = string_field(message, "clientUserMessageId")
             .or_else(|| string_field(message, "client_user_message_id"))
             .unwrap_or(message_id);
-        return vec![(
-            id,
-            markdown_search_text(visible_user_request_content(&content)),
-        )];
+        return vec![(id, user_text.unwrap_or_default())];
     }
     let segment_content = segment_contents.get(&message_id).or_else(|| {
         message

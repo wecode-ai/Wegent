@@ -24,6 +24,7 @@ import {
   terminalHistoryAssistantEvents,
   terminalHistoryCompletion,
   terminalHistoryTurn,
+  terminalHistoryUserText,
   verifyNativeTerminalHistorySearch,
   waitForHighlightedHistoryMatch as waitForHighlightedSearchTarget,
   waitForHistorySearchCount,
@@ -221,9 +222,12 @@ async function seedLegacySearchHistory(executorHome, sqliteHome, task) {
     const terminal = terminalHistoryTurn(index)
     const answer = terminal?.text ?? `Legacy search answer ${index}`
     const assistantEvents = terminalHistoryAssistantEvents(index, answer)
-    const prompt = LEGACY_MATCH_TURNS.includes(index)
-      ? `${LEGACY_PROMPT} ${index}`
-      : `Legacy search prompt ${index}`
+    const prompt = terminalHistoryUserText(
+      index,
+      LEGACY_MATCH_TURNS.includes(index)
+        ? `${LEGACY_PROMPT} ${index}`
+        : `Legacy search prompt ${index}`
+    )
     const attachmentTurn = index === LEGACY_MATCH_TURNS[0]
     const events = [
       { type: 'task_started', turn_id: turnId, model_context_window: null },

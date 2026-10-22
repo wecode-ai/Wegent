@@ -13,15 +13,123 @@ use super::{
     util::{item_type, string_field},
 };
 
+#[derive(Default)]
+pub(super) struct AsyncReplySearchProjection {
+    pending: Vec<(String, Vec<String>)>,
+    replies: HashMap<String, (String, Vec<String>)>,
+}
+
+impl AsyncReplySearchProjection {
+    pub(super) fn reply_source(&self, item_id: &str) -> Option<&str> {
+        self.replies.get(item_id).map(|reply| reply.0.as_str())
+    }
+
+    pub(super) fn reply_questions(&self, item_id: &str) -> Option<&[String]> {
+        self.replies.get(item_id).map(|reply| reply.1.as_slice())
+    }
+
+    /// Match chat-core's next nonempty user reply, with the last valid question group winning.
+    pub(super) fn message_text(&mut self, message: &Value, source: &str) -> Option<String> {
+        if message["role"] == "assistant" {
+            let questions = async_question_prompts(message);
+            if !questions.is_empty() {
+                self.pending.push((source.to_owned(), questions));
+            }
+            return None;
+        }
+        if message["role"] != "user" {
+            return None;
+        }
+        let content = message["content"].as_str().unwrap_or_default();
+        if content.trim().is_empty() {
+            return Some(markdown_search_text(visible_user_request_content(content)));
+        }
+        let groups = std::mem::take(&mut self.pending);
+        for (source, questions) in groups.into_iter().rev() {
+            let answers = if questions.len() == 1 {
+                vec![content.trim()]
+            } else {
+                content
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .collect()
+            };
+            if questions.len() != answers.len() {
+                continue;
+            }
+            let text = questions
+                .iter()
+                .zip(answers)
+                .map(|(question, answer)| format!("{question}\n{answer}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            if let Some(id) = message["id"].as_str() {
+                self.replies.insert(id.to_owned(), (source, questions));
+            }
+            return Some(text);
+        }
+        Some(markdown_search_text(visible_user_request_content(content)))
+    }
+}
+
+fn async_question_prompts(message: &Value) -> Vec<String> {
+    message["blocks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|block| {
+            let payload = block
+                .get("renderPayload")
+                .or_else(|| block.get("render_payload"));
+            payload
+                .filter(|payload| {
+                    block["type"] == "tool"
+                        && payload["kind"] == "request_user_input"
+                        && payload["delivery"] == "async"
+                })
+                .and_then(|payload| payload["questions"].as_array())
+                .into_iter()
+                .flatten()
+                .enumerate()
+                .map(|(index, question)| {
+                    question["question"]
+                        .as_str()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .or_else(|| {
+                            question["id"]
+                                .as_str()
+                                .map(str::trim)
+                                .filter(|value| !value.is_empty())
+                        })
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| format!("question_{}", index + 1))
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
 /// Index the same item projection that transcript hydration sends to the renderer.
 pub(super) fn codex_turn_search_sources(
     turn: &Value,
     user_content_by_client_id: &HashMap<String, String>,
     root_thread_id: Option<&str>,
+    projection: &mut AsyncReplySearchProjection,
 ) -> Vec<(String, String)> {
     let mut turn = turn.clone();
     restore_search_user_content(&mut turn, user_content_by_client_id);
     let messages = search_transcript_messages(&json!({"id": root_thread_id, "turns": [turn]}));
+    projection.replies.clear();
+    let source = turn["id"].as_str().unwrap_or_default();
+    let user_texts = messages
+        .iter()
+        .filter_map(|message| {
+            let text = projection.message_text(message, source)?;
+            Some((message["id"].as_str()?.to_owned(), text))
+        })
+        .collect::<HashMap<_, _>>();
     let mut items = Vec::new();
     for message in &messages {
         if message["role"] == "user" {
@@ -53,7 +161,7 @@ pub(super) fn codex_turn_search_sources(
             segment,
             if is_last { status } else { "done" },
             if is_last { error } else { None },
-            user_content_by_client_id,
+            &user_texts,
         ));
     }
     sources
@@ -80,7 +188,7 @@ fn projected_segment_search_sources(
     items: &[Value],
     status: &str,
     error: Option<&str>,
-    user_content_by_client_id: &HashMap<String, String>,
+    user_texts: &HashMap<String, String>,
 ) -> Vec<(String, String)> {
     let content = items
         .iter()
@@ -94,16 +202,7 @@ fn projected_segment_search_sources(
         .filter_map(|item| {
             let id = string_field(item, "id")?;
             let text = match item["type"].as_str()? {
-                "user_message" => {
-                    let message = &item["message"];
-                    let client_id = message["clientUserMessageId"].as_str().unwrap_or(&id);
-                    let content = user_content_by_client_id
-                        .get(client_id)
-                        .map(String::as_str)
-                        .or_else(|| message["content"].as_str())
-                        .unwrap_or_default();
-                    markdown_search_text(visible_user_request_content(content))
-                }
+                "user_message" => user_texts.get(&id).cloned().unwrap_or_default(),
                 "assistant_text" if !visible_content.is_empty() => {
                     assistant_search_text(item["content"].as_str().unwrap_or_default())
                 }
@@ -362,6 +461,10 @@ fn is_block(end: TagEnd) -> bool {
 }
 
 #[cfg(test)]
+#[path = "transcript_search_text/async_reply_tests.rs"]
+mod async_reply_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -373,6 +476,7 @@ mod tests {
             }),
             &HashMap::new(),
             None,
+            &mut Default::default(),
         )
     }
 
@@ -410,6 +514,7 @@ mod tests {
             }),
             &HashMap::new(),
             None,
+            &mut Default::default(),
         );
         assert!(sources.contains(&("first".into(), "API error: needle".into())));
         assert!(!sources.iter().any(|(id, _)| id == "last"));
@@ -424,6 +529,7 @@ mod tests {
             }),
             &HashMap::new(),
             None,
+            &mut Default::default(),
         );
         assert_eq!(
             sources,
@@ -447,6 +553,7 @@ mod tests {
             }),
             &HashMap::new(),
             None,
+            &mut Default::default(),
         );
         assert_eq!(sources, vec![("process".into(), "useful needle".into())]);
     }
@@ -459,6 +566,7 @@ mod tests {
             }]}),
             &HashMap::from([("client-user".into(), "restored **needle**".into())]),
             None,
+            &mut Default::default(),
         );
         assert_eq!(
             sources,

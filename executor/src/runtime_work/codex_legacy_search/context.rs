@@ -69,6 +69,7 @@ struct ContextWindow {
     turn_limit: usize,
     capture_native: bool,
     complete_anchor_turn: Option<usize>,
+    complete_start_turn: Option<usize>,
 }
 
 impl ContextWindow {
@@ -76,6 +77,7 @@ impl ContextWindow {
         direction: Option<CodexTranscriptDirection>,
         turn_limit: usize,
         complete_anchor_turn: Option<usize>,
+        complete_start_turn: Option<usize>,
     ) -> Self {
         Self {
             items: VecDeque::new(),
@@ -84,6 +86,7 @@ impl ContextWindow {
             turn_limit: turn_limit.clamp(1, 5),
             capture_native: direction != Some(CodexTranscriptDirection::Ascending),
             complete_anchor_turn,
+            complete_start_turn,
         }
     }
 
@@ -118,8 +121,13 @@ impl ContextWindow {
         self.anchor_turn = Some(item.turn_index);
         match self.direction {
             None => {
-                self.items
-                    .retain(|previous| previous.turn_index >= item.turn_index.saturating_sub(1));
+                self.items.retain(|previous| {
+                    previous.turn_index
+                        >= self
+                            .complete_start_turn
+                            .unwrap_or(item.turn_index)
+                            .min(item.turn_index.saturating_sub(1))
+                });
                 self.items.push_back(item);
             }
             Some(CodexTranscriptDirection::Descending) => {
@@ -175,7 +183,10 @@ impl ContextWindow {
                 self.items.len() < CONTEXT_PAGE_SIZE
             };
         } else {
-            let complete_anchor_item = Some(item.turn_index) == self.complete_anchor_turn;
+            let complete_anchor_item = self
+                .complete_start_turn
+                .zip(self.complete_anchor_turn)
+                .is_some_and(|(start, end)| (start..=end).contains(&item.turn_index));
             self.items.push_back(item);
             let maximum = if self.direction.is_none() {
                 ITEM_RADIUS
@@ -195,13 +206,18 @@ pub(super) fn hydrate_context_reader(
     direction: Option<CodexTranscriptDirection>,
     turn_limit: usize,
 ) -> Result<CodexTranscriptPage, String> {
-    let complete_anchor_turn = if direction.is_none() {
-        complete_anchor_turn(&mut reader, cursor)?
+    let (complete_start_turn, complete_anchor_turn) = if direction.is_none() {
+        complete_turn_range(&mut reader, cursor)?
     } else {
-        None
+        (None, None)
     };
     let mut reducer = LegacyProjection::new();
-    let mut window = ContextWindow::new(direction, turn_limit, complete_anchor_turn);
+    let mut window = ContextWindow::new(
+        direction,
+        turn_limit,
+        complete_anchor_turn,
+        complete_start_turn,
+    );
     scan(reader, 0, |record, offset| {
         reducer.capture_native = window.capture_native;
         let result = reducer.handle(&record, offset);
@@ -219,6 +235,7 @@ pub(super) fn hydrate_context_reader(
                     turn_id: turn.id.clone(),
                     item_id: item.id,
                     byte_offset: offset,
+                    reply_source_turn_id: None,
                 },
                 native: item.native,
             };
@@ -242,17 +259,17 @@ pub(super) fn hydrate_context_reader(
     context_page(&reducer, window)
 }
 
-fn complete_anchor_turn(
+fn complete_turn_range(
     reader: &mut (impl BufRead + Seek),
     cursor: &LegacySearchCursor,
-) -> Result<Option<usize>, String> {
+) -> Result<(Option<usize>, Option<usize>), String> {
     let metadata = read_metadata(&mut *reader)?;
     reader
         .rewind()
         .map_err(|error| format!("Cannot rewind legacy Codex history: {error}"))?;
     // Every anchor needs the complete projection. A distant final fragment can
     // make a same-text process block visible even when the turn completed.
-    Ok(metadata.turns.iter().position(|turn| {
+    let anchor = metadata.turns.iter().position(|turn| {
         turn.id == cursor.turn_id
             && turn.item_ids.contains_key(&cursor.item_id)
             && turn
@@ -261,7 +278,19 @@ fn complete_anchor_turn(
             && turn
                 .last_text_offset
                 .is_some_and(|offset| offset >= cursor.byte_offset)
-    }))
+    });
+    let start = if let Some(source_id) = cursor.reply_source_turn_id.as_deref() {
+        let source = metadata
+            .turns
+            .iter()
+            .position(|turn| turn.id == source_id)
+            .filter(|index| anchor.is_some_and(|anchor| *index <= anchor))
+            .ok_or_else(|| "Legacy async question source is no longer available".to_owned())?;
+        Some(source)
+    } else {
+        anchor
+    };
+    Ok((start, anchor))
 }
 
 fn context_page(

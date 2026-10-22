@@ -104,12 +104,26 @@ fn response_preserves_cursor_occurrence_and_omits_null_ids() {
 }
 
 #[test]
+fn response_preserves_async_reply_question_context() {
+    let value = json!({
+        "matches": [{"messageId": "reply", "itemId": "provider-reply", "occurrence": 1,
+            "cursor": "opaque:cursor", "replyQuestions": ["needle?", "**Keep Markdown**?"]}],
+        "totalMatches": 2, "isCapped": false,
+    });
+    assert_eq!(
+        serde_json::to_value(response(value.clone()).unwrap()).unwrap(),
+        value
+    );
+}
+
+#[test]
 fn invalid_runtime_results_are_explicit_gateway_failures() {
     for result in [
         json!({"success": false, "error": "device lost"}),
         json!({}),
         json!({"matches": [{"cursor": "", "occurrence": 0}], "totalMatches": 1, "isCapped": false}),
         json!({"matches": [{"cursor": "c", "occurrence": -1}], "totalMatches": 1, "isCapped": false}),
+        json!({"matches": [{"cursor": "c", "occurrence": 0, "replyQuestions": [false]}], "totalMatches": 1, "isCapped": false}),
     ] {
         assert_eq!(
             response(result).unwrap_err().status(),

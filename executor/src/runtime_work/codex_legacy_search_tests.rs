@@ -51,6 +51,55 @@ fn hydrate_reader(
         .ok_or_else(|| "selected turn is missing".to_owned())
 }
 
+#[test]
+fn legacy_async_reply_search_keeps_raw_answer_and_complete_distant_question_turn() {
+    let mut records = vec![
+        event(json!({"type":"task_started", "turn_id":"question-turn"})),
+        event(
+            json!({"type":"agent_message", "message":"fallback", "phase":"final_answer", "delivery":"async", "questions":[{"title":"needle needle?", "options":["yes", "no"]}]}),
+        ),
+    ];
+    records.extend((0..70).map(|index| event(json!({"type":"agent_message", "message":format!("context {index}"), "phase":"commentary"}))));
+    records.extend([
+        event(json!({"type":"task_complete", "turn_id":"question-turn"})),
+        event(json!({"type":"task_started", "turn_id":"middle-turn"})),
+        event(json!({"type":"agent_message", "message":"Other"})),
+        event(json!({"type":"task_complete", "turn_id":"middle-turn"})),
+        event(json!({"type":"task_started", "turn_id":"reply-turn"})),
+        event(json!({"type":"user_message", "message":"**needle**", "client_id":"client-reply"})),
+        event(json!({"type":"task_complete", "turn_id":"reply-turn"})),
+        event(json!({"type":"task_started", "turn_id":"ordinary-turn"})),
+        event(json!({"type":"user_message", "message":"**plain**"})),
+    ]);
+    let bytes = rollout(records);
+    let response = search(&bytes, "needle");
+    assert_eq!(response["totalMatches"], 3);
+    for (index, matched) in response["matches"].as_array().unwrap().iter().enumerate() {
+        assert_eq!(matched["itemId"], "item-73");
+        assert_eq!(matched["messageId"], "client-reply");
+        assert_eq!(matched["occurrence"], index);
+        assert_eq!(matched["replyQuestions"], json!(["needle needle?"]));
+        let cursor = parse_legacy_search_cursor(matched["cursor"].as_str().unwrap())
+            .unwrap()
+            .unwrap();
+        let page = context::hydrate_context_reader(Cursor::new(&bytes), &cursor, None, 3).unwrap();
+        let turns = page.thread["turns"].as_array().unwrap();
+        assert_eq!(turns[0]["id"], "question-turn");
+        assert_eq!(turns[0]["items"].as_array().unwrap().len(), 71);
+        assert_eq!(turns[0]["items"][0]["id"], "item-1");
+        let mut projection = AsyncReplySearchProjection::default();
+        let sources = turns
+            .iter()
+            .flat_map(|turn| {
+                codex_turn_search_sources(turn, &HashMap::new(), None, &mut projection)
+            })
+            .collect::<HashMap<_, _>>();
+        assert_eq!(sources["item-73"], "needle needle?\n**needle**");
+    }
+    assert_eq!(search(&bytes, "**needle**")["totalMatches"], 1);
+    assert_eq!(search(&bytes, "**plain**")["totalMatches"], 0);
+}
+
 /// These item ids were checked against the bundled alpha.5 app-server's
 /// thread/read and turns/list using the same synthetic legacy event sequence.
 #[test]
@@ -467,7 +516,8 @@ fn completed_match_preserves_process_dedup_against_the_complete_joined_answer() 
                 turn["items"].as_array().unwrap().len(),
                 112 + usize::from(append_tail)
             );
-            let sources = codex_turn_search_sources(&turn, &HashMap::new(), None);
+            let sources =
+                codex_turn_search_sources(&turn, &HashMap::new(), None, &mut Default::default());
             let visible_hits = sources
                 .iter()
                 .filter(|(_, text)| text.contains("needle"))
@@ -529,7 +579,7 @@ fn failed_match_restores_complete_joined_answer_and_keeps_neighbor_pagination() 
     assert_eq!(failed["items"][0]["text"], "useful output");
     assert_eq!(failed["items"][151]["text"], "needle");
     assert_eq!(failed["error"], "needle");
-    let sources = codex_turn_search_sources(failed, &HashMap::new(), None);
+    let sources = codex_turn_search_sources(failed, &HashMap::new(), None, &mut Default::default());
     assert!(sources
         .iter()
         .any(|(id, text)| id == &cursor.item_id && text == "needle"));
@@ -584,7 +634,7 @@ fn failed_match_restores_guidance_boundaries_beyond_the_item_radius() {
     let turn = hydrate(&bytes, &response["matches"][0]);
     assert_eq!(turn["items"].as_array().unwrap().len(), 123);
     assert_eq!(turn["items"][121]["clientId"], "guidance");
-    let sources = codex_turn_search_sources(&turn, &HashMap::new(), None);
+    let sources = codex_turn_search_sources(&turn, &HashMap::new(), None, &mut Default::default());
     assert!(sources
         .iter()
         .any(|(id, text)| id == "item-1" && text.contains("needle")));
@@ -613,9 +663,11 @@ fn interrupted_match_restores_the_complete_meaningful_partial_answer() {
     assert_eq!(turn["status"], "interrupted");
     assert_eq!(turn["items"].as_array().unwrap().len(), 141);
     assert_eq!(turn["items"][0]["text"], "partial 0");
-    assert!(codex_turn_search_sources(&turn, &HashMap::new(), None)
-        .iter()
-        .any(|(_, text)| text == "needle"));
+    assert!(
+        codex_turn_search_sources(&turn, &HashMap::new(), None, &mut Default::default())
+            .iter()
+            .any(|(_, text)| text == "needle")
+    );
 }
 
 #[test]

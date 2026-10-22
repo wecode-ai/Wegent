@@ -3,7 +3,10 @@ import { unified } from 'unified'
 import remarkParse from 'remark-parse'
 import remarkGfm from 'remark-gfm'
 import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
-import type { AsyncRequestUserInputReply } from '@wegent/chat-core/runtime-user-input'
+import {
+  resolveAsyncRequestUserInputReplies,
+  type AsyncRequestUserInputReply,
+} from '@wegent/chat-core/runtime-user-input'
 import { stripPluginWorkspaceResultMarkers } from '@wegent/chat-core/plugin-workspace-result'
 import {
   getAssistantSearchPresentation,
@@ -21,6 +24,19 @@ export interface ConversationSearchMatch {
 }
 
 const MAX_NAVIGABLE_MATCHES = 250
+const repliesByMessages = new WeakMap<
+  WorkbenchMessage[],
+  Map<string, AsyncRequestUserInputReply[]>
+>()
+
+/** Associate replies within the same reading window that MessageList renders. */
+export function conversationReplyQuestions(messages: WorkbenchMessage[]) {
+  const cached = repliesByMessages.get(messages)
+  if (cached) return cached
+  const replies = resolveAsyncRequestUserInputReplies(messages)
+  repliesByMessages.set(messages, replies)
+  return replies
+}
 
 function nodeText(node: Root | RootContent): string {
   if (node.type === 'image' || node.type === 'imageReference' || node.type === 'html') return ''
@@ -76,6 +92,7 @@ export interface ConversationFindMatch extends ConversationSearchMatch {
   itemId?: string
   itemOccurrence?: number
   turnId?: string
+  replyQuestions?: string[]
   cursor?: string
   source?: 'page'
 }
@@ -248,7 +265,12 @@ export function mergeConversationMatches(
 }
 
 const visibleTextByMessage = new WeakMap<WorkbenchMessage, string>()
-function cachedMessageText(message: WorkbenchMessage): string {
+function cachedMessageText(
+  message: WorkbenchMessage,
+  replyQuestions?: AsyncRequestUserInputReply[]
+): string {
+  // A reply's presentation can change while its own message object stays unchanged.
+  if (replyQuestions?.length) return conversationSearchText(message, replyQuestions)
   const cached = visibleTextByMessage.get(message)
   if (cached !== undefined) return cached
   const text = conversationSearchText(message)
@@ -270,8 +292,20 @@ function resolveMessageMatch(
       )
     : messages.find(message => message.id === match.messageId)
   if (!message) return null
+  const replyQuestions = conversationReplyQuestions(messages).get(message.id)
+  if (
+    match.replyQuestions &&
+    (match.replyQuestions.length !== (replyQuestions?.length ?? 0) ||
+      match.replyQuestions.some(
+        (question, index) => question !== replyQuestions?.[index]?.question
+      ))
+  )
+    return null
   if (!match.itemId || message.role === 'user' || !message.runtimeDisplayItems?.length) {
-    if (match.cursor && countOccurrences(cachedMessageText(message), query) <= match.occurrence)
+    if (
+      match.cursor &&
+      countOccurrences(cachedMessageText(message, replyQuestions), query) <= match.occurrence
+    )
       return null
     return { messageId: message.id, occurrence: match.occurrence }
   }

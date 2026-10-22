@@ -10,10 +10,12 @@ import { ensureExperimentalFeaturesEnabled } from './preferences-automation-flow
 import {
   TERMINAL_HISTORY_SEARCH_CASES,
   TERMINAL_HISTORY_TURN_COUNT as TURN_COUNT,
+  assertAsyncHistoryUnloaded,
   seedNativeTerminalHistory,
   terminalHistoryAssistantEvents,
   terminalHistoryCompletion,
   terminalHistoryTurn,
+  terminalHistoryUserText,
   verifyNativeTerminalHistorySearch,
   verifyTerminalHistorySearch,
   waitForHighlightedHistoryMatch,
@@ -43,7 +45,10 @@ const NEWER = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-newer-runtime-tra
 const USERS = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="user-message-content"]`
 const ANSWERS = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`
 const prompt = index =>
-  MATCH_TURNS.includes(index) ? `${QUERY} ${index}` : `Cloud history question ${index}`
+  terminalHistoryUserText(
+    index,
+    MATCH_TURNS.includes(index) ? `${QUERY} ${index}` : `Cloud history question ${index}`
+  )
 const answer = index => `Cloud history answer ${index}`
 
 /** Buffer only the two bounded read APIs; forward their original bytes exactly once. */
@@ -325,6 +330,7 @@ export function createCloudHistorySearchVerification() {
           pane => pane?.currentRuntimeTask?.taskId === taskId && !pane.transcript.loading,
           'The original cloud conversation did not finish loading'
         )
+        await assertAsyncHistoryUnloaded(control)
         assert.doesNotMatch(
           await control.command('getText', ANSWERS),
           /interrupted|TERMINAL_ERROR_BODY/
@@ -422,6 +428,7 @@ export function createCloudHistorySearchVerification() {
           'Cloud search polluted original messages'
         )
         assert.equal(Number(await control.command('getElementCount', NEWER)), 0)
+        await assertAsyncHistoryUnloaded(control)
         assert.ok(
           proxy.requests.filter(
             entry =>
