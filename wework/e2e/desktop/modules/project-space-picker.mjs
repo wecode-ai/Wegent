@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { reloadMainWindow, waitForWorkbenchDebugState } from './workspace-flows.mjs'
+import { reloadMainWindow, waitForWorkbenchTask } from './workspace-flows.mjs'
 
 const MENU = '[data-testid="work-item-context-menu"]'
 const OPTIONS = `${MENU} [role="option"]`
@@ -61,12 +61,12 @@ export function createProjectSpacePickerRegression({
       visible: true,
       timeoutMs: workbenchReadyTimeoutMs,
     })
-    const state = await waitForWorkbenchDebugState(
+    await waitForWorkbenchTask(
       control,
-      snapshot => snapshot.workbench?.currentRuntimeTask?.taskId === address.taskId,
-      'Project picker navigation did not select the requested runtime task',
-      uiTimeoutMs
+      address.taskId,
+      'The project picker task did not finish restoring after navigation'
     )
+    const state = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
     assert.equal(state.workbench?.currentRuntimeTask?.taskId, address.taskId)
   }
 
