@@ -104,7 +104,7 @@ DingTalk hosts the document, sheet, AI table, and wiki MCP servers at fixed OAut
 | `dingtalk_aitable` | DingTalk AI Table | `https://mcp-gw.dingtalk.com/oauth/server/aitable` |
 | `dingtalk_wiki` | DingTalk Wiki | `https://mcp-gw.dingtalk.com/oauth/server/wiki` |
 
-Backfill is idempotent. Deleting a built-in app removes its row, so the next startup bootstrap recreates it; edit an app to customize it instead of deleting it.
+Backfill is idempotent: it creates every built-in slug that has no active app. A deleted built-in app is recreated on the next startup; set `CONNECTOR_BUILTIN_APPS_ENABLED=False` to keep it removed.
 
 These four services no longer use the provider configuration popup and inject no "open configuration" guidance. Built-in apps default to `toolLoadingMode: lazy` and carry DingTalk service keywords. A matching user message preloads the corresponding `wegent-connector-<slug>` Skill; otherwise the model loads it on demand through `load_skill`. The conversation authorization link still covers missing grants, and OAuth, tool discovery, and allowlist enforcement keep the existing Connector flow. The Wegent web "Settings → Integrations" page drops the DingTalk provider card in favor of the app-connections card.
 

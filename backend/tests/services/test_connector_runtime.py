@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import builtins
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -20,6 +21,14 @@ from app.services.connector_apps import (
 )
 from app.services.connector_connections import connector_connection_service
 from app.services.connector_runtime import ConnectorRuntimeService
+
+
+def _exception_group(message: str, exception: BaseException) -> BaseException:
+    """Build a real exception group on Python 3.10 through 3.13."""
+    factory = getattr(builtins, "ExceptionGroup", None)
+    if factory is None:  # pragma: no cover - Python 3.10 backport
+        from exceptiongroup import ExceptionGroup as factory
+    return factory(message, [exception])
 
 
 def _app(**overrides):
@@ -960,8 +969,8 @@ async def test_discovery_maps_transport_auth_error_to_401(
         request=request,
         response=httpx.Response(401, request=request),
     )
-    grouped = ExceptionGroup(
-        "unhandled errors in a TaskGroup (1 sub-exception)", [upstream_error]
+    grouped = _exception_group(
+        "unhandled errors in a TaskGroup (1 sub-exception)", upstream_error
     )
 
     @asynccontextmanager

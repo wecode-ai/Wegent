@@ -104,7 +104,7 @@ GIT_TOKEN_AES_IV="$(openssl rand -base64 12 | head -c 16)"
 | `dingtalk_aitable` | 钉钉 AI 表格 | `https://mcp-gw.dingtalk.com/oauth/server/aitable` |
 | `dingtalk_wiki` | 钉钉知识库 | `https://mcp-gw.dingtalk.com/oauth/server/wiki` |
 
-补齐是幂等的。删除内置应用会移除对应记录，下一次启动会重新建出它；需要定制时请编辑应用而不是删除。
+补齐是幂等的：只要某个内置 slug 没有可用应用，就会新建一个。删除内置应用后，下一次启动会重新建出它；如需长期移除，请设置 `CONNECTOR_BUILTIN_APPS_ENABLED=False`。
 
 这四个服务不再使用 provider 配置弹窗，也不再注入"打开配置弹窗"的引导。内置 App 默认使用 `toolLoadingMode: lazy`，并带有钉钉服务关键词；消息命中关键词时提前 preload 对应 `wegent-connector-<slug>` Skill，否则由模型按需 `load_skill`。未授权时仍由对话内的 Connector 授权链接引导。OAuth 授权、工具发现和白名单校验保持原有 Connector 流程不变。Wegent Web 的"设置 → 集成"不再展示钉钉 provider 卡片，改用"应用连接"卡片。
 
