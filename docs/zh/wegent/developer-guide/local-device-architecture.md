@@ -100,6 +100,8 @@ Wework 在请求进入跨进程或跨服务边界时生成 request ID，并在�
 
 ### Executor 启动环境与 Codex Home 初始化
 
+Git worktree 会话设置 `PNPM_CONFIG_IGNORE_SCRIPTS=true` 和 `PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false`，复用 pnpm 内容缓存，但将虚拟依赖目录保留在工作树内。全局虚拟仓库的真实路径会让 TypeScript 向用户主目录查找类型，可能混入另一版本的 React。Wework 的 TypeScript 配置还将 `react` 和 `react/*` 绑定到自身的 `@types/react`，让共享 JSON 等工作树包目录外的输入也使用同一套类型。已有工作树切换此设置后，需运行 `PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false pnpm install --frozen-lockfile` 重建依赖链接；执行器更新后的新会话会自动使用该设置。
+
 共享插件包按内容哈希保存并保留旧包；Codex 原生缓存目录使用插件清单中的版本号。不能给该缓存版本追加哈希，否则 Codex 原生安装会清理该目录并使工作台保存的路径失效。插件认证 SDK 从 Executor 的 `capabilities/manifest-v2.json` 解析当前安装身份，不能读取迁移后残留的旧清单。
 
 续聊保留任务 ID，但每轮使用新的子任务 ID，以刷新 MCP 上下文并区分消息。会话读取和续聊使用首次执行所属的原生 Home；不同 Home 的 Codex 查询进程互相隔离，历史刷新只读且不恢复会话，以免占用下一轮执行所需的写锁；续轮保存用户及 Team 身份但不保存凭据。后端 Team 的原生 Home 位于工作台根目录的 `agents/<执行用户名>/<namespace>/<Team 名称>`。流水线中各 Bot 使用其下的 `bots/<Bot ID>`，分别保存配置、会话和执行锁；按任务调用技能时，只有持有执行锁且记录了该任务的 Home 才能消除多个阶段之间的歧义。Wework 直接运行的配置（`team_id = 0`）继续使用应用管理的原生 Home，负责人续轮时保留此标记；其选择的后端技能部署到任务工作区的 `.codex/skills`，原生插件技能仍由 Codex 管理。共享 Codex 进程因环境变化重启前，必须等待活跃回合和未完成的 RPC 全部结束。
