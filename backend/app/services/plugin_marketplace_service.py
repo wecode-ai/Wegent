@@ -113,8 +113,6 @@ SEMVER_PATTERN = re.compile(
 )
 SLUG_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?$")
 MAX_RESOLVED_INTERFACE_CACHE_ENTRIES = 128
-# Bound both recipient leases and installation CAS writes in one transaction.
-MAX_PLUGIN_REVOCATION_INSTALLATIONS = 20
 logger = logging.getLogger(__name__)
 
 
@@ -2497,7 +2495,6 @@ class PluginMarketplaceService:
                 grants=grants,
             )
         ]
-        self._validate_revocation_size(revoked)
         acquire_plugin_write_locks(db, (user_id for user_id, _ in revoked))
         (
             db.query(ResourceMember)
@@ -2560,7 +2557,6 @@ class PluginMarketplaceService:
                 status_code=409,
                 detail="Plugin is shared or installed by other users",
             )
-        self._validate_revocation_size(installations)
         acquire_plugin_write_locks(db, (user_id for user_id, _ in installations))
         self._clear_plugin_grants(db, plugin_id=plugin.id)
         self._deactivate_revoked_installations(db, installations)
@@ -2628,18 +2624,6 @@ class PluginMarketplaceService:
             json.dumps(revision_payload, sort_keys=True).encode("utf-8")
         ).hexdigest()
         return installations, len(grants), len(device_rows), revision
-
-    @staticmethod
-    def _validate_revocation_size(installations: list[tuple[int, int]]) -> None:
-        """Reject unsupported fan-out before acquiring leases or changing grants."""
-        if len(installations) > MAX_PLUGIN_REVOCATION_INSTALLATIONS:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "Plugin revocation supports at most "
-                    f"{MAX_PLUGIN_REVOCATION_INSTALLATIONS} installations per request"
-                ),
-            )
 
     def _deactivate_revoked_installations(
         self,

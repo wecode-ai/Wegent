@@ -49,10 +49,10 @@ Python and the migrated Rust plugin writers use the same protocol:
   rolls back the whole transaction and releases acquired locks without partial
   revocation. Policy reads count toward this budget, but synchronous I/O cannot
   be interrupted; business changes do not start after the budget is exhausted.
-  Each revocation or deletion supports at most 20 installation records, including
-  the owner's installation during deletion. Larger operations return HTTP 409
-  before acquiring leases or changing grants or catalog state, preserving all
-  records and bounding the number of transactional CAS writes.
+  Revocation and deletion have no business limit on installation count. The
+  coordination and operation budgets still apply. A timeout or conflict rolls
+  back the whole transaction, preserving grants and installation state so the
+  caller can explicitly retry.
 - Renewal, ownership checks, and release compare tokens. An old worker must not
   release its successor's lock.
 - After acquiring the lock, reread policies, installations, connections, and other
