@@ -33,6 +33,7 @@ type CommentApi = Pick<SharedWorkspaceApi, 'attachments' | 'taskBindings' | 'iss
 
 /** Browser services around the exact PC main composer, controls, uploads and execution orchestration. */
 export function BrowserIssueCommentComposer({
+  assignment,
   api,
   runtime,
   client,
@@ -49,6 +50,7 @@ export function BrowserIssueCommentComposer({
   onTaskUpdated,
   onCommentPersisted,
 }: {
+  assignment?: import('./useCommentAssignment').CommentAssignment
   api: CommentApi
   runtime: SharedWorkspaceRuntimeApi
   client: ProjectChatClient
@@ -114,8 +116,9 @@ export function BrowserIssueCommentComposer({
       !draft.attachments.isAttachmentReadyToSend ||
       !draft.beginOperation()
     )
-      return
+      return false
     const attachments = draft.attachments.attachments
+    let persisted = false
     try {
       if (!serverExecution && agent && !execution.target)
         throw new Error(t('activity.comment_execution_target_required'))
@@ -157,6 +160,7 @@ export function BrowserIssueCommentComposer({
           ...mentions.filter(mention => mention.type === 'user'),
         ],
       })
+      persisted = true
       onMessages([message])
       onCommentPersisted?.(message)
       // Persistence succeeded. A rejected execution must not cause a duplicate comment on retry.
@@ -194,8 +198,10 @@ export function BrowserIssueCommentComposer({
           onTaskUpdated,
           startFailedText: t('workbench.project_chat_agent_start_failed'),
         })
+      return true
     } catch (cause) {
       draft.setError(cause instanceof Error ? cause.message : String(cause))
+      return persisted
     } finally {
       draft.endOperation()
     }
@@ -216,11 +222,12 @@ export function BrowserIssueCommentComposer({
         </div>
       )}
       <IssueMainCommentComposer
+        assignment={assignment}
         mentionCandidates={mentionCandidates}
         translate={t}
         value={draft.draft}
         onChange={draft.setDraft}
-        onSubmit={(body, mentions) => void submit(body, mentions)}
+        onSubmit={submit}
         disabled={!canComment || loading}
         sending={draft.busy}
         uploading={!draft.attachments.isAttachmentReadyToSend}

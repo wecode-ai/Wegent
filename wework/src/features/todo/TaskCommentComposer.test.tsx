@@ -49,6 +49,41 @@ function setup(overrides: Partial<Parameters<typeof TaskCommentComposer>[0]> = {
 }
 
 describe('TaskCommentComposer', () => {
+  it('places the first mentioned assignee next to Send and allows assignment without text', async () => {
+    const user = userEvent.setup()
+    const assign = vi.fn().mockResolvedValue(undefined)
+    const assignment = {
+      members: [1, 2].map(user_id => ({
+        user_id,
+        user_name: `User ${user_id}`,
+        role: 'Developer',
+      })) as import('@wegent/collaboration').CollaborationMember[],
+      assign,
+    }
+    const { props, rerender } = setup({
+      assignment,
+      value: '[$@User 1](wework-member://1) [$@User 2](wework-member://2)',
+    })
+    const select = screen.getByTestId('task-comment-form-assignee')
+    const send = screen.getByTestId('send-message-button')
+    expect(select).toHaveAttribute('data-value', '1')
+    expect(select.nextElementSibling).toBe(send)
+    expect(send).toHaveTextContent('发送并转派')
+    await user.click(select)
+    await user.click(screen.getByTestId('task-comment-form-assignee-option-2'))
+    rerender(<TaskCommentComposer {...props} value="" />)
+    expect(send).toHaveTextContent('转派')
+    expect(send).toBeEnabled()
+    await user.click(send)
+    await waitFor(() => expect(assign).toHaveBeenCalledWith(2))
+    expect(props.onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('hides assignment when the host does not grant permission', () => {
+    setup()
+    expect(screen.queryByTestId('task-comment-form-assignee')).not.toBeInTheDocument()
+  })
+
   it('keeps execution settings collapsed without replacing the draft when toggled', async () => {
     const user = userEvent.setup()
     const { input } = setup()

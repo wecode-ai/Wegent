@@ -39,6 +39,9 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'plugin-account-auth-conversation': './scenarios/plugin-account-auth.scenario.mjs',
   'plugin-account-auth-github': './scenarios/plugin-account-auth.scenario.mjs',
 
+  'plugin-registration-coordination': './scenarios/plugin-uninstall-resilience.scenario.mjs',
+  'plugin-account-auth-coordination': './scenarios/plugin-account-auth.scenario.mjs',
+  'plugin-write-coordination': './scenarios/plugin-uninstall-resilience.scenario.mjs',
   'plugin-uninstall-lost-response': './scenarios/plugin-uninstall-resilience.scenario.mjs',
   'plugin-uninstall-unknown-result': './scenarios/plugin-uninstall-resilience.scenario.mjs',
   'plugin-uninstall-restart-recovery': './scenarios/plugin-uninstall-resilience.scenario.mjs',
@@ -175,7 +178,10 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'plugin-account-auth-dws',
   'plugin-account-auth-conversation',
   'plugin-account-auth-github',
+  'plugin-account-auth-coordination',
 
+  'plugin-write-coordination',
+  'plugin-registration-coordination',
   'plugin-uninstall-lost-response',
   'plugin-uninstall-unknown-result',
   'plugin-uninstall-restart-recovery',

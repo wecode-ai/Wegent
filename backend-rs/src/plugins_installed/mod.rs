@@ -23,6 +23,7 @@ mod item;
 mod record_sync_result;
 mod report;
 mod sync_device;
+mod write_coordination;
 use brz_mysql::{FromMysqlRow, Mysql, MysqlResult};
 use chrono::NaiveDateTime;
 pub use item::kind_to_item;
