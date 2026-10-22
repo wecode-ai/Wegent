@@ -504,7 +504,7 @@ export async function createDesktopScenario({
         await assertUnchangedContinuation(testCase, baseline, name)
       }
       await openIssue(control, testCase)
-      const nextCard = `${CONTENT} [data-testid="cloud-task-activity-card-${testCase.activityId}"] [data-testid="collaboration-chat-message-${testCase.nextActivityId}"]`
+      const nextCard = `${CONTENT} [data-testid="cloud-task-activity-card-${testCase.nextActivityId}"]`
       await control.command('waitFor', nextCard, { text: testCase.continuePrefix })
       await control.command(
         'waitFor',
