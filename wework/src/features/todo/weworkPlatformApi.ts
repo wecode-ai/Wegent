@@ -132,10 +132,11 @@ export function createWeworkPlatformApi(
           ? localApi.workspaces!.removeMember(workspaceId, memberUserId)
           : cloudApi.workspaces!.removeMember(workspaceId, memberUserId)
       },
-      listAgents(workspaceId) {
-        return isLocalWorkspace(workspaceId)
-          ? localApi.workspaces!.listAgents(workspaceId)
-          : cloudApi.workspaces!.listAgents(workspaceId)
+      listAgents(workspaceId, options) {
+        const api = isLocalWorkspace(workspaceId) ? localApi : cloudApi
+        return options
+          ? api.workspaces!.listAgents(workspaceId, options)
+          : api.workspaces!.listAgents(workspaceId)
       },
       addAgent(workspaceId, input) {
         return isLocalWorkspace(workspaceId)
@@ -308,10 +309,9 @@ export function createWeworkPlatformApi(
     },
     agents: {
       ...cloudApi.agents,
-      async list(projectId) {
-        return (await projectLocation(projectId)) === 'local'
-          ? localApi.agents.list(projectId)
-          : cloudApi.agents.list(projectId)
+      async list(projectId, options) {
+        const api = (await projectLocation(projectId)) === 'local' ? localApi : cloudApi
+        return options ? api.agents.list(projectId, options) : api.agents.list(projectId)
       },
       async create(projectId, input) {
         return (await projectLocation(projectId)) === 'local'
@@ -429,24 +429,26 @@ export function createWeworkPlatformApi(
         ...cloudApi.resources?.devices,
       },
       async list() {
-        const localResources = localApi.resources
-          ? await localApi.resources.list()
-          : { agents: [], execution_environments: [] }
-        if (!cloudApi.resources) return localResources
-        try {
-          const cloudResources = await cloudApi.resources.list()
-          return {
-            agents: [
-              ...localResources.agents.map(agent => ({ ...agent, location: 'local' as const })),
-              ...cloudResources.agents.map(agent => ({ ...agent, location: 'cloud' as const })),
-            ],
-            execution_environments: mergeExecutionEnvironmentResources(
-              localResources.execution_environments,
-              cloudResources.execution_environments
-            ),
-          }
-        } catch {
-          return localResources
+        const [local, cloud] = await Promise.allSettled([
+          localApi.resources?.list() ?? Promise.resolve({ agents: [], execution_environments: [] }),
+          cloudApi.resources?.list(),
+        ])
+        if (local.status === 'rejected') throw local.reason
+        const localResources = local.value
+        if (cloud.status === 'rejected') {
+          return { ...localResources, unavailable_sources: ['cloud' as const] }
+        }
+        if (!cloud.value) return localResources
+        const cloudResources = cloud.value
+        return {
+          agents: [
+            ...localResources.agents.map(agent => ({ ...agent, location: 'local' as const })),
+            ...cloudResources.agents.map(agent => ({ ...agent, location: 'cloud' as const })),
+          ],
+          execution_environments: mergeExecutionEnvironmentResources(
+            localResources.execution_environments,
+            cloudResources.execution_environments
+          ),
         }
       },
       async removeAgent(agent) {

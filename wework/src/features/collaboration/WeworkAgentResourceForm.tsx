@@ -1,5 +1,4 @@
 import { useAgentRouting } from '@/features/collaboration/useAgentRouting'
-import { useAgentCreationDefaults } from './useAgentCreationDefaults'
 import { AgentEnvironmentFields, AgentModelFields } from './AgentRoutingFields'
 import { useAgentRuntimeTab } from './useAgentRuntimeTab'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -74,13 +73,14 @@ export function WeworkAgentResourceForm({
   const [name, setName] = useState(createAgentResourceName)
   const [displayName, setDisplayName] = useState('')
   const [runtime, setRuntime] = useState<UnifiedAgentRuntime>('Codex')
-  const creationDefaults = useAgentCreationDefaults(!editing)
   const routing = useAgentRouting(api, runtime === 'Codex' ? 'codex' : 'claude_code', projectId, {
-    creationDefaults,
+    defer: true,
+    creation: !editing,
   })
   const runtimeTab = useAgentRuntimeTab(routing)
   const loadRouting = routing.load
-  const [capabilityMode, setCapabilityMode] = useState<UnifiedAgentCapabilityMode>('follow_device')
+  const [selectedCapabilityMode, setCapabilityMode] =
+    useState<UnifiedAgentCapabilityMode>('follow_device')
   const [systemPrompt, setSystemPrompt] = useState('')
   const [mcpConfig, setMcpConfig] = useState('{}')
   const [skills, setSkills] = useState<UnifiedSkill[]>([])
@@ -95,11 +95,13 @@ export function WeworkAgentResourceForm({
   const [skillLoadError, setSkillLoadError] = useState<string | null>(null)
   const [pluginLoadError, setPluginLoadError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [capabilitiesActive, setCapabilitiesActive] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const skillsPrefilled = useRef(false)
-  const deviceState = useCurrentAgentDevice(deviceApi, pluginApi)
+  const deviceState = useCurrentAgentDevice(deviceApi, pluginApi, capabilitiesActive)
 
   useEffect(() => {
+    if (!capabilitiesActive) return
     let active = true
 
     void api
@@ -141,7 +143,7 @@ export function WeworkAgentResourceForm({
     return () => {
       active = false
     }
-  }, [api, pluginApi, t])
+  }, [api, capabilitiesActive, pluginApi, t])
 
   useEffect(() => {
     if (editingTeamId == null) return
@@ -194,6 +196,10 @@ export function WeworkAgentResourceForm({
     () => resolveAgentPromptCapabilityReferences(systemPrompt, availablePlugins, availableSkills),
     [availablePlugins, availableSkills, systemPrompt]
   )
+  const capabilityMode =
+    promptCapabilities.pluginIds.size || promptCapabilities.skillIds.size
+      ? 'manual'
+      : selectedCapabilityMode
   const effectiveSelectedPluginSet = useMemo(
     () => new Set([...selectedPluginSet, ...promptCapabilities.pluginIds]),
     [promptCapabilities.pluginIds, selectedPluginSet]
@@ -236,14 +242,16 @@ export function WeworkAgentResourceForm({
       systemPrompt,
       skills:
         capabilityMode === 'manual'
-          ? availableSkills
-              .filter(skill => effectiveSelectedSkillIds.has(skill.id))
-              .map(skill => ({
-                skillId: skill.id,
-                name: skill.name,
-                namespace: skill.namespace || 'default',
-                isPublic: skill.is_public,
-              }))
+          ? !capabilitiesActive && detail
+            ? detail.skills
+            : availableSkills
+                .filter(skill => effectiveSelectedSkillIds.has(skill.id))
+                .map(skill => ({
+                  skillId: skill.id,
+                  name: skill.name,
+                  namespace: skill.namespace || 'default',
+                  isPublic: skill.is_public,
+                }))
           : [],
       plugins:
         capabilityMode === 'manual' && runtime === 'Codex'
@@ -286,6 +294,7 @@ export function WeworkAgentResourceForm({
   return (
     <AgentFormDialog
       deletion={editing ? deletion : undefined}
+      onAdvancedOpen={() => setCapabilitiesActive(true)}
       runtimeTab={runtimeTab}
       advanced={
         <>
@@ -506,6 +515,7 @@ export function WeworkAgentResourceForm({
       }}
       promptEditor={
         <AgentPromptEditor
+          onFocus={() => setCapabilitiesActive(true)}
           busy={busy}
           field={{
             label: t('workbench.agent_creator_prompt', '提示词'),
@@ -532,7 +542,16 @@ export function WeworkAgentResourceForm({
           }
         />
       }
-      saveDisabled={!routing.valid || unsupportedRuntime || (editing && !detail)}
+      saveDisabled={
+        !routing.valid ||
+        unsupportedRuntime ||
+        (editing && !detail) ||
+        (capabilityMode === 'manual' &&
+          capabilitiesActive &&
+          (loadingSkills ||
+            loadingPlugins ||
+            (editing && Boolean(skillLoadError || pluginLoadError))))
+      }
       saveLabel={
         editing
           ? t('workbench.agent_editor_save', '保存')

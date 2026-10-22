@@ -4,6 +4,7 @@ import type {
   WorkspaceRuntimeTaskAddress,
   RunnerModel,
 } from '@wegent/collaboration'
+import type { RuntimeTaskSummary } from '@/types/api'
 
 type Request = <T>(method: string, payload: Record<string, unknown>, deviceId: string) => Promise<T>
 type ProjectStore = 'local' | 'cloud'
@@ -13,6 +14,10 @@ export type StandInProjectSettings = WorkspaceStandInSettings & {
   userId: number
 }
 export interface StandInExecutorApi {
+  readTask(
+    deviceId: string,
+    taskId: string
+  ): Promise<{ success: boolean; task?: RuntimeTaskSummary }>
   catalog(deviceId: string): Promise<{ models: RunnerModel[] }>
   run(
     projectId: string,
@@ -44,6 +49,7 @@ export interface StandInExecutorApi {
 
 export function createStandInExecutorApi(request: Request): StandInExecutorApi {
   return {
+    readTask: (deviceId, taskId) => request('runtime.tasks.get', { taskId }, deviceId),
     catalog: deviceId => request('runtime.runner.catalog', {}, deviceId),
     run: (projectId, issueId, userId, projectStore, deviceId, standInId = 'default') =>
       request(

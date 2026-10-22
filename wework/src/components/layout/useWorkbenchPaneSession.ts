@@ -1756,53 +1756,61 @@ export function useWorkbenchPaneSession({
       const applyResponse = prepareLocalRequestUserInputResponse(response)
       const message = requestUserInputResponseText(response)
       const requestUserInputKey = requestUserInputResponseKey(response)
-      const runtimeModelOverride = options.forceDefaultCollaborationMode
-        ? { collaborationMode: 'default' }
-        : undefined
-      if (options.forceDefaultCollaborationMode) {
-        projectChat.setSelectedModelOption('collaborationMode', 'default')
-      }
-      // A question that is answered by the next user message - a non-blocking
-      // Codex question or an implementation-plan confirmation - is delivered like
-      // any other user message. Codex then steers the running turn while the model
-      // is still working and starts a new turn once it has stopped, instead of
-      // rejecting the answer for arriving mid-turn.
-      const answerIsUserMessage =
-        options.appendUserMessage ||
-        isAsyncRequestUserInputPayload(
-          findRequestUserInputPayload(messagesRef.current, requestUserInputKey)
-        )
-      if (answerIsUserMessage) {
-        const answerMessage: RuntimePaneQueuedMessage = {
-          id: `queued-runtime-pane-${Date.now()}-${queuedMessages.length}`,
-          content: message,
-          status: 'queued',
-          createdAt: new Date().toISOString(),
-          ...getRuntimeModelFields(runtimeModelOverride),
+      const operation = beginRuntimeConversationOperation(currentRuntimeTask, {
+        requestUserInputKey,
+      })
+      try {
+        const runtimeModelOverride = options.forceDefaultCollaborationMode
+          ? { collaborationMode: 'default' }
+          : undefined
+        if (options.forceDefaultCollaborationMode) {
+          projectChat.setSelectedModelOption('collaborationMode', 'default')
         }
-        setQueuedMessages(messages => [...messages, answerMessage])
-        if (!(await sendQueuedMessageAsGuidance(answerMessage))) return false
-      } else {
-        const additionalContext = readRuntimeTerminalAdditionalContext(currentRuntimeTask)
-        const sent = await sendRuntimePaneMessage({
-          address: currentRuntimeTask,
-          message,
-          requestUserInputResponse: response,
-          ...(additionalContext ? { additionalContext } : {}),
-        })
-        if (!sent) return false
-        markRuntimeTerminalAdditionalContextDelivered(additionalContext)
+        // A question that is answered by the next user message - a non-blocking
+        // Codex question or an implementation-plan confirmation - is delivered like
+        // any other user message. Codex then steers the running turn while the model
+        // is still working and starts a new turn once it has stopped, instead of
+        // rejecting the answer for arriving mid-turn.
+        const answerIsUserMessage =
+          options.appendUserMessage ||
+          isAsyncRequestUserInputPayload(
+            findRequestUserInputPayload(messagesRef.current, requestUserInputKey)
+          )
+        if (answerIsUserMessage) {
+          const answerMessage: RuntimePaneQueuedMessage = {
+            id: `queued-runtime-pane-${Date.now()}-${queuedMessages.length}`,
+            content: message,
+            status: 'queued',
+            createdAt: new Date().toISOString(),
+            ...getRuntimeModelFields(runtimeModelOverride),
+          }
+          setQueuedMessages(messages => [...messages, answerMessage])
+          if (!(await sendQueuedMessageAsGuidance(answerMessage))) return false
+        } else {
+          const additionalContext = readRuntimeTerminalAdditionalContext(currentRuntimeTask)
+          const sent = await sendRuntimePaneMessage({
+            address: currentRuntimeTask,
+            message,
+            requestUserInputResponse: response,
+            ...(additionalContext ? { additionalContext } : {}),
+          })
+          if (!sent) return false
+          markRuntimeTerminalAdditionalContextDelivered(additionalContext)
+        }
+        if (!operation.isCurrent()) return false
+        const responseIsSelected = applyResponse()
+        if (requestUserInputKey && responseIsSelected) {
+          setAnsweredRequestUserInputIds(current => {
+            if (current.has(requestUserInputKey)) return current
+            const next = new Set(current)
+            next.add(requestUserInputKey)
+            return next
+          })
+        }
+        return true
+      } finally {
+        operation.dispose()
       }
-      const responseIsSelected = applyResponse()
-      if (requestUserInputKey && responseIsSelected) {
-        setAnsweredRequestUserInputIds(current => {
-          if (current.has(requestUserInputKey)) return current
-          const next = new Set(current)
-          next.add(requestUserInputKey)
-          return next
-        })
-      }
-      return true
     },
     [
       prepareLocalRequestUserInputResponse,

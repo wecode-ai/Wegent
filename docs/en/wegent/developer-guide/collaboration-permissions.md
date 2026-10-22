@@ -6,6 +6,8 @@ sidebar_position: 36
 
 Spaces define the administrative boundary. Projects inherit space membership by default. Resources participate through explicit use grants and project bindings. Lists and mutations share one server-side authorization policy. This document is a human-approved product contract, protected by tests.
 
+Project details reuse the project list's permission query and response construction (CP13), preserving inherited space roles and permission sources. Stand-in saves read project details to authorize execution, so details must not use the legacy query that reduces inherited roles to Viewer. The `stand-in-permissions` desktop E2E checkpoint covers successful saves by inherited administrators and members, Viewer denial, and restricted-project access boundaries; the shared desktop CI runs this checkpoint.
+
 ```mermaid
 flowchart TD
     User[User] -->|membership and role| Space[Space]
@@ -22,6 +24,8 @@ flowchart TD
 ## Roles and inheritance
 
 The three administrative roles are administrator (`Maintainer`), member (`Developer`) and read-only member (`Viewer`). Ownership is a separate space relation. The read-only `Owner` response label is derived from that relation and cannot be assigned through membership APIs. Creating a project explicitly adds its creator as a project administrator; creator identity is audit information.
+
+The new project, parent-space grant and creator's administrator grant are written in one transaction. Insert the new project's parent grant directly instead of locking an absent grant, avoiding MySQL gap-lock deadlocks when independent spaces create projects concurrently. Existing-resource authorization restoration keeps its locking rules. The MySQL permission regression suite covers concurrent creation, the unique parent and use permission after creation.
 
 | Space identity | Inherited project | Restricted project |
 | --- | --- | --- |
@@ -67,6 +71,8 @@ Personal tasks created from an Issue use the original project and Issue as their
 Queued work revalidates current permission at claim time. Device liveness, model readiness and capacity are execution conditions, not permission sources. All routing policies use the project's authorized device set.
 
 ## Management surfaces
+
+HTTP and MCP board bulk ordering enforce CP07, CP13 and CP14 together: Viewers cannot reorder, and other members may submit and receive only Issues they can read. Reordering visible cards exchanges only their slots in the global sibling sequence, retaining invisible members' positions. For non-administrators, inaccessible or nonexistent request targets return the same 404 before any write. Project administrators retain their existing access to all Issues. `test_loop_item_reorder_permissions.py` covers roles, default security, same-status and cross-status ordering, and unchanged persistence after rejection.
 
 Users with project access and no parent-space access can still open their authorized projects from the unified sidebar. The parent supplies a grouping label only: it grants no space home, settings, membership, resource catalog or unauthorized sibling access. Public Viewers and directly invited project guests follow the same rule. Switching local/cloud spaces or reopening the current space does not change the authorized global project navigation.
 

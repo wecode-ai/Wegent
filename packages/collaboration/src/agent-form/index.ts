@@ -11,3 +11,5 @@ export * from "./resourceName";
 export * from "./types";
 
 export * from "./runnerRouting";
+
+export * from './runnerModelCatalog'

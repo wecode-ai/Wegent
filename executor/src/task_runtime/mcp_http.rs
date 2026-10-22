@@ -568,8 +568,15 @@ mod tests {
 
     #[tokio::test]
     async fn persistent_endpoint_authenticates_and_reuses_one_mcp_session() {
+        use futures_util::FutureExt;
+
         let endpoint = ensure_space_mcp_http_endpoint().await.unwrap();
-        let same_endpoint = ensure_space_mcp_http_endpoint().await.unwrap();
+        // Reusing an owned live server must not depend on a timed HTTP probe:
+        // discarding it on timeout invalidates concurrent turns and MCP contexts.
+        let same_endpoint = ensure_space_mcp_http_endpoint()
+            .now_or_never()
+            .expect("Reusing a live MCP endpoint must not wait for network scheduling")
+            .unwrap();
         assert_eq!(endpoint.url, same_endpoint.url);
         assert_eq!(endpoint.token, same_endpoint.token);
         let active = space_mcp_http_endpoint().unwrap();

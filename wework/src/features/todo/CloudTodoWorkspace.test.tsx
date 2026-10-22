@@ -52,6 +52,10 @@ vi.mock('@/telemetry/client', () => telemetryMocks)
 vi.mock('@dnd-kit/core', async importOriginal => {
   const actual = await importOriginal<typeof import('@dnd-kit/core')>()
   const ActualDndContext = actual.DndContext
+  const activeCard = () => ({
+    id: JSON.stringify([item.status, item.id]),
+    data: { current: { itemId: item.id } },
+  })
   return {
     ...actual,
     DndContext: ({ children, ...props }: DndContextProps) => (
@@ -63,7 +67,7 @@ vi.mock('@dnd-kit/core', async importOriginal => {
           data-testid="mock-dnd-drag-start"
           onClick={() =>
             props.onDragStart?.({
-              active: { id: item.id },
+              active: activeCard(),
             } as DragStartEvent)
           }
         />
@@ -73,7 +77,7 @@ vi.mock('@dnd-kit/core', async importOriginal => {
           data-testid="mock-dnd-drag-cancel"
           onClick={() =>
             props.onDragCancel?.({
-              active: { id: item.id },
+              active: activeCard(),
             } as DragCancelEvent)
           }
         />
@@ -83,8 +87,22 @@ vi.mock('@dnd-kit/core', async importOriginal => {
           data-testid="mock-dnd-drag-to-pending"
           onClick={() =>
             props.onDragEnd?.({
-              active: { id: item.id },
+              active: activeCard(),
               over: { id: 'todo-column:pending' },
+            } as DragEndEvent)
+          }
+        />
+        <button
+          type="button"
+          hidden
+          data-testid="mock-dnd-drag-before-third"
+          onClick={() =>
+            props.onDragEnd?.({
+              active: activeCard(),
+              over: {
+                id: 'todo-card:["in_progress","WEG-3"]',
+                data: { current: { columnKey: 'in_progress' } },
+              },
             } as DragEndEvent)
           }
         />
@@ -94,7 +112,7 @@ vi.mock('@dnd-kit/core', async importOriginal => {
           data-testid="mock-dnd-drag-to-in-progress"
           onClick={() =>
             props.onDragEnd?.({
-              active: { id: item.id },
+              active: activeCard(),
               over: { id: 'todo-column:in_progress' },
             } as DragEndEvent)
           }
@@ -4492,7 +4510,8 @@ describe('CloudTodoWorkspace', () => {
       'disabled:bg-text-primary',
       'disabled:text-background'
     )
-    await userEvent.click(screen.getByRole('button', { name: '＋ 新建标签' }))
+    await userEvent.click(screen.getByTestId('cloud-project-manage-tags-toggle'))
+    await userEvent.click(await screen.findByRole('button', { name: '＋ 新建标签' }))
     expect(screen.getByTestId('cloud-project-tag-create-confirm')).toHaveClass(
       'bg-text-primary',
       'text-background',
@@ -4580,6 +4599,7 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await userEvent.click(await screen.findByTestId('cloud-project-manage-view'))
     expect(screen.queryByText('看板字段映射')).not.toBeInTheDocument()
+    expect(screen.getByTestId('aitable-manage-save')).toBeVisible()
     await userEvent.click(screen.getByTestId('aitable-manage-save'))
 
     expect(screen.queryByTestId('aitable-status-mode-custom')).not.toBeInTheDocument()
@@ -4614,15 +4634,16 @@ describe('CloudTodoWorkspace', () => {
     workbenchServices.deliveryApi!.listCloudProjects = vi.fn(async () => ({
       items: [aitableProject],
     }))
-    let authCalls = 0
+    let authenticated = false
     workbenchServices.dwsApi = {
-      authStatus: vi.fn(async () => {
-        authCalls += 1
-        return authCalls === 1
-          ? { authenticated: false, token_valid: false }
-          : { authenticated: true, token_valid: true, corp_name: '测试组织' }
+      authStatus: vi.fn(async () => ({
+        authenticated,
+        token_valid: authenticated,
+        ...(authenticated ? { corp_name: '测试组织' } : {}),
+      })),
+      login: vi.fn(async () => {
+        authenticated = true
       }),
-      login: vi.fn(async () => undefined),
       logout: vi.fn(async () => undefined),
     }
     workbenchServices.deliveryApi!.listLoopItems = vi
@@ -4641,13 +4662,21 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click(await screen.findByTestId('cloud-sidebar-project-11'))
     const connectButton = await screen.findByTestId('aitable-board-dws-login')
     expect(connectButton).toHaveTextContent('连接钉钉')
+    expect(workbenchServices.dwsApi.login).not.toHaveBeenCalled()
 
-    await userEvent.click(connectButton)
-    await waitFor(() => expect(workbenchServices.dwsApi!.login).toHaveBeenCalledOnce())
-    await waitFor(
-      () => expect(screen.queryByTestId('aitable-board-dws-login')).not.toBeInTheDocument(),
-      { timeout: 5000 }
-    )
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      fireEvent.click(connectButton)
+      expect(workbenchServices.dwsApi.login).toHaveBeenCalledOnce()
+      expect(connectButton).toBeDisabled()
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(750)
+      })
+      expect(screen.queryByTestId('aitable-board-dws-login')).not.toBeInTheDocument()
+      expect(workbenchServices.deliveryApi!.listLoopItems).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('keeps project header controls interactive above the macOS drag region', async () => {
@@ -4900,6 +4929,120 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute('data-task-id', inboxItem.id)
   })
 
+  it('keeps all three local sibling ranks when a backward move refresh fails and recovers', async () => {
+    const localProject = { ...project, project_store: 'local' as const }
+    const siblings = [
+      item,
+      { ...item, id: 'WEG-2', sort_order: 1 },
+      { ...item, id: 'WEG-3', sort_order: 2 },
+    ]
+    const savedItems = [
+      { ...item, sort_order: 1, version: item.version + 1, updated_at: '2026-10-21T00:00:00Z' },
+      { ...siblings[1], sort_order: 0, version: item.version + 1 },
+      siblings[2],
+    ]
+    let committed = false
+    let offline = true
+    const localApi = services().deliveryApi!
+    localApi.listCloudProjects = vi.fn(async () => ({ items: [localProject] }))
+    localApi.listLoopItems = vi.fn(async () => {
+      if (committed && offline) throw new Error('Order refresh failed')
+      return { items: committed ? savedItems : siblings }
+    })
+    localApi.updateLoopItem = vi.fn(async () => {
+      committed = true
+      return savedItems[0]
+    })
+    const cloudApi = services().deliveryApi!
+    cloudApi.listCloudProjects = vi.fn(async () => ({ items: [] }))
+    const props = {
+      user: { id: 1, user_name: 'local', email: 'local@example.com' } as User,
+      localProjects: [],
+      services: services({
+        deliveryApi: cloudApi,
+        projectSpaceApis: { local: localApi, cloud: cloudApi, defaultLocation: 'local' },
+      }),
+    }
+    const view = render(<CloudTodoWorkspace {...props} />)
+    await userEvent.click(await screen.findByTestId('cloud-sidebar-project-11'))
+    await screen.findByTestId('cloud-todo-card-WEG-3')
+    await userEvent.click(screen.getByTestId('cloud-board-sort-by-in_progress'))
+    await userEvent.click(screen.getByTestId('cloud-board-sort-by-in_progress-manual'))
+    await userEvent.click(screen.getByTestId('cloud-board-sort-by-in_progress'))
+    fireEvent.click(screen.getByTestId('mock-dnd-drag-before-third'))
+    await screen.findByText('Order refresh failed')
+    const order = () =>
+      Array.from(
+        screen
+          .getByTestId('cloud-todo-column-in_progress')
+          .querySelectorAll('article[data-testid^="cloud-todo-card-drop-"]')
+      ).map(card => card.getAttribute('data-testid'))
+    expect(order()).toEqual([
+      'cloud-todo-card-drop-WEG-2',
+      'cloud-todo-card-drop-WEG-1',
+      'cloud-todo-card-drop-WEG-3',
+    ])
+    offline = false
+    view.unmount()
+    render(<CloudTodoWorkspace {...props} />)
+    await userEvent.click(await screen.findByTestId('cloud-sidebar-project-11'))
+    await screen.findByTestId('cloud-todo-card-WEG-3')
+    expect(order()).toEqual([
+      'cloud-todo-card-drop-WEG-2',
+      'cloud-todo-card-drop-WEG-1',
+      'cloud-todo-card-drop-WEG-3',
+    ])
+    expect(localApi.updateLoopItem).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['write', 'refresh'])(
+    'keeps the persisted local move state after a %s failure',
+    async stage => {
+      const localProject = { ...project, project_store: 'local' as const }
+      const localApi = services().deliveryApi!
+      let committed = false
+      localApi.listCloudProjects = vi.fn(async () => ({ items: [localProject] }))
+      localApi.listLoopItems = vi.fn(async () => {
+        if (committed) throw new Error('Order refresh failed')
+        return { items: [item] }
+      })
+      localApi.updateLoopItem = vi.fn(async (_id, update) => {
+        if (stage === 'write') throw new Error('Atomic write failed')
+        committed = true
+        return { ...item, ...update, version: item.version + 1 }
+      })
+      const cloudApi = services().deliveryApi!
+      cloudApi.listCloudProjects = vi.fn(async () => ({ items: [] }))
+      render(
+        <CloudTodoWorkspace
+          user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+          localProjects={[]}
+          services={services({
+            deliveryApi: cloudApi,
+            projectSpaceApis: { local: localApi, cloud: cloudApi, defaultLocation: 'local' },
+          })}
+        />
+      )
+      await userEvent.click(await screen.findByTestId('cloud-sidebar-project-11'))
+      await screen.findByTestId('cloud-todo-card-WEG-1')
+      fireEvent.click(screen.getByTestId('mock-dnd-drag-to-pending'))
+      await screen.findByText(stage === 'write' ? 'Atomic write failed' : 'Order refresh failed')
+      const lane = stage === 'write' ? 'in_progress' : 'pending'
+      expect(
+        within(screen.getByTestId(`cloud-todo-column-${lane}`)).getByTestId('cloud-todo-card-WEG-1')
+      ).toBeInTheDocument()
+      expect(localApi.updateLoopItem).toHaveBeenCalledTimes(1)
+      expect(localApi.updateLoopItem).toHaveBeenCalledWith(
+        item.id,
+        expect.objectContaining({
+          version: item.version,
+          status: 'pending',
+          position: { beforeItemId: null },
+        })
+      )
+    }
+  )
+
   it('fails closed when dragging a cloud Issue without can_edit', async () => {
     const readOnlyItem = {
       ...item,
@@ -4951,6 +5094,7 @@ describe('CloudTodoWorkspace', () => {
       expect(workbenchServices.deliveryApi!.updateLoopItem).toHaveBeenCalledWith('WEG-1', {
         version: pendingItem.version,
         status: 'in_progress',
+        position: { beforeItemId: null },
       })
     )
     expect(screen.getByTestId('mock-start-background-task')).toHaveAttribute(
@@ -5098,6 +5242,26 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     expect(await screen.findByTestId('cloud-todo-card-WEG-1')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-board-sort-by-in_progress')).toHaveAccessibleName(
+      '进行中 · 排序方式'
+    )
+    expect(screen.getByTestId('cloud-board-sort-by-in_progress')).toHaveAttribute(
+      'data-sort-rules',
+      'priority-desc'
+    )
+    await userEvent.click(screen.getByTestId('cloud-board-sort-by-in_progress'))
+    await userEvent.click(screen.getByTestId('cloud-board-sort-by-in_progress-add'))
+    expect(screen.getByTestId('cloud-board-sort-by-in_progress')).toHaveAttribute(
+      'data-sort-rules',
+      'priority-desc,created-desc'
+    )
+    await userEvent.click(screen.getByTestId('cloud-board-sort-by-in_progress-manual'))
+    expect(screen.getByTestId('cloud-board-sort-by-in_progress')).toHaveAttribute(
+      'data-sort-rules',
+      'manual'
+    )
+    await userEvent.click(screen.getByTestId('cloud-board-sort-by-in_progress'))
+    expect(workbenchServices.deliveryApi!.updateCloudProject).not.toHaveBeenCalled()
     expect(screen.getByTestId('cloud-todo-column-in_progress')).toHaveTextContent(
       'Implement cloud MCP'
     )

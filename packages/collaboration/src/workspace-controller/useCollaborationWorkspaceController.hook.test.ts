@@ -73,12 +73,12 @@ const hookRuntime = vi.hoisted(() => {
       const index = hookIndex++;
       const hook = hooks[index] ?? { state: initialState };
       hooks[index] = hook;
-      return [
-        hook.state as State,
-        (action) => {
+      if (!hook.dispatch) {
+        hook.dispatch = (action: Action) => {
           hook.state = reducer(hook.state as State, action);
-        },
-      ];
+        };
+      }
+      return [hook.state as State, hook.dispatch as (action: Action) => void];
     },
     useRef<T>(initialValue: T) {
       const index = hookIndex++;
@@ -98,6 +98,7 @@ vi.mock("react", () => ({
 
 import {
   type CollaborationWorkspaceController,
+  initialCollaborationWorkspaceControllerState,
   useCollaborationWorkspaceController,
 } from "./useCollaborationWorkspaceController";
 
@@ -204,10 +205,11 @@ const messages = {
 };
 
 function renderController(
-  api: SharedWorkspaceApi,
+  api: SharedWorkspaceApi | null | undefined,
   location: CollaborationLocation,
   myWorkEnabled?: boolean,
   initialProject?: CollaborationProject,
+  loadProjectOnLocation = true,
 ): CollaborationWorkspaceController {
   hookRuntime.beginRender();
   const controller = useCollaborationWorkspaceController({
@@ -215,6 +217,7 @@ function renderController(
     location,
     messages,
     initialProject,
+    loadProjectOnLocation,
     ...(myWorkEnabled === undefined ? {} : { myWorkEnabled }),
     pollIntervalMs: 0,
   });
@@ -225,6 +228,45 @@ function renderController(
 describe("useCollaborationWorkspaceController location effects", () => {
   beforeEach(() => {
     hookRuntime.reset();
+  });
+
+  it("keeps a host-managed project catalog loaded when switching between board and settings", async () => {
+    const api = createApi();
+    const location = {
+      projectId: projectA.id,
+      issueId: null,
+      view: "board" as const,
+    };
+    const render = (view: "board" | "manage") =>
+      renderController(api, { ...location, view }, false, undefined, false);
+    render("board");
+    await vi.waitFor(() => expect(render("board").state.loading).toBe(false));
+    expect(api.projects.list).toHaveBeenCalledOnce();
+
+    expect(render("manage").state.loading).toBe(false);
+    expect(render("board").state.loading).toBe(false);
+    expect(api.projects.list).toHaveBeenCalledOnce();
+    expect(api.issues.getBoardSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("opens settings from project metadata and loads the board only on returning to it", async () => {
+    const api = createApi();
+    const location = {
+      projectId: projectA.id,
+      issueId: null,
+      view: "manage" as const,
+    };
+    renderController(api, location);
+    await vi.waitFor(() =>
+      expect(renderController(api, location).state.project?.id).toBe(
+        projectA.id,
+      ),
+    );
+    expect(api.issues.getBoardSnapshot).not.toHaveBeenCalled();
+    renderController(api, { ...location, view: "board" });
+    await vi.waitFor(() =>
+      expect(api.issues.getBoardSnapshot).toHaveBeenCalledWith(projectA.id),
+    );
   });
 
   it("defaults My Work closed and falls an old root location back to home", async () => {
@@ -261,6 +303,26 @@ describe("useCollaborationWorkspaceController location effects", () => {
     expect(api.issues.getBoardSnapshot).toHaveBeenCalledExactlyOnceWith(
       projectA.id,
     );
+  });
+
+  it("keeps the authorized initial project after the API scope resets", async () => {
+    const firstApi = createApi();
+    const nextApi = createApi();
+    const location = {
+      projectId: projectA.id,
+      issueId: null,
+      view: "board" as const,
+    };
+
+    renderController(firstApi, location, false, projectA);
+    const controller = renderController(nextApi, location, false, projectA);
+
+    expect(controller.state.projects).toEqual([projectA]);
+    await vi.waitFor(() =>
+      expect(nextApi.issues.getBoardSnapshot).toHaveBeenCalledWith(projectA.id),
+    );
+    expect(nextApi.projects.list).not.toHaveBeenCalled();
+    expect(nextApi.projects.get).not.toHaveBeenCalled();
   });
 
   it("does not return to project A when its detail resolves after navigation to B", async () => {
@@ -395,4 +457,117 @@ describe("useCollaborationWorkspaceController location effects", () => {
     expect(controller.state.project).toEqual(projectB);
     expect(controller.state.issues).toEqual([issueB]);
   });
+
+  it.each([undefined, null, "direct"] as const)(
+    "does not carry confirmed reads to another API via %s",
+    async (disconnectedApi) => {
+      const accountA = createApi();
+      const accountB = createApi();
+      const unread = {
+        ...issueA,
+        content_revision: 3,
+        activity_read_sequence: 0,
+        is_unread: true,
+      };
+      const read = {
+        ...unread,
+        activity_read_sequence: 10,
+        is_unread: false,
+      };
+      for (const api of [accountA, accountB]) {
+        vi.mocked(api.issues.getBoardSnapshot).mockResolvedValue({
+          items: [unread],
+          members: [],
+          agents: [],
+          taskBindings: [],
+        });
+      }
+      accountA.issues.markRead = vi.fn().mockResolvedValue(read);
+      const location = {
+        projectId: projectA.id,
+        issueId: null,
+        view: "board" as const,
+      };
+
+      renderController(accountA, location);
+      await vi.waitFor(() => {
+        expect(renderController(accountA, location).state.issues).toEqual([
+          unread,
+        ]);
+      });
+      await renderController(accountA, location).commands.markIssueRead(unread);
+      expect(renderController(accountA, location).state.issues).toEqual([read]);
+
+      if (disconnectedApi !== "direct") {
+        expect(renderController(disconnectedApi, location).state).toEqual(
+          initialCollaborationWorkspaceControllerState,
+        );
+      }
+      renderController(accountB, location);
+      await vi.waitFor(() => {
+        expect(accountB.issues.getBoardSnapshot).toHaveBeenCalledOnce();
+        expect(renderController(accountB, location).state.issues).toEqual([
+          unread,
+        ]);
+      });
+      const controller = renderController(accountB, location);
+      expect(controller.state.confirmedIssueReads).toEqual({});
+    },
+  );
+
+  it.each(["another API", "the same API after reconnect"])(
+    "rejects an old pending read after loading the same Issue from %s",
+    async (destination) => {
+      const accountA = createApi();
+      const accountB = destination === "another API" ? createApi() : accountA;
+      const pendingRead = deferred<CollaborationIssue>();
+      const unread = {
+        ...issueA,
+        content_revision: 3,
+        activity_read_sequence: 0,
+        is_unread: true,
+      };
+      for (const api of [accountA, accountB]) {
+        vi.mocked(api.issues.getBoardSnapshot).mockResolvedValue({
+          items: [unread],
+          members: [],
+          agents: [],
+          taskBindings: [],
+        });
+      }
+      accountA.issues.markRead = vi.fn().mockReturnValue(pendingRead.promise);
+      const location = {
+        projectId: projectA.id,
+        issueId: null,
+        view: "board" as const,
+      };
+      renderController(accountA, location);
+      await vi.waitFor(() => {
+        expect(renderController(accountA, location).state.issues).toEqual([
+          unread,
+        ]);
+      });
+      const readRequest = renderController(
+        accountA,
+        location,
+      ).commands.markIssueRead(unread);
+
+      renderController(undefined, location);
+      renderController(accountB, location);
+      await vi.waitFor(() => {
+        expect(renderController(accountB, location).state.issues).toEqual([
+          unread,
+        ]);
+      });
+      const beforeRead = renderController(accountB, location).state;
+      pendingRead.resolve({
+        ...unread,
+        is_unread: false,
+        activity_read_sequence: 10,
+      });
+      await readRequest;
+
+      expect(renderController(accountB, location).state).toEqual(beforeRead);
+    },
+  );
 });

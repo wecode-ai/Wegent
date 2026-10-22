@@ -21,26 +21,22 @@ export function IssueExecutionEnvironmentNotice({
   if (
     readiness.kind === "not_applicable" ||
     readiness.kind === "loading" ||
+    readiness.kind === "unassigned" ||
     readiness.kind === "ready"
   ) {
     return null;
   }
 
   const description =
-    readiness.kind === "unassigned"
+    readiness.kind === "offline"
       ? translate(
-          "todo.issue_environment_notice_unassigned",
-          "当前项目未添加执行环境。AI 执行前需要配置，不影响创建和人工处理 Issue。",
+          "todo.issue_environment_notice_offline",
+          "运行设备离线，暂时无法执行 AI 任务。可以继续创建和人工处理 Issue。",
         )
-      : readiness.kind === "offline"
-        ? translate(
-            "todo.issue_environment_notice_offline",
-            "运行设备离线，暂时无法执行 AI 任务。可以继续创建和人工处理 Issue。",
-          )
-        : translate(
-            "todo.issue_environment_notice_unknown",
-            "暂时无法检查项目执行环境，不影响创建和人工处理 Issue。",
-          );
+      : translate(
+          "todo.issue_environment_notice_unknown",
+          "暂时无法检查项目执行环境，不影响创建和人工处理 Issue。",
+        );
   const actionLabel =
     readiness.kind === "unknown"
       ? translate("todo.issue_environment_notice_retry", "重新检查")

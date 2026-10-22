@@ -34,6 +34,8 @@ import {
 import {
   applyRequestUserInputResponseToBlock,
   isAnsweredRequestUserInputBlock,
+  isRequestUserInputBlock,
+  requestUserInputPayloadKey,
 } from '@wegent/chat-core/runtime-user-input'
 import {
   createAppliedRuntimeGuidanceMessage,
@@ -77,11 +79,15 @@ const EMPTY_RUNTIME_CONVERSATION_TURNS: RuntimeConversationTurn[] = []
 const pendingConversationOperations = new Set<{
   address: RuntimeTaskAddress
   current: boolean
+  requestUserInputKey?: string | null
 }>()
 let nextRuntimeGoalSnapshotVersion = 1
 
-export function beginRuntimeConversationOperation(address: RuntimeTaskAddress) {
-  const operation = { address, current: true }
+export function beginRuntimeConversationOperation(
+  address: RuntimeTaskAddress,
+  options: { requestUserInputKey?: string | null } = {}
+) {
+  const operation = { address, current: true, ...options }
   pendingConversationOperations.add(operation)
   return {
     isCurrent: () => operation.current,
@@ -343,6 +349,13 @@ export function replaceRuntimeConversationSnapshot(
   snapshotTurns: RuntimeConversationTurn[]
 ): WorkbenchMessage[] {
   const key = runtimeConversationKey(address)
+  // Terminal history can arrive before the runtime acknowledges a submitted form.
+  const pendingInputKeys = new Set(
+    [...pendingConversationOperations]
+      .filter(operation => operation.current && runtimeConversationKey(operation.address) === key)
+      .map(operation => operation.requestUserInputKey)
+      .filter(Boolean)
+  )
   const localTurnsById = new Map(
     (turnsByConversation.get(key) ?? []).flatMap(turn =>
       turn.id === null ? [] : ([[turn.id, turn]] as const)
@@ -360,7 +373,10 @@ export function replaceRuntimeConversationSnapshot(
       items: mergedTurn.items.filter(
         item =>
           authoritativeItemIds.has(item.id) ||
-          (item.type === 'block' && isAnsweredRequestUserInputBlock(item.block))
+          (item.type === 'block' &&
+            (isAnsweredRequestUserInputBlock(item.block) ||
+              (isRequestUserInputBlock(item.block) &&
+                pendingInputKeys.has(requestUserInputPayloadKey(item.block.renderPayload)))))
       ),
     }
   })

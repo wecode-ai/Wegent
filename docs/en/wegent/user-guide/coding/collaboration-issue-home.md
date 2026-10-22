@@ -16,6 +16,8 @@ Local projects from Tasks appear automatically under Local workspace. Reloading 
 
 The Executor stores local ownership; the backend stores cloud ownership. A collaboration group owner is a project group reference, not a resource-library Agent's Team ID. Assigning it does not automatically execute the group's workflow.
 
+When a project has no execution environment, the New Issue page and creation dialog show no environment notice. You can still create and handle Issues manually. Offline devices and failed environment checks retain their notices and configuration, viewing, or retry actions.
+
 ## Change an existing Issue's owner
 
 After selecting or clearing an owner in Issue details, select **Save assignment** beside the owner. The header does not show a duplicate save action. Saving also submits other pending detail edits. If saving fails, the draft and save action remain available for correction and resubmission.
@@ -65,6 +67,8 @@ Cloud fixtures are archived by the checkpoint cleanup. Local fixtures live only 
 ## Web project views
 
 Projects support Board, Calendar, Gantt, Table, Files, and Project settings. Calendar and Gantt selections persist in the URL across reloads and opening or closing Issue details. Project board cards and their drag previews display no unread dot or unread highlight.
+
+Each lane on a native project board has a **Sort by** control in its header. Lanes default to highest priority first. Combine ascending or descending rules for priority, creation time, and update time, then move rules up or down or remove them. Rules apply from top to bottom: each subsequent rule breaks ties, and manual order breaks any remaining ties. Choose **Manual order** to reorder cards within status, priority, assignee, or tag lanes, or insert a card into another lane at a specific position. Non-status lanes can mix Issues with different statuses; reordering within a lane preserves status, assignee, and tags. Manual positions use the project’s shared order across groupings. Preferences are saved in the current browser by user, project, grouping, and lane, restore separately after reloads or account switches, and do not affect other members. Drop onto the blank space at the end of a lane to append a card. Group fields and position are saved together; a failed save commits neither. Changes to different lane preferences in multiple tabs are retained independently and synchronized to open boards.
 
 The collaboration sidebar no longer includes My Work or Run Center. Their former URLs return to collaboration home. Open Issues that need action or review from Inbox or the project board.
 
