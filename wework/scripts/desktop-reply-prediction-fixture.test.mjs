@@ -8,12 +8,23 @@ import {
   isReplyPredictionRequest,
 } from '../e2e/desktop/modules/response-protocol.mjs'
 
-test('recognizes predictions only in the latest model input', () => {
-  const prediction = { role: 'user', content: 'Predict one natural next USER message' }
-  assert.equal(isReplyPredictionRequest({ input: [prediction] }), true)
-  assert.equal(isReplyPredictionRequest({ messages: [prediction] }), true)
+function predictionMetadata(requestKind = 'turn') {
+  return {
+    'x-codex-turn-metadata': JSON.stringify({
+      thread_source: 'composer_predictions',
+      request_kind: requestKind,
+    }),
+  }
+}
+
+test('recognizes prediction turns and compaction from their native thread source', () => {
+  for (const kind of ['turn', 'compaction']) {
+    assert.equal(isReplyPredictionRequest({ client_metadata: predictionMetadata(kind) }), true)
+  }
+  assert.equal(isReplyPredictionRequest({ input: 'Predict one natural next USER message' }), false)
+  assert.equal(isReplyPredictionRequest({ client_metadata: {} }), false)
   assert.equal(
-    isReplyPredictionRequest({ input: [prediction, { role: 'user', content: 'Continue' }] }),
+    isReplyPredictionRequest({ client_metadata: { 'x-codex-turn-metadata': 'invalid' } }),
     false
   )
 })
@@ -32,7 +43,7 @@ test('returns an empty prediction response without consuming ordinary scenario r
   assert.equal(handleEmptyReplyPrediction({ input: 'Continue the task' }, response), false)
   assert.equal(output, undefined)
   assert.equal(
-    handleEmptyReplyPrediction({ input: 'Predict one natural next USER message' }, response),
+    handleEmptyReplyPrediction({ client_metadata: predictionMetadata() }, response),
     true
   )
   assert.equal(status, 200)
@@ -49,6 +60,7 @@ test('serves background predictions without advancing the active tool scenario',
   const server = new DesktopE2EServer('/tmp/reply-prediction-fixture')
   server.scenario = 'embedded_browser_setup'
   const body = {
+    client_metadata: predictionMetadata(),
     input: [
       { role: 'user', content: 'Open the browser' },
       { role: 'assistant', content: 'Browser opened' },

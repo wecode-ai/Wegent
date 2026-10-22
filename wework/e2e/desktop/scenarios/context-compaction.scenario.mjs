@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { createInterruptedCompactionScenario } from './interrupted-context-compaction.mjs'
+import { handleEmptyReplyPrediction } from '../modules/response-protocol.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -191,6 +192,7 @@ export function createDesktopScenario({
       }
 
       const body = await readJson(request)
+      if (handleEmptyReplyPrediction(body, response)) return true
       const kind = requestKind(body)
       const serialized = JSON.stringify(body)
       const responseId = `wework-context-compaction-${Date.now()}`

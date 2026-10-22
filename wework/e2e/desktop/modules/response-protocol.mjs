@@ -55,15 +55,19 @@ function createSse(events) {
     .join('')
 }
 
-function codexRequestKind(body) {
+function codexRequestMetadata(body) {
   const metadata = body.client_metadata?.['x-codex-turn-metadata']
   if (typeof metadata !== 'string') return null
 
   try {
-    return JSON.parse(metadata).request_kind ?? null
+    return JSON.parse(metadata)
   } catch {
     return null
   }
+}
+
+function codexRequestKind(body) {
+  return codexRequestMetadata(body)?.request_kind ?? null
 }
 
 function latestModelInputText(body) {
@@ -73,7 +77,7 @@ function latestModelInputText(body) {
 }
 
 function isReplyPredictionRequest(body) {
-  return latestModelInputText(body).includes('Predict one natural next USER message')
+  return codexRequestMetadata(body)?.thread_source === 'composer_predictions'
 }
 
 function handleEmptyReplyPrediction(body, response) {
