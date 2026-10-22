@@ -115,6 +115,18 @@ def acquire_plugin_write_lock(db: Session, user_id: int) -> None:
     _acquire_plugin_write_lock(db, user_id, blocking_timeout=WAIT_SECONDS)
 
 
+def _release_plugin_write_lease(db: Session, user_id: int, lease: _Lease) -> None:
+    logger.info(
+        "Plugin write lease releasing user_id=%s session_id=%s "
+        "operation=%s held_ms=%d",
+        user_id,
+        id(db),
+        db.info.get("plugin_write_operation", "request"),
+        int((time.monotonic() - lease.started) * 1000),
+    )
+    lease.release()
+
+
 def acquire_plugin_write_locks(db: Session, user_ids: Iterable[int]) -> None:
     """Acquire a batch before business writes, sharing one coordination budget."""
     ordered_user_ids = sorted(set(user_ids))
@@ -185,7 +197,7 @@ def _acquire_plugin_write_lock(
             db.expire_all()
         leases[user_id] = lease
     except SQLAlchemyError as exc:
-        lease.release()
+        _release_plugin_write_lease(db, user_id, lease)
         original = getattr(exc, "orig", None)
         args = getattr(original, "args", ())
         errno = args[0] if args and isinstance(args[0], int) else None
@@ -198,7 +210,7 @@ def _acquire_plugin_write_lock(
         )
         raise PluginWriteError("plugin_write_unavailable") from None
     except Exception:
-        lease.release()
+        _release_plugin_write_lease(db, user_id, lease)
         raise
 
 
@@ -250,12 +262,4 @@ def _release_transaction(db: Session, transaction: SessionTransaction) -> None:
         return
     db.info.pop(_SAVEPOINTS, None)
     for user_id, lease in db.info.pop(_LEASES, {}).items():
-        logger.info(
-            "Plugin write lease releasing user_id=%s session_id=%s "
-            "operation=%s held_ms=%d",
-            user_id,
-            id(db),
-            db.info.get("plugin_write_operation", "request"),
-            int((time.monotonic() - lease.started) * 1000),
-        )
-        lease.release()
+        _release_plugin_write_lease(db, user_id, lease)

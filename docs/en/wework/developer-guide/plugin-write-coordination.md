@@ -72,6 +72,8 @@ and contention logs by `user_id`, process-local `session_id`, and native
 from contention caused by an injected lease. Redis ownership tokens and plugin
 credentials are never logged. Contention retains the existing timeout budget
 without automatic retries.
+Initialization failures and root transaction cleanup share the same release
+logging path, including the held duration.
 Both desktop E2E runner and CI cleanup preserve `backend-rs-logs`, so requests
 to Rust writers sharing the lease remain available in uploaded diagnostics.
 
