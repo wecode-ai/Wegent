@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld('weworkElectronCloudCredentials', {
 
 contextBridge.exposeInMainWorld('weworkElectronExecutionEnvironments', {
   list: () => ipcRenderer.invoke('runtime:list-execution-environments'),
+  ensurePython: () => ipcRenderer.invoke('runtime:ensure-python'),
   chooseNodeExecutable: () => ipcRenderer.invoke('runtime:choose-node-executable'),
   useBuiltinNode: () => ipcRenderer.invoke('runtime:use-builtin-node'),
 })

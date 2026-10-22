@@ -51,6 +51,7 @@ import type { LocalDeviceApp } from '@/types/api'
 import { openExternalUrl } from '@/lib/external-links'
 import { getErrorMessage } from '@/lib/error-message'
 import { navigateTo } from '@/lib/navigation'
+import { ensurePython } from '@/desktop/executionEnvironments'
 import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
 import { ensureLocalExecutorStarted, getKnownLocalExecutorDeviceId } from '@/desktop/localExecutor'
 import {
@@ -2100,8 +2101,11 @@ export function PluginsWorkspace({
     // immediately with the list-row item; a fast confirm must not skip connector
     // detail that prepareMarketplaceInstallItem is still loading.
     let installRequestAttempt: OperationAttempt | null = null
-    const request = prepareMarketplaceInstallItem(item)
-      .then(async preparedItem => {
+    const pythonReady = window.weworkElectronExecutionEnvironments
+      ? ensurePython()
+      : Promise.resolve(null)
+    const request = Promise.all([prepareMarketplaceInstallItem(item), pythonReady])
+      .then(async ([preparedItem]) => {
         await ensureMarketplaceConnectors(preparedItem)
         return preparedItem
       })

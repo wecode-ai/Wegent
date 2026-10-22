@@ -1,10 +1,11 @@
-import { Box, FolderOpen, RefreshCw, RotateCcw } from 'lucide-react'
+import { Box, Download, FolderOpen, RefreshCw, RotateCcw } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   chooseNodeExecutable,
+  ensurePython,
   listExecutionEnvironments,
   type ExecutionEnvironmentStatus,
   useBuiltinNode,
@@ -133,7 +134,12 @@ export function ExecutionEnvironmentsSettingsPage() {
                           )}`
                         : environment.source === 'configured'
                           ? ` · ${t('workbench.execution_environment_custom', '自定义')}`
-                          : ''}
+                          : environment.source === 'managed'
+                            ? ` · ${t(
+                                'workbench.execution_environment_wework_managed',
+                                'Wework 管理'
+                              )}`
+                            : ''}
                       {environment.version ? ` · ${environment.version}` : ''}
                     </span>
                   </div>
@@ -145,7 +151,7 @@ export function ExecutionEnvironmentsSettingsPage() {
                         )
                       : t(
                           'workbench.execution_environment_python_description',
-                          '默认不下载。请在系统中手动安装 Python，Wework 会自动检测。'
+                          '由 Wework 自动准备独立的 Python 3.12，不依赖系统 Python，也不会修改系统 PATH。'
                         )}
                   </p>
                   {downloading && (
@@ -222,11 +228,16 @@ export function ExecutionEnvironmentsSettingsPage() {
                       <Button
                         size="sm"
                         variant="outline"
-                        data-testid="execution-environment-python-refresh"
-                        onClick={() => void refresh()}
+                        disabled={busy || downloading}
+                        data-testid="execution-environment-python-install"
+                        onClick={() => void runAction('python', ensurePython)}
                       >
-                        <RefreshCw />
-                        {t('workbench.execution_environment_refresh', '重新检测')}
+                        {installed ? <RefreshCw /> : <Download />}
+                        {environment.state === 'error'
+                          ? t('workbench.execution_environment_retry', '重试安装')
+                          : installed
+                            ? t('workbench.execution_environment_refresh', '重新检测')
+                            : t('workbench.execution_environment_install', '安装 Python')}
                       </Button>
                     )}
                   </div>

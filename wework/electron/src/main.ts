@@ -107,6 +107,7 @@ import {
 import { AppUpdateService } from './host/app-update-service.js'
 import { AppUpdateLogger } from './host/app-update-logger.js'
 import { CloudCredentialError, CloudCredentialService } from './host/cloud-credential-service.js'
+import { cloudFetch } from './host/cloud-http.js'
 import {
   cleanupStaleTemporaryImages,
   createNativeContextMenuActions,
@@ -124,6 +125,7 @@ import {
   resolveConfiguredNodePath,
   type ElectronNodeRuntime,
 } from './runtime/electron-node-runtime.js'
+import { PythonRuntimeManager } from './runtime/python-runtime.js'
 import type { BrandRuntimeMetadata } from './runtime/brand-runtime-environment.js'
 import {
   prepareWorkbenchEnvironment,
@@ -319,6 +321,7 @@ let runtimePhase: 'initializing' | 'ready' | 'failed' = 'initializing'
 let runtimeStartPromise: Promise<void> | null = null
 let computerUseStartupScheduled = false
 let electronNodeRuntimePromise: Promise<ElectronNodeRuntime> | null = null
+let pythonRuntimeManagerPromise: Promise<PythonRuntimeManager> | null = null
 let quitting = false
 let shutdownPromise: Promise<void> | null = null
 let dockVisible = true
@@ -1639,7 +1642,10 @@ function installIpc(): void {
     await startDesktopRuntime()
   })
   ipcMain.handle('runtime:list-execution-environments', async () => {
-    const runtime = await electronNodeRuntime()
+    const [runtime, pythonStatus] = await Promise.all([
+      electronNodeRuntime(),
+      managedPythonRuntime().then(python => python.status()),
+    ])
     const configuredPath = await configuredNodePath()
     return [
       {
@@ -1648,7 +1654,15 @@ function installIpc(): void {
         restartRequired:
           configuredPath !== (runtime.status.source === 'configured' ? runtime.status.path : null),
       },
+      pythonStatus,
     ]
+  })
+  ipcMain.handle('runtime:ensure-python', async () => {
+    const pythonRuntime = await managedPythonRuntime()
+    if (process.env.WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP === '1') {
+      return pythonRuntime.status()
+    }
+    return pythonRuntime.ensure()
   })
   ipcMain.handle('runtime:choose-node-executable', async () => {
     const options: OpenDialogOptions = {
@@ -2483,6 +2497,10 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
   logStartupStep('node-runtime-prepare', 'started')
   const nodeRuntime = await electronNodeRuntime()
   logStartupStep('node-runtime-prepare', 'completed')
+  const pythonRuntime = await managedPythonRuntime()
+  if (!pluginDevelopmentInstance && process.env.WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP !== '1') {
+    pythonRuntime.startBackgroundEnsure()
+  }
   const cliBin = join(app.getPath('userData'), 'runtime', 'wework-cli-bin')
   logStartupStep('wework-cli-install', 'started')
   await installWeworkCli(
@@ -2520,11 +2538,18 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
   nodeRuntime.environment.PATH = [cliBin, nodeRuntime.environment.PATH?.trim()]
     .filter(Boolean)
     .join(delimiter)
+  const runtimeEnvironment =
+    process.env.WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP === '1'
+      ? { ...nodeRuntime.environment }
+      : pythonRuntime.environment()
+  runtimeEnvironment.PATH = [cliBin, runtimeEnvironment.PATH?.trim()]
+    .filter(Boolean)
+    .join(delimiter)
   logStartupStep('wework-cli-install', 'completed')
   logStartupStep('workbench-environment', 'started')
   const environment = await prepareWorkbenchEnvironment({
     environment: {
-      ...nodeRuntime.environment,
+      ...runtimeEnvironment,
       WEWORK_HARNESS_RUNTIME_ROOT: runtimeRoot,
       WEWORK_HARNESS_RESOURCE_ROOT:
         components?.coreDsh ?? join(componentResourcesRoot, 'harness-runtime'),
@@ -2609,6 +2634,20 @@ function electronNodeRuntime(): Promise<ElectronNodeRuntime> {
     })
   })()
   return electronNodeRuntimePromise
+}
+
+function managedPythonRuntime(): Promise<PythonRuntimeManager> {
+  pythonRuntimeManagerPromise ??= electronNodeRuntime().then(nodeRuntime => {
+    return new PythonRuntimeManager({
+      dataDirectory: app.getPath('userData'),
+      environment: nodeRuntime.environment,
+      runtimeBin: join(app.getPath('userData'), 'runtime', 'bin'),
+      fetch: cloudFetch,
+      resolveProxy: targetUrl => resolveSystemProxy(session.defaultSession, targetUrl),
+      log: event => console.info('[python-runtime]', event),
+    })
+  })
+  return pythonRuntimeManagerPromise
 }
 
 async function configuredNodePath(): Promise<string | null> {
