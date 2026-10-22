@@ -37,6 +37,10 @@ import {
 } from '@/features/plugins/pluginTrial'
 import { buildAutomationTaskOptions } from '@/features/automations/automationDraft'
 import { WorkbenchProvider, type WorkbenchServices } from './WorkbenchProvider'
+import {
+  getArchivedCleanupError,
+  resetArchivedConversationsSettingsStateForTest,
+} from '@/components/settings/archivedConversationsSettingsState'
 import { useWorkbench } from './useWorkbench'
 import { MessageList } from '@/components/chat/MessageList'
 import { ChatInput } from '@/components/chat/ChatInput'
@@ -2869,6 +2873,30 @@ function StartSkillChatProbe() {
 }
 
 describe('WorkbenchProvider runtime tasks', () => {
+  test('publishes background archive cleanup failures outside the settings page', async () => {
+    resetArchivedConversationsSettingsStateForTest()
+    let onChanged: ChatStreamHandlers['onRuntimeWorkChanged']
+    const services = createWorkbenchServices({
+      chatStream: {
+        subscribe: (handlers: ChatStreamHandlers) => {
+          if (handlers.onRuntimeWorkChanged) onChanged = handlers.onRuntimeWorkChanged
+          return vi.fn()
+        },
+      } as WorkbenchServices['chatStream'],
+    })
+    renderWorkbench(<ProjectSendProbe />, services)
+    await waitFor(() => expect(onChanged).toBeDefined())
+    act(() =>
+      onChanged?.({
+        taskId: 'task-1',
+        deviceId: 'device-1',
+        archiveCleanup: { workspacePath: '/managed/task-1/repo', errors: ['Git metadata missing'] },
+      })
+    )
+    expect(getArchivedCleanupError()).toContain('Git metadata missing')
+    resetArchivedConversationsSettingsStateForTest()
+  })
+
   beforeEach(async () => {
     await i18n.changeLanguage('zh-CN')
     vi.useRealTimers()

@@ -4,8 +4,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import OperationalError
 
 from app.api.ws import plugin_auth_broker as broker
+from app.services.plugin_write_coordination import PluginWriteError
 
 
 @pytest.fixture
@@ -76,6 +79,189 @@ async def test_identity_comes_from_session_and_errors_do_not_leak(
     exchange.assert_called_once_with(
         12, "runtime", "runtime", "instance", "enroll", data
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "code", ["plugin_write_busy", "plugin_write_unavailable", "plugin_write_lease_lost"]
+)
+async def test_coordination_failure_returns_stable_retryable_code(
+    identity, route, monkeypatch, caplog, code
+):
+    monkeypatch.setattr(
+        broker, "_exchange_sync", Mock(side_effect=PluginWriteError(code))
+    )
+
+    result = await broker.exchange(
+        sid="socket",
+        session=identity,
+        operation="local_lifecycle",
+        data={"action": "logout", "credential": "payload-secret"},
+    )
+
+    assert result == {"success": False, "error": code}
+    assert f"stage=exchange code={code}" in caplog.text
+    assert "payload-secret" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_database_failure_logs_safe_metadata_and_lifecycle_timing(
+    identity, route, monkeypatch, caplog
+):
+    clock = Mock(return_value=100.0)
+    monkeypatch.setattr(broker, "monotonic", clock)
+    monkeypatch.setattr(
+        broker,
+        "engine",
+        SimpleNamespace(
+            url=make_url(
+                "mysql+pymysql://username-secret:password-secret@db.internal:3307/"
+                "auth_db?ssl_key=query-secret"
+            )
+        ),
+    )
+
+    def fail(*args):
+        clock.return_value = 116.125
+        raise OperationalError(
+            "SELECT sql-secret",
+            {"credential": "parameter-secret"},
+            Exception(1205, "driver-message-secret"),
+        )
+
+    monkeypatch.setattr(broker, "_exchange_sync", fail)
+    with caplog.at_level("INFO", logger=broker.__name__):
+        result = await broker.exchange(
+            sid="socket",
+            session=identity,
+            operation="local_lifecycle",
+            data={"action": "logout", "credential": "payload-secret"},
+        )
+
+    assert result == {"success": False, "error": "plugin_auth_exchange_failed"}
+    assert "stage=exchange error_type=OperationalError" in caplog.text
+    assert "operation=local_lifecycle action=logout" in caplog.text
+    assert "db_host=db.internal db_port=3307 db_name=auth_db" in caplog.text
+    assert "db_error_code=1205" in caplog.text
+    assert "elapsed_ms=16125 success=False" in caplog.text
+    records = [record for record in caplog.records if record.name == broker.__name__]
+    assert len(records) == 3
+    assert "Plugin auth exchange started" in records[0].message
+    assert "Plugin auth exchange failed" in records[1].message
+    assert "Plugin auth exchange finished" in records[2].message
+    exchange_ids = {
+        field
+        for record in records
+        for field in record.message.split()
+        if field.startswith("exchange_id=")
+    }
+    assert len(exchange_ids) == 1
+    assert all(record.exc_info is None for record in records)
+    for secret in (
+        "username-secret",
+        "password-secret",
+        "query-secret",
+        "sql-secret",
+        "parameter-secret",
+        "driver-message-secret",
+        "payload-secret",
+    ):
+        assert secret not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("driver_args", [(), ("code-secret",), (True,)])
+async def test_failure_diagnostics_never_log_non_numeric_driver_arguments(
+    identity, route, monkeypatch, caplog, driver_args
+):
+    monkeypatch.setattr(
+        broker,
+        "_exchange_sync",
+        Mock(side_effect=OperationalError(None, None, Exception(*driver_args))),
+    )
+
+    result = await broker.exchange(
+        sid="socket", session=identity, operation="automatic", data={}
+    )
+
+    assert result["error"] == "plugin_auth_exchange_failed"
+    assert "operation=automatic action=unknown" in caplog.text
+    assert "db_error_code=None" in caplog.text
+    assert "code-secret" not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "operation,data",
+    [
+        ("local_lifecycle", {"action": "action-secret\ninjected-log-line"}),
+        ("local_lifecycle", {"action": ["action-secret"]}),
+        ("local_lifecycle", {"action": {"secret": "action-secret"}}),
+        ("local_lifecycle", "payload-secret"),
+        ("enroll", {"action": "logout"}),
+    ],
+)
+async def test_failure_diagnostics_only_log_valid_lifecycle_actions(
+    identity, route, monkeypatch, caplog, operation, data
+):
+    monkeypatch.setattr(
+        broker, "_exchange_sync", Mock(side_effect=RuntimeError("exception-secret"))
+    )
+
+    result = await broker.exchange(
+        sid="socket", session=identity, operation=operation, data=data
+    )
+
+    assert result["error"] == "plugin_auth_exchange_failed"
+    assert "action=unknown" in caplog.text
+    assert "db_error_code=None" in caplog.text
+    for secret in (
+        "action-secret",
+        "injected-log-line",
+        "payload-secret",
+        "exception-secret",
+    ):
+        assert secret not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_route_database_failure_logs_route_stage(identity, route, caplog):
+    broker.runtime_route_resolver.resolve.side_effect = OperationalError(
+        None, None, Exception(2003, "connection-secret")
+    )
+
+    result = await broker.exchange(
+        sid="socket",
+        session=identity,
+        operation="local_lifecycle",
+        data={"action": "logout"},
+    )
+
+    assert result["error"] == "plugin_auth_exchange_failed"
+    assert "stage=route error_type=OperationalError" in caplog.text
+    assert "db_error_code=2003" in caplog.text
+    assert "connection-secret" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_successful_lifecycle_logs_completion_without_response_data(
+    identity, route, monkeypatch, caplog
+):
+    response = {"success": True, "status": "ok", "credential": "response-secret"}
+    monkeypatch.setattr(broker, "_exchange_sync", Mock(return_value=response))
+    with caplog.at_level("INFO", logger=broker.__name__):
+        result = await broker.exchange(
+            sid="socket",
+            session=identity,
+            operation="local_lifecycle",
+            data={"action": "logout"},
+        )
+
+    assert result == response
+    assert "Plugin auth exchange started" in caplog.text
+    assert "Plugin auth exchange finished" in caplog.text
+    assert "success=True" in caplog.text
+    assert "response-secret" not in caplog.text
 
 
 @pytest.mark.asyncio
