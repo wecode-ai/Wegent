@@ -6082,8 +6082,15 @@ async fn execution_mapper_does_not_rebind_queued_notification_to_new_active_turn
     let active_messages = handler.active_codex_transcript_messages(local_task_id);
     assert_eq!(active_messages.len(), 1);
     assert_eq!(active_messages[0]["subtaskId"], "turn-continuation");
+    assert_eq!(active_messages[0]["content"], "");
+    assert_eq!(active_messages[0]["blocks"].as_array().unwrap().len(), 1);
+    assert_eq!(active_messages[0]["blocks"][0]["type"], "text");
     assert_eq!(
-        active_messages[0]["content"],
+        active_messages[0]["blocks"][0]["id"],
+        "message-continuation"
+    );
+    assert_eq!(
+        active_messages[0]["blocks"][0]["content"],
         "Automatic continuation running"
     );
 

@@ -7,3 +7,6 @@ mod core;
 
 #[path = "tests_stream.rs"]
 mod stream;
+
+#[path = "tests_phase.rs"]
+mod phase;
