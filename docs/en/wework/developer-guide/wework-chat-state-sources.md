@@ -424,6 +424,12 @@ break in a partial plain-text response and then resumes output, checking cached
 items, text uniqueness, and process placement before completion as well as the
 final state.
 
+While a Provider turn is running, assistant text without a phase must remain
+process text, even if the snapshot does not yet include a later tool. An explicit
+final phase can render as answer text immediately. Unphased trailing text can
+become the final answer only when the turn completes, so an in-flight transcript
+page cannot prematurely reclassify process text.
+
 Final text, process text, and tool blocks within one assistant turn must be
 projected in runtime item arrival order. The UI must not group them by type and
 then render them in a fixed layout. In particular, when final text arrives

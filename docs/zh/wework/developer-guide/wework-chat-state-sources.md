@@ -342,6 +342,10 @@ assistant 之前。canonical `turns` 是前端 transcript 的唯一输入，不�
 
 ### Assistant 轮内显示顺序与字号
 
+Provider turn 仍在运行时，未标注 phase 的助手文本必须保留为过程文本，即使快照
+尚未包含后续工具。显式 final phase 可以立即展示为正文；未标注 phase 的尾部文本
+只有在 turn 完成后才能作为最终正文，避免运行中的分页快照提前改变文本归属。
+
 运行中 transcript 的缓存用于切回任务或恢复页面时读取已有消息。缓存消息已有
 `runtimeItems` 时，canonical `turns` 必须直接使用这些条目，保留原生 item ID、
 条目类型和顺序，包括空数组。不能再用展示用的 `content` 与 `blocks` 重建条目：
