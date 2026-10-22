@@ -429,7 +429,8 @@ export class RuntimeTaskLifecycleStore {
       canonicalEvent.type === 'executor_snapshot_received' &&
       previous.turn.active &&
       typeof canonicalEvent.task.runtimeHandle?.lastTurnId === 'string' &&
-      machine.isPriorTurn(canonicalEvent.task.runtimeHandle.lastTurnId)
+      machine.isPriorTurn(canonicalEvent.task.runtimeHandle.lastTurnId) &&
+      previous.task?.completedAt != null
     )
       return false
     const key = previous.key
