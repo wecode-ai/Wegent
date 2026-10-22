@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
@@ -11,7 +12,9 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import '@/i18n'
 import { StandInPopover } from './StandInPopover'
 
-vi.mock('./StandInComposer', () => ({ StandInComposer: () => <div /> }))
+vi.mock('./StandInComposer', () => ({
+  StandInComposer: ({ deviceControl }: { deviceControl?: ReactNode }) => <div>{deviceControl}</div>,
+}))
 vi.mock('./StandInRequirements', () => ({ StandInRequirements: () => <div /> }))
 
 function fixture() {
@@ -134,6 +137,43 @@ describe('Project personal stand-in entry', () => {
       })
     )
     expect(screen.queryByTestId('stand-in-enabled')).not.toBeInTheDocument()
+  })
+
+  it('reopens the device whose personal settings were explicitly saved', async () => {
+    const { props, personalGet, personalSave } = fixture()
+    personalGet.mockImplementation(async (...args: unknown[]) => {
+      const device = String(args[1])
+      return {
+        userId: 7,
+        executionDeviceId: device,
+        version: 0,
+        autoSelect: false,
+        roles: [newStandInRole(device, 'default')],
+      }
+    })
+    const user = userEvent.setup()
+    render(
+      <StandInPopover
+        {...props}
+        devices={[{ id: 2, device_id: 'remote', name: 'Remote', status: 'online' }]}
+      />
+    )
+    await user.click(screen.getByTestId('stand-in-open'))
+    await user.click(await screen.findByTestId('stand-in-back'))
+    await user.click(screen.getByTestId('stand-in-advanced-open'))
+    await user.selectOptions(screen.getByTestId('stand-in-device'), 'remote')
+    await waitFor(() => expect(screen.getByTestId('stand-in-device')).toHaveValue('remote'))
+    await user.click(screen.getByTestId('stand-in-back'))
+    await user.click(screen.getByTestId('stand-in-save'))
+    await waitFor(() => expect(screen.queryByTestId('stand-in-dialog')).not.toBeInTheDocument())
+    expect(personalSave).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ executionDeviceId: 'remote' })
+    )
+    await user.click(screen.getByTestId('stand-in-open'))
+    await user.click(await screen.findByTestId('stand-in-back'))
+    await user.click(screen.getByTestId('stand-in-advanced-open'))
+    expect(screen.getByTestId('stand-in-device')).toHaveValue('remote')
   })
 
   it('does not expose an unusable project entry without personal services or identity', () => {

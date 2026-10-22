@@ -85,6 +85,9 @@ fn migration_preserves_project_scopes_agent_permissions_and_assignment_cutoff() 
     for (index, project) in ["first", "second"].into_iter().enumerate() {
         assert_eq!(roles[index]["enabledAfter"], timestamp);
         assert_eq!(roles[index]["version"], 4);
+        let project_view = store.stand_in_settings(project, 7, "default").unwrap();
+        assert_eq!(project_view["id"], roles[index]["id"]);
+        assert_eq!(project_view["agentProject"]["id"], project);
         assert!(role_project_matches(&roles[index], project, "cloud"));
         assert!(!role_project_matches(&roles[index], "unrelated", "cloud"));
         let mut broadened = roles[index].clone();
@@ -154,4 +157,36 @@ fn failed_selection_is_owner_and_version_scoped_and_retry_invalidates_it() {
         .unwrap()
         .is_empty());
     assert!(store.stand_in_decision("decision").unwrap().is_some());
+}
+
+#[test]
+fn legacy_settings_without_optional_name_remain_editable_after_migration() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("tasks.sqlite");
+    let store = LocalTaskStore::open(&path).unwrap();
+    let mut legacy = role("default");
+    legacy.as_object_mut().unwrap().remove("name");
+    legacy.as_object_mut().unwrap().remove("collaboration");
+    legacy["projectId"] = json!("project");
+    legacy["projectStore"] = json!("cloud");
+    legacy["userId"] = json!(7);
+    legacy["version"] = json!(2);
+    legacy["tags"] = json!([]);
+    legacy["enabledAfter"] = json!("2026-10-22T06:54:17Z");
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection.execute("INSERT INTO loop_items (id,resource_type,metadata,created_at,updated_at) VALUES ('legacy','stand_in_settings',?1,'now','now')", rusqlite::params![legacy.to_string()]).unwrap();
+    let migrated = store.personal_stand_in(7, "mac").unwrap();
+    assert_eq!(migrated["roles"][0]["name"], "");
+    let updated = store.save_personal_stand_in(7, "mac", migrated).unwrap();
+    assert_eq!(updated["roles"][0]["enabledAfter"], legacy["enabledAfter"]);
+    assert!(role_project_matches(
+        &updated["roles"][0],
+        "project",
+        "cloud"
+    ));
+    assert!(!role_project_matches(
+        &updated["roles"][0],
+        "other",
+        "cloud"
+    ));
 }

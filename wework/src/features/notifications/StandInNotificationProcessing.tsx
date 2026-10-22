@@ -145,7 +145,7 @@ export function StandInNotificationProcessing({
         userId,
         origin?.projectStore === 'local' ? 'local' : 'cloud',
         target,
-        typeof origin?.standInId === 'string' ? origin.standInId : undefined
+        typeof origin?.standInId === 'string' ? origin.standInId : 'default'
       )
       setStarted({
         ...address,

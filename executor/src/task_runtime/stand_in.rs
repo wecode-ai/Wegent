@@ -17,7 +17,7 @@ impl LocalTaskStore {
             .unwrap()
             .iter()
             .find(|role| {
-                role["id"] == stand_in_id
+                (role["id"] == stand_in_id || role["legacyStandInId"] == stand_in_id)
                     && role["collaboration"]["projects"]
                         .as_array()
                         .is_some_and(|projects| {

@@ -425,3 +425,70 @@ async fn project_agent_reference_is_rejected_outside_its_owning_project_before_c
         assert_eq!(error.code, "agent_project_mismatch");
     }
 }
+
+#[tokio::test]
+async fn personal_agent_catalog_is_owned_available_and_preserves_fixed_device_policy() {
+    let router = Router::new()
+        .route("/api/users/me", get(|| async { Json(json!({"id":7})) }))
+        .route("/api/v1/resources", get(|| async { Json(json!({"agents":[
+            {"team_id":11,"name":"Personal reviewer","owner_type":"user","owner_id":"7","status":"available"},
+            {"team_id":12,"name":"Other user","owner_type":"user","owner_id":"8","status":"available"},
+            {"team_id":13,"name":"Workspace","owner_type":"workspace","owner_id":"7","status":"available"},
+            {"team_id":14,"name":"Archived","owner_type":"user","owner_id":"7","status":"unavailable"}
+        ]})) }))
+        .route("/api/teams/11", get(|| async { Json(json!({"name":"Personal reviewer","is_active":true,"bots":[{"role":"leader","bot":{"shell_name":"Codex","execution_policy":{"mode":"fixed","environment_id":"another-device"},"model_policy":{"mode":"user_select"}}}]})) }))
+        .route("/api/devices/online", get(|| async { Json(json!({"items":[]})) }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
+        backend_url: url,
+        auth_token: "test".into(),
+        ..Default::default()
+    })));
+    let catalog = handler
+        .personal_stand_in_agents(json!({"userId":7}))
+        .await
+        .unwrap();
+    assert_eq!(
+        catalog["items"],
+        json!([{"id":11,"name":"Personal reviewer"}])
+    );
+    assert_eq!(
+        handler
+            .personal_stand_in_agents(json!({"userId":8}))
+            .await
+            .unwrap_err()
+            .code,
+        "permission_denied"
+    );
+    assert_eq!(
+        handler
+            .stand_in_agent(&json!({"userId":7,"agentResourceId":11}))
+            .await
+            .unwrap_err()
+            .code,
+        "agent_device_conflict"
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn personal_settings_project_view_retains_the_requested_storage_kind() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let settings = store.personal_stand_in(7, "mac").unwrap();
+    store.save_personal_stand_in(7, "mac", settings).unwrap();
+    let cloud = handler
+        .stand_in_settings(
+            json!({"userId":7,"projectId":"future-project","projectStore":"cloud"}),
+            false,
+        )
+        .await
+        .unwrap();
+    assert_eq!(cloud["projectStore"], "cloud");
+    assert_eq!(cloud["projectId"], "future-project");
+}

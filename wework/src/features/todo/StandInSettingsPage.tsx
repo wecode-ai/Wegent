@@ -9,6 +9,7 @@ import type {
 } from '@wegent/collaboration'
 import {
   newStandInRole,
+  standInRoleName,
   roleIncludesProject,
   type PersonalStandInSettings,
   type StandInRole,
@@ -63,6 +64,7 @@ export function StandInSettingsPage({
   const [view, setView] = useState<View>(initialProject ? 'connections' : 'main')
   const [beforeView, setBeforeView] = useState<PersonalStandInSettings | null>(null)
   const [notice, setNotice] = useState(false)
+  const [roleNameError, setRoleNameError] = useState(false)
   const [confirmDiscard, setConfirmDiscard] = useState(false)
   const [personalAgentDetail, setPersonalAgentDetail] = useState<{
     id: number
@@ -127,6 +129,7 @@ export function StandInSettingsPage({
   }, [view, executionDeviceId, services, setError])
 
   const openView = (next: View) => {
+    setRoleNameError(false)
     setBeforeView(draft)
     setView(next)
     setNotice(false)
@@ -137,9 +140,11 @@ export function StandInSettingsPage({
   }
   const close = () => {
     if (saving) return
+    setRoleNameError(false)
     if (view !== 'main') {
-      if (beforeView) setDraft(beforeView)
-      setSelectedId(beforeView?.roles.some(row => row.id === selectedId) ? selectedId : '')
+      const previous = beforeView ?? saved
+      if (previous) setDraft(previous)
+      setSelectedId(previous?.roles.some(row => row.id === selectedId) ? selectedId : '')
       setView('main')
     } else if (dirty) setConfirmDiscard(true)
     else onCancel?.()
@@ -152,10 +157,11 @@ export function StandInSettingsPage({
   useImperativeHandle(ref, () => ({ requestClose: closeSettings }))
   const save = async () => {
     if (!draft || !role) return
-    if (multiple && draft.roles.some(row => !row.name.trim())) {
-      state.setError(t('standIn.personal.role_name_required'))
+    if (view === 'create' && !role.name.trim()) {
+      setRoleNameError(true)
       return
     }
+    setRoleNameError(false)
     const result = await state.save()
     if (!result) return
     setBeforeView(result)
@@ -166,8 +172,14 @@ export function StandInSettingsPage({
   const createRole = () => {
     if (!draft) return
     const added = newStandInRole(draft.executionDeviceId)
-    const roles = draft.roles.map(row =>
-      row.name ? row : { ...row, name: t('standIn.personal.default_role') }
+    setRoleNameError(false)
+    const roles = draft.roles.map((row, index) =>
+      row.name
+        ? row
+        : {
+            ...row,
+            name: standInRoleName(row, index, projects, t('standIn.personal.default_role')),
+          }
     )
     setBeforeView(draft)
     setDraft({ ...draft, roles: [...roles, added] })
@@ -279,7 +291,7 @@ export function StandInSettingsPage({
           key={role.id}
           role={role}
           services={services}
-          onChange={changeRole}
+          onChange={update => updateRole(role.id, update)}
           disabled={saving}
           onSave={() => void save()}
         />
@@ -293,29 +305,6 @@ export function StandInSettingsPage({
       data-testid="stand-in-page"
     >
       <div className="mx-auto w-full max-w-2xl" data-testid="stand-in-settings">
-        {!!draft?.selectionErrors?.length && (
-          <div
-            role="alert"
-            data-testid="stand-in-selection-errors"
-            className="m-5 rounded-lg border border-border p-3"
-          >
-            <p>{t('standIn.personal.selection_failed')}</p>
-            {draft.selectionErrors.map(item => (
-              <p key={item.issueId} className="mt-1 text-xs text-text-muted">
-                {item.title}: {item.error}
-              </p>
-            ))}
-            <button
-              type="button"
-              data-testid="stand-in-selection-retry"
-              disabled={saving}
-              onClick={() => void save()}
-              className="mt-2 text-primary"
-            >
-              {t('standIn.personal.selection_retry')}
-            </button>
-          </div>
-        )}
         <header className="flex items-start gap-3 px-5 pb-5 pt-5">
           {view !== 'main' && (
             <button
@@ -370,6 +359,29 @@ export function StandInSettingsPage({
             </button>
           )}
         </header>
+        {!!draft?.selectionErrors?.length && (
+          <div
+            role="alert"
+            data-testid="stand-in-selection-errors"
+            className="m-5 rounded-lg border border-border p-3"
+          >
+            <p>{t('standIn.personal.selection_failed')}</p>
+            {draft.selectionErrors.map(item => (
+              <p key={item.issueId} className="mt-1 text-xs text-text-muted">
+                {item.title}
+              </p>
+            ))}
+            <button
+              type="button"
+              data-testid="stand-in-selection-retry"
+              disabled={saving}
+              onClick={() => void save()}
+              className="mt-2 text-primary"
+            >
+              {t('standIn.personal.selection_retry')}
+            </button>
+          </div>
+        )}
         {loading ? (
           <p role="status" className="px-5 py-8 text-text-muted">
             {t('standIn.loading')}
@@ -387,9 +399,9 @@ export function StandInSettingsPage({
                     onChange={event => setSelectedId(event.target.value)}
                     className="min-h-9 rounded-md border border-border bg-transparent px-2"
                   >
-                    {draft.roles.map(row => (
+                    {draft.roles.map((row, index) => (
                       <option key={row.id} value={row.id}>
-                        {row.name || t('standIn.personal.default_role')}
+                        {standInRoleName(row, index, projects, t('standIn.personal.default_role'))}
                       </option>
                     ))}
                   </select>
@@ -403,10 +415,24 @@ export function StandInSettingsPage({
                     data-testid="stand-in-role-name"
                     value={role.name}
                     disabled={saving}
-                    onChange={event => changeRole({ ...role, name: event.target.value })}
+                    aria-invalid={roleNameError}
+                    aria-describedby={roleNameError ? 'stand-in-role-name-error' : undefined}
+                    onChange={event => {
+                      setRoleNameError(false)
+                      changeRole({ ...role, name: event.target.value })
+                    }}
                     className="min-h-9 rounded-md border border-border bg-background px-2"
                     placeholder={t('standIn.personal.role_name_placeholder')}
                   />
+                  {roleNameError && (
+                    <span
+                      id="stand-in-role-name-error"
+                      role="alert"
+                      className="col-start-2 text-xs text-error"
+                    >
+                      {t('standIn.personal.role_name_required')}
+                    </span>
+                  )}
                 </label>
               )}
               {initialProject && (view === 'main' || view === 'connections') && (
@@ -547,16 +573,21 @@ export function StandInSettingsPage({
                 />
               )}
               {view === 'scheduling' && (
-                <StandInRoleScheduling settings={draft} onChange={setDraft} disabled={saving} />
+                <StandInRoleScheduling
+                  projects={projects}
+                  settings={draft}
+                  onChange={setDraft}
+                  disabled={saving}
+                />
               )}
               {view === 'advanced' && (
                 <StandInComposer
                   key={role.id}
                   draft={role}
                   onChange={update =>
-                    changeRole(
+                    updateRole(role.id, current =>
                       typeof update === 'function'
-                        ? (update(role) as StandInRole)
+                        ? (update(current) as StandInRole)
                         : (update as StandInRole)
                     )
                   }
@@ -585,7 +616,12 @@ export function StandInSettingsPage({
                       aria-label={t('standIn.device')}
                       value={draft.executionDeviceId}
                       disabled={saving || dirty}
-                      onChange={event => state.setDeviceId(event.target.value)}
+                      onChange={event => {
+                        setBeforeView(null)
+                        setSelectedId('')
+                        setNotice(false)
+                        state.setDeviceId(event.target.value)
+                      }}
                       className="min-h-8 max-w-full bg-transparent px-2"
                     >
                       <option value={state.currentDeviceId}>{t('standIn.current_device')}</option>

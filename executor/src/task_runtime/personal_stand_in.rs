@@ -33,6 +33,8 @@ pub(super) fn read_personal(
     for row in rows {
         let mut role: Value = serde_json::from_str(&row?)
             .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?;
+        role["name"] = json!(role["name"].as_str().unwrap_or_default());
+        role["legacyStandInId"] = role["id"].clone();
         let project = json!({"id":role["projectId"],"store":role["projectStore"]});
         role["collaboration"] = json!({"enabled":true,"allProjects":false,"projects":[project],"excludedProjects":[],"tags":role["tags"]});
         // Preserve project agent permission boundaries when importing old configurations.

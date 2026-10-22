@@ -3870,7 +3870,17 @@ export function CollaborationPlatformApp({
     });
     content =
       rootView === "stand-in" && host.renderStandInPage ? (
-        host.renderStandInPage({ projects: domainProjects })
+        host.renderStandInPage({
+          projects: domainProjects,
+          onClose: () =>
+            host.navigate({
+              ...host.location,
+              rootView: "home",
+              workspaceId: null,
+              projectId: null,
+              issueId: null,
+            }),
+        })
       ) : rootView === "agents" ||
         rootView === "teams" ||
         rootView === "devices" ? (

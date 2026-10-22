@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, readFile, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test, expect, vi } from 'vitest'
@@ -39,3 +39,47 @@ test('builds source changes serially, recovers from failure, and ignores its out
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test('rebuilds unchanged CSS assets and publishes subsequent asset edits with fresh Vite instances', async () => {
+  const { build: viteBuild } = await import('vite')
+  const { readdir } = await import('node:fs/promises')
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), 'wework-css-build-')))
+  const output = path.join(root, 'output')
+  await writeFile(path.join(root, 'index.html'), '<script type="module" src="/entry.js"></script>')
+  await writeFile(path.join(root, 'entry.js'), 'import "./style.css"; console.log("one")')
+  await writeFile(path.join(root, 'style.css'), 'body { background: url("./image.svg") }')
+  const svg = color =>
+    `<svg xmlns="http://www.w3.org/2000/svg"><rect fill="${color}" width="10" height="10"/></svg>`
+  await writeFile(path.join(root, 'image.svg'), svg('red'))
+  let completed = 0
+  const onError = vi.fn()
+  const watcher = await watchDevelopmentBuild({
+    directories: [root],
+    files: [],
+    ignored: [output],
+    debounceMs: 20,
+    onError,
+    build: async () => {
+      await viteBuild({
+        root,
+        configFile: false,
+        logLevel: 'silent',
+        build: { outDir: output, emptyOutDir: false, assetsInlineLimit: 0 },
+      })
+      completed += 1
+    },
+  })
+  try {
+    await writeFile(path.join(root, 'entry.js'), 'import "./style.css"; console.log("two")')
+    await expect.poll(() => completed, { timeout: 10000 }).toBe(2)
+    await writeFile(path.join(root, 'image.svg'), svg('blue'))
+    await expect.poll(() => completed, { timeout: 10000 }).toBe(3)
+    expect(onError).not.toHaveBeenCalled()
+    expect(
+      (await readdir(path.join(output, 'assets'))).filter(file => file.endsWith('.svg'))
+    ).toHaveLength(2)
+  } finally {
+    await watcher.close()
+    await rm(root, { recursive: true, force: true })
+  }
+}, 30000)

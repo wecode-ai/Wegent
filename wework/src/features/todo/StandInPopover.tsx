@@ -48,6 +48,8 @@ export function StandInPopover({
 }) {
   const { t } = useTranslation('common')
   const [open, setOpen] = useState(embedded)
+  const [savedDeviceId, setSavedDeviceId] = useState<string>()
+  const editorDeviceId = initialDeviceId || savedDeviceId
   const [saving, setSaving] = useState(false)
   const editorRef = useRef<StandInSettingsHandle>(null)
   const [settings, setSettings] = useState<PersonalStandInSettings | null>(null)
@@ -58,7 +60,7 @@ export function StandInPopover({
   const dialogRef = useDialogKeyboard<HTMLElement>(requestClose, open && !embedded)
   useEffect(() => {
     let active = true
-    let targetDeviceId = initialDeviceId
+    let targetDeviceId = editorDeviceId
     const unsubscribe = subscribePersonalStandIn(value => {
       if (active && value.userId === userId && value.executionDeviceId === targetDeviceId)
         setSettings(value)
@@ -66,7 +68,7 @@ export function StandInPopover({
     void (async () => {
       const identity = await services?.getLocalRuntimeSidebarIdentity?.()
       if (!identity || !services?.standInApi || userId == null) return
-      targetDeviceId = initialDeviceId || identity.deviceId
+      targetDeviceId = editorDeviceId || identity.deviceId
       const result = await services.standInApi.personalGet(userId, targetDeviceId)
       if (active) setSettings(result)
     })().catch(() => {
@@ -76,7 +78,7 @@ export function StandInPopover({
       active = false
       unsubscribe()
     }
-  }, [services, userId, initialDeviceId])
+  }, [services, userId, editorDeviceId])
   useEffect(() => {
     if (!open) return
     let active = true
@@ -116,7 +118,7 @@ export function StandInPopover({
       devices={devices}
       userId={userId}
       initialProject={project}
-      initialDeviceId={initialDeviceId}
+      initialDeviceId={editorDeviceId}
       initialProfileId={initialProfileId}
       onCancel={() => {
         setOpen(false)
@@ -127,6 +129,7 @@ export function StandInPopover({
         onSavingChange?.(value)
       }}
       onSaved={value => {
+        setSavedDeviceId(value.executionDeviceId)
         onSaved?.(value, 'settings')
         setOpen(false)
       }}

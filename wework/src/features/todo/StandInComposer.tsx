@@ -63,14 +63,20 @@ export function StandInComposer({
   )
   const models = useStandInModels(services, draft, selectedAgent)
   useEffect(() => {
-    const model = models.fixedIdentity ?? models.defaultIdentity
+    if (!showPrompt && !draft.model) return
+    const model = models.fixedIdentity ?? (showPrompt ? models.defaultIdentity : null)
     if (
       model &&
       (!draft.model ||
         (models.fixedIdentity && runnerModelKey(draft.model) !== runnerModelKey(model)))
     )
-      onChange(current => ({ ...current, model }))
-  }, [draft.model, models.defaultIdentity, models.fixedIdentity, onChange])
+      onChange(current =>
+        current.model &&
+        (!models.fixedIdentity || runnerModelKey(current.model) === runnerModelKey(model))
+          ? current
+          : { ...current, model }
+      )
+  }, [draft.model, models.defaultIdentity, models.fixedIdentity, onChange, showPrompt])
   const rows = (runtimeWork?.projects ?? []).flatMap(row => {
     const workspace = row.deviceWorkspaces.find(
       workspace =>
@@ -105,8 +111,8 @@ export function StandInComposer({
       : resolveProjectWorktreeAvailability({ project, workspace, device })
   const selectProject = (id: number | null) => {
     const row = rows.find(row => runtimeProjectToProject(row).id === id)
-    onChange({
-      ...draft,
+    onChange(current => ({
+      ...current,
       workspace: row
         ? {
             projectKey: runtimeProjectKey(row.project),
@@ -114,7 +120,7 @@ export function StandInComposer({
             executionMode: 'current_workspace',
           }
         : null,
-    })
+    }))
   }
   const projectWork: ProjectWorkControls = {
     projects,
@@ -133,20 +139,24 @@ export function StandInComposer({
     onSelectProject: selectProject,
     onSelectProjectWorkspace: projectId => selectProject(projectId),
     onSelectStandaloneDevice: () => {},
-    onExecutionModeChange: executionMode => {
-      if (draft.workspace)
-        onChange({
-          ...draft,
-          workspace: {
-            ...draft.workspace,
-            executionMode: executionMode === 'git_worktree' ? 'git_worktree' : 'current_workspace',
-          },
-        })
-    },
+    onExecutionModeChange: executionMode =>
+      onChange(current =>
+        current.workspace
+          ? {
+              ...current,
+              workspace: {
+                ...current.workspace,
+                executionMode:
+                  executionMode === 'git_worktree' ? 'git_worktree' : 'current_workspace',
+              },
+            }
+          : current
+      ),
     worktreeBranch: draft.workspace?.branch,
-    onWorktreeBranchChange: branch => {
-      if (draft.workspace) onChange({ ...draft, workspace: { ...draft.workspace, branch } })
-    },
+    onWorktreeBranchChange: branch =>
+      onChange(current =>
+        current.workspace ? { ...current, workspace: { ...current.workspace, branch } } : current
+      ),
     onListBranches:
       services?.deviceApi && project
         ? () => listProjectBranches(services.deviceApi!, project)
@@ -175,7 +185,12 @@ export function StandInComposer({
         <div className="min-w-0">{deviceControl}</div>
         <span className="text-text-muted">{t('standIn.local_project')}</span>
         <div className="min-w-0" inert={disabled || !draft.executionDeviceId}>
-          <ProjectWorkBar {...projectWork} className="min-h-8 px-0" showWorkSection={false} />
+          <ProjectWorkBar
+            {...projectWork}
+            className="min-h-8 px-0"
+            menuClassName="z-critical"
+            showWorkSection={false}
+          />
         </div>
         <span className="text-text-muted">{t('standIn.workspace_label')}</span>
         <div className="flex min-h-8 min-w-0 flex-wrap items-center gap-1" inert={disabled}>

@@ -1,4 +1,4 @@
-import type { WorkspaceStandInSettings } from '@wegent/collaboration'
+import type { WorkspaceStandInSettings, CollaborationProject } from '@wegent/collaboration'
 
 export interface StandInProjectRef {
   id: string
@@ -60,6 +60,28 @@ export function roleIncludesProject(role: StandInRole, project: StandInProjectRe
     (role.collaboration.allProjects || role.collaboration.projects.some(matches)) &&
     (!role.agentProject || matches(role.agentProject))
   )
+}
+
+export function standInRoleName(
+  role: StandInRole,
+  index: number,
+  projects: CollaborationProject[],
+  fallback: string
+): string {
+  if (role.name?.trim()) return role.name
+  const scope =
+    role.agentProject ??
+    (!role.collaboration.allProjects && role.collaboration.projects.length === 1
+      ? role.collaboration.projects[0]
+      : undefined)
+  const project =
+    scope &&
+    projects.find(
+      project =>
+        project.id === scope.id &&
+        (project.project_store === 'local' ? 'local' : 'cloud') === scope.store
+    )
+  return project ? project.name : `${fallback}${index ? ` ${index + 1}` : ''}`
 }
 
 type SettingsListener = (settings: PersonalStandInSettings) => void

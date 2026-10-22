@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
@@ -8,7 +9,9 @@ import '@/i18n'
 import { StandInSettingsPage } from './StandInSettingsPage'
 
 vi.mock('./StandInComposer', () => ({
-  StandInComposer: () => <div data-testid="execution-settings" />,
+  StandInComposer: ({ deviceControl }: { deviceControl?: ReactNode }) => (
+    <div data-testid="execution-settings">{deviceControl}</div>
+  ),
 }))
 vi.mock('./StandInRequirements', () => ({
   StandInRequirements: () => (
@@ -161,6 +164,73 @@ describe('Personal stand-in settings', () => {
     await user.click(screen.getByTestId('stand-in-connections-open'))
     expect(screen.queryByTestId('stand-in-all-projects')).not.toBeInTheDocument()
     expect(screen.queryByTestId('stand-in-connect-project-two')).not.toBeInTheDocument()
+  })
+
+  it('keeps the newly selected device when returning from execution settings', async () => {
+    const { props, personalGet, personalSave } = fixture()
+    personalGet.mockImplementation(async (...args: unknown[]) => {
+      const device = String(args[1])
+      return {
+        userId: 7,
+        executionDeviceId: device,
+        version: 0,
+        autoSelect: false,
+        roles: [newStandInRole(device, 'default')],
+      }
+    })
+    props.devices.push({ id: 2, device_id: 'remote', name: 'Remote', status: 'online' })
+    const user = userSetup()
+    render(<StandInSettingsPage {...props} />)
+    await user.click(await screen.findByTestId('stand-in-advanced-open'))
+    await user.selectOptions(screen.getByTestId('stand-in-device'), 'remote')
+    await waitFor(() => expect(screen.getByTestId('stand-in-device')).toHaveValue('remote'))
+    await user.click(screen.getByTestId('stand-in-back'))
+    await user.click(screen.getByTestId('stand-in-save'))
+    expect(personalSave).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({
+        executionDeviceId: 'remote',
+        roles: [expect.objectContaining({ executionDeviceId: 'remote' })],
+      })
+    )
+  })
+
+  it('discards an invalid new role without leaving its validation error on the main page', async () => {
+    const { props, personalSave } = fixture()
+    const user = userSetup()
+    render(<StandInSettingsPage {...props} />)
+    await user.click(await screen.findByTestId('stand-in-list-configure'))
+    await user.click(screen.getByTestId('stand-in-save'))
+    expect(await screen.findByRole('alert')).toHaveTextContent('请填写每个角色的名称')
+    expect(screen.queryByTestId('stand-in-reload')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('stand-in-cancel'))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('stand-in-role-select')).not.toBeInTheDocument()
+    expect(personalSave).not.toHaveBeenCalled()
+  })
+
+  it('labels unnamed migrated roles by project and allows their configuration to be saved', async () => {
+    const first = { ...newStandInRole('mac', 'first'), version: 1 }
+    const second = { ...newStandInRole('mac', 'second'), version: 1 }
+    first.collaboration = {
+      ...first.collaboration,
+      allProjects: false,
+      projects: [{ id: 'one', store: 'local' }],
+    }
+    second.collaboration = {
+      ...second.collaboration,
+      allProjects: false,
+      projects: [{ id: 'two', store: 'local' }],
+    }
+    const { props, personalSave } = fixture({ roles: [first, second] })
+    const user = userSetup()
+    render(<StandInSettingsPage {...props} />)
+    expect(await screen.findByRole('option', { name: 'First project' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Second project' })).toBeInTheDocument()
+    await user.click(screen.getByTestId('stand-in-auto'))
+    await user.click(screen.getByTestId('stand-in-save'))
+    await waitFor(() => expect(personalSave).toHaveBeenCalledOnce())
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   it('discards connection drafts on Back and does not change saved configuration', async () => {

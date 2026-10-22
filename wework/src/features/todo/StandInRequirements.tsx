@@ -16,7 +16,7 @@ export function StandInRequirements({
 }: {
   role: StandInRole
   services: WorkbenchServices
-  onChange(role: StandInRole): void
+  onChange(update: (current: StandInRole) => StandInRole): void
   disabled: boolean
   onSave(): void
 }) {
@@ -37,8 +37,8 @@ export function StandInRequirements({
     <ComposerCatalogContext.Provider value={catalog}>
       <BufferedChatInput
         value={role.prompt}
-        onChange={prompt => onChange({ ...role, prompt })}
-        onDraftEdit={prompt => onChange({ ...role, prompt })}
+        onChange={prompt => onChange(current => ({ ...current, prompt }))}
+        onDraftEdit={prompt => onChange(current => ({ ...current, prompt }))}
         onSubmit={() => onSave()}
         disabled={disabled}
         clearOnSubmit={false}
@@ -50,9 +50,9 @@ export function StandInRequirements({
         showProjectWorkBar={false}
         showWorkspaceMenu={false}
         showExecutionTools={false}
-        onSetGoal={() => onChange({ ...role, goalMode: true })}
+        onSetGoal={() => onChange(current => ({ ...current, goalMode: true }))}
         goalDraftActive={Boolean(role.goalMode)}
-        onCancelGoalDraft={() => onChange({ ...role, goalMode: false })}
+        onCancelGoalDraft={() => onChange(current => ({ ...current, goalMode: false }))}
       />
     </ComposerCatalogContext.Provider>
   ) : (

@@ -49,11 +49,13 @@ function Fixture({
   initial,
   services,
   selectedAgent,
+  showPrompt = true,
 }: {
   save: ReturnType<typeof vi.fn>
   initial?: WorkspaceStandInSettings['workspace']
   services?: WorkbenchServices
   selectedAgent?: WorkspaceProjectAgent
+  showPrompt?: boolean
 }) {
   const [draft, setDraft] = useState<WorkspaceStandInSettings>({
     enabled: false,
@@ -68,6 +70,7 @@ function Fixture({
       <StandInComposer
         draft={draft}
         selectedAgent={selectedAgent}
+        showPrompt={showPrompt}
         onChange={setDraft}
         onSave={async prompt => save({ ...draft, prompt })}
         onValidityChange={setValid}
@@ -129,6 +132,26 @@ describe('Stand-in configuration composer', () => {
     )
     await userEvent.click(screen.getByTestId('stand-in-save'))
     expect(save).toHaveBeenCalledWith(expect.objectContaining({ model: fixed }))
+  })
+
+  it('keeps advanced settings unchanged when the default model catalog arrives', async () => {
+    const save = vi.fn()
+    const model = {
+      runtime: 'codex' as const,
+      provider: 'local',
+      model_id: 'default',
+      is_default: true,
+    }
+    const services = {
+      standInApi: { catalog: vi.fn(async () => ({ models: [model] })) },
+      modelApi: { listModels: vi.fn(async () => ({ data: [] })) },
+    } as unknown as WorkbenchServices
+    render(<Fixture save={save} services={services} showPrompt={false} />)
+    await waitFor(() =>
+      expect(screen.getByTestId('model-selector-button')).toHaveTextContent('default')
+    )
+    await userEvent.click(screen.getByTestId('stand-in-save'))
+    expect(save.mock.calls[0][0].model).toBeUndefined()
   })
 
   it('allows settings to be saved while the model catalog is loading', async () => {

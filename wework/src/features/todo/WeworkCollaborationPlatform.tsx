@@ -1516,13 +1516,14 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
         locale={locale}
         onReady={handleReady}
         host={{
-          renderStandInPage: ({ projects }) => (
+          renderStandInPage: ({ projects, onClose }) => (
             <StandInSettingsPage
               api={platformApi}
               projects={projects}
               services={props.services}
               devices={props.devices ?? []}
               userId={Number(props.user.id)}
+              onCancel={onClose}
             />
           ),
           renderProjectSidebarBadge: project =>

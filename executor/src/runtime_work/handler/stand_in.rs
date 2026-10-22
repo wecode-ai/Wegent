@@ -100,6 +100,7 @@ impl RuntimeWorkRpcHandler {
                 )
                 .map_err(settings_error)?;
             settings["executionDeviceId"] = json!(self.device_id);
+            settings["projectStore"] = json!(project_store);
             return Ok(settings);
         }
         let mut settings = payload["settings"].clone();

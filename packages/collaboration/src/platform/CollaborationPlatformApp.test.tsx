@@ -2607,8 +2607,13 @@ describe("CollaborationPlatformApp real component flow", () => {
 
   it("opens the host Stand-in settings page from the sidebar", async () => {
     const { api } = createApi();
-    const renderStandInPage = vi.fn(({ projects }) => (
-      <div data-testid="stand-in-settings-page">{projects[0]?.name}</div>
+    const renderStandInPage = vi.fn(({ projects, onClose }) => (
+      <div data-testid="stand-in-settings-page">
+        {projects[0]?.name}
+        <button data-testid="stand-in-close-page" onClick={onClose}>
+          Close
+        </button>
+      </div>
     ));
     await render(
       <PlatformHarness api={api} renderStandInPage={renderStandInPage} />,
