@@ -191,7 +191,7 @@ export const defaultAppPreferences: AppPreferences = {
   popoutWindowProjectlessDefaultEnabled: false,
   friendlyTaskTitlesEnabled: false,
   friendlyTaskTitleModel: null,
-  replyPredictionsEnabled: false,
+  replyPredictionsEnabled: true,
   changeRequestStatusEnabled: true,
   quickPhrases: defaultQuickPhrases,
   localHarnesses: defaultLocalHarnessPreferences,
@@ -409,7 +409,10 @@ export function mergeAppPreferences(value: unknown): AppPreferences {
         ? record.friendlyTaskTitlesEnabled
         : defaultAppPreferences.friendlyTaskTitlesEnabled,
     friendlyTaskTitleModel: normalizeFriendlyTaskTitleModel(record.friendlyTaskTitleModel),
-    replyPredictionsEnabled: record.replyPredictionsEnabled === true,
+    replyPredictionsEnabled:
+      typeof record.replyPredictionsEnabled === 'boolean'
+        ? record.replyPredictionsEnabled
+        : defaultAppPreferences.replyPredictionsEnabled,
     changeRequestStatusEnabled:
       typeof record.changeRequestStatusEnabled === 'boolean'
         ? record.changeRequestStatusEnabled
