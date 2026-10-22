@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { Readable } from 'node:stream'
 import { test } from 'vitest'
 import { DesktopE2EServer } from '../e2e/desktop/modules/desktop-server.mjs'
-import { MODEL_API_KEY } from '../e2e/desktop/modules/shared.mjs'
+import { CLOUD_VISION_SIDECAR_CASE, MODEL_API_KEY } from '../e2e/desktop/modules/shared.mjs'
 import {
   handleEmptyReplyPrediction,
   isReplyPredictionRequest,
@@ -106,4 +106,43 @@ test('serves background predictions without advancing the active tool scenario',
   assert.equal(events.at(-1).type, 'response.completed')
   const message = events.find(event => event.item?.type === 'message')
   assert.deepEqual(JSON.parse(message.item.content[0].text), { suggestion: null })
+})
+
+test('keeps prediction image descriptions separate from conversation cache assertions', async () => {
+  const server = new DesktopE2EServer('/tmp/reply-prediction-vision-fixture')
+  server.scenario = 'vision_sidecar'
+  for (const context of ['Describe the attached image', REPLY_PREDICTION_PROMPT]) {
+    const body = {
+      model: CLOUD_VISION_SIDECAR_CASE.sidecarModelId,
+      stream: false,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: `Describe this image.\n\nThe user's request:\n\n${context}` },
+            { type: 'image_url', image_url: { url: 'data:image/png;base64,fixture' } },
+          ],
+        },
+      ],
+    }
+    const request = Readable.from([JSON.stringify(body)])
+    request.headers = { authorization: `Bearer ${MODEL_API_KEY}` }
+    let output
+    const response = {
+      writeHead(status) {
+        assert.equal(status, 200)
+      },
+      end(value) {
+        output = JSON.parse(value)
+      },
+    }
+
+    await server.handleModelResponse(request, response, 'chat')
+
+    assert.ok(output.choices[0].message.content)
+  }
+  assert.deepEqual(
+    server.visionSidecarRequests.map(request => request.kind),
+    ['vision', 'prediction-vision']
+  )
 })

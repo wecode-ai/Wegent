@@ -86,15 +86,26 @@ const REPLY_PREDICTION_PROMPT = [
   'Return only JSON matching this schema: {"suggestion": string | null}.',
 ].join('\n')
 
+function modelMessageText(message) {
+  if (typeof message?.content === 'string') return message.content
+  return Array.isArray(message?.content)
+    ? message.content.map(part => part.text ?? '').join('')
+    : ''
+}
+
 function isReplyPredictionRequest(body) {
   if (Array.isArray(body.messages)) {
     const message = body.messages.at(-1)
-    const text = Array.isArray(message?.content)
-      ? message.content.map(part => part.text ?? '').join('')
-      : message?.content
-    return message?.role === 'user' && text === REPLY_PREDICTION_PROMPT
+    return message?.role === 'user' && modelMessageText(message) === REPLY_PREDICTION_PROMPT
   }
   return codexRequestMetadata(body)?.thread_source === 'composer_predictions'
+}
+
+function isReplyPredictionVisionRequest(body) {
+  const message = body.messages?.at(-1)
+  return (
+    message?.role === 'user' && modelMessageText(message).endsWith(`\n\n${REPLY_PREDICTION_PROMPT}`)
+  )
 }
 
 function handleEmptyReplyPrediction(body, response) {
@@ -823,6 +834,7 @@ export {
   codexRequestKind,
   latestModelInputText,
   isReplyPredictionRequest,
+  isReplyPredictionVisionRequest,
   REPLY_PREDICTION_PROMPT,
   handleEmptyReplyPrediction,
   responseCreated,
