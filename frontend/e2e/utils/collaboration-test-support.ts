@@ -2,16 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect, type Locator, type Page } from '@playwright/test'
+import type { CollaborationView } from '@wegent/collaboration'
 
 export async function selectCollaborationProjectView(
   page: Page,
-  view: 'board' | 'manage'
+  view: CollaborationView
 ): Promise<void> {
   const compact = page.getByTestId('collaboration-project-view-select')
+  const tab = page.getByTestId(`collaboration-tab-${view}`)
+  await expect(compact.or(tab)).toBeVisible()
   if (await compact.isVisible()) {
     await compact.selectOption(view)
   } else {
-    await page.getByTestId(`collaboration-tab-${view}`).click()
+    await tab.click()
   }
 }
 
