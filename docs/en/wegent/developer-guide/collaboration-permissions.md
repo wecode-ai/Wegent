@@ -35,7 +35,7 @@ The new project, parent-space grant and creator's administrator grant are writte
 | Read-only member | Read-only member | Direct invitation required |
 | Project guest | Direct grant | Direct grant |
 
-Effective permissions are the union of active inheritance and direct grants. A lower direct role cannot override inherited administration. Public reading does not make visitors eligible project participants.
+Space owners and administrators always administer child projects. For other users, a valid direct project role takes precedence over inherited space membership, allowing promotion or demotion within that project. Removing the direct grant restores current inheritance. Updating only a member's project responsibilities neither creates a role override nor approves pending or rejected grants. Public reading does not make visitors eligible project participants.
 
 ## Protected contracts
 
@@ -45,10 +45,10 @@ Effective permissions are the union of active inheritance and direct grants. A l
 | CP02 | Space owners and administrators administer all child projects, including restricted projects, regardless of creator. |
 | CP03 | Ordinary projects inherit members and viewers; restricted projects stop those two sources. |
 | CP04 | Project invitations never grant access to parent members, resources or sibling projects. |
-| CP05 | Effective permission is a union of valid sources; pending, rejected, invalid, inactive and archived sources grant nothing. |
+| CP05 | Space owners and administrators retain project administration; otherwise valid direct project roles override inherited roles, and removing a direct grant restores inheritance. Pending, rejected, invalid, inactive and archived sources grant nothing. |
 | CP06 | Creator, assignee, group leader and runner identity do not grant human administration. |
 | CP07 | Viewers can read authorized spaces and projects but cannot edit, comment, assign or execute. |
-| CP08 | Project rosters include inherited and direct members, effective/direct roles and sources. Inherited roles are read-only. |
+| CP08 | Project rosters include inherited and direct members, effective/direct roles and sources. Space inheritance stays read-only; project administrators can set or remove a direct project role for inherited members. |
 | CP09 | Enabled shared agents are visible to project readers; explicit private definitions remain creator-only for visibility and use; readiness problems have explicit states and reasons. |
 | CP10 | Resource use never grants source-definition editing or access to private credentials. |
 | CP11 | Agent and device use requires valid use authority and an enabled project binding; valid legacy installations retain authority only within their original project, without granting catalog or source-definition access. |
@@ -79,6 +79,8 @@ Users with project access and no parent-space access can still open their author
 - Space settings: members, projects, shared agents/devices, space groups and ownership transfer.
 - Project settings: membership mode, effective roster and sources, guests, enabled resources, groups, automation and Issue security.
 - Personal resources: source definitions, devices, credentials and sharing grants.
+
+Member rows distinguish the effective project role, read-only inherited space role and direct project role. Changing an inherited member's role creates a direct project grant without changing space or sibling-project permissions. Removing that grant keeps the row with its restored inherited role. Project grants cannot lower space-owner or administrator authority.
 
 ## Storage and mixed-version compatibility
 
@@ -123,13 +125,13 @@ Development startup now aborts on migration failure instead of serving an incomp
 
 Regression entry points:
 
-- The migrated Rust project-list and project execution-environment APIs follow the same CP contract. `test_rust_collaboration_permissions_mysql.py` executes the actual Rust SQL on MySQL and compares role combinations, restricted inheritance, project guests, public read-only access and revocation. Rust unit tests protect provenance fields and device-consent intersections. Python service tests retain the business assertions; existing desktop CI scenarios cover the migrated HTTP endpoints.
+- The migrated Rust project list, detail and execution-environment APIs follow the same CP contract. `test_rust_collaboration_permissions_mysql.py` executes the actual Rust SQL on MySQL and compares role overrides, restored inheritance, space administration, restricted inheritance, project guests, public read-only access and revocation. Rust unit tests protect provenance fields and device-consent intersections. Python service tests retain the business assertions; existing desktop CI scenarios cover the migrated HTTP endpoints.
 
 - Role matrices and resource contracts: `test_collaboration_permission_contract.py`, `test_collaboration_permission_resources.py`, and `test_workspace_shared_agents.py`.
 - Claims, assignment, comments and queues: execution, runner routing, assignment and comment service tests.
 - Existing-schema compatibility: `test_collaboration_permission_compatibility.py`; CI's `integration_checks/test_collaboration_permission_mysql.py` covers populated old databases and unused interrupted-DDL leftovers.
 - Startup failure: `test_startup_migration_failure.py`.
-- Contract protection: `test_collaboration_permission_guard.py` verifies the approved CP fingerprint and per-rule coverage. CP09 and CP11 reflect the user's added compatibility requirement, preserving private choices and existing project installations.
+- Contract protection: `test_collaboration_permission_guard.py` verifies the approved CP fingerprint and per-rule coverage. The user-approved CP05 and CP08 changes permit direct project roles to override ordinary inheritance while preserving CP02's space administration boundary. CP09 and CP11 preserve private choices and existing project installations.
 - Shared UI: inherited sources, guests, membership mode, ownership transfer, absent old-backend capabilities, binding reactivation and chat recovery.
 
 Permission changes must update the corresponding rule, local architecture record and tests. Semantic changes require user authorization. Never weaken assertions, skip cases or add administrator exceptions to conceal a violation. Tests use isolated databases, deterministic encryption and mocked external services; passing them does not claim deployment or live Runtime execution.

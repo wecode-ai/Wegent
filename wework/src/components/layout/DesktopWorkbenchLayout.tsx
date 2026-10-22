@@ -1271,6 +1271,7 @@ export function DesktopWorkbenchLayout({
                   runtimeTaskLifecycle={runtimeTaskLifecycle}
                   services={services}
                   startupActive={routeActive && routeWorkItemsOpen}
+                  workspaceActive={routeActive && routeWorkItemsOpen && !settingsOpen}
                   onOpenRuntimeTask={openProjectSpaceRuntimeTask}
                   onArchiveRuntimeTasks={onArchiveChatConversations}
                   onCancelRuntimeTask={onCancelRuntimeTask}

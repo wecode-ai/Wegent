@@ -764,6 +764,8 @@
       "loading_description": "如果尚未登录，将自动跳转到 Wegent 登录页。",
       "approved_title": "已授权 Wework",
       "approved_description": "可以回到 Wework，本地客户端会自动完成云端连接。",
+      "close_countdown": "此页面将在 {{count}} 秒后自动关闭。",
+      "close_manually": "如果页面未自动关闭，请手动关闭并返回 Wework。",
       "declined_title": "已取消授权",
       "declined_description": "Wework 不会连接此云端账号。",
       "title": "授权 Wework 连接 Wegent",

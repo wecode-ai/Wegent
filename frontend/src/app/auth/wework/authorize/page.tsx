@@ -28,6 +28,7 @@ function WeworkAuthorizeContent() {
   const { user, isLoading } = useUser()
   const sessionId = searchParams.get('session_id') ?? ''
   const [state, setState] = useState<AuthorizationState>('idle')
+  const [closeCountdown, setCloseCountdown] = useState(3)
   const [error, setError] = useState<string | null>(null)
   const backendHost = useMemo(() => {
     if (typeof window === 'undefined') return 'Wegent'
@@ -40,6 +41,16 @@ function WeworkAuthorizeContent() {
     sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, redirectTarget)
     router.replace(`${paths.auth.login.getHref()}?redirect=${encodeURIComponent(redirectTarget)}`)
   }, [isLoading, router, sessionId, user])
+
+  useEffect(() => {
+    if (state !== 'approved') return
+    if (closeCountdown === 0) {
+      window.close()
+      return
+    }
+    const timer = window.setTimeout(() => setCloseCountdown(value => value - 1), 1000)
+    return () => window.clearTimeout(timer)
+  }, [state, closeCountdown])
 
   async function handleApprove() {
     setState('submitting')
@@ -115,6 +126,11 @@ function WeworkAuthorizeContent() {
           title={t('auth.wework_authorize.approved_title')}
           description={t('auth.wework_authorize.approved_description')}
         />
+        <p className="mt-3 text-center text-sm text-text-secondary" role="status">
+          {closeCountdown > 0
+            ? t('auth.wework_authorize.close_countdown', { count: closeCountdown })
+            : t('auth.wework_authorize.close_manually')}
+        </p>
       </AuthorizeShell>
     )
   }
