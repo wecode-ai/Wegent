@@ -78,6 +78,9 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
         let key = format!("wegent:plugin-write:{user_id}");
         let acquire_deadline = Instant::now() + wait;
         loop {
+            if Instant::now() >= acquire_deadline {
+                return Err(coordination_error("plugin_write_busy"));
+            }
             let result = tokio::time::timeout_at(
                 acquire_deadline,
                 redis.set_with(
@@ -102,9 +105,6 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
                 Ok(Ok(false)) => {}
                 Ok(Err(_)) => return Err(coordination_error("plugin_write_unavailable")),
                 Err(_) => return Err(coordination_error("plugin_write_busy")),
-            }
-            if Instant::now() >= acquire_deadline {
-                return Err(coordination_error("plugin_write_busy"));
             }
             tokio::time::sleep_until(
                 (Instant::now() + Duration::from_millis(50)).min(acquire_deadline),

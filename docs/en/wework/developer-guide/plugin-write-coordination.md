@@ -60,6 +60,10 @@ Python and the migrated Rust plugin writers use the same protocol:
 - Hold the lock until the outer database transaction commits, rolls back, or
   closes. Ending a savepoint does not release it.
 
+Rust checks the acquisition deadline before every lock `SET`. Once the final
+wait consumes the budget, it returns `plugin_write_busy` without another write,
+preventing an expired request from leaving a new lease that blocks later login.
+
 ## Coordination diagnostics
 
 For `plugin_write_busy` diagnostics, correlate Backend lease acquisition, release,
