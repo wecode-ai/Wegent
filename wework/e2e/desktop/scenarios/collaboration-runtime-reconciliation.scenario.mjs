@@ -503,23 +503,6 @@ export async function createDesktopScenario({
         await proxy.replay(testCase.terminal, overrides)
         await assertUnchangedContinuation(testCase, baseline, name)
       }
-      // Verify the durable continuation state from a fresh renderer instead of
-      // racing asynchronous invalidations while the model stream remains held.
-      await reloadMainWindow(
-        control,
-        'Electron did not reconnect after checking stale terminal delivery'
-      )
-      await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
-        timeoutMs: workbenchReadyTimeoutMs,
-      })
-      await openIssue(control, testCase)
-      const nextCard = `${CONTENT} [data-testid="cloud-task-activity-card-${testCase.nextActivityId}"]`
-      await control.command('waitFor', nextCard, { text: testCase.continuePrefix })
-      await control.command(
-        'waitFor',
-        `${CONTENT} [data-testid="cloud-task-activity-execution-badge-${testCase.nextActivityId}"][data-status="running"]`
-      )
-      await control.command('click', `${CONTENT} [data-testid="cloud-todo-detail-close"]`)
     } finally {
       testCase.continueGate.resolve()
     }
@@ -541,6 +524,16 @@ export async function createDesktopScenario({
       'The completed native continuation did not release its slot',
       modelResponseTimeoutMs
     )
+    // Verify the durable continuation after it settles. The running state is
+    // asserted above against persisted runtime, workflow and capacity facts.
+    await reloadMainWindow(control, 'Electron did not reconnect after the stale terminal checks')
+    await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
+      timeoutMs: workbenchReadyTimeoutMs,
+    })
+    await openIssue(control, testCase)
+    const nextCard = `${CONTENT} [data-testid="cloud-task-activity-card-${testCase.nextActivityId}"]`
+    await control.command('waitFor', nextCard, { text: testCase.continueText })
+    await control.command('click', `${CONTENT} [data-testid="cloud-todo-detail-close"]`)
   }
 
   return {
