@@ -37,6 +37,10 @@ export function createDesktopScenario({ uiTimeoutMs }) {
           uiTimeoutMs
         )
       const open = async () => {
+        await control.command('waitFor', `${CONTENT} [data-testid="stand-in-open"]`, {
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        })
         await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
         await control.command('waitFor', PROMPT, { timeoutMs: uiTimeoutMs })
       }
