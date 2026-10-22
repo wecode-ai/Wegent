@@ -91,6 +91,19 @@ files are never rewritten by this protocol.
 
 ## Regression coverage
 
+Conversation search applies the rendered prose and process-block visibility rules and
+locates matches by their original item IDs. Loading a match retains its complete anchor
+turn, including completed turns: distant final-answer fragments can determine whether
+a same-text process block is hidden. Neighboring turns remain paginated. Temporary
+context pages do not add matches to completed provider search results; leaving search
+restores the original messages and pagination. Anchor size still depends on the turn.
+
+Cloud search runs in the Rust Backend and checks project access, Issue visibility,
+persisted session bindings and device identity before calling the Executor. Bound reads
+discard client-supplied workspace paths and runtime handles. Duplicate prose, long turns,
+context continuation and restoration run through the existing local
+`running-conversation-history` and cloud `conversation-state` CI checkpoints.
+
 | Scenario                                                           | Expected result                                                                       |
 | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
 | Mixed client/Executor versions                                     | Legacy responses remain readable; new responses require opt-in; unknown versions fail |

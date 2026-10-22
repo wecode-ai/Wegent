@@ -13,7 +13,6 @@ use super::{
     codex_transcript_page::{
         read_codex_thread_metadata, CodexTranscriptDirection, CodexTranscriptPage,
     },
-    transcript::turn_assistant_status,
     transcript_search_text::codex_turn_search_sources,
     util::{item_type, string_field},
 };
@@ -383,25 +382,20 @@ pub(super) async fn load_search_match(
         })
         .cloned()
         .ok_or_else(|| "Persisted conversation search turn is no longer available".to_owned())?;
-    let (center, before_item_cursor, after_item_cursor) =
-        load_match_turn(client, &thread_id, turn.clone(), &cursor).await?;
+    let center = load_match_turn(client, &thread_id, turn, &cursor).await?;
     let (older_context, newer_context) = tokio::try_join!(
         initial_context_side(
             client,
             &thread_id,
-            &turn,
             &cursor.turn_id,
             &older_turns,
-            before_item_cursor,
             ContextDirection::Desc
         ),
         initial_context_side(
             client,
             &thread_id,
-            &turn,
             &cursor.turn_id,
             &newer_turns,
-            after_item_cursor,
             ContextDirection::Asc
         ),
     )?;
@@ -422,56 +416,18 @@ async fn load_match_turn(
     thread_id: &str,
     turn: Value,
     cursor: &CodexSearchCursor,
-) -> Result<(Value, Option<String>, Option<String>), String> {
-    if matches!(turn_assistant_status(&turn), "failed" | "cancelled") {
-        // Visibility depends on every assistant fragment and user boundary in the turn.
-        let center = load_search_turn_items(client, thread_id, turn).await?;
-        if !center["items"].as_array().is_some_and(|items| {
-            items
-                .iter()
-                .any(|item| string_field(item, "id").as_deref() == Some(cursor.item_id.as_str()))
-        }) {
-            return Err("Persisted conversation search item is no longer available".to_owned());
-        }
-        return Ok((center, None, None));
-    }
-    let (older, matched, newer) = tokio::try_join!(
-        search_neighbor_items(client, thread_id, cursor, "desc"),
-        client.request(
-            "thread/items/read",
-            json!({
-                "threadId": thread_id,
-                "turnId": cursor.turn_id,
-                "itemIds": [cursor.item_id],
-            }),
-        ),
-        search_neighbor_items(client, thread_id, cursor, "asc"),
-    )?;
-    let mut items = response_items(&older, &cursor.turn_id)?;
-    items.reverse();
-    let matched_items = response_items(&matched, &cursor.turn_id)?;
-    if !matched_items
-        .iter()
-        .any(|item| string_field(item, "id").as_deref() == Some(cursor.item_id.as_str()))
-    {
+) -> Result<Value, String> {
+    // Completed turns also need every fragment: truncation can change which
+    // process blocks duplicate the joined final answer and become hidden.
+    let center = load_search_turn_items(client, thread_id, turn).await?;
+    if !center["items"].as_array().is_some_and(|items| {
+        items
+            .iter()
+            .any(|item| string_field(item, "id").as_deref() == Some(cursor.item_id.as_str()))
+    }) {
         return Err("Persisted conversation search item is no longer available".to_owned());
     }
-    items.extend(matched_items);
-    items.extend(response_items(&newer, &cursor.turn_id)?);
-    let mut center = turn;
-    center["items"] = json!(items);
-    center["itemsView"] = json!(if string_field(&older, "nextCursor").is_none()
-        && string_field(&newer, "nextCursor").is_none()
-    {
-        "full"
-    } else {
-        "summary"
-    });
-    Ok((
-        center,
-        string_field(&older, "nextCursor"),
-        string_field(&newer, "nextCursor"),
-    ))
+    Ok(center)
 }
 
 async fn resolve_search_turn_cursor(
@@ -538,10 +494,8 @@ async fn context_turn_page(
 async fn initial_context_side(
     client: &CodexAppServerClient,
     thread_id: &str,
-    center: &Value,
     center_id: &str,
     turn_page: &Value,
-    item_cursor: Option<String>,
     direction: ContextDirection,
 ) -> Result<(Vec<Value>, Option<String>), String> {
     let neighbor = turn_page
@@ -553,18 +507,7 @@ async fn initial_context_side(
         .cloned();
     let mut pending = Vec::new();
     let mut turns = Vec::new();
-    if let Some(item_cursor) = item_cursor {
-        pending.push(PendingContextTurn {
-            turn: center.clone(),
-            item_cursor: Some(item_cursor),
-        });
-        if let Some(turn) = neighbor {
-            pending.push(PendingContextTurn {
-                turn,
-                item_cursor: None,
-            });
-        }
-    } else if let Some(turn) = neighbor {
+    if let Some(turn) = neighbor {
         let (turn, remaining) = load_context_turn(
             client,
             thread_id,
@@ -694,26 +637,6 @@ pub(super) async fn load_context_page(
         after_cursor,
         prepend_item_turn_ids,
     })
-}
-
-async fn search_neighbor_items(
-    client: &CodexAppServerClient,
-    thread_id: &str,
-    cursor: &CodexSearchCursor,
-    direction: &str,
-) -> Result<Value, String> {
-    client
-        .request(
-            "thread/items/list",
-            json!({
-                "threadId": thread_id,
-                "turnId": cursor.turn_id,
-                "cursor": {"type": "item", "itemId": cursor.item_id},
-                "limit": SEARCH_ITEM_RADIUS,
-                "sortDirection": direction,
-            }),
-        )
-        .await
 }
 
 #[cfg(all(test, unix))]

@@ -41,6 +41,47 @@ afterEach(() => {
 })
 
 describe('conversation search indexing', () => {
+  test('keeps distinct visible blocks with equal text addressable by their own item ids', () => {
+    const projected: WorkbenchMessage = {
+      ...message('projection', 'tail'),
+      blocks: ['first-block', 'second-block'].map(id => ({
+        id,
+        subtaskId: 'turn',
+        type: 'text' as const,
+        content: 'needle',
+        status: 'done' as const,
+        createdAt: 0,
+      })),
+      runtimeDisplayItems: [
+        { id: 'first-block', type: 'block' },
+        { id: 'second-block', type: 'block' },
+        { id: 'final-item', type: 'assistant_text', content: 'tail' },
+      ],
+    }
+    const index = conversationSearch.deduplicateConversationSearchIndex([
+      {
+        messageId: projected.id,
+        message: projected,
+        text: conversationSearch.conversationSearchText(projected),
+      },
+    ])
+    expect(conversationSearch.findConversationMatches(index, 'needle')).toEqual({
+      matches: [
+        { messageId: 'first-block', occurrence: 0 },
+        { messageId: 'second-block', occurrence: 0 },
+      ],
+      totalMatches: 2,
+      isCapped: false,
+    })
+    expect(
+      conversationSearch.resolveConversationMatch(
+        { messageId: '', itemId: 'second-block', occurrence: 0 },
+        [projected],
+        'needle'
+      )
+    ).toEqual({ messageId: projected.id, occurrence: 1 })
+  })
+
   test('keeps the navigation target stable while unrelated messages stream', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const matched = message('matched', 'needle')

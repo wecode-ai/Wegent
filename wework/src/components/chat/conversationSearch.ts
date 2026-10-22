@@ -6,6 +6,7 @@ import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
 import type { AsyncRequestUserInputReply } from '@wegent/chat-core/runtime-user-input'
 import { stripPluginWorkspaceResultMarkers } from '@wegent/chat-core/plugin-workspace-result'
 import {
+  getAssistantSearchPresentation,
   getAssistantSearchTextSources,
   getUserMessageTextContent,
 } from '@wegent/collaboration/conversation'
@@ -94,14 +95,14 @@ function searchUnits(message: WorkbenchMessage, text?: string): SearchUnit[] | n
   if (!message.runtimeDisplayItems?.length || message.role !== 'assistant') return null
   const cached = searchUnitsByMessage.get(message)
   if (cached !== undefined) return cached
-  const visibleSources = new Set(getAssistantSearchTextSources(message))
-  const blocks = new Map(message.blocks?.map(block => [block.id, block]))
+  const { blocks: displayBlocks } = getAssistantSearchPresentation(message)
+  const blocks = new Map(displayBlocks.map(block => [block.id, block]))
   const units = message.runtimeDisplayItems.flatMap<SearchUnit>(item => {
     const block = blocks.get(item.id)
     const source =
       item.type === 'assistant_text'
         ? stripPluginWorkspaceResultMarkers(item.content)
-        : block?.type === 'text' && visibleSources.has(block.content)
+        : block?.type === 'text'
           ? block.content
           : ''
     return source

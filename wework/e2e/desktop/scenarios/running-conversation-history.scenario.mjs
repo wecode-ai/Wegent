@@ -21,6 +21,7 @@ import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.
 import {
   TERMINAL_HISTORY_TURN_COUNT as LEGACY_TURN_COUNT,
   seedNativeTerminalHistory,
+  terminalHistoryAssistantEvents,
   terminalHistoryCompletion,
   terminalHistoryTurn,
   verifyNativeTerminalHistorySearch,
@@ -202,6 +203,7 @@ async function seedLegacySearchHistory(executorHome, sqliteHome, task) {
     const turnId = `legacy-search-turn-${index}`
     const terminal = terminalHistoryTurn(index)
     const answer = terminal?.text ?? `Legacy search answer ${index}`
+    const assistantEvents = terminalHistoryAssistantEvents(index, answer)
     const prompt = LEGACY_MATCH_TURNS.includes(index)
       ? `${LEGACY_PROMPT} ${index}`
       : `Legacy search prompt ${index}`
@@ -217,8 +219,8 @@ async function seedLegacySearchHistory(executorHome, sqliteHome, task) {
         text_elements: [],
         local_images: [],
       },
-      { type: 'agent_message', message: answer, phase: terminal?.phase ?? 'final_answer' },
-      terminalHistoryCompletion(turnId, answer, terminal),
+      ...assistantEvents,
+      terminalHistoryCompletion(turnId, assistantEvents.at(-1).message, terminal),
     ]
     records.push(
       ...events.map(payload =>
@@ -808,6 +810,9 @@ export function createDesktopScenario({
       await control.command('waitFor', `[data-testid="${pagedRowId}"]`)
       await control.command('click', `[data-testid="${pagedRowId}"]`)
       await control.command('waitFor', loadOlder)
+      const originalSearchPane = JSON.parse(
+        await control.command('getWorkbenchDebugSnapshot', 'body')
+      ).pane
       const findInput = '[data-testid="conversation-find-input"]'
       await control.command('nativePress', COMPOSER_SELECTOR, {
         key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
@@ -846,8 +851,8 @@ export function createDesktopScenario({
       })
       const pagedSnapshot = JSON.parse(await control.command('performanceSnapshot', 'body'))
       assert.ok(
-        pagedSnapshot.runtimeAssistantDisplayItemCount < PAGED_ITEM_COUNT,
-        'Conversation search materialized the entire native turn'
+        pagedSnapshot.runtimeAssistantDisplayItemCount >= PAGED_ITEM_COUNT,
+        'Search must preserve the complete anchor turn projection'
       )
       await control.command('nativePress', findInput, { key: 'Escape' })
       await control.command('waitFor', loadOlder)
@@ -858,6 +863,14 @@ export function createDesktopScenario({
           snapshot.pane?.transcript?.loadingMoreBefore === false,
         'Search changed the original conversation pagination state',
         uiTimeoutMs
+      )
+      const restoredSearchPane = JSON.parse(
+        await control.command('getWorkbenchDebugSnapshot', 'body')
+      ).pane
+      assert.deepEqual(restoredSearchPane.messageSummary, originalSearchPane.messageSummary)
+      assert.deepEqual(
+        restoredSearchPane.transcript.loadedRanges,
+        originalSearchPane.transcript.loadedRanges
       )
       releasePagedResponseResolve()
       await control.command('waitFor', '[data-testid="message-assistant"]', {

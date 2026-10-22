@@ -10,8 +10,11 @@ import { ensureExperimentalFeaturesEnabled } from './preferences-automation-flow
 import {
   TERMINAL_HISTORY_SEARCH_CASES,
   TERMINAL_HISTORY_TURN_COUNT as TURN_COUNT,
+  seedNativeTerminalHistory,
+  terminalHistoryAssistantEvents,
   terminalHistoryCompletion,
   terminalHistoryTurn,
+  verifyNativeTerminalHistorySearch,
   verifyTerminalHistorySearch,
   waitForHighlightedHistoryMatch,
 } from './terminal-history-search.mjs'
@@ -93,7 +96,7 @@ async function findRollout(directory, threadId) {
   return null
 }
 
-async function seedHistory(cloud, taskId) {
+async function seedHistory(cloud, taskId, nativeTaskId) {
   // Stop the real Executor before editing its isolated persisted fixture.
   await stopProcessGroup(cloud.remoteExecutor)
   await cloud.waitForDeviceStatus(CLOUD_DEVICE_ID, 'offline', cloud.remoteExecutorLogPath)
@@ -114,11 +117,12 @@ async function seedHistory(cloud, taskId) {
     const turnId = `cloud-search-turn-${index}`
     const terminal = terminalHistoryTurn(index)
     const text = terminal?.text ?? answer(index)
+    const assistantEvents = terminalHistoryAssistantEvents(index, text)
     for (const payload of [
       { type: 'task_started', turn_id: turnId, model_context_window: null },
       { type: 'user_message', message: prompt(index), text_elements: [], local_images: [] },
-      { type: 'agent_message', message: text, phase: terminal?.phase ?? 'final_answer' },
-      terminalHistoryCompletion(turnId, text, terminal),
+      ...assistantEvents,
+      terminalHistoryCompletion(turnId, assistantEvents.at(-1).message, terminal),
     ]) {
       records.push({ timestamp: '2026-10-20T00:00:00Z', type: 'event_msg', payload })
     }
@@ -137,6 +141,11 @@ async function seedHistory(cloud, taskId) {
   delete task.runtime_handle?.completedTranscriptThreadId
   const cachedTask = createCachedHistoryTask(task)
   index.tasks[cachedTask.local_task_id] = cachedTask
+  const nativeTask = Object.values(index.tasks).find(value => value.local_task_id === nativeTaskId)
+  assert.ok(nativeTask?.thread_id, 'The native cloud fixture has no completed Codex thread')
+  seedNativeTerminalHistory(cloud.remoteCodexHome, nativeTask.thread_id)
+  delete nativeTask.runtime_handle?.completedTranscriptMessages
+  delete nativeTask.runtime_handle?.completedTranscriptThreadId
   await writeFile(indexPath, `${JSON.stringify(index)}\n`)
   await cloud.restartCloudExecutor()
   return cachedTask
@@ -159,6 +168,7 @@ export function createCloudHistorySearchVerification() {
   let scope
   let taskId
   let cachedTaskId
+  let nativeTaskId
   let fault
   const evidence = []
   const appEnvironment = {}
@@ -170,13 +180,14 @@ export function createCloudHistorySearchVerification() {
       appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL = proxy.url
       proxy.rule = (entry, request) => {
         const read = request.historySearch
-        if (!read || ![taskId, cachedTaskId].includes(read.taskId)) return null
+        if (!read || ![taskId, cachedTaskId, nativeTaskId].includes(read.taskId)) return null
         const bound =
           read.projectSession?.projectId === scope?.projectId &&
           read.projectSession?.issueId === scope?.issueId
         // Keep only fixture identities and stages, never bodies, cursors, or credentials.
         entry.projectBound = bound
         entry.cachedHistory = read.taskId === cachedTaskId
+        entry.nativeHistory = read.taskId === nativeTaskId
         entry.stage = entry.path === SEARCH_PATH ? 'search' : read.afterCursor ? 'after' : 'before'
         if (!bound || !fault?.matches(entry, read)) return null
         const selected = fault
@@ -201,27 +212,34 @@ export function createCloudHistorySearchVerification() {
       }
       try {
         control.setScenario('fresh_chat')
-        const created = await request('/api/runtime-work/create', {
-          deviceId: CLOUD_DEVICE_ID,
-          workspacePath,
-          runtime: 'codex',
-          message: FRESH_CHAT_PROMPT,
-          title: 'Project-bound cloud history search',
-          modelId: CLOUD_PUBLIC_MODEL_NAME,
-          modelType: 'public',
-          modelOptions: CLOUD_PUBLIC_MODEL_OPTIONS,
-          modelSelection: {
-            modelName: CLOUD_PUBLIC_MODEL_NAME,
+        const createTask = title =>
+          request('/api/runtime-work/create', {
+            deviceId: CLOUD_DEVICE_ID,
+            workspacePath,
+            runtime: 'codex',
+            message: FRESH_CHAT_PROMPT,
+            title,
+            modelId: CLOUD_PUBLIC_MODEL_NAME,
             modelType: 'public',
-            options: CLOUD_PUBLIC_MODEL_OPTIONS,
-          },
-        })
+            modelOptions: CLOUD_PUBLIC_MODEL_OPTIONS,
+            modelSelection: {
+              modelName: CLOUD_PUBLIC_MODEL_NAME,
+              modelType: 'public',
+              options: CLOUD_PUBLIC_MODEL_OPTIONS,
+            },
+          })
+        const created = await createTask('Project-bound cloud history search')
         assert.equal(created.accepted, true)
         taskId = created.taskId
         assert.ok(taskId)
         const address = { deviceId: created.deviceId, taskId, workspacePath: created.workspacePath }
         const task = await cloud.waitForRuntimeTask(address)
-        const cachedTask = await seedHistory(cloud, taskId)
+        const nativeCreated = await createTask('Project-bound native history search')
+        assert.equal(nativeCreated.accepted, true)
+        nativeTaskId = nativeCreated.taskId
+        const nativeAddress = { ...address, taskId: nativeTaskId }
+        const nativeTask = await cloud.waitForRuntimeTask(nativeAddress)
+        const cachedTask = await seedHistory(cloud, taskId, nativeTaskId)
         cachedTaskId = cachedTask.local_task_id
 
         await request('/api/admin/setup-complete', {})
@@ -380,7 +398,7 @@ export function createCloudHistorySearchVerification() {
         await control.command('scrollIntoView', NEWER)
         await control.command('clickWhenEnabled', NEWER)
         await control.command('waitFor', USERS, { text: prompt(MATCH_TURNS[1] + 2) })
-        await verifyTerminalHistorySearch(control)
+        await verifyTerminalHistorySearch(control, DEFAULT_STEP_TIMEOUT_MS, prompt)
         await control.command('fill', FIND, { value: `${QUERY}_NO_MATCH` })
         await control.command('waitFor', COUNT, { text: '0 个结果' })
         assert.equal(Number(await control.command('getElementCount', FIND_RETRY)), 0)
@@ -460,6 +478,45 @@ export function createCloudHistorySearchVerification() {
         evidence.push({
           cachedHistory: 'project-bound search, terminal visibility and restoration',
         })
+        await request(`/api/v1/loop-items/${issue.id}/tasks`, {
+          ...nativeAddress,
+          taskTitle: 'Project-bound native history search',
+          executionContext: { runtime: 'codex', workspacePath, threadId: nativeTask.threadId },
+        })
+        const nativeBinding = (await request(`/api/v1/loop-items/${issue.id}/tasks`)).find(
+          binding => binding.task_id === nativeTaskId
+        )
+        assert.ok(nativeBinding, 'The native cloud history task was not bound to the Issue')
+        await control.command('openWeworkScheme', 'body', {
+          value: `wework://boards/${project.id}/issues/${issue.id}`,
+        })
+        await control.command(
+          'clickWhenEnabled',
+          `[data-testid="cloud-todo-open-task-conversation-${nativeBinding.id}"]`,
+          { timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
+        )
+        await control.command('clickWhenEnabled', '[data-testid="ai-chat-open-runtime-task"]')
+        await waitForPane(
+          control,
+          pane => pane?.currentRuntimeTask?.taskId === nativeTaskId && !pane.transcript.loading,
+          'The native cloud history task did not open',
+          WORKBENCH_READY_TIMEOUT_MS
+        )
+        await verifyNativeTerminalHistorySearch(
+          control,
+          nativeAddress,
+          DEFAULT_STEP_TIMEOUT_MS,
+          query => request(SEARCH_PATH, { ...nativeAddress, projectSession: scope, query })
+        )
+        const nativeReads = proxy.requests.filter(
+          entry => entry.nativeHistory && entry.projectBound && entry.status === 200
+        )
+        assert.ok(
+          nativeReads.some(entry => entry.path === SEARCH_PATH) &&
+            nativeReads.some(entry => entry.path === TRANSCRIPT_PATH && entry.stage === 'before'),
+          'Native matches must load through the real project-bound cloud routes'
+        )
+        evidence.push({ nativeHistory: 'project-bound search, deduplication and restoration' })
       } finally {
         fault = undefined
         proxy.rule = () => null

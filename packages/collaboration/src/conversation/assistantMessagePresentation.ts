@@ -173,10 +173,11 @@ export function getWebSearchToolBlocks(blocks: ProcessingBlock[]) {
   );
 }
 
-/** Returns only message prose in the same order as the rendered assistant timeline. */
-export function getAssistantSearchTextSources(
-  message: WorkbenchMessage,
-): string[] {
+/** Preserves block identity after applying the assistant's visible-content rules. */
+export function getAssistantSearchPresentation(message: WorkbenchMessage): {
+  content: string;
+  blocks: ProcessingBlock[];
+} {
   const cancelled = isCancelledAssistantMessage(message);
   const hidden =
     shouldHideFailedAssistantContent(message) ||
@@ -185,6 +186,14 @@ export function getAssistantSearchTextSources(
     ? ""
     : stripPluginWorkspaceResultMarkers(message.content);
   const blocks = getDisplayProcessingBlocks(message.blocks, cancelled, content);
+  return { content, blocks };
+}
+
+/** Returns only message prose in the same order as the rendered assistant timeline. */
+export function getAssistantSearchTextSources(
+  message: WorkbenchMessage,
+): string[] {
+  const { content, blocks } = getAssistantSearchPresentation(message);
   const segments = getOrderedRuntimeDisplaySegments(
     message.runtimeDisplayItems,
     blocks,

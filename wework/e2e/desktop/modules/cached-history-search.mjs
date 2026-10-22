@@ -10,6 +10,7 @@ const ERROR_QUERY = 'WEWORK_E2E_CACHED_ERROR_BODY'
 const ERROR_BODY = `API error: ${ERROR_QUERY}`
 const GUIDANCE_QUERY = 'WEWORK_E2E_CACHED_GUIDANCE_BODY'
 const GUIDANCE_BODY = `API error: ${GUIDANCE_QUERY}`
+const DUPLICATE_QUERY = 'WEWORK_E2E_CACHED_DUPLICATE_BODY'
 const LAST_ANSWER = 'Cached search answer 119'
 const FIND = '[data-testid="conversation-find-input"]'
 const ANSWERS = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`
@@ -35,6 +36,10 @@ const CASES = [
   {
     query: GUIDANCE_QUERY,
     matches: [{ name: 'guidance', first: 0, index: 0, text: GUIDANCE_BODY }],
+  },
+  {
+    query: DUPLICATE_QUERY,
+    matches: [{ name: 'duplicate', first: 0, index: 0, text: DUPLICATE_QUERY }],
   },
 ]
 
@@ -85,6 +90,18 @@ export function createCachedHistoryTask(source) {
   tools('guidance')
   append('guidance', 6, 'Continue after the diagnostic', { role: 'user' })
   append('guidance', 7, 'Guidance completed successfully', { status: 'done' })
+  append('duplicate', 0, DUPLICATE_QUERY, {
+    status: 'done',
+    blocks: [
+      {
+        id: `${itemId('duplicate', 0)}-block`,
+        type: 'text',
+        content: DUPLICATE_QUERY,
+        status: 'done',
+        createdAt: 1_792_454_400_000 + messages.length * 1000,
+      },
+    ],
+  })
   // Keep every edge case outside even the largest normal transcript page.
   for (let index = 0; index < 120; index += 1) {
     append(`tail-${index}`, 0, `Cached search question ${index}`, { role: 'user' })

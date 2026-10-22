@@ -2,6 +2,12 @@ import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-li
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
 import type { RuntimeTranscriptSearchResponse } from '@wegent/chat-core/runtime'
+import { createCollaborationTranslator } from '@wegent/collaboration'
+import {
+  AssistantMessage,
+  ConversationTranslationProvider,
+} from '@wegent/collaboration/conversation'
+import { conversationSearchRanges } from '../../../../packages/collaboration/src/conversation/useConversationSearchTarget'
 import { useConversationFind } from './useConversationFind'
 import { ConversationFindBar } from './ConversationFindBar'
 import '@/i18n'
@@ -10,6 +16,23 @@ vi.mock('@/lib/platform', () => ({ getPlatform: () => 'mac' }))
 
 function message(id: string, content: string): WorkbenchMessage {
   return { id, content, role: 'assistant', status: 'done', createdAt: '2026-10-14T00:00:00Z' }
+}
+
+function partialContextMessage(): WorkbenchMessage {
+  return {
+    ...message('partial-context', ''),
+    blocks: [
+      {
+        id: 'context-narrative',
+        subtaskId: 'context-turn',
+        type: 'text',
+        content: 'needle',
+        status: 'done',
+        createdAt: 0,
+      },
+    ],
+    runtimeDisplayItems: [{ id: 'context-narrative', type: 'block' }],
+  }
 }
 
 function pluginResultMarker(overrides: Record<string, unknown> = {}): string {
@@ -69,6 +92,77 @@ describe('persisted conversation find', () => {
     expect(result.current.historyFailed).toBe(false)
     expect(loadBefore).not.toHaveBeenCalled()
     expect(loadGap).not.toHaveBeenCalled()
+  })
+
+  test('searches temporary context pages when persisted search is unavailable', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const { result } = renderHook(() =>
+      useConversationFind(
+        {
+          messages: [message('latest', 'latest')],
+          searchMessages: [partialContextMessage()],
+        },
+        true
+      )
+    )
+    act(() => {
+      fireEvent.keyDown(window, { key: 'f', metaKey: true })
+      result.current.changeQuery('needle')
+    })
+    act(() => vi.advanceTimersByTime(150))
+    expect(result.current.result).toEqual({ matches: 1, active: 1, isCapped: false })
+    expect(result.current.searchTarget).toMatchObject({
+      messageId: 'partial-context',
+      occurrence: 0,
+      source: 'page',
+    })
+    expect(result.current.historyFailed).toBe(false)
+  })
+
+  test('uses persisted hits without adding a narrative duplicate from a partial context page', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const target = { itemId: 'final-item', occurrence: 0, cursor: 'final-cursor' }
+    const search = vi.fn().mockResolvedValue({
+      matches: [target],
+      totalMatches: 1,
+      isCapped: false,
+    })
+    const hydrate = vi.fn()
+    const original = [message('latest', 'latest')]
+    const visibleTarget: WorkbenchMessage = {
+      ...message('visible-target', 'needle'),
+      runtimeDisplayItems: [{ id: target.itemId, type: 'assistant_text', content: 'needle' }],
+    }
+    const props: Parameters<typeof useConversationFind>[0] = {
+      messages: original,
+      searchMessages: [visibleTarget],
+      onSearchTranscript: search,
+      onEnsureSearchMatch: hydrate,
+    }
+    const { result, rerender } = renderHook(props => useConversationFind(props, true), {
+      initialProps: props,
+    })
+    act(() => {
+      fireEvent.keyDown(window, { key: 'f', metaKey: true })
+      result.current.changeQuery('needle')
+    })
+    await act(async () => vi.advanceTimersByTime(150))
+    expect(result.current.result).toEqual({ matches: 1, active: 1, isCapped: false })
+
+    // The final body hiding this narrative item is outside the temporary page.
+    rerender({ ...props, searchMessages: [partialContextMessage(), visibleTarget] })
+    expect(result.current.result).toEqual({ matches: 1, active: 1, isCapped: false })
+    act(() => result.current.step(1))
+    expect(result.current.searchTarget).toMatchObject({
+      messageId: visibleTarget.id,
+      occurrence: 0,
+      source: 'page',
+    })
+    expect(hydrate).not.toHaveBeenCalled()
+    expect(result.current.historyFailed).toBe(false)
+    act(() => result.current.close())
+    expect(result.current.searchTarget).toBeNull()
+    expect(props.messages).toBe(original)
   })
 
   test('searches a large persisted history once and hydrates only its selected match', async () => {
@@ -181,6 +275,95 @@ describe('persisted conversation find', () => {
     expect(result.current.isLoading).toBe(false)
     expect(hydrate).toHaveBeenCalledOnce()
   })
+
+  test.each(['live', 'page'] as const)(
+    'resolves one visible final-body hit after a hidden duplicate block is hydrated into %s messages',
+    async location => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      const target = { itemId: 'final-item', occurrence: 0, cursor: 'old-cursor' }
+      const search = vi.fn().mockResolvedValue({
+        matches: [target],
+        totalMatches: 1,
+        isCapped: false,
+      })
+      let finishHydration!: () => void
+      const hydrate = vi.fn(
+        () =>
+          new Promise<void>(resolve => {
+            finishHydration = resolve
+          })
+      )
+      const props: Parameters<typeof useConversationFind>[0] = {
+        messages: [message('latest', 'latest')],
+        onSearchTranscript: search,
+        onEnsureSearchMatch: hydrate,
+      }
+      const { result, rerender } = renderHook(props => useConversationFind(props, true), {
+        initialProps: props,
+      })
+      act(() => {
+        fireEvent.keyDown(window, { key: 'f', metaKey: true })
+        result.current.changeQuery('needle')
+      })
+      await act(async () => vi.advanceTimersByTime(150))
+      expect(hydrate).toHaveBeenCalledOnce()
+
+      const projected: WorkbenchMessage = {
+        ...message('projected-old', 'needle'),
+        blocks: [
+          {
+            id: 'duplicate-block',
+            subtaskId: 'turn',
+            type: 'text',
+            content: 'needle',
+            status: 'done',
+            createdAt: 0,
+          },
+        ],
+        runtimeDisplayItems: [
+          { id: 'duplicate-block', type: 'block' },
+          { id: target.itemId, type: 'assistant_text', content: 'needle' },
+        ],
+      }
+      rerender({
+        ...props,
+        ...(location === 'live'
+          ? { messages: [projected, ...props.messages] }
+          : { searchMessages: [projected] }),
+      })
+      await act(async () => finishHydration())
+      await act(async () => vi.advanceTimersByTime(1500))
+
+      expect(result.current.result).toEqual({ matches: 1, active: 1, isCapped: false })
+      expect(result.current.searchTarget).toMatchObject({
+        messageId: projected.id,
+        occurrence: 0,
+        ...(location === 'page' ? { source: 'page' } : {}),
+      })
+      expect(result.current.historyFailed).toBe(false)
+      expect(result.current.isLoading).toBe(false)
+
+      const { container } = render(
+        <ConversationTranslationProvider translate={createCollaborationTranslator('en')}>
+          <AssistantMessage
+            message={projected}
+            devices={[]}
+            imageServices={{
+              identity: image => String(image.id),
+              load: vi.fn(),
+              download: vi.fn(),
+            }}
+          />
+        </ConversationTranslationProvider>
+      )
+      const ranges = conversationSearchRanges(container, 'needle', 250)
+      expect(ranges.map(range => range.toString())).toEqual(['needle'])
+      expect(ranges[result.current.searchTarget!.occurrence].toString()).toBe('needle')
+      act(() => result.current.close())
+      expect(result.current.searchTarget).toBeNull()
+      expect(props.messages).toEqual([message('latest', 'latest')])
+    }
+  )
 
   test('deduplicates plugin result items shared by live messages, reading pages and persisted search', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })

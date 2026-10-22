@@ -135,7 +135,7 @@ fn rollback_removes_occurrences_and_resets_counter_from_all_retained_items() {
 }
 
 #[test]
-fn large_turn_search_caps_metadata_and_hydrates_only_selected_neighborhood() {
+fn large_turn_search_caps_metadata_and_hydrates_the_complete_anchor() {
     let mut records = vec![event(json!({"type":"task_started", "turn_id":"large"}))];
     records.extend(
         (0..300).map(|index| {
@@ -149,10 +149,10 @@ fn large_turn_search_caps_metadata_and_hydrates_only_selected_neighborhood() {
     assert_eq!(response["isCapped"], true);
     let turn = hydrate(&bytes, &response["matches"][150]);
     let items = turn["items"].as_array().unwrap();
-    assert_eq!(items.len(), 101);
-    assert_eq!(items.first().unwrap()["id"], "item-101");
-    assert_eq!(items[50]["id"], "item-151");
-    assert_eq!(items.last().unwrap()["id"], "item-201");
+    assert_eq!(items.len(), 300);
+    assert_eq!(items.first().unwrap()["id"], "item-1");
+    assert_eq!(items[150]["id"], "item-151");
+    assert_eq!(items.last().unwrap()["id"], "item-300");
     assert!(response["matches"]
         .as_array()
         .unwrap()
@@ -403,7 +403,7 @@ fn late_review_for_finished_turn_does_not_change_selected_active_turn() {
 }
 
 #[test]
-fn hydration_reads_late_completion_after_its_bounded_text_window() {
+fn hydration_preserves_late_completion_and_the_complete_turn() {
     let mut records = vec![event(
         json!({"type":"task_started", "turn_id":"large", "started_at":10}),
     )];
@@ -418,10 +418,68 @@ fn hydration_reads_late_completion_after_its_bounded_text_window() {
     let bytes = rollout(records);
     let response = search(&bytes, "needle");
     let turn = hydrate(&bytes, &response["matches"][0]);
-    assert_eq!(turn["items"].as_array().unwrap().len(), 51);
+    assert_eq!(turn["items"].as_array().unwrap().len(), 200);
     assert_eq!(turn["status"], "completed");
     assert_eq!(turn["completedAt"], 20);
     assert_eq!(turn["durationMs"], 10000);
+}
+
+#[test]
+fn completed_match_preserves_process_dedup_against_the_complete_joined_answer() {
+    for append_tail in [false, true] {
+        let mut records = vec![
+            event(json!({"type":"task_started", "turn_id":"completed"})),
+            event(json!({"type":"agent_message", "phase":"final_answer", "message":"needle"})),
+            event(json!({"type":"agent_message", "phase":"analysis", "message":"needle"})),
+        ];
+        records.extend((0..110).map(|index| {
+            event(json!({"type":"agent_message", "phase":"analysis",
+                "message":format!("padding {index}")}))
+        }));
+        if append_tail {
+            records.push(event(
+                json!({"type":"agent_message", "phase":"final_answer", "message":"tail"}),
+            ));
+        }
+        records.push(event(
+            json!({"type":"task_complete", "turn_id":"completed"}),
+        ));
+        let bytes = rollout(records);
+        let response = search(&bytes, "needle");
+        let matches = response["matches"].as_array().unwrap();
+        let expected_ids = if append_tail {
+            vec!["item-1", "item-2"]
+        } else {
+            vec!["item-1"]
+        };
+        assert_eq!(response["totalMatches"], expected_ids.len());
+        assert_eq!(
+            matches
+                .iter()
+                .map(|matched| matched["itemId"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            expected_ids
+        );
+        for matched in matches {
+            let turn = hydrate(&bytes, matched);
+            assert_eq!(turn["status"], "completed");
+            assert_eq!(
+                turn["items"].as_array().unwrap().len(),
+                112 + usize::from(append_tail)
+            );
+            let sources = codex_turn_search_sources(&turn, &HashMap::new(), None);
+            let visible_hits = sources
+                .iter()
+                .filter(|(_, text)| text.contains("needle"))
+                .map(|(id, _)| id.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(visible_hits, expected_ids);
+            assert_eq!(matched["occurrence"], 0);
+            assert!(sources.iter().any(|(id, text)| {
+                id == matched["itemId"].as_str().unwrap() && text == "needle"
+            }));
+        }
+    }
 }
 
 #[test]
@@ -644,16 +702,20 @@ fn legacy_search_context_includes_adjacent_turns_and_can_browse_both_edges() {
 }
 
 #[test]
-fn long_legacy_turn_context_pages_are_bounded_and_never_skip_items() {
+fn long_legacy_neighbor_context_pages_are_bounded_and_never_skip_items() {
     use crate::runtime_work::codex_transcript_page::CodexTranscriptDirection;
 
-    let mut records = vec![event(json!({"type":"task_started", "turn_id":"long"}))];
-    records
-        .extend((0..360).map(|index| {
-            event(json!({"type":"agent_message", "message":format!("item {index}")}))
+    let mut records = Vec::new();
+    for turn_id in ["older", "selected", "newer"] {
+        records.push(event(json!({"type":"task_started", "turn_id":turn_id})));
+        let item_count = if turn_id == "selected" { 1 } else { 360 };
+        records.extend((0..item_count).map(|index| {
+            event(json!({"type":"agent_message", "message":format!("{turn_id} {index}")}))
         }));
+        records.push(event(json!({"type":"task_complete", "turn_id":turn_id})));
+    }
     let bytes = rollout(records);
-    let matched = search(&bytes, "item 180");
+    let matched = search(&bytes, "selected 0");
     let cursor = parse_legacy_search_cursor(matched["matches"][0]["cursor"].as_str().unwrap())
         .unwrap()
         .unwrap();
@@ -685,17 +747,17 @@ fn long_legacy_turn_context_pages_are_bounded_and_never_skip_items() {
             boundary = match direction {
                 CodexTranscriptDirection::Ascending => page.after_cursor,
                 CodexTranscriptDirection::Descending => {
-                    assert!(page.prepend_item_turn_ids.contains("long"));
+                    assert!(page.prepend_item_turn_ids.contains("older"));
                     page.before_cursor
                 }
             };
         }
     }
-    assert_eq!(collected.len(), 360);
+    assert_eq!(collected.len(), 721);
     let unique = collected.into_iter().collect::<HashSet<_>>();
     assert_eq!(
         unique,
-        (1..=360).map(|index| format!("item-{index}")).collect()
+        (1..=721).map(|index| format!("item-{index}")).collect()
     );
 }
 

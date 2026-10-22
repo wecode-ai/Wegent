@@ -250,11 +250,11 @@ fn complete_anchor_turn(
     reader
         .rewind()
         .map_err(|error| format!("Cannot rewind legacy Codex history: {error}"))?;
-    // Terminal visibility depends on the joined final answer and guidance boundaries.
+    // Every anchor needs the complete projection. A distant final fragment can
+    // make a same-text process block visible even when the turn completed.
     Ok(metadata.turns.iter().position(|turn| {
         turn.id == cursor.turn_id
             && turn.item_ids.contains_key(&cursor.item_id)
-            && matches!(turn.status, "failed" | "interrupted")
             && turn
                 .first_text_offset
                 .is_some_and(|offset| offset <= cursor.byte_offset)

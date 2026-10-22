@@ -156,7 +156,9 @@ export function useConversationFind(
       return deduplicateConversationSearchIndex(
         [
           ...props.messages.map(message => ({ message })),
-          ...pageMessages.map(message => ({ message, source: 'page' as const })),
+          ...(onSearchTranscript
+            ? []
+            : pageMessages.map(message => ({ message, source: 'page' as const }))),
         ].map(({ message, ...source }) => {
           const replyQuestions = replies.get(message.id)
           return {
@@ -170,7 +172,7 @@ export function useConversationFind(
         })
       )
     })
-  }, [indexReady, props.messages, props.searchMessages])
+  }, [indexReady, onSearchTranscript, props.messages, props.searchMessages])
   useEffect(() => {
     if (!open || !active || !queryPending) return
     const startedAt = performance.now()

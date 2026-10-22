@@ -10,6 +10,8 @@ const ERROR_MARKER = 'WEWORK_E2E_TERMINAL_ERROR_BODY'
 const ERROR_BODY = `API error: ${ERROR_MARKER}`
 const PARTIAL = 'The operation was interrupted after useful output'
 const PLUGIN_QUERY = 'WEWORK_E2E_PLUGIN_HISTORY_BODY'
+const DUPLICATE_QUERY = 'WEWORK_E2E_DUPLICATE_HISTORY_BODY'
+const LONG_TURN_QUERY = 'WEWORK_E2E_LONG_TURN_HISTORY_BODY'
 const PLUGIN_BODY = `${PLUGIN_QUERY} appears before the result. ${PLUGIN_QUERY} appears again.`
 // The hidden transport payload must not contribute a third occurrence.
 const PLUGIN_MARKER = `[WEGENT_PLUGIN_RESULT]${JSON.stringify({
@@ -44,6 +46,9 @@ const TURNS = [
     visibleText: PLUGIN_BODY,
     phase: 'final_answer',
   },
+  { index: 46, status: 'completed', text: DUPLICATE_QUERY, phase: 'final_answer' },
+  { index: 47, status: 'completed', text: LONG_TURN_QUERY, phase: 'final_answer' },
+  { index: 48, status: 'completed', text: LONG_TURN_QUERY, phase: 'final_answer' },
 ]
 export const TERMINAL_HISTORY_SEARCH_CASES = [
   { query: 'interrupted', matches: [TURNS[2], TURNS[3]] },
@@ -55,6 +60,12 @@ export const TERMINAL_HISTORY_SEARCH_CASES = [
       { ...TURNS[5], occurrence: 1 },
     ],
   },
+  { query: DUPLICATE_QUERY, matches: [TURNS[6]] },
+  {
+    query: LONG_TURN_QUERY,
+    matches: [TURNS[7], { ...TURNS[7], narrative: true }, TURNS[8]],
+    browseContext: true,
+  },
 ]
 const FIND = '[data-testid="conversation-find-input"]'
 const COUNT =
@@ -62,6 +73,48 @@ const COUNT =
 const ANSWERS = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`
 
 export const terminalHistoryTurn = index => TURNS.find(turn => turn.index === index)
+
+/** Keep native and legacy fixtures identical at the user-visible projection boundary. */
+export function terminalHistoryAssistantParts(index, fallbackText) {
+  const terminal = terminalHistoryTurn(index)
+  const text = terminal?.text ?? fallbackText
+  if (index === 46) {
+    return [
+      { text, phase: 'analysis' },
+      { text, phase: 'final_answer' },
+    ]
+  }
+  if (index === 47) {
+    return [
+      { text, phase: 'final_answer' },
+      { text, phase: 'analysis' },
+      ...Array.from({ length: 60 }, (_, offset) => ({
+        text: `Long completed turn context ${offset}`,
+        phase: 'analysis',
+      })),
+      { text: 'Long completed turn final tail', phase: 'final_answer' },
+    ]
+  }
+  if (index === 48) {
+    return [
+      { text, phase: 'analysis' },
+      ...Array.from({ length: 60 }, (_, offset) => ({
+        text: `Neighbor completed turn context ${offset}`,
+        phase: 'analysis',
+      })),
+      { text, phase: 'final_answer' },
+    ]
+  }
+  return [{ text, phase: terminal?.phase ?? 'final_answer' }]
+}
+
+export function terminalHistoryAssistantEvents(index, fallbackText) {
+  return terminalHistoryAssistantParts(index, fallbackText).map(({ text, phase }) => ({
+    type: 'agent_message',
+    message: text,
+    phase,
+  }))
+}
 
 export function terminalHistoryCompletion(turnId, text, terminal) {
   return terminal?.status === 'interrupted'
@@ -97,10 +150,11 @@ export function seedNativeTerminalHistory(sqliteHome, threadId) {
       VALUES (?, ?, ?, ?, ?, ?, ?)`)
     const startedAt = Date.now()
     database.exec('BEGIN IMMEDIATE')
+    let ordinal = maximum + 1
     for (let index = 0; index < TERMINAL_HISTORY_TURN_COUNT; index += 1) {
       const turnId = `native-search-turn-${index}`
       const terminal = terminalHistoryTurn(index)
-      const ordinal = maximum + (index + 1) * 3
+      const parts = terminalHistoryAssistantParts(index, `Native search answer ${index}`)
       const timestamp = startedAt + index * 1000
       insertTurn.run(
         threadId,
@@ -111,7 +165,7 @@ export function seedNativeTerminalHistory(sqliteHome, threadId) {
         Math.floor(timestamp / 1000),
         Math.floor(timestamp / 1000) + 1,
         `${turnId}-user`,
-        terminal?.phase === 'commentary' ? null : `${turnId}-assistant`
+        parts.at(-1).phase === 'commentary' ? null : `${turnId}-assistant-${parts.length - 1}`
       )
       const turnItems = [
         {
@@ -120,12 +174,11 @@ export function seedNativeTerminalHistory(sqliteHome, threadId) {
           clientId: `${turnId}-user`,
           content: [{ type: 'text', text: `Native search prompt ${index}`, text_elements: [] }],
         },
-        {
+        ...parts.map((part, offset) => ({
           ...assistant,
-          id: `${turnId}-assistant`,
-          text: terminal?.text ?? `Native search answer ${index}`,
-          phase: terminal?.phase ?? 'final_answer',
-        },
+          id: `${turnId}-assistant-${offset}`,
+          ...part,
+        })),
       ]
       turnItems.forEach((item, offset) =>
         insertItem.run(
@@ -138,6 +191,7 @@ export function seedNativeTerminalHistory(sqliteHome, threadId) {
           item.type
         )
       )
+      ordinal += turnItems.length + 1
     }
     database.exec('COMMIT')
   } finally {
@@ -190,8 +244,13 @@ export async function waitForHistorySearchCount(
   await control.command('waitFor', COUNT, { text, timeoutMs: 2 * timeoutMs })
 }
 
-export async function verifyTerminalHistorySearch(control, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) {
-  for (const { query, matches } of TERMINAL_HISTORY_SEARCH_CASES) {
+export async function verifyTerminalHistorySearch(
+  control,
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS,
+  contextPrompt = index => `Legacy search prompt ${index}`,
+  newerPageCount = 1
+) {
+  for (const { query, matches, browseContext } of TERMINAL_HISTORY_SEARCH_CASES) {
     // Typing preserves a legal result index; start each independent query at the first match.
     await control.command('fill', FIND, { value: '' })
     await control.command('waitFor', '[data-testid="conversation-find-next-button"][disabled]')
@@ -205,7 +264,9 @@ export async function verifyTerminalHistorySearch(control, timeoutMs = DEFAULT_S
         control,
         match.visibleText ?? match.text,
         timeoutMs,
-        ANSWERS,
+        match.narrative
+          ? `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`
+          : ANSWERS,
         match.occurrence
       )
       assert.equal(
@@ -219,10 +280,56 @@ export async function verifyTerminalHistorySearch(control, timeoutMs = DEFAULT_S
         'A hidden terminal body produced an unresolvable historical match'
       )
     }
+    if (browseContext) {
+      // Return to the long anchor after checking its neighboring turn's canonical hit.
+      for (let index = matches.length - 1; index > 1; index -= 1) {
+        await control.command('clickWhenEnabled', '[data-testid="conversation-find-prev-button"]')
+      }
+      await waitForHistorySearchCount(control, `2 / ${matches.length}`, timeoutMs)
+      await waitForHighlightedHistoryMatch(
+        control,
+        query,
+        timeoutMs,
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`
+      )
+      for (const direction of ['older', 'newer']) {
+        const button = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-${direction}-runtime-transcript-button"]`
+        const pageCount = direction === 'newer' ? newerPageCount : 1
+        for (let page = 0; page < pageCount; page += 1) {
+          await control.command('scrollIntoView', button)
+          await control.command('clickWhenEnabled', button)
+          await control.command('waitFor', `${button}:not([disabled])`, { timeoutMs })
+        }
+        await control.command(
+          'waitFor',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="user-message-content"]`,
+          { text: contextPrompt(matches[0].index + (direction === 'older' ? -2 : 2)), timeoutMs }
+        )
+        await waitForHistorySearchCount(control, `2 / ${matches.length}`, timeoutMs)
+        assert.equal(
+          Number(
+            await control.command('getElementCount', `${ACTIVE_WORKBENCH_SELECTOR} [role="alert"]`)
+          ),
+          0,
+          'Context pagination changed the completed turn projection'
+        )
+      }
+      await control.command('clickWhenEnabled', '[data-testid="conversation-find-prev-button"]')
+      await waitForHistorySearchCount(control, `1 / ${matches.length}`, timeoutMs)
+      await waitForHighlightedHistoryMatch(control, query, timeoutMs, ANSWERS)
+      await control.command('clickWhenEnabled', '[data-testid="conversation-find-next-button"]')
+      await waitForHistorySearchCount(control, `2 / ${matches.length}`, timeoutMs)
+      await waitForHighlightedHistoryMatch(
+        control,
+        query,
+        timeoutMs,
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`
+      )
+    }
   }
 }
 
-export async function verifyNativeTerminalHistorySearch(control, address, timeoutMs) {
+export async function verifyNativeTerminalHistorySearch(control, address, timeoutMs, search) {
   const loadOlder = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-older-runtime-transcript-button"]`
   const loadNewer = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-newer-runtime-transcript-button"]`
   const latest = `Native search answer ${TERMINAL_HISTORY_TURN_COUNT - 1}`
@@ -231,12 +338,14 @@ export async function verifyNativeTerminalHistorySearch(control, address, timeou
   const original = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).pane
   assert.doesNotMatch(await control.command('getText', ANSWERS), /interrupted|TERMINAL_ERROR_BODY/)
   for (const { query, matches } of TERMINAL_HISTORY_SEARCH_CASES) {
-    const result = await requestExecutor(
-      control,
-      'runtime.tasks.transcript.search',
-      { address, query },
-      timeoutMs
-    )
+    const result = search
+      ? await search(query)
+      : await requestExecutor(
+          control,
+          'runtime.tasks.transcript.search',
+          { address, query },
+          timeoutMs
+        )
     assert.equal(result.totalMatches, matches.length)
     assert.deepEqual(
       result.matches.map(match => match.turnId),
@@ -244,12 +353,11 @@ export async function verifyNativeTerminalHistorySearch(control, address, timeou
       'Native search indexed a hidden terminal body or omitted useful output'
     )
   }
-  await control.command(
-    'nativePress',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`,
-    { key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F` }
-  )
-  await verifyTerminalHistorySearch(control, timeoutMs)
+  await control.command('nativePress', loadOlder, {
+    key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
+  })
+  // The first newer page finishes the partially loaded neighbor before advancing a turn.
+  await verifyTerminalHistorySearch(control, timeoutMs, index => `Native search prompt ${index}`, 2)
   await control.command('nativePress', FIND, { key: 'Escape' })
   await control.command('waitFor', ANSWERS, { text: latest })
   const restored = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).pane
