@@ -506,9 +506,11 @@ describe("useCollaborationWorkspaceController location effects", () => {
       renderController(accountB, location);
       await vi.waitFor(() => {
         expect(accountB.issues.getBoardSnapshot).toHaveBeenCalledOnce();
+        expect(renderController(accountB, location).state.issues).toEqual([
+          unread,
+        ]);
       });
       const controller = renderController(accountB, location);
-      expect(controller.state.issues).toEqual([unread]);
       expect(controller.state.confirmedIssueReads).toEqual({});
     },
   );

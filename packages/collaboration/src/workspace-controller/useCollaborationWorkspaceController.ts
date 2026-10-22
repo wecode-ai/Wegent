@@ -1589,10 +1589,13 @@ export function useCollaborationWorkspaceController({
     scope,
     state: initialState,
   });
-  const state =
-    scopedState.scope === scope ? scopedState.state : initialState;
-  if (scopedState.scope !== scope) {
-    scopedDispatch({ type: "reset", scope, state: initialState });
+  const scopeChanged = scopedState.scope !== scope;
+  const nextScopeState = api
+    ? { ...scopedState.state, confirmedIssueReads: {} }
+    : initialCollaborationWorkspaceControllerState;
+  const state = scopeChanged ? nextScopeState : scopedState.state;
+  if (scopeChanged) {
+    scopedDispatch({ type: "reset", scope, state: nextScopeState });
   }
   const dispatch = useMemo(
     () => (action: CollaborationWorkspaceControllerAction) =>
