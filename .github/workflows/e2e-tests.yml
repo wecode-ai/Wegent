@@ -887,6 +887,7 @@ jobs:
           E2E_API_URL: http://localhost:8000
           WEGENT_HYBRID_STATE_FILE: ${{ github.workspace }}/backend/backend-hybrid.state
           E2E_REPORT_DIR: ${{ github.workspace }}/.ci-artifacts/knowledge-python-gateway
+          E2E_EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           E2E_PYTHON_LOG: ${{ github.workspace }}/backend/backend.log
           ATTACHMENT_S3_ENDPOINT: minio:9000
           ATTACHMENT_S3_ACCESS_KEY: wegent-e2e
@@ -896,7 +897,9 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p "$E2E_REPORT_DIR"
-          git rev-parse HEAD > "$E2E_REPORT_DIR/sha.txt"
+          export E2E_TEST_SHA="$(git -c safe.directory="$GITHUB_WORKSPACE" rev-parse HEAD)"
+          test "$E2E_TEST_SHA" = "$E2E_EXPECTED_SHA"
+          printf '%s\n' "$E2E_TEST_SHA" > "$E2E_REPORT_DIR/sha.txt"
           uv run --no-sync python tests/e2e/knowledge_python_gateway.py \
             2>&1 | tee "$E2E_REPORT_DIR/e2e.log"
 

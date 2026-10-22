@@ -15,7 +15,6 @@ from __future__ import annotations
 import json
 import os
 import secrets
-import subprocess
 import sys
 import unittest
 import uuid
@@ -549,7 +548,7 @@ class KnowledgePythonGateway(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    sha = os.environ["E2E_TEST_SHA"]
     report_dir = Path(os.environ["E2E_REPORT_DIR"])
     report_dir.mkdir(parents=True, exist_ok=True)
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(KnowledgePythonGateway)
