@@ -41,13 +41,21 @@ REFERENCED_CONVERSATIONS_PREAMBLE = "\n".join(
 # A reference attached to the current message describes the state the request
 # continues from; one replayed from an earlier message is only background.
 REFERENCED_CONVERSATIONS_FOCUS_CURRENT = (
-    "These references describe the state this request continues from. When they "
-    "conflict with earlier turns in this session, prefer the referenced state."
+    "The referenced conversation below defines the state this request continues "
+    "from. Continue from its final state even when earlier turns in this session "
+    "show a different one: those turns were produced from another reference and "
+    "are superseded for this request."
 )
 REFERENCED_CONVERSATIONS_FOCUS_HISTORY = (
     "These references were attached to an earlier message in this session. Treat "
     "them as background; references attached to the current message take "
     "precedence when they conflict."
+)
+# Repeated right before the closing tag so the instruction is the last thing the
+# model reads for the current message's reference block.
+REFERENCED_CONVERSATIONS_CONTINUE_TRAILER = (
+    "[Continue from the final state in the transcript above. Earlier turns in this "
+    "session that disagree are superseded by it.]"
 )
 # First line of the preamble used before handoff framing was made explicit.
 # Older stored prompts still start with it, so display helpers keep recognising

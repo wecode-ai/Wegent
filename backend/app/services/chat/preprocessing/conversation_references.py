@@ -21,6 +21,7 @@ from app.stores.tasks import subtask_store, task_access_store, task_store
 from app.utils.prompt_utils import extract_display_prompt
 from shared.prompts.constants import (
     REFERENCED_CONVERSATIONS_CLOSE,
+    REFERENCED_CONVERSATIONS_CONTINUE_TRAILER,
     REFERENCED_CONVERSATIONS_FOCUS_CURRENT,
     REFERENCED_CONVERSATIONS_FOCUS_HISTORY,
     REFERENCED_CONVERSATIONS_PREAMBLE,
@@ -156,6 +157,11 @@ def build_conversation_reference_context(
             ),
             f"{omitted_note}{rendered}".strip(),
             f'</referenced_conversation id="{boundary}">',
+            *(
+                [REFERENCED_CONVERSATIONS_CONTINUE_TRAILER]
+                if focus_attr == "current"
+                else []
+            ),
             REFERENCED_CONVERSATIONS_CLOSE,
         ]
     )

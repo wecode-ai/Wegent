@@ -134,7 +134,8 @@ async def test_conversation_reference_is_injected_as_untrusted_context(
         '<referenced_conversations focus="current">'
     )
     assert reference_block["text"].endswith("</referenced_conversations>")
-    assert "describe the state this request continues from" in reference_block["text"]
+    assert "defines the state this request continues from" in reference_block["text"]
+    assert reference_block["text"].count("Continue from the final state") == 1
     assert "explicitly referenced the following earlier conversations" in (
         reference_block["text"]
     )
