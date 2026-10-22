@@ -83,6 +83,9 @@ export function createCatalogContextVerification({
         value: '500000',
       })
       await control.command('clickWhenEnabled', '[data-testid="codex-catalog-editor-save"]')
+      await control.command('waitFor', '[data-testid="codex-catalog-editor-dialog"]', {
+        visible: false,
+      })
       await control.command(
         'waitFor',
         `[data-testid="codex-official-model-row-openai-${modelId}"]`,
