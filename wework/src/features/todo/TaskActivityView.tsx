@@ -86,6 +86,7 @@ import { ChatMessage, type ExecutionTaskSummary } from './TaskActivityMessage'
 import { resolveMessageRunStatus } from './taskActivityMessageUtils'
 import { statusHistoryLabels } from './statusHistoryLabels'
 import { memberNameById } from './todoShared'
+import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
 import type { CloudProjectMember } from '@/api/deliveries'
 
 interface TaskActivityViewProps {
@@ -1066,6 +1067,7 @@ export function TaskActivityView({
 
   return (
     <>
+      <IssueChangeRequestBadges api={services.deviceApi} badges={task.badges ?? []} />
       <IssueActivityFeed
         mode={linear ? 'linear' : rail ? 'rail' : 'document'}
         testId={`cloud-task-activity-${task.id}`}

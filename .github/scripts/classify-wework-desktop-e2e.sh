@@ -102,6 +102,7 @@ core_segments=(
   streaming-message-order
   streaming-subagents
   background-terminals
+  collaboration-issue-badges
   change-request-status
   git-commit-generation
   claude-runtime
@@ -210,7 +211,7 @@ core_shards=(
   goal-lifecycle,goal-state-sync,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,application-menu,dsh-owner-capture
   send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
   claude-runtime,workspace-tabs,task-attachments
-  task-status-sync,task-board-association,task-board-bulk-actions,change-request-status,git-commit-generation,context-compaction
+  task-status-sync,task-board-association,task-board-bulk-actions,collaboration-issue-badges,change-request-status,git-commit-generation,context-compaction
   window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
   project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,stand-in,stand-in-workspace,stand-in-controls,collaboration-local-group-coordinate,collaboration-human-round-resume
   resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-task-discovery,collaboration-app-queue-identity,collaboration-issue-archive,collaboration-board-sorting,collaboration-board-move-recovery,collaboration-local-group-cancellation
@@ -1211,6 +1212,13 @@ classify_wework_path() {
     wework/src/api/commitMessage* | \
       wework/e2e/desktop/scenarios/git-commit-generation.scenario.mjs)
       select_target "core:git-commit-generation"
+      return
+      ;;
+
+    wework/e2e/desktop/scenarios/collaboration-issue-badges.scenario.mjs | \
+      wework/src/features/todo/IssueBadges* | \
+      wework/src/features/change-requests/*)
+      select_target "core:collaboration-issue-badges"
       return
       ;;
 

@@ -126,6 +126,7 @@ export interface CloudLoopItem {
   can_edit?: boolean
   security_level?: 'open' | 'related'
   detail_loaded?: boolean
+  badges?: CollaborationIssue['badges']
   content_revision?: number
   activity_read_sequence?: number
   has_additional_context?: boolean

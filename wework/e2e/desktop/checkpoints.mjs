@@ -133,6 +133,7 @@ export const DESKTOP_CHECKPOINTS = [
   'streaming-message-order',
   'streaming-subagents',
 
+  'collaboration-issue-badges',
   'change-request-status',
   'git-commit-generation',
   'claude-runtime',

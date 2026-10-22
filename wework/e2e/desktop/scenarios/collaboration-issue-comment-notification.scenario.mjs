@@ -221,7 +221,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     return browserLabel
   }
 
-  async function closeCommentBrowser(control, activeSurface, routeBeforeClick) {
+  async function closeCommentBrowser(control, activeSurface, routeBeforeClick, commentId) {
     const browserPanel = `${activeSurface} [data-testid="collaboration-embedded-browser-panel"]`
     const issueTitle = `${activeSurface} [data-testid="cloud-todo-detail-title"]`
     await control.command(
@@ -230,7 +230,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       { visible: true }
     )
     await control.command('waitFor', browserPanel, { visible: false, timeoutMs: uiTimeoutMs })
-    await control.command('waitFor', issueTitle, {
+    assert.ok(commentId, 'Comment link navigation must retain its originating comment')
+    // Closing the browser preserves the comment scroll position, not the header position.
+    await control.command('waitFor', commentSelectorFor(activeSurface, commentId), {
       visible: true,
       stableMs: 250,
       timeoutMs: uiTimeoutMs,
@@ -243,7 +245,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     )
   }
 
-  async function verifyPendingCommentNavigation(control, activeSurface, routeBeforeClick) {
+  async function verifyPendingCommentNavigation(
+    control,
+    activeSurface,
+    routeBeforeClick,
+    commentId
+  ) {
     const documentLink = url =>
       `${activeSurface} a[data-testid="assistant-markdown-link"][href="${url}"]`
     const browserPanel = `${activeSurface} [data-testid="collaboration-embedded-browser-panel"]`
@@ -307,14 +314,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         `[e2e] Comment browser verified: ${['pending open replacement', 'same URL reload', 'closed panel reopen'][requestNumber - 1]}`
       )
       if (requestNumber !== 1) {
-        await closeCommentBrowser(control, activeSurface, routeBeforeClick)
+        await closeCommentBrowser(control, activeSurface, routeBeforeClick, commentId)
       }
     }
     assert.equal(pendingDocumentRequestCount, 1)
     assert.equal(latestDocumentRequestCount, 3)
   }
 
-  async function verifyCommentLinks(control, activeSurface) {
+  async function verifyCommentLinks(control, activeSurface, commentId) {
     const githubLink = `${activeSurface} [data-testid="composer-link-chip"][data-composer-link-url="${COMMENT_LINK}"]`
     const documentLink = `${activeSurface} a[data-testid="assistant-markdown-link"][href="${commentDocumentLink}"]`
     await control.command('waitFor', githubLink, { visible: true, timeoutMs: uiTimeoutMs })
@@ -339,18 +346,18 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         expectedUrl,
         expectedText
       )
-      await closeCommentBrowser(control, activeSurface, routeBeforeClick)
+      await closeCommentBrowser(control, activeSurface, routeBeforeClick, commentId)
     }
-    await verifyPendingCommentNavigation(control, activeSurface, routeBeforeClick)
+    await verifyPendingCommentNavigation(control, activeSurface, routeBeforeClick, commentId)
   }
 
   /**
-   * Wait until the notification's Issue and its comment are both on screen.
+   * Wait until the notification's Issue is loaded and its comment is on screen.
    *
    * The click a notification answers only navigates once the read it persists
    * comes back, so the surface that was on screen when the click was dispatched
    * can answer a single probe and be replaced right after. Only a surface that
-   * keeps showing the Issue and its comment counts as the reader arriving.
+   * keeps showing the comment in the correct Issue counts as the reader arriving.
    */
   async function waitForComment(
     control,
@@ -359,7 +366,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     timeoutMs
   ) {
     const issueTitleSelector = `${activeSurface} [data-testid="cloud-todo-detail-title"]`
-    await control.command('waitFor', issueTitleSelector, {
+    await control.command('waitFor', `${activeSurface} [data-testid="cloud-todo-detail"]`, {
       stableMs: LANDED_STABILITY_MS,
       timeoutMs,
     })
@@ -559,7 +566,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await waitForFlash(control, commentSelectorFor(activeSurface, message.messageId), uiTimeoutMs)
       const linkFlashMs = Date.now() - linkStartedAt
       assertNavigationBudget('The DingTalk link', linkCommentMs, linkFlashMs)
-      await verifyCommentLinks(control, activeSurface)
+      await verifyCommentLinks(control, activeSurface, message.messageId)
       await captureScreenshot(control, 'comment-notification-03-comment-links.png')
       const readIssue = await waitForApiValue(
         () => ownerRequest(`/api/v1/loop-items/${issue.id}`),

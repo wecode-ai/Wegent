@@ -857,6 +857,9 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
     can_edit: ['Owner', 'Maintainer', 'Developer'].includes(role),
     security_level: record.metadata.security_level === 'related' ? 'related' : 'open',
     content_revision: record.version,
+    badges: Array.isArray(record.metadata.badges)
+      ? (record.metadata.badges as NonNullable<CloudLoopItem['badges']>)
+      : [],
     activity_read_sequence:
       typeof record.metadata.activity_read_sequence === 'number'
         ? record.metadata.activity_read_sequence
