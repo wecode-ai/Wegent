@@ -9,11 +9,12 @@ import { useTranslation } from '@/hooks/useTranslation'
 
 export function ProjectWorkBar({
   extensionContext = {},
+  showWorkSection = true,
   ...props
 }: Omit<
   ProjectWorkBarProps,
   'translate' | 'isMobile' | 'renderCreateSection' | 'renderWorkSection'
-> & { extensionContext?: object }) {
+> & { extensionContext?: object; showWorkSection?: boolean }) {
   const { t } = useTranslation('common')
   const isMobile = useIsMobile()
   return (
@@ -35,13 +36,21 @@ export function ProjectWorkBar({
           slot={WEWORK_DSH_SLOTS.projectCreateSection}
         />
       )}
-      renderWorkSection={project => (
-        <DshContributionSlotSurface
-          attachedClassName="contents"
-          props={{ context: { ...extensionContext, compact: isMobile, project } }}
-          slot={WEWORK_DSH_SLOTS.projectWorkSection}
-        />
-      )}
+      renderWorkSection={project =>
+        showWorkSection ? (
+          <ProjectWorkSection context={{ ...extensionContext, compact: isMobile, project }} />
+        ) : null
+      }
+    />
+  )
+}
+
+export function ProjectWorkSection({ context }: { context: object }) {
+  return (
+    <DshContributionSlotSurface
+      attachedClassName="contents"
+      props={{ context }}
+      slot={WEWORK_DSH_SLOTS.projectWorkSection}
     />
   )
 }

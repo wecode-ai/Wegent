@@ -43,6 +43,24 @@ create_stub() {
     cat > "$path" <<'STUB'
 #!/usr/bin/env bash
 printf '%s %s\n' "$(basename "$0")" "$*" >> "$CALL_LOG"
+if [ "$(basename "$0")" = "pnpm" ]; then
+    case "$*" in
+        '--filter wework run prepare:electron')
+            rm -f "$CALL_LOG.electron-typecheck-complete"
+            ;;
+        '--dir wework/electron typecheck')
+            # Keep the shared staging directory busy until typechecking finishes.
+            sleep 0.2
+            touch "$CALL_LOG.electron-typecheck-complete"
+            ;;
+        '--dir wework/electron test')
+            if [ ! -f "$CALL_LOG.electron-typecheck-complete" ]; then
+                echo 'Electron tests started before typechecking finished staging process-explorer' >&2
+                exit 1
+            fi
+            ;;
+    esac
+fi
 exit 0
 STUB
     chmod +x "$path"

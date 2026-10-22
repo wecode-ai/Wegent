@@ -2,13 +2,25 @@ import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
+import { createPersonalIssueAccessRegression } from '../modules/personal-issue-access.mjs'
+import { startRealObjectStorage } from '../modules/real-object-storage.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const REPORT = 'PR review regression: this report must be visible in the Issue activity.'
 const PR_LINK = 'https://github.com/wecode-ai/Wegent/pull/3933'
 
 /** Exercise the real MCP, persistence, Socket.IO and Issue activity UI together. */
-export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) {
+export async function createDesktopScenario({
+  resultDir,
+  uiTimeoutMs,
+  workbenchReadyTimeoutMs,
+  modelResponseTimeoutMs,
+}) {
+  const storage = await startRealObjectStorage(resultDir, workbenchReadyTimeoutMs)
+  const personalAccess = createPersonalIssueAccessRegression({
+    uiTimeoutMs,
+    modelResponseTimeoutMs,
+  })
   let backendUrl
   let authToken
   let project
@@ -59,6 +71,9 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
 
   return {
     requiresCloudEnvironment: true,
+    backendEnv: storage.backendEnv,
+    handleHttp: personalAccess.handleHttp,
+    cleanup: storage.stop,
 
     async prepareCloud(cloud) {
       backendUrl = cloud.backendUrl
@@ -81,6 +96,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         method: 'POST',
         body: JSON.stringify({ title: 'MCP review reports appear in Issue activity' }),
       })
+      await personalAccess.prepare(cloud, project, issue)
     },
 
     async verify(control) {
@@ -137,6 +153,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         'Issue comments passed while collaboration displayed a loading error'
       )
       console.log(`[e2e] Issue comment assertions completed at ${new Date().toISOString()}`)
+      await personalAccess.verify(control)
     },
   }
 }

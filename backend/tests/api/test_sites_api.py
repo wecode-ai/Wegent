@@ -6,9 +6,11 @@ import json
 from typing import Any
 
 import pytest
-from app.core.config import settings
 from fastapi.testclient import TestClient
 from pytest_httpx import HTTPXMock
+
+from app.core.config import settings
+from app.services.site_application_types import list_application_types
 
 SITES_API_BASE_URL = "https://sites.example.test"
 
@@ -106,6 +108,41 @@ def test_list_sites_requires_authentication(
     response = test_client.get("/api/sites")
 
     assert response.status_code == 401
+
+
+def test_application_type_handlers_expose_ordered_capabilities() -> None:
+    assert list_application_types().model_dump() == {
+        "items": [
+            {
+                "app_type": "web",
+                "enabled": True,
+                "order": 10,
+                "capabilities": [
+                    "create",
+                    "publish",
+                    "edit",
+                    "delete",
+                    "configure_environment",
+                    "manage_access",
+                    "view_analytics",
+                ],
+                "create": {
+                    "plugin_name": "wegent-sites",
+                    "marketplace_name": "wegent",
+                },
+            },
+            {
+                "app_type": "miniapp",
+                "enabled": True,
+                "order": 20,
+                "capabilities": ["create", "open_experience"],
+                "create": {
+                    "plugin_name": "weibo-miniapp-h5-develop-agent",
+                    "marketplace_name": "wegent",
+                },
+            },
+        ]
+    }
 
 
 def test_list_sites_returns_not_available_when_upstream_is_not_configured(

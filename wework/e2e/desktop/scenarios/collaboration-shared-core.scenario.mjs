@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { createBoardReplyModelRegression } from '../modules/board-reply-model.mjs'
 import { createProjectOnlyNavigationRegression } from '../modules/project-only-navigation.mjs'
+import { createProjectSpacePickerRegression } from '../modules/project-space-picker.mjs'
 import { verifyIssueConversationDrawers } from '../modules/issue-conversation-drawers.mjs'
 import { verifyCollaborationIssueHome } from '../modules/collaboration-issue-home.mjs'
 import { verifyCollaborationMemberSettings } from '../modules/collaboration-member-settings.mjs'
@@ -95,6 +96,11 @@ export function createDesktopScenario({
   let fixtureArchived = false
 
   const request = (pathname, options) => requestJson(backendUrl, authToken, pathname, options)
+  const projectSpacePicker = createProjectSpacePickerRegression({
+    request,
+    uiTimeoutMs,
+    workbenchReadyTimeoutMs,
+  })
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
 
   async function archiveFixture() {
@@ -147,6 +153,7 @@ export function createDesktopScenario({
       owner = await request('/api/users/me')
       await request('/api/admin/setup-complete', { method: 'POST' })
       await projectOnlyNavigation.prepare(cloud, owner)
+      await projectSpacePicker.prepare()
     },
 
     setCloudEnvironment(environment) {
@@ -335,6 +342,10 @@ export function createDesktopScenario({
             { method: 'DELETE' }
           )
         }
+        const unassignedEnvironments = await request(
+          `/api/v1/cloud-projects/${project.id}/execution-environments`
+        )
+        assert.equal(unassignedEnvironments.items.length, 0)
 
         agent = await request(`/api/v1/cloud-projects/${project.id}/chat-agents`, {
           method: 'POST',
@@ -353,14 +364,28 @@ export function createDesktopScenario({
           }),
         })
         await control.command('click', scoped('[data-testid="collaboration-primary-home"]'))
+        await control.command('waitFor', scoped('[data-testid="collaboration-issue-workspace"]'), {
+          timeoutMs: uiTimeoutMs,
+        })
         await control.command(
           'waitFor',
-          scoped('[data-testid="issue-execution-environment-notice"]'),
-          { timeoutMs: uiTimeoutMs }
+          scoped(
+            '[data-testid="collaboration-issue-home"][data-execution-environment-readiness="unassigned"]'
+          )
+        )
+        assert.equal(
+          Number(
+            await control.command(
+              'getElementCount',
+              scoped('[data-testid="issue-execution-environment-notice"]')
+            )
+          ),
+          0,
+          'A project without execution environments must not show an environment notice'
         )
         await control.command(
           'click',
-          scoped('[data-testid="issue-execution-environment-notice-action"]')
+          scoped(`[data-testid="collaboration-workspace-project-${project.id}"]`)
         )
         await configureFirstProjectExecutionEnvironment(
           control,
@@ -742,11 +767,19 @@ export function createDesktopScenario({
           scoped,
           workbenchReadyTimeoutMs,
         })
+        await projectSpacePicker.verify(control, {
+          deviceId: binding.deviceId ?? binding.device_id,
+          taskId: binding.taskId ?? binding.task_id,
+        })
       } finally {
         try {
           await archiveFixture()
         } finally {
-          await projectOnlyNavigation.cleanup()
+          try {
+            await projectOnlyNavigation.cleanup()
+          } finally {
+            await projectSpacePicker.cleanup()
+          }
         }
       }
     },
@@ -755,7 +788,11 @@ export function createDesktopScenario({
       try {
         await archiveFixture()
       } finally {
-        await projectOnlyNavigation.cleanup()
+        try {
+          await projectOnlyNavigation.cleanup()
+        } finally {
+          await projectSpacePicker.cleanup()
+        }
       }
     },
 

@@ -359,47 +359,6 @@ class DeliveryService:
             delivery.manifest_object_key = manifest_key
             delivery.status = "delivered"
             delivery.delivered_at = now
-            binding_metadata = (
-                source_binding.metadata_json
-                if source_binding is not None
-                and isinstance(source_binding.metadata_json, dict)
-                else {}
-            )
-            if binding_metadata.get("human_assignment_id"):
-                from app.services.collaboration_human_assignments import (
-                    DIRECT_HUMAN_ROUND_ID,
-                )
-
-                direct_human_delivery = (
-                    binding_metadata.get("dispatch_round_id") == DIRECT_HUMAN_ROUND_ID
-                )
-                item.current_delivery_id = delivery.id
-                if direct_human_delivery:
-                    # An AI delivery is a suggestion, never a human submission.
-                    metadata = dict(item.metadata_json or {})
-                    stored = metadata.get("human_work")
-                    work = dict(stored) if isinstance(stored, dict) else {}
-                    work["assignment_id"] = binding_metadata.get("assignment_id")
-                    work["ai_draft_delivery_id"] = delivery.id
-                    metadata["human_work"] = work
-                    item.metadata_json = metadata
-                item.metadata_json = advance_content_revision(
-                    item.metadata_json, actor_user_id=user_id
-                )
-                item.version += 1
-                db.commit()
-                db.refresh(delivery)
-                publish_loop_item_changed(
-                    db,
-                    item=item,
-                    reason=(
-                        "human_ai_draft_ready"
-                        if direct_human_delivery
-                        else "collaboration_human_delivery_finalized"
-                    ),
-                    actor_user_id=user_id,
-                )
-                return delivery
             item.current_delivery_id = delivery.id
             item.metadata_json = advance_content_revision(
                 item.metadata_json, actor_user_id=user_id

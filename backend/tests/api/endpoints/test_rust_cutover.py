@@ -8,8 +8,9 @@ import tomllib
 from pathlib import Path
 
 import pytest
-from app.api.api import api_router
 from fastapi.routing import APIRoute
+
+from app.api.api import api_router
 
 ROUTES_FILE = Path(__file__).resolve().parents[4] / "backend-rs/config/routes.toml"
 
@@ -102,6 +103,7 @@ def test_rust_owned_route_is_not_registered_in_python(method: str, path: str) ->
         ("GET", "/wework-transcripts/{transcript_id}"),
         ("POST", "/v1/responses"),
         ("GET", "/connector-runtime/tools"),
+        ("GET", "/sites/{siteid}/analytics"),
     ],
 )
 def test_unmigrated_sibling_remains_registered_in_python(

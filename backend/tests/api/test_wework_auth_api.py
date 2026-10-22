@@ -4,9 +4,10 @@ import json
 import time
 import uuid
 
-from app.api.endpoints import wework_auth
 from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi.testclient import TestClient
+
+from app.api.endpoints import wework_auth
 
 
 class MemoryAuthSessionCache:

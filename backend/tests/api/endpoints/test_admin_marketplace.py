@@ -6,12 +6,13 @@ import io
 import json
 import zipfile
 
+from sqlalchemy.orm.attributes import flag_modified
+
 from app.models.kind import Kind
 from app.models.marketplace_resource import MarketplaceResource
 from app.models.plugin_marketplace import Plugin, PluginRelease
 from app.models.smart_app_marketplace import SmartApp, SmartAppRelease
 from app.services.marketplace_artifact_storage import marketplace_artifact_storage
-from sqlalchemy.orm.attributes import flag_modified
 
 
 def _headers(token: str) -> dict[str, str]:

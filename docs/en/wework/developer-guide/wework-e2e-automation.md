@@ -6,6 +6,12 @@ sidebar_position: 34
 
 Wework provides a dedicated Playwright E2E entrypoint and a test-only frontend automation bridge for operating the Wework Vite/React frontend in CI. The default entrypoint runs in browser mode, which covers most frontend interactions; the desktop task-flow E2E below covers native-window and task-execution behavior.
 
+Issue MCP attachment coverage uses the shared `setup-minio-e2e` Action on Linux and Windows to build and verify the same pinned real MinIO version. Only main writes caches; scenarios use the platform executable through `WEWORK_E2E_MINIO_BIN`.
+
+The first model-routing task and real Harness CLI launch use the workbench startup budget. Streaming scroll waits for the model request before applying the original ten-second UI assertion. After changing projects, wait for the execution mode control to become available. Scroll moved board cards into view before checking result visibility, and use the responsive view helper for cloud Stand-in navigation. Failed workbench snapshots include resource connection, request, and response timings with paths only, excluding query parameters.
+
+Numeric Process Explorer filters match the exact PID, excluding matches in other processes' launch arguments or PID substrings. Text filters still search process names and launch details. The application-menu checkpoint retains its assertion that filtering by the application PID excludes unrelated helpers.
+
 ## Running Tests
 
 Install the Playwright browser before the first run:
@@ -146,17 +152,59 @@ checkpoint. When upstream checkpoints are skipped, each checkpoint establishes
 its own minimal fixtures instead of depending on tasks or UI state created only
 by the complete flow. PR CI builds the smallest segment matrix for the changed
 feature paths. Shared desktop infrastructure, merge queue, scheduled runs, and
-`ci:all` still run the complete desktop suites. Core uses seventeen fixed GitHub
-Actions matrix jobs and Cloud uses fifteen. A Core job runs at most two isolated
-checkpoints concurrently so three complete Electron, Executor, and real-backend
-stacks cannot contend for one runner's CPU; Cloud jobs retain up to three
-concurrent checkpoints. Checkpoints that share the Collaboration cloud runtime
-or have demonstrated timing contention remain serialized through an exclusive
-resource lock. The thirty-two Core and Cloud matrix jobs still provide
+`ci:all` still run the complete desktop suites. Core and Cloud shard definitions
+live in `.github/scripts/classify-wework-desktop-e2e.sh`. Linux Core and Cloud jobs
+run at most four isolated checkpoints concurrently; actual concurrency also
+depends on the shard's checkpoint count. Each checkpoint owns its database,
+Redis, ports, and runtime directories, and Harness runtimes are extracted once
+before the shard starts. The former intensive-runtime and Collaboration groups
+therefore no longer serialize entire checkpoints. macOS checkpoints that require
+the native desktop foreground still use an exclusive resource lock.
+
+`split-workbench` keeps its fixed three-second drag interaction assertion on a
+dedicated Linux shard so competing full-stack instances do not change the benchmark's
+CPU allocation. It retains all functional assertions and logs pointer movement,
+pointer-up dispatch, and split readiness timings. Other functional shards still
+allow up to four instances.
+Core and Cloud matrix jobs also provide
 suite-level parallelism across runners. Shards are balanced from observed CI
 durations and capped to bound the complete suite's critical path; a new or
 materially slower checkpoint requires rebalancing instead of
-removing coverage or rerunning failures. The 2,200-delta Codex notification
+removing coverage or rerunning failures.
+Long scenarios are split into independent checkpoints as well as balanced shards:
+
+- `plugin-account-auth` expands into password sync, exclusive credential transfer, OAuth, DWS accounts, conversation QR, and GitHub checkpoints.
+- `plugin-uninstall-resilience` expands into lost response, unknown result, restart recovery, and reinstall race checkpoints.
+- `harness-apps` expands into development and installation/runtime lifecycle checkpoints.
+- `streaming-text` expands into content, tool details, timers, scrolling, message order, and subagent checkpoints.
+
+Each checkpoint establishes its own prerequisites in an isolated environment. The
+group names remain valid for `--segment`; `--from-segment` starts at the group's
+first checkpoint. CI schedules the individual checkpoints directly. Shards reuse
+the same build artifact while reducing CPU contention between heavy workflows.
+The long list still checks all 24 plugins, scrolling, and last-item selection.
+`plugin-toggle-persistence` independently checks enable/disable persistence across
+two restarts with one plugin, avoiding repeated synchronization of the whole list.
+Linux Core/Cloud tests emit `[runner-resources]` JSON records at startup, completion,
+and every 15 seconds, also saved as `runner-resources.jsonl` in the diagnostic
+artifact. Web shards reuse this sampler with `RUNNER_PROCESS_DIAGNOSTICS=1` to
+record process IDs, parent IDs, states, elapsed times, and names without command
+arguments. `RUNNER_RESOURCE_LOG_PATH` selects the log path; separate
+`e2e-process-diagnostics-*` artifacts help diagnose commands that remain alive
+after tests finish. Records include CPU utilization, load average, memory, available disk
+space, Linux CPU/memory/I/O pressure, and cgroup CPU limits, memory peaks, and OOM
+counters. Unreadable kernel metrics report `unavailable`. CPU utilization is the
+average between samples; its initial value is `null`.
+`[desktop-e2e-schedule]` logs list active checkpoints and actual concurrency on
+each start and completion, making overlap visible independently of the configured
+worker limit. Compare shard durations and these metrics after increasing
+concurrency to identify CPU, memory, or I/O contention.
+Drawer animation checks sample from before the action until movement is observed
+and the track animation completes, then stop explicitly within the shared step
+timeout. Command transport and rendering delays cannot exhaust a fixed 800ms
+capture window. Movement, continuity, intermediate-frame, and reduced-motion
+assertions remain intact.
+The 2,200-delta Codex notification
 isolation stress case and the long plugin auto-update checkpoint each have a
 dedicated shard; the notification scenario uses a targeted 30-second render
 budget without changing the shared 10-second UI timeout. CI first builds one Core Electron
@@ -409,6 +457,13 @@ Core DSH binds port `0` directly and lets the OS assign its listening port.
 Electron reads the actual DSH address before probing the host, Executor, Terminal,
 and application endpoints. It does not discover a port by opening and closing a
 temporary listener, avoiding collisions during concurrent startup.
+
+Linux cloud-test services, including backends and databases, publish ports before
+startup. The shared allocator reads `/proc/sys/net/ipv4/ip_local_port_range` and
+selects bindable, unprivileged ports outside that kernel dynamic range. The port
+registry keeps parallel checkpoints separate, while excluding the dynamic range
+prevents Core DSH and other port `0` listeners from claiming ports during service
+initialization.
 
 Before upload, GitHub Actions repeats the cleanup and excludes
 `managed-components` at any depth from the Artifact path so a teardown failure
@@ -696,7 +751,7 @@ pnpm --filter wework e2e:desktop:memory
 
 The repository includes a basic workflow at `.github/workflows/wework-e2e.yml`. It runs when Wework, `packages/chat-core`, the pnpm lockfile, or the workflow itself changes.
 Linux and Windows Desktop Core E2E consume the same shard matrix produced by
-the classifier; a complete classification runs all 17 Core shards on both
+the classifier; a complete classification runs every declared Core shard on both
 platforms. The Windows job builds native `WeWork.exe`,
 `wegent-executor.exe`, and `codex.exe` artifacts on `windows-latest` before
 running checkpoints. A cross-platform package or a single Windows smoke test is

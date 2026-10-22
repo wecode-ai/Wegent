@@ -150,6 +150,12 @@ Electron 启动主窗口时必须保持主窗口隐藏，并由独立的 startup
 
 为跨 Wework 或 executor 重启恢复真正运行中的目标，runtime work 会把 active Goal 执行记录写入加密的 turn 队列。恢复依据是这条执行记录，而不是仅凭 `goalStatus=active` 推断运行：只有重启前仍在执行的 Goal 才会重新绑定。恢复时 executor 必须先订阅事件，再调用 Codex `thread/resume`，不得额外创建 `turn/start`、伪造用户消息或注入续聊提示；后续轮次仍由 Codex 的原生 Goal 协议驱动。目标暂停、清除或完成后必须删除对应执行记录，防止下次启动错误恢复。
 
+恢复后的 Goal turn 使用新的原生 turn 身份，不得复用已持久化请求中的 `clientUserMessageId`、用户消息展示绑定或生成用户消息标记。原用户消息与原 turn 的映射保持不变；该规则同样适用于需要用户操作后的原生 Goal 恢复。
+
+executor 的活动 transcript 缓存同时累计 `item/agentMessage/delta` 和 `item/plan/delta`，按原生 item ID 更新条目。历史加载必须能读取尚未收到 `item/completed` 的部分文本；用户停止执行时，这些文本以中断状态持久化，后续追问或重新打开任务不能将其丢弃。最终 item 快照替换已累计文本，避免重复拼接。
+
+仍在流式累计且尚未标注 phase 的文本条目与实时流一样按过程文本展示，完成后再按终态投影；历史加载不能提前把它改成最终回答。Goal 恢复在原生 turn 建立前失败或取消时，终态事件也必须移除旧用户消息身份，且不能修改用于后端上报的原请求。
+
 Goal 的单个物理 turn 完成后，executor 会等待 Codex 自动创建下一轮。若等待超时，它会通过 `thread/goal/get` 和 `thread/read` 对账 provider 的权威状态：已有活跃 turn 时重新绑定并继续监听；目标仍为 active 且线程空闲时只尝试一次原生 `thread/resume`；仍无法继续时停止静默等待并向 Wework 暴露 `needsAttention`。Wework 使用 `running`、`recovering` 和 `needsAttention` 三种 Goal 执行状态分别显示正常运行、重启恢复和需要用户恢复，用户点击恢复时复用已保留的 Goal 请求，而不是发送一条普通聊天消息。
 
 Wework 前端通过一个用户级 `RuntimeTaskLifecycleStore` 管理所有任务生命周期；Store 为每个任务维护一个状态机并负责事件路由，状态机是执行状态、回合状态、Goal 状态和未读状态的聚合根，reducer 仅作为状态机内部的状态转换实现。React Provider 只把同一个 Store 适配为订阅，不保存或推断运行状态。任务列表、输入框、消息思考态、系统托盘、关闭保护和完成提醒都读取该 Store 的同一份快照。

@@ -8,13 +8,14 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from fastapi import FastAPI
+
 from app.api.endpoints import users as users_endpoint
 from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.services.adapters.team_kinds import team_kinds_service
 from app.stores.tasks import task_store
-from fastapi import FastAPI
 
 
 class _FakeQuery:
@@ -172,8 +173,22 @@ def test_recent_teams_are_returned_independently(monkeypatch):
     assert response[0].display_name == "Team 202"
 
 
-@pytest.mark.parametrize("query,is_code", [("", False), ("?is_code=true", True)])
-async def test_recent_teams_api_queries_run_off_event_loop(monkeypatch, query, is_code):
+@pytest.mark.parametrize(
+    "query,is_code,include_fallback,mode",
+    [
+        ("", False, True, None),
+        ("?is_code=true", True, True, None),
+        ("?include_fallback=false&mode=code", False, False, "code"),
+        ("?is_code=true&include_fallback=false&mode=chat", True, False, "chat"),
+        ("?include_fallback=false&mode=knowledge", False, False, "knowledge"),
+        ("?include_fallback=false&mode=task", False, False, "task"),
+        ("?include_fallback=false&mode=video", False, False, "video"),
+        ("?include_fallback=false&mode=image", False, False, "image"),
+    ],
+)
+async def test_recent_teams_api_queries_run_off_event_loop(
+    monkeypatch, query, is_code, include_fallback, mode
+):
     app = FastAPI()
     app.include_router(users_endpoint.router, prefix="/api/users")
     db = SimpleNamespace()
@@ -184,8 +199,10 @@ async def test_recent_teams_api_queries_run_off_event_loop(monkeypatch, query, i
     loop_thread = threading.get_ident()
     calls = []
 
-    def get_recent_teams(session, *, user_id, is_code):
-        calls.append((threading.get_ident(), session, user_id, is_code))
+    def get_recent_teams(session, *, user_id, is_code, include_fallback, mode):
+        calls.append(
+            (threading.get_ident(), session, user_id, is_code, include_fallback, mode)
+        )
         return [_team(202), _team(101, user_id=0)]
 
     monkeypatch.setattr(
@@ -205,11 +222,20 @@ async def test_recent_teams_api_queries_run_off_event_loop(monkeypatch, query, i
     ]
     assert response.json()[0]["display_name"] == "Team 202"
     assert len(calls) == 1
-    worker_thread, session, user_id, received_is_code = calls[0]
+    (
+        worker_thread,
+        session,
+        user_id,
+        received_is_code,
+        received_include_fallback,
+        received_mode,
+    ) = calls[0]
     assert worker_thread != loop_thread
     assert session is db
     assert user_id == 7
     assert received_is_code is is_code
+    assert received_include_fallback is include_fallback
+    assert received_mode == mode
 
 
 def test_recent_teams_are_deduplicated_and_filled_by_latest(test_db):
@@ -255,6 +281,79 @@ def test_no_history_returns_five_latest_accessible_teams(test_db):
         "team-3",
         "team-2",
     ]
+
+
+@pytest.mark.parametrize("has_history", [False, True])
+def test_recent_teams_can_exclude_fallback(test_db, monkeypatch, has_history):
+    recent_team = _team_kind(7, "used-team")
+    test_db.add_all([recent_team, _team_kind(7, "unused-team", updated_offset=5)])
+    if has_history:
+        test_db.add(_task(8101, team_name=recent_team.name))
+    test_db.commit()
+    monkeypatch.setattr(
+        team_kinds_service,
+        "_build_accessible_teams_query",
+        lambda *args, **kwargs: pytest.fail("fallback query should not run"),
+    )
+
+    result = team_kinds_service.get_recent_accessible_teams(
+        test_db, user_id=7, include_fallback=False
+    )
+
+    assert [team["name"] for team in result] == (["used-team"] if has_history else [])
+
+
+@pytest.mark.parametrize(
+    "mode", ["chat", "code", "knowledge", "task", "video", "image"]
+)
+def test_recent_teams_filter_mode_before_scan_limit_and_deduplication(test_db, mode):
+    shared_team = _team_kind(7, "shared-across-modes")
+    newer_team = _team_kind(7, "newer-in-mode")
+    unrelated_team = _team_kind(7, "only-other-mode")
+    other_mode = "task" if mode == "chat" else "chat"
+    for team in (shared_team, newer_team, unrelated_team):
+        team.json["spec"]["bind_mode"] = [mode, other_mode]
+    test_db.add_all(
+        [
+            shared_team,
+            newer_team,
+            unrelated_team,
+            _task(8101, team_name=shared_team.name, task_type=mode, updated_offset=1),
+            _task(8102, team_name=newer_team.name, task_type=mode, updated_offset=2),
+            _task(
+                8103,
+                team_name=shared_team.name,
+                task_type=other_mode,
+                updated_offset=3,
+            ),
+            _task(
+                8104,
+                team_name=unrelated_team.name,
+                task_type=other_mode,
+                updated_offset=4,
+            ),
+            *[
+                _task(
+                    8200 + index,
+                    team_name=unrelated_team.name,
+                    task_type=other_mode,
+                    updated_offset=5 + index,
+                )
+                for index in range(50)
+            ],
+        ]
+    )
+    test_db.commit()
+
+    result = team_kinds_service.get_recent_accessible_teams(
+        test_db,
+        user_id=7,
+        is_code=mode != "code",
+        include_fallback=False,
+        mode=mode,
+    )
+
+    assert [team["name"] for team in result] == ["newer-in-mode", "shared-across-modes"]
 
 
 def test_recent_teams_distinguish_code_tasks(test_db):

@@ -7,16 +7,16 @@
 import json
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+
 from app.api.dependencies import get_db
 from app.api.endpoints import user_mcp_oauth
 from app.api.endpoints.users import router
 from app.core import security
 from app.models.user import User
 from app.services import mcp_provider_registry
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
-
 from shared.utils.crypto import is_data_encrypted
 
 

@@ -8,7 +8,7 @@ use std::{
 };
 
 use axum::{
-    http::HeaderMap,
+    http::{HeaderMap, StatusCode},
     routing::{get, post},
     Json, Router,
 };
@@ -318,6 +318,21 @@ async fn space_mcp_routes_board_operations_through_backend() {
         Json(json!({"id": "GL-11", "title": "Existing"}))
     }
 
+    async fn list_other_board_items(headers: HeaderMap) -> Json<Value> {
+        assert_auth(&headers);
+        Json(json!({"items": [{
+            "id": "OTHER-21", "cloud_project_id": 9002, "title": "Other project Issue"
+        }]}))
+    }
+
+    async fn deny_board_access(headers: HeaderMap) -> (StatusCode, Json<Value>) {
+        assert_auth(&headers);
+        (
+            StatusCode::FORBIDDEN,
+            Json(json!({"detail": "Project access denied"})),
+        )
+    }
+
     async fn create_board_item(headers: HeaderMap, Json(body): Json<Value>) -> Json<Value> {
         assert_auth(&headers);
         assert_eq!(body["title"], "Created through MCP");
@@ -369,7 +384,11 @@ async fn space_mcp_routes_board_operations_through_backend() {
                 )
                 .route(
                     "/api/v1/cloud-projects/9002/loop-items",
-                    get(list_board_items),
+                    get(list_other_board_items),
+                )
+                .route(
+                    "/api/v1/cloud-projects/9003/loop-items",
+                    get(deny_board_access),
                 )
                 .route(
                     "/api/v1/cloud-projects/9001/loop-items/reorder",
@@ -488,6 +507,11 @@ async fn space_mcp_routes_board_operations_through_backend() {
         r#"{{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{{"name":"list_board_items","arguments":{{"space_id":"9002"}}}}}}"#
     )
     .unwrap();
+    writeln!(
+        stdin,
+        r#"{{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{{"name":"list_board_items","arguments":{{"space_id":"9003"}}}}}}"#
+    )
+    .unwrap();
     drop(stdin);
 
     let status = child.wait().unwrap();
@@ -497,13 +521,15 @@ async fn space_mcp_routes_board_operations_through_backend() {
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
         .collect::<Vec<_>>();
-    assert_eq!(responses[1].pointer("/result/isError"), Some(&json!(false)));
-    assert_eq!(responses[2].pointer("/result/isError"), Some(&json!(false)));
-    assert_eq!(responses[9].pointer("/result/isError"), Some(&json!(true)));
-    assert!(responses[9]
+    assert_eq!(responses.len(), 11);
+    for response in &responses[..10] {
+        assert_eq!(response.pointer("/result/isError"), Some(&json!(false)));
+    }
+    assert_eq!(responses[10].pointer("/result/isError"), Some(&json!(true)));
+    assert!(responses[10]
         .pointer("/result/content/0/text")
         .and_then(Value::as_str)
-        .is_some_and(|text| text.contains("outside this Agent session")));
+        .is_some_and(|text| text.contains("403") && text.contains("Project access denied")));
     assert_eq!(std::fs::read(attachment_path).unwrap(), b"diagnostic");
     let projects = responses[0]
         .pointer("/result/content/0/text")
@@ -513,7 +539,7 @@ async fn space_mcp_routes_board_operations_through_backend() {
     assert_eq!(projects[0]["id"], 9001);
     let decoded = responses
         .iter()
-        .take(9)
+        .take(10)
         .map(|response| {
             serde_json::from_str::<Value>(
                 response
@@ -531,5 +557,7 @@ async fn space_mcp_routes_board_operations_through_backend() {
     assert_eq!(decoded[6]["title"], "Updated through MCP");
     assert_eq!(decoded[7]["body"], "MCP comment");
     assert_eq!(decoded[8]["items"][0]["status"], "in_progress");
+    assert_eq!(decoded[9][0]["id"], "OTHER-21");
+    assert_eq!(decoded[9][0]["cloud_project_id"], 9002);
     server.abort();
 }

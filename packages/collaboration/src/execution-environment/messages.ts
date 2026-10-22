@@ -72,8 +72,6 @@ export const executionEnvironmentMessages: Record<
     'todo.execution_environment_primary_repository_required':
       '请为已添加的代码仓库设置一个主仓库。',
     'todo.execution_environment_prepare_ahead': '提前准备项目目录',
-    'todo.issue_environment_notice_unassigned':
-      '当前项目未添加执行环境。AI 执行前需要配置，不影响创建和人工处理 Issue。',
     'todo.issue_environment_notice_offline':
       '运行设备离线，暂时无法执行 AI 任务。可以继续创建和人工处理 Issue。',
     'todo.issue_environment_notice_unknown':
@@ -188,8 +186,6 @@ export const executionEnvironmentMessages: Record<
     'todo.execution_environment_primary_repository_required':
       'Set one added code repository as the primary repository.',
     'todo.execution_environment_prepare_ahead': 'Prepare project directory ahead of time',
-    'todo.issue_environment_notice_unassigned':
-      'This project has no execution environment. Configure one before running AI; Issue creation and human work are available.',
     'todo.issue_environment_notice_offline':
       'The runtime device is offline, so AI tasks cannot run. You can still create and handle Issues manually.',
     'todo.issue_environment_notice_unknown':

@@ -177,9 +177,9 @@ test.describe('Collaboration group Executor coordination', () => {
     )
     const groupName = `Coordinate Group ${suffix}`
     const groupId = await createCollaborationGroup(page, groupName, {
-      agentIds: [leader.id, collector.id, reviewer.id],
+      agentIds: [leader, collector, reviewer].map(agent => String(agent.wegentTeamId)),
       humanId: '',
-      leader: { id: leader.id, type: 'agent' },
+      leader: { id: String(leader.wegentTeamId), type: 'agent' },
     })
 
     const clearManagerScenario = await configureIssueDispatchModelScenario(request, issueTitle, [
@@ -277,20 +277,25 @@ test.describe('Collaboration group Executor coordination', () => {
       await expect(page.getByTestId('collaboration-issue-detail')).toBeVisible()
       await page.getByTestId('cloud-todo-detail-assignee').click()
       await page.getByTestId(`cloud-todo-detail-assignee-option-group:${groupId}`).click()
-      await page.getByTestId('cloud-todo-save').click()
-      await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
       await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
         'data-value',
         `group:${groupId}`
       )
-      await captureEvidence(page, testInfo, '01-group-assigned')
-
-      const assigned = await apiRequest<CollaborationIssue>(
-        request,
-        model.token,
-        `/api/v1/loop-items/${fixture.issueId}`
+      // The manager can reassign the Issue before a subsequent read reaches the server.
+      const groupAssigned = page.waitForResponse(
+        response =>
+          response.request().method() === 'PATCH' &&
+          new URL(response.url()).pathname === `/api/v1/loop-items/${fixture.issueId}` &&
+          response.request().postDataJSON()?.assignee_group_id === groupId
       )
+      await page.getByTestId('cloud-todo-save').click()
+      const assignmentResponse = await groupAssigned
+      expect(assignmentResponse.ok()).toBe(true)
+      const assigned: CollaborationIssue = await assignmentResponse.json()
+      expect(assigned.id).toBe(fixture.issueId)
       expect(assigned.assignee_group_id).toBe(groupId)
+      await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
+      await captureEvidence(page, testInfo, '01-group-assigned')
 
       const collectorCard = page
         .locator('[data-testid^="cloud-task-activity-card-"]')

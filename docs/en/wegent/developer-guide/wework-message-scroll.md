@@ -44,6 +44,8 @@ Streaming rendering changes must also verify that frame coalescing immediately d
 
 The ordering regression first stops a response, sends 26 follow-up turns to move the stopped turn outside the default transcript page, switches to other tasks, reopens the original task, and verifies that the latest AI response—not the “Stopped” notice—occupies the bottom position.
 
+The `latest-conversation-history` desktop checkpoint covers an itemless failed turn in cached history: open the latest page, load the older page containing the failure, switch tasks, and reopen the conversation with the latest reply still at the bottom. Itemless turns must use their existing start or completion timestamps for ordering; a missing message timestamp must not disable ordering for the entire history. The checkpoint exercises the real executor, Codex history store, and Electron UI with test responses from the model service.
+
 The goal-continuation regression verifies that one `runtime.tasks.send` payload contains both the goal and first instruction, then reads the real executor log to confirm that submission awaits exactly one turn automatically started by `thread/goal/set`, issues no extra `turn/start`, and renders no error card during streaming or after completion.
 
 ## Markdown chunk windowing contract

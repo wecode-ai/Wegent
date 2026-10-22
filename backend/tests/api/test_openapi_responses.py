@@ -14,6 +14,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+
 from app.api.endpoints.openapi_responses import (
     _build_result_block_streaming_chunks,
     _create_non_streaming_response_unified,
@@ -32,8 +35,6 @@ from app.models.share_link import ResourceType
 from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
-from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
 
 
 @pytest.mark.asyncio
@@ -1551,11 +1552,12 @@ class TestOpenAPIResponsesCreate:
         test_team: Kind,
     ):
         """Video generation is asynchronous and rejects stream=true."""
+        from fastapi import HTTPException
+
         from app.api.endpoints.openapi_responses import (
             _create_streaming_response_unified,
         )
         from app.schemas.openapi_response import ResponseCreateInput
-        from fastapi import HTTPException
 
         setup = SimpleNamespace(
             task=SimpleNamespace(id=101, json={"metadata": {"labels": {}}}),
@@ -1718,7 +1720,9 @@ class TestOpenAPIResponsesCreate:
         )
         execution_request = SimpleNamespace(task_id=101, subtask_id=654)
         query_db = MagicMock()
-        query_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = []
+        query_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = (
+            []
+        )
 
         with (
             patch(
@@ -1786,7 +1790,9 @@ class TestOpenAPIResponsesCreate:
             model_config={"modelType": "image"},
         )
         query_db = MagicMock()
-        query_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = []
+        query_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = (
+            []
+        )
 
         with (
             patch(
@@ -1845,11 +1851,12 @@ class TestOpenAPIResponsesCreate:
         test_team: Kind,
     ):
         """Dispatch failures before terminal events should still persist FAILED."""
+        from fastapi import HTTPException
+
         from app.api.endpoints.openapi_responses import (
             _create_non_streaming_response_unified,
         )
         from app.schemas.openapi_response import ResponseCreateInput
-        from fastapi import HTTPException
 
         setup = SimpleNamespace(
             task=SimpleNamespace(id=101, json={"metadata": {"labels": {}}}),

@@ -5,13 +5,14 @@
 import base64
 import json
 
-from app.models.user import User
-from app.services.auth import create_task_token
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
+
+from app.models.user import User
+from app.services.auth import create_task_token
 
 DEFAULT_RUNTIME_AES_KEY = "12345678901234567890123456789012"
 

@@ -27,6 +27,7 @@ export * from "./project-create";
 export * from "./project-manage";
 export * from "./project-shell";
 export * from "./SharedIssueDetailEditor";
+export { IssueDetailSearchableSelect } from "./issue-detail/IssueDetailControls";
 export * from "./permissions";
 export * from "./platform";
 export * from "./plugin-catalog";

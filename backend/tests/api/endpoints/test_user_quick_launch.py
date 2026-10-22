@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
+
 from app.api.endpoints import users as users_endpoint
 from app.schemas.quick_launch import QuickLaunchPreparePresetRequest
 

@@ -101,6 +101,7 @@ export interface IssueDetailSearchableSelectOption<
   value: TValue;
   label: string;
   group?: string;
+  section?: string;
   searchText?: string;
 }
 
@@ -121,6 +122,9 @@ export interface IssueDetailSearchableSelectProps<TValue extends string> {
   disabled?: boolean;
   searchPlaceholder: string;
   emptyLabel: string;
+  triggerContent?: ReactNode;
+  footer?: ReactNode;
+  contentClassName?: string;
   groupLimit?: number;
   showAllLabel?(group: string, count: number): string;
   onChange(value: TValue): void;
@@ -135,7 +139,7 @@ function visibleSearchableSelectOptions<TValue extends string>(
 ) {
   if (normalizedQuery) {
     return options.filter((option) =>
-      `${option.label} ${option.searchText ?? ""} ${option.group ?? ""}`
+      `${option.label} ${option.searchText ?? ""} ${option.group ?? ""} ${option.section ?? ""}`
         .toLocaleLowerCase()
         .includes(normalizedQuery),
     );
@@ -164,6 +168,9 @@ export function IssueDetailSearchableSelect<TValue extends string>({
   disabled,
   searchPlaceholder,
   emptyLabel,
+  triggerContent,
+  footer,
+  contentClassName,
   groupLimit,
   showAllLabel,
   onChange,
@@ -210,7 +217,9 @@ export function IssueDetailSearchableSelect<TValue extends string>({
           aria-haspopup="listbox"
           disabled={disabled}
           className={className}
-        />
+        >
+          {triggerContent}
+        </button>
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Content
@@ -218,12 +227,12 @@ export function IssueDetailSearchableSelect<TValue extends string>({
           data-testid={`${testId}-menu`}
           sideOffset={4}
           collisionPadding={8}
-          style={portalTheme.style}
+          style={{ ...portalTheme.style, maxWidth: "calc(100vw - 16px)" }}
           onOpenAutoFocus={(event) => {
             event.preventDefault();
             searchInputRef.current?.focus({ preventScroll: true });
           }}
-          className={`${portalTheme.className} z-system-popover flex max-h-[min(320px,var(--radix-popover-content-available-height))] w-72 flex-col overflow-hidden rounded-xl border border-border bg-background p-1.5 text-text-primary shadow-lg`}
+          className={`${portalTheme.className} z-system-popover flex max-h-[min(320px,var(--radix-popover-content-available-height))] w-72 flex-col overflow-hidden rounded-xl border border-border bg-background p-1.5 text-text-primary shadow-lg ${contentClassName ?? ""}`}
         >
           <label className="flex h-8 shrink-0 items-center gap-2 rounded-lg bg-muted px-2.5 text-text-muted">
             <Search className="h-3.5 w-3.5 shrink-0" />
@@ -243,6 +252,9 @@ export function IssueDetailSearchableSelect<TValue extends string>({
             className="mt-1 min-h-0 overflow-y-auto overscroll-contain"
           >
             {visibleOptions.map((option, index) => {
+              const showSection =
+                option.section &&
+                option.section !== visibleOptions[index - 1]?.section;
               const previousGroup = visibleOptions[index - 1]?.group;
               const nextGroup = visibleOptions[index + 1]?.group;
               const showGroup = Boolean(
@@ -260,8 +272,15 @@ export function IssueDetailSearchableSelect<TValue extends string>({
                 !expandedGroups.has(option.group!);
               return (
                 <div key={option.value}>
+                  {showSection ? (
+                    <p className="px-2.5 pb-1 pt-2 text-xs font-medium text-text-secondary">
+                      {option.section}
+                    </p>
+                  ) : null}
                   {showGroup ? (
-                    <p className="px-2.5 pb-1 pt-2 text-xs font-medium text-text-muted">
+                    <p
+                      className={`px-2.5 pb-1 pt-2 text-xs font-medium text-text-muted ${option.section ? "pl-5" : ""}`}
+                    >
                       {option.group}
                     </p>
                   ) : null}
@@ -274,7 +293,7 @@ export function IssueDetailSearchableSelect<TValue extends string>({
                       onChange(option.value);
                       setOpen(false);
                     }}
-                    className={`flex min-h-9 w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-muted ${
+                    className={`flex min-h-9 w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-muted ${option.section ? "pl-7" : ""} ${
                       option.value === value ? "bg-muted font-medium" : ""
                     }`}
                   >
@@ -336,6 +355,11 @@ export function IssueDetailSearchableSelect<TValue extends string>({
                   </span>
                 </button>
               ))}
+            </div>
+          ) : null}
+          {footer ? (
+            <div className="mt-1 shrink-0 border-t border-border pt-1">
+              {footer}
             </div>
           ) : null}
         </Popover.Content>

@@ -1,4 +1,5 @@
 import type { CollaborationIssue } from "../types";
+import { isIssueVersionConflict } from "./issueVersionConflict";
 import type {
   SharedIssueDetailPort,
   SharedIssueDetailUpdateInput,
@@ -25,16 +26,7 @@ export async function persistIssueDetailFields(
   try {
     return await port.update(source.id, { version: source.version, ...patch });
   } catch (error) {
-    if (
-      !error ||
-      typeof error !== "object" ||
-      !(
-        ("status" in error && error.status === 409) ||
-        ("code" in error && error.code === "version_conflict") ||
-        ("errorCode" in error && error.errorCode === "version_conflict")
-      )
-    )
-      throw error;
+    if (!isIssueVersionConflict(error)) throw error;
     const latest = await port.get(source.id);
     if (
       fields.some(

@@ -100,10 +100,15 @@ export function issueCommentSubmission(value: string): IssueCommentSubmission {
     if (!id) continue;
     const label = reference.label.replace(/^\$?@/, "") || id;
     body = `${body.slice(0, reference.start)}@${label}${body.slice(reference.end)}`;
-    const key = `${type}:${id}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
     mentions.push({ type, id, label });
   }
-  return { body: body.trim(), mentions };
+  return {
+    body: body.trim(),
+    mentions: mentions.reverse().filter((mention) => {
+      const key = `${mention.type}:${mention.id}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }),
+  };
 }

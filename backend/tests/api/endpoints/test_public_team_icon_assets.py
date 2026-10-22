@@ -6,9 +6,10 @@ import io
 from unittest.mock import MagicMock
 
 import pytest
-from app.api.endpoints.admin import public_teams
 from fastapi import HTTPException
 from PIL import Image
+
+from app.api.endpoints.admin import public_teams
 
 
 def _headers(token: str) -> dict[str, str]:

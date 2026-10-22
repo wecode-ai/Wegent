@@ -154,6 +154,49 @@ test('rejects capabilities not granted by Electron', async () => {
   client.stop()
 })
 
+test('allows runtime preparation past the ordinary request deadline', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const hostToDsh = new PassThrough()
+  const dshToHost = new PassThrough()
+  const client = new ElectronHostClient({
+    token: 'test-token',
+    input: hostToDsh,
+    output: dshToHost,
+  })
+  dshToHost.once('data', () =>
+    hostToDsh.write(
+      `${JSON.stringify({
+        type: 'hello',
+        ok: true,
+        protocolVersion: 1,
+        capabilities: ['smartApps.start', 'smartApps.verify', 'window.getState'],
+      })}\n`
+    )
+  )
+  await client.start()
+  try {
+    for (const capability of ['smartApps.start', 'smartApps.verify']) {
+      let request
+      dshToHost.once('data', chunk => {
+        request = JSON.parse(chunk.toString())
+      })
+      const pending = client.invoke(capability)
+      await new Promise(setImmediate)
+      t.mock.timers.tick(120_001)
+      hostToDsh.write(
+        `${JSON.stringify({ type: 'response', id: request.id, ok: true, result: 'ready' })}\n`
+      )
+      assert.equal(await pending, 'ready')
+    }
+    const ordinary = assert.rejects(client.invoke('window.getState'), { code: 'host_timeout' })
+    await new Promise(setImmediate)
+    t.mock.timers.tick(120_001)
+    await ordinary
+  } finally {
+    client.stop()
+  }
+})
+
 test('reports an unexpected Electron host pipe close exactly once', async () => {
   const hostToDsh = new PassThrough()
   const dshToHost = new PassThrough()

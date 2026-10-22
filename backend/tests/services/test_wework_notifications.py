@@ -6,6 +6,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi import HTTPException
+
 from app.core.config import settings
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
@@ -28,8 +30,6 @@ from app.services.wework_notifications import (
     notification_links,
     send_wework_notification,
 )
-from fastapi import HTTPException
-
 from tests.services.test_loop_item_assignment import (
     _make_item,
     _make_member,

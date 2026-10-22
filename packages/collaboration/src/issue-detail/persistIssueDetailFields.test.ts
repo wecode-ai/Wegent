@@ -59,7 +59,7 @@ describe("persistIssueDetailFields", () => {
 
   it.each([
     { code: "version_conflict" },
-    { status: 409 },
+    { status: 409, detail: { code: "version_conflict", message: "TODO changed" } },
     { errorCode: "version_conflict" },
   ])("preserves a concurrent edit to the same field (%j)", async (conflict) => {
     const port = portFor(
@@ -69,6 +69,7 @@ describe("persistIssueDetailFields", () => {
     await expect(
       persistIssueDetailFields(issue, { title: "Renamed" }, port),
     ).rejects.toBe(conflict);
+    expect(port.get).toHaveBeenCalledWith(issue.id);
     expect(port.update).toHaveBeenCalledOnce();
   });
 
@@ -77,6 +78,16 @@ describe("persistIssueDetailFields", () => {
     const port = portFor(issue, error);
     await expect(
       persistIssueDetailFields(issue, { title: "Renamed" }, port),
+    ).rejects.toBe(error);
+    expect(port.get).not.toHaveBeenCalled();
+    expect(port.update).toHaveBeenCalledOnce();
+  });
+
+  it("does not classify a business denial as a version conflict", async () => {
+    const error = { status: 409, detail: "This action is unavailable" };
+    const port = portFor(issue, error);
+    await expect(
+      persistIssueDetailFields(issue, { status: "completed" }, port),
     ).rejects.toBe(error);
     expect(port.get).not.toHaveBeenCalled();
     expect(port.update).toHaveBeenCalledOnce();
