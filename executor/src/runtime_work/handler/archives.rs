@@ -398,6 +398,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn delete_archived_link(&self, link: RuntimeTaskLink) -> Value {
+        self.store.upsert_task(link.clone());
         self.mark_archived_link_deleted(&link);
         let background = match self.archived_delete_tx.send(link.clone()) {
             Ok(()) => true,
@@ -432,7 +433,17 @@ impl RuntimeWorkRpcHandler {
         let Ok(handle) = tokio::runtime::Handle::try_current() else {
             return;
         };
+        // Snapshot before accepting new requests so queued work is not replayed twice.
+        let interrupted = self
+            .store
+            .list_task_summaries(true)
+            .into_iter()
+            .filter(|link| link.status == "archived" && self.archived_link_is_deleted(link))
+            .collect::<Vec<_>>();
         handle.spawn(async move {
+            for link in interrupted {
+                handler.delete_archived_link_background(link).await;
+            }
             while let Some(link) = rx.recv().await {
                 handler.delete_archived_link_background(link).await;
                 sleep(ARCHIVED_BACKGROUND_DELETE_INTERVAL).await;
@@ -441,46 +452,12 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn delete_archived_link_background(&self, link: RuntimeTaskLink) {
-        if let Some(thread_id) = link.thread_id.as_deref() {
-            let started_at = Instant::now();
-            match self
-                .call_codex_thread_method_without_list_invalidation(
-                    "thread/delete",
-                    json!({"threadId": thread_id}),
-                )
-                .await
-            {
-                Ok(_) => {
-                    let elapsed = started_at.elapsed();
-                    if elapsed >= ARCHIVED_BACKGROUND_THREAD_DELETE_SLOW_THRESHOLD {
-                        log_executor_event(
-                            "runtime archived conversation background thread delete slow",
-                            &[
-                                ("local_task_id", link.local_task_id.clone()),
-                                ("thread_id", thread_id.to_owned()),
-                                ("elapsed_ms", elapsed.as_millis().to_string()),
-                            ],
-                        );
-                    }
-                }
-                Err(error) => {
-                    log_executor_event(
-                        "runtime archived conversation background thread delete failed",
-                        &[
-                            ("local_task_id", link.local_task_id.clone()),
-                            ("thread_id", thread_id.to_owned()),
-                            ("elapsed_ms", started_at.elapsed().as_millis().to_string()),
-                            ("error", error),
-                        ],
-                    );
-                }
-            }
-        }
+        let mut errors = Vec::new();
 
-        self.store.delete_task(&link.local_task_id);
         let has_other_link = self.store.list_task_summaries(true).iter().any(|task| {
-            normalize_workspace_path(&task.workspace_path)
-                == normalize_workspace_path(&link.workspace_path)
+            task.local_task_id != link.local_task_id
+                && normalize_workspace_path(&task.workspace_path)
+                    == normalize_workspace_path(&link.workspace_path)
         });
         let cleanup_link = link.clone();
         let worktrees = self.worktrees.clone();
@@ -515,7 +492,57 @@ impl RuntimeWorkRpcHandler {
                 ),
             ],
         );
-        if !has_other_link {
+        if let Some(error) = cleanup.get("error").and_then(Value::as_str) {
+            errors.push(error.to_owned());
+        }
+        if let Some(items) = cleanup.get("items").and_then(Value::as_array) {
+            errors.extend(items.iter().filter_map(|item| {
+                item.get("error").and_then(Value::as_str).map(|error| {
+                    format!(
+                        "{}: {error}",
+                        item["path"].as_str().unwrap_or(&link.workspace_path)
+                    )
+                })
+            }));
+        }
+        if let Some(thread_id) = link.thread_id.as_deref().filter(|_| errors.is_empty()) {
+            let started_at = Instant::now();
+            match self
+                .call_codex_thread_method_without_list_invalidation(
+                    "thread/delete",
+                    json!({"threadId": thread_id}),
+                )
+                .await
+            {
+                Ok(_) => {
+                    let elapsed = started_at.elapsed();
+                    if elapsed >= ARCHIVED_BACKGROUND_THREAD_DELETE_SLOW_THRESHOLD {
+                        log_executor_event(
+                            "runtime archived conversation background thread delete slow",
+                            &[
+                                ("local_task_id", link.local_task_id.clone()),
+                                ("thread_id", thread_id.to_owned()),
+                                ("elapsed_ms", elapsed.as_millis().to_string()),
+                            ],
+                        );
+                    }
+                }
+                Err(error) => {
+                    errors.push(error.clone());
+                    log_executor_event(
+                        "runtime archived conversation background thread delete failed",
+                        &[
+                            ("local_task_id", link.local_task_id.clone()),
+                            ("thread_id", thread_id.to_owned()),
+                            ("elapsed_ms", started_at.elapsed().as_millis().to_string()),
+                            ("error", error),
+                        ],
+                    );
+                }
+            }
+        }
+
+        if errors.is_empty() && !has_other_link {
             let worktrees = self.worktrees.clone();
             let workspace_path = PathBuf::from(&link.workspace_path);
             let forgotten =
@@ -525,11 +552,49 @@ impl RuntimeWorkRpcHandler {
                 .map_err(|error| error.to_string())
                 .and_then(|result| result.map_err(|error| error.to_string()))
             {
+                errors.push(error.clone());
                 log_executor_event(
                     "runtime archived conversation worktree snapshot cleanup failed",
-                    &[("local_task_id", link.local_task_id), ("error", error)],
+                    &[
+                        ("local_task_id", link.local_task_id.clone()),
+                        ("error", error),
+                    ],
                 );
             }
+        }
+        if errors.is_empty() {
+            self.store.delete_task(&link.local_task_id);
+        } else {
+            log_executor_event(
+                "runtime archived conversation background cleanup failed",
+                &[
+                    ("local_task_id", link.local_task_id.clone()),
+                    ("error", errors.join("; ")),
+                ],
+            );
+            // Preserve the archived task and worktree metadata so cleanup can be retried.
+            let mut ids = vec![link.local_task_id.clone()];
+            ids.extend(link.thread_id.iter().cloned());
+            self.store.unmark_deleted_archived_task_ids(&ids);
+        }
+        if let Some(event_tx) = &self.event_tx {
+            let _ = event_tx.send(json!({
+                "type": "event",
+                "event": "runtime.work.changed",
+                "payload": {
+                    "event_type": "runtime.work.changed",
+                    "taskId": link.local_task_id,
+                    "deviceId": self.device_id,
+                    "runtime": link.runtime,
+                    "eventSeq": next_runtime_event_sequence(),
+                    "data": {
+                        "archiveCleanup": {
+                            "workspacePath": link.workspace_path,
+                            "errors": errors,
+                        },
+                    },
+                },
+            }));
         }
     }
 

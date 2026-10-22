@@ -871,6 +871,49 @@ async fn app_runtime_archive_cleans_codex_threads_with_missing_rollout() {
 }
 
 #[tokio::test]
+async fn app_runtime_background_archive_cleanup_emits_completion_event() {
+    let _lock = env_lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+    let _codex_home = set_temp_codex_home("archive-cleanup-event");
+    let fake_codex = write_fake_codex(&root.path().join("calls.jsonl"));
+    let (event_tx, mut event_rx) = tokio::sync::broadcast::channel(64);
+    let handler = RuntimeWorkRpcHandler::with_event_sender(
+        "device-1",
+        fake_codex.display().to_string(),
+        event_tx,
+    );
+    let address = json!({"taskId": "thread-1", "workspacePath": "/tmp/project"});
+    for method in [
+        "runtime.tasks.archive",
+        "runtime.archived_conversations.delete",
+    ] {
+        let result = handler
+            .handle_runtime_rpc(json!({"method": method, "payload": address}))
+            .await
+            .unwrap();
+        assert_eq!(result["accepted"], true);
+    }
+
+    let event = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let event = event_rx.recv().await.unwrap();
+            if event["payload"]["data"]["archiveCleanup"].is_object() {
+                break event;
+            }
+        }
+    })
+    .await
+    .expect("the background worker must publish its actual cleanup result");
+    assert_eq!(event["payload"]["deviceId"], "device-1");
+    assert_eq!(event["payload"]["taskId"], "thread-1");
+    assert_eq!(
+        event["payload"]["data"]["archiveCleanup"]["errors"],
+        json!([])
+    );
+}
+
+#[tokio::test]
 async fn app_runtime_deletes_archived_codex_threads_through_app_server() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(

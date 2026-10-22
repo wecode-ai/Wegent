@@ -28,6 +28,10 @@ import {
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import { ContinueInImDialog } from '@/components/chat/ContinueInImDialog'
 import { TransientNotice } from '@/components/common/TransientNotice'
+import {
+  getArchivedCleanupError,
+  subscribeArchivedCleanupError,
+} from '@/components/settings/archivedConversationsSettingsState'
 import { DesktopWorkbenchMain } from './DesktopWorkbenchMain'
 import { WorkbenchSearchDialog } from './WorkbenchSearchDialog'
 import {
@@ -163,6 +167,8 @@ export function DesktopWorkbenchLayout({
   surfaceKind,
 }: DesktopWorkbenchLayoutProps) {
   const { t } = useTranslation('common')
+  const [archivedCleanupError, setArchivedCleanupError] = useState(getArchivedCleanupError)
+  useEffect(() => subscribeArchivedCleanupError(setArchivedCleanupError), [])
   const { logout: onLogout } = useAuth()
   const runtimeTaskLifecycle = useRuntimeTaskLifecycleStoreSnapshot()
   const {
@@ -1588,6 +1594,11 @@ export function DesktopWorkbenchLayout({
         message={notice?.message ?? null}
         tone={notice?.tone}
         onClear={() => setNotice(null)}
+      />
+      <TransientNotice
+        message={archivedCleanupError}
+        tone="error"
+        onClear={() => setArchivedCleanupError(null)}
       />
       <WorkbenchSearchDialog
         open={searchOpen}

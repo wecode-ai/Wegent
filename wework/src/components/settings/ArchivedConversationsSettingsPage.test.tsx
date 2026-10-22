@@ -2,7 +2,11 @@ import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ArchivedConversationsSettingsPage } from './ArchivedConversationsSettingsPage'
-import { resetArchivedConversationsSettingsStateForTest } from './archivedConversationsSettingsState'
+import {
+  reportArchivedCleanupFailure,
+  notifyArchivedBulkDeleteDeleted,
+  resetArchivedConversationsSettingsStateForTest,
+} from './archivedConversationsSettingsState'
 import { createLocalAppServices } from '@/api/local/localServices'
 import '@/i18n'
 import type { ArchivedConversationItem } from '@/types/api'
@@ -96,6 +100,24 @@ describe('ArchivedConversationsSettingsPage', () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
+  })
+
+  test('shows late cleanup failures and restores the task after leaving settings', async () => {
+    const item = archivedItem
+    listArchivedConversations.mockResolvedValue({ items: [item] })
+    const view = render(<ArchivedConversationsSettingsPage />)
+    await screen.findByTestId('archived-delete-button-device-1-codex-1')
+    const key = `${item.deviceId}\0${item.workspacePath}\0${item.taskId}`
+    act(() => notifyArchivedBulkDeleteDeleted(new Set([key])))
+    expect(screen.queryByTestId('archived-delete-button-device-1-codex-1')).not.toBeInTheDocument()
+    view.unmount()
+    act(() => reportArchivedCleanupFailure(key, '工作树清理失败：Git metadata missing'))
+
+    render(<ArchivedConversationsSettingsPage />)
+
+    expect(screen.getByTestId('archived-operation-error')).toHaveTextContent('Git metadata missing')
+    await screen.findByTestId('archived-delete-button-device-1-codex-1')
+    expect(screen.getByTestId('archived-operation-error')).toHaveTextContent('Git metadata missing')
   })
 
   test.each([true, false])(
