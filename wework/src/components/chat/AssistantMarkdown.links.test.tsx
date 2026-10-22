@@ -1,3 +1,4 @@
+import { copyTextToClipboard } from '@/lib/clipboard'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
 import { AssistantMarkdown } from './AssistantMarkdown'
@@ -6,6 +7,8 @@ import {
   MarkdownServicesProvider,
   browserMarkdownServices,
 } from '@wegent/collaboration/markdown'
+
+vi.mock('@/lib/clipboard', () => ({ copyTextToClipboard: vi.fn() }))
 
 test('renders Windows drive-letter markdown links as file links instead of [blocked]', () => {
   const onOpenFile = vi.fn()
@@ -32,11 +35,7 @@ test.each(['default', 'document', 'user'] as const)(
   'preserves SQL regex text in code and copied code for %s messages',
   async variant => {
     const sql = "regexp_extract(analysis_extra, 'cate[=:]([0-9]+)', 1)"
-    const writeText = vi.fn().mockResolvedValue(undefined)
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: { writeText },
-    })
+    vi.mocked(copyTextToClipboard).mockReset().mockResolvedValue(undefined)
     render(
       <AssistantMarkdown content={`\`${sql}\`\n\n\`\`\`sql\n${sql}\n\`\`\``} variant={variant} />
     )
@@ -45,7 +44,7 @@ test.each(['default', 'document', 'user'] as const)(
     expect(code).toHaveLength(2)
     for (const element of code) expect(element.textContent).toBe(sql)
     fireEvent.click(screen.getByTestId('markdown-code-copy-button'))
-    await vi.waitFor(() => expect(writeText).toHaveBeenCalledExactlyOnceWith(sql))
+    await vi.waitFor(() => expect(copyTextToClipboard).toHaveBeenCalledExactlyOnceWith(sql))
   }
 )
 

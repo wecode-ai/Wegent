@@ -322,6 +322,7 @@ export function createDesktopScenario({
       const responseId = `wework-streaming-text-${Date.now()}`
       const latestInput = latestModelInputText(body)
       if (latestInput.includes(MARKDOWN_LINKS_PROMPT)) {
+        recordScenarioRequest('markdown_original_links', body)
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
         response.end(
           sse([

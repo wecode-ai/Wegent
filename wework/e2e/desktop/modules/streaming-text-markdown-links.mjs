@@ -13,7 +13,7 @@ const COMPOSER = `${WORKBENCH} [data-testid="chat-message-input"][contenteditabl
 const ASSISTANT = `${WORKBENCH} [data-testid="assistant-message-content"]`
 const LINKS = `${ASSISTANT} [data-testid="assistant-markdown-link"]`
 const SQL = "regexp_extract(analysis_extra, 'cate[=:]([0-9]+)', 1)"
-export const MARKDOWN_LINKS_PROMPT = `WEWORK_E2E_MARKDOWN_ORIGINAL_LINKS: explain \`${SQL}\``
+export const MARKDOWN_LINKS_PROMPT = `Wework Markdown original links: explain \`${SQL}\``
 const FILE_TEXT = 'export const markdownOriginalLink = true'
 const PNG =
   'iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAEklEQVR4nGP4z8CAB+GTG8HSALfKY52fTcuYAAAAAElFTkSuQmCC'
@@ -49,7 +49,7 @@ export function createMarkdownLinkChecks({ captureScreenshot, workspacePath, uiT
     SQL,
     '```',
     '',
-    `[File link](<${filePath}:1>)`,
+    `[File link](<markdown links/report.ts:1>)`,
     `[File URI](${pathToFileURL(filePath).href})`,
     `[Directory URI](folder://${directory.replaceAll('\\', '/').replaceAll(' ', '%20')})`,
     '',
