@@ -43,6 +43,8 @@ const PAGED_SEARCH_TERM = 'foo bar & baz'
 const PAGED_REQUEST = `${PAGED_PROMPT} foo **bar** &amp; baz`
 const PAGED_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_PAGED_COMPLETE'
 const PAGED_ITEM_COUNT = 650
+const PAGED_ASSISTANT_ITEM = 'paged-history-assistant'
+const PAGED_ASSISTANT_BODY = 'WEWORK_E2E_PAGED_ANCHOR_BODY'
 const LONG_HISTORY_ITEM_COUNT = 1_200
 // High-entropy output forces several transport chunks even after compression.
 const LARGE_TOOL_OUTPUT = Array.from(
@@ -154,13 +156,28 @@ async function seedPaginatedTurnHistory(sqliteHome, threadId, cwd, timeoutMs) {
     const insert = database.prepare(`INSERT INTO thread_items
       (thread_id, turn_id, item_id, rollout_ordinal, created_at_ms, item_json, item_type)
       VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    // Put the search target before the tool history, outside the initial item budget.
+    insert.run(
+      threadId,
+      turn.turn_id,
+      PAGED_ASSISTANT_ITEM,
+      ordinal + 1,
+      Date.now(),
+      JSON.stringify({
+        type: 'agentMessage',
+        id: PAGED_ASSISTANT_ITEM,
+        text: PAGED_ASSISTANT_BODY,
+        phase: 'final_answer',
+      }),
+      'agentMessage'
+    )
     for (let index = 0; index < PAGED_ITEM_COUNT; index += 1) {
       const id = `paged-history-command-${index}`
       insert.run(
         threadId,
         turn.turn_id,
         id,
-        ordinal + index + 1,
+        ordinal + index + 2,
         Date.now(),
         JSON.stringify({
           type: 'commandExecution',
@@ -744,6 +761,15 @@ export function createDesktopScenario({
       assert.equal(persistedSearch.totalMatches, 1, 'Persisted search missed rendered user text')
       assert.equal(persistedSearch.matches.length, 1)
       assert.ok(persistedSearch.matches[0].cursor?.startsWith('wework-codex-search:'))
+      const anchorSearch = await requestExecutor(
+        control,
+        'runtime.tasks.transcript.search',
+        { address: pagedAddress, query: PAGED_ASSISTANT_BODY },
+        uiTimeoutMs
+      )
+      assert.equal(anchorSearch.totalMatches, 1)
+      assert.equal(anchorSearch.matches[0].itemId, PAGED_ASSISTANT_ITEM)
+      const anchorMessageId = `runtime-view:${anchorSearch.matches[0].turnId}:assistant`
       const pageRequest = { address: pagedAddress, limit: 50 }
       const nativePage = await requestExecutor(
         control,
@@ -756,6 +782,10 @@ export function createDesktopScenario({
       )
       assert.equal(nativePage.hasMoreBefore, true, 'The fixture must exceed the native item budget')
       assert.ok(nativePage.beforeCursor?.startsWith('wework-codex-items:'))
+      assert.ok(
+        nativePage.turns.every(turn => turn.items.every(item => item.id !== PAGED_ASSISTANT_ITEM)),
+        'The anchor search must require loading an older native item'
+      )
       const cachedPage = await requestExecutor(
         control,
         'runtime.tasks.transcript',
@@ -813,6 +843,16 @@ export function createDesktopScenario({
       const originalSearchPane = JSON.parse(
         await control.command('getWorkbenchDebugSnapshot', 'body')
       ).pane
+      const comparison = originalSearchPane.messageStyleComparison
+      const partialAssistant = [comparison.transcriptLoaded, comparison.currentStreaming].find(
+        message => message?.id === anchorMessageId
+      )
+      assert.ok(partialAssistant, 'The partially loaded anchor assistant was not projected')
+      assert.equal(partialAssistant.hasVisibleContent, false, 'The older body was already loaded')
+      assert.ok(
+        partialAssistant.blockCount < PAGED_ITEM_COUNT,
+        'The live turn was already complete'
+      )
       const findInput = '[data-testid="conversation-find-input"]'
       await control.command('nativePress', COMPOSER_SELECTOR, {
         key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
@@ -849,10 +889,40 @@ export function createDesktopScenario({
       await control.command('waitFor', '[data-testid="user-message-content"]', {
         text: `${PAGED_PROMPT} ${PAGED_SEARCH_TERM}`,
       })
-      const pagedSnapshot = JSON.parse(await control.command('performanceSnapshot', 'body'))
-      assert.ok(
-        pagedSnapshot.runtimeAssistantDisplayItemCount >= PAGED_ITEM_COUNT,
-        'Search must preserve the complete anchor turn projection'
+      await waitForHighlightedSearchTarget(
+        control,
+        `${PAGED_PROMPT} ${PAGED_SEARCH_TERM}`,
+        uiTimeoutMs
+      )
+      // The prompt is already cached. Only the older assistant item exercises isolated hydration.
+      await control.command('fill', findInput, { value: PAGED_ASSISTANT_BODY })
+      await waitForHistorySearchCount(control, '1 / 1', uiTimeoutMs)
+      const anchorMessage = `${ACTIVE_WORKBENCH_SELECTOR} [data-message-id="${anchorMessageId}"]`
+      await waitForHighlightedSearchTarget(
+        control,
+        PAGED_ASSISTANT_BODY,
+        uiTimeoutMs,
+        `${anchorMessage} [data-testid="assistant-message-content"]`,
+        0
+      )
+      await control.command('expandProcessingSummaries', 'body')
+      const toolStats = `${anchorMessage} [data-testid="processing-tool-stats"]`
+      await control.command('waitFor', toolStats, { text: String(PAGED_ITEM_COUNT) })
+      assert.equal(
+        (await control.command('getText', toolStats)).trim(),
+        String(PAGED_ITEM_COUNT),
+        'The isolated search page must project every tool in the anchor turn'
+      )
+      for (const index of [0, PAGED_ITEM_COUNT - 1]) {
+        const tool = `${anchorMessage} [data-processing-block-id="paged-history-command-${index}"]`
+        await control.command('waitFor', tool)
+        await control.command('scrollIntoView', tool)
+        await control.command('waitFor', tool, { visible: true })
+      }
+      assert.equal(
+        Number(await control.command('getElementCount', '[data-testid="conversation-find-retry"]')),
+        0,
+        'Loading the complete anchor turn must not report a history failure'
       )
       await control.command('nativePress', findInput, { key: 'Escape' })
       await control.command('waitFor', loadOlder)
