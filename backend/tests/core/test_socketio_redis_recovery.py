@@ -8,7 +8,7 @@ import json
 import socket
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 import pytest_asyncio
@@ -149,34 +149,53 @@ class RedisSubscriptionServer:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("close_error", [None, ConnectionResetError, BrokenPipeError])
-async def test_connection_cleanup_handles_peer_disconnect(
+async def test_subscription_cleanup_handles_peer_disconnect(
     close_error: type[ConnectionError] | None,
 ) -> None:
     stub = RedisSubscriptionServer(partial_response=False)
     reader = asyncio.StreamReader()
     reader.feed_eof()
-    writer = MagicMock(spec=asyncio.StreamWriter)
+    writer = Mock(spec=asyncio.StreamWriter)
     writer.wait_closed = AsyncMock(side_effect=close_error)
+    heartbeat = asyncio.create_task(asyncio.Event().wait())
+    stub.subscribers.add(writer)
+    stub.heartbeats[writer] = heartbeat
 
     await stub.handle(reader, writer)
 
     writer.close.assert_called_once_with()
     writer.wait_closed.assert_awaited_once_with()
+    assert heartbeat.cancelled()
+    assert not stub.subscribers
+    assert not stub.heartbeats
     assert not stub.handlers
     assert stub.connections_closed.is_set()
 
 
 @pytest.mark.asyncio
-async def test_connection_cleanup_preserves_unexpected_close_errors() -> None:
+@pytest.mark.parametrize("close_error_type", [RuntimeError, asyncio.CancelledError])
+async def test_subscription_cleanup_preserves_unexpected_close_errors(
+    close_error_type: type[BaseException],
+) -> None:
     stub = RedisSubscriptionServer(partial_response=False)
     reader = asyncio.StreamReader()
     reader.feed_eof()
-    writer = MagicMock(spec=asyncio.StreamWriter)
-    writer.wait_closed = AsyncMock(side_effect=RuntimeError("unexpected close failure"))
+    writer = Mock(spec=asyncio.StreamWriter)
+    close_error = close_error_type("unexpected close failure")
+    writer.wait_closed = AsyncMock(side_effect=close_error)
+    heartbeat = asyncio.create_task(asyncio.Event().wait())
+    stub.subscribers.add(writer)
+    stub.heartbeats[writer] = heartbeat
 
-    with pytest.raises(RuntimeError, match="unexpected close failure"):
+    with pytest.raises(close_error_type) as raised:
         await stub.handle(reader, writer)
+    assert raised.value is close_error
 
+    writer.close.assert_called_once_with()
+    writer.wait_closed.assert_awaited_once_with()
+    assert heartbeat.cancelled()
+    assert not stub.subscribers
+    assert not stub.heartbeats
     assert not stub.handlers
     assert stub.connections_closed.is_set()
 

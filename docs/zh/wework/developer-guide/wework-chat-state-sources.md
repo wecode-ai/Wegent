@@ -14,6 +14,9 @@ sidebar_position: 18
 4. `useWorkbenchPaneSession` 管理消息、排队输入等 pane 内容，但任务和 turn 生命周期事实全部读取 Store。
 5. `runtimePaneStatus.ts` 只是把生命周期快照投影到现有 pane 展示字段的只读适配层，不能自行推断执行或 turn 状态。
 
+侧栏优先级筛选中的显式 `interactionStatus` 也只读取生命周期 Store 的投影；
+任务列表旧快照不能在视图层重新覆盖已经接受的用户回复。
+
 ## 最近 turn 的身份
 
 `turn.id` 只表示正在运行的 turn，完成后可以清空。`turn.latestId` 保留从运行事件、transcript 或 executor 快照确认的最近 turn 身份；任务列表刷新、完成时间精度变化和其他元数据更新不能清除它。回复预测以 `turn.latestId` 标识请求，等待真实 turn 身份可用后才生成建议。新 turn 启动时，原建议仍会失效。
@@ -328,6 +331,15 @@ assistant 之前。canonical `turns` 是前端 transcript 的唯一输入，不�
 留在兼容 `messages` 数组中。
 
 ### Assistant 轮内显示顺序与字号
+
+运行中 transcript 的缓存用于切回任务或恢复页面时读取已有消息。缓存消息已有
+`runtimeItems` 时，canonical `turns` 必须直接使用这些条目，保留原生 item ID、
+条目类型和顺序，包括空数组。不能再用展示用的 `content` 与 `blocks` 重建条目：
+这会把正文换成聚合消息 ID，并把正文移到过程消息前，导致后续原生 ID 的增量被
+追加为另一段正文。文本提取也必须保留原始空白；快照末尾的空格或换行可能是
+下一个增量的分隔符，不能按元数据字段的规则裁剪。`streaming-content` E2E 在段落
+换行后暂停普通文本并恢复页面，再继续输出，分别检查缓存条目、正文唯一性和
+过程消息位置；不能只检查完成快照。
 
 同一个 assistant turn 内的最终文本、过程文本和工具块必须按 runtime item 的到达顺序
 投影到界面，不能先按类型分组再固定渲染。特别是最终文本先到、过程文本后到时，后到

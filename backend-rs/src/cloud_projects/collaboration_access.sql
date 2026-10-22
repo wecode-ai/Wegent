@@ -35,10 +35,16 @@ WITH parents AS (
     LEFT JOIN memberships AS direct ON direct.resource_type = 'CloudProject' AND direct.resource_id = CAST(loop_items.id AS SIGNED)
     LEFT JOIN memberships AS space_member ON space_member.resource_type = 'Workspace' AND space_member.resource_id = kinds.id
     WHERE loop_items.resource_type = 'project' AND loop_items.status = 'active'
+), resolved_access AS (
+    SELECT access.*,
+           CASE WHEN inherited_priority = 1 THEN 1
+                ELSE COALESCE(direct_priority, inherited_priority, public_priority, 5)
+           END AS priority
+    FROM access
 )
-SELECT {columns}, LEAST(COALESCE(access.direct_priority, 5), COALESCE(access.inherited_priority, 5), COALESCE(access.public_priority, 5)) AS anon_1_priority,
+SELECT {columns}, access.priority AS anon_1_priority,
        access.workspace_id, access.workspace_name, access.workspace_public_id,
        access.workspace_priority, access.direct_priority, access.inherited_priority, access.public_priority
-FROM loop_items JOIN access ON access.project_id = loop_items.id
-WHERE LEAST(COALESCE(access.direct_priority, 5), COALESCE(access.inherited_priority, 5), COALESCE(access.public_priority, 5)) <= 4
+FROM loop_items JOIN resolved_access AS access ON access.project_id = loop_items.id
+WHERE access.priority <= 4
 {project_filter} {workspace_filter}
