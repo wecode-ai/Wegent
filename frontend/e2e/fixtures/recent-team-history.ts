@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { test as base, expect, type BrowserContext, type Page } from '@playwright/test'
+import { createAuthenticatedSocketClient } from '../../../packages/chat-core/src/socket/authenticatedSocketClient'
 import { ADMIN_USER } from '../config/test-users'
 import { ApiClient, createApiClient, type ApiResponse } from '../utils/api-client'
 import { buildStorageState, getJwtExpiryMs } from '../utils/auth-state'
@@ -28,15 +29,12 @@ export class HistoryAccount {
   private removedPaths = new Set<string>()
   private sequence = 0
   private botId = 0
-  private readonly workspaceName: string
 
   constructor(
     readonly api: ApiClient,
     readonly token: string,
     readonly prefix: string
-  ) {
-    this.workspaceName = `${prefix}-workspace`
-  }
+  ) {}
 
   async initialize(): Promise<void> {
     const modelName = `${this.prefix}-model`
@@ -70,15 +68,6 @@ export class HistoryAccount {
     )
     this.botId = bot.id
     this.removeLater(`/api/bots/${bot.id}`)
-    checked(
-      await this.api.post('/api/v1/namespaces/default/workspaces', {
-        kind: 'Workspace',
-        metadata: { name: this.workspaceName, namespace: 'default' },
-        spec: { repository: { gitUrl: '', gitRepo: '', gitDomain: '', branchName: '' } },
-      }),
-      201
-    )
-    this.removeLater(`/api/v1/namespaces/default/workspaces/${this.workspaceName}`)
   }
 
   async team(label: string): Promise<HistoryTeam> {
@@ -99,37 +88,38 @@ export class HistoryAccount {
 
   async seed(team: HistoryTeam, mode: HistoryMode = 'chat'): Promise<HistoryTask> {
     const name = `${this.prefix}-history-${++this.sequence}`
-    // Persist history through the real CRD API, including reference validation and execution.
-    // The browser/send tests below create their new tasks through the real chat transport.
-    checked(
-      await this.api.post('/api/v1/namespaces/default/tasks', {
-        kind: 'Task',
-        metadata: { name, namespace: 'default', labels: { taskType: mode, type: 'online' } },
-        spec: {
-          title: name,
-          prompt: name,
-          teamRef: { name: team.name, namespace: 'default' },
-          workspaceRef: { name: this.workspaceName, namespace: 'default' },
-        },
-        status: { state: 'Available', status: 'PENDING', progress: 0 },
-      }),
-      201
-    )
-    const tasks = await this.tasks()
-    const task = tasks.find(item => item.prompt === name)
-    expect(task, `Persisted history ${name}`).toBeDefined()
-    expect(task!.team_id).toBe(team.id)
-    // Finish execution before seeding another entry so completion cannot reorder history.
-    await expect
-      .poll(
-        async () =>
-          checked(
-            await this.api.get<{ task_status: string }>(`/api/tasks/${task!.id}/runtime-check`)
-          ).task_status,
-        { timeout: 30_000 }
-      )
-      .toBe('COMPLETED')
-    return task!
+    const client = createAuthenticatedSocketClient({
+      socketBaseUrl: () => process.env.E2E_API_URL || 'http://localhost:8000',
+      getToken: () => this.token,
+      namespace: '/chat',
+    })
+    try {
+      await client.ensureConnected()
+      // Use the same authenticated send and execution pipeline as the product.
+      const ack = (await client.getRawSocket()!.timeout(10_000).emitWithAck('chat:send', {
+        team_id: team.id,
+        message: name,
+        title: name,
+        task_type: mode,
+      })) as { task_id?: number; error?: string }
+      expect(ack.error).toBeUndefined()
+      expect(ack.task_id).toEqual(expect.any(Number))
+      // Finish execution before another send so completion cannot reorder history.
+      await expect
+        .poll(
+          async () =>
+            checked(
+              await this.api.get<{ task_status: string }>(`/api/tasks/${ack.task_id}/runtime-check`)
+            ).task_status,
+          { timeout: 30_000 }
+        )
+        .toBe('COMPLETED')
+      const task = (await this.tasks()).find(item => item.id === ack.task_id)
+      expect(task, `Persisted history ${name}`).toMatchObject({ team_id: team.id, prompt: name })
+      return task!
+    } finally {
+      client.dispose()
+    }
   }
 
   async tasks(): Promise<HistoryTask[]> {
