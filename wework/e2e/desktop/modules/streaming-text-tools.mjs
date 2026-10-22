@@ -84,6 +84,7 @@ export function createStreamingToolChecks({
       stableMs: 250,
       timeoutMs: uiTimeoutMs,
     })
+    const streamingSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
     await control.command('markElementWithText', `${LONG_CODE_SCROLL_SELECTOR} code`, {
       text: LONG_CODE_STREAM_MARKER,
       value: LONG_CODE_E2E_ID,
@@ -144,6 +145,19 @@ export function createStreamingToolChecks({
       )
       await new Promise(resolve => setTimeout(resolve, 100))
     }
+    const completedSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    await writeFile(
+      join(resultDir, 'streaming-text-long-code-identity.json'),
+      JSON.stringify(
+        {
+          streaming: streamingSnapshot.pane?.messageSummary,
+          completed: completedSnapshot.pane?.messageSummary,
+        },
+        null,
+        2
+      ) + '\n',
+      'utf8'
+    )
     assert.equal(
       Number(await control.command('getElementCount', LONG_CODE_MARKED_SELECTOR)),
       1,

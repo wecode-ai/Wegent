@@ -8,6 +8,7 @@ import {
   latestModelInputText,
   orderFollowUpNumber,
   streamingEvents,
+  longCodeStreamingEvents,
   SUBAGENT_CHILD_COMMENTARY,
   selectShellTool,
   SUBAGENT_CHILD_TOOL_START,
@@ -39,7 +40,6 @@ import {
   GENERATED_IMAGE_COMPLETION,
   LONG_CODE_PROMPT,
   LONG_CODE_COMPLETION,
-  LONG_CODE_REASONING,
   LONG_CODE_STREAM_MARKER,
   ORDER_FOLLOW_UP_COUNT,
   ORDER_COMPLETION_PREFIX,
@@ -496,20 +496,14 @@ export function createDesktopScenario({
         return true
       }
       if (latestInput.includes(LONG_CODE_PROMPT)) {
-        const stream = streamingEvents(responseId, LONG_CODE_COMPLETION, 'final_answer')
+        const stream = longCodeStreamingEvents(responseId)
         response.writeHead(200, {
           'Cache-Control': 'no-cache',
           Connection: 'keep-alive',
           'Content-Type': 'text/event-stream; charset=utf-8',
         })
         response.flushHeaders()
-        response.write(
-          sse([
-            ...stream.start.slice(0, 1),
-            ...reasoningEvents('wework-long-code-reasoning', LONG_CODE_REASONING, 4),
-            ...stream.start.slice(1),
-          ])
-        )
+        response.write(sse(stream.start))
         let offset = 0
         let streamedText = ''
         let streamHeld = false
@@ -518,7 +512,7 @@ export function createDesktopScenario({
         const streamedCode = LONG_CODE_COMPLETION.slice(0, codeEnd + '\n```'.length)
         const windowedTail = LONG_CODE_COMPLETION.slice(streamedCode.length)
         for (const chunk of streamedCode.match(/[\s\S]{1,48}/g) ?? []) {
-          response.write(sse(textDeltaEvents(stream.itemId, chunk, offset)))
+          response.write(sse(textDeltaEvents(stream.itemId, chunk, offset, stream.outputIndex)))
           response.flush?.()
           offset += [...chunk].length
           streamedText += chunk
@@ -528,7 +522,9 @@ export function createDesktopScenario({
           }
           await new Promise(resolve => setTimeout(resolve, 16))
         }
-        response.write(sse(textDeltaEvents(stream.itemId, windowedTail, offset)))
+        response.write(
+          sse(textDeltaEvents(stream.itemId, windowedTail, offset, stream.outputIndex))
+        )
         response.end(sse(stream.finish))
         return true
       }

@@ -621,6 +621,7 @@ export function createLocalProjectChatAgentApi(
       projectId: string,
       options?: { forceRefresh?: boolean }
     ): Promise<LocalProjectChatAgent[]> {
+      if (options?.forceRefresh) cache.invalidate(`agents:${projectId}`)
       return cache.get(
         `agents:${projectId}`,
         async () => {

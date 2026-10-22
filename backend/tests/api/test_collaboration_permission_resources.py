@@ -217,6 +217,27 @@ def test_cp10_cp11_cp13_resource_use_requires_space_share_and_project_binding(
     assert share.status_code == 201, share.text
     with pytest.raises(HTTPException, match="not enabled"):
         collaboration_permission_service.require_project_team(test_db, pid, team.id)
+    member_binding = test_client.post(
+        f"/api/v1/cloud-projects/{pid}/chat-agents",
+        headers=scope["member"],
+        json={**body, "share_with_workspace": True},
+    )
+    assert member_binding.status_code == 403
+    unbound_issue = test_client.post(
+        f"/api/v1/cloud-projects/{pid}/loop-items",
+        headers=scope["member"],
+        json={"title": "Shared Agent still requires a project binding"},
+    ).json()
+    unbound_assignment = test_client.post(
+        f"/api/v1/cloud-projects/{pid}/loop-items/{unbound_issue['id']}/assign",
+        headers=scope["member"],
+        json={
+            "version": unbound_issue["version"],
+            "assignee_type": "team",
+            "assignee_id": str(team.id),
+        },
+    )
+    assert unbound_assignment.status_code == 422
     enabled = test_client.post(
         f"/api/v1/cloud-projects/{pid}/chat-agents", headers=scope["owner"], json=body
     )

@@ -290,6 +290,43 @@ describe('reply prediction provider', () => {
     expect(predict.mock.calls[0][0].signal?.aborted).toBe(true)
   })
 
+  it('keeps a pending prediction when native recovery reorders the same model options', async () => {
+    let resolve!: (result: { suggestion: string }) => void
+    const predict = vi.fn<Predict>(
+      () =>
+        new Promise(done => {
+          resolve = done
+        })
+    )
+    const original = {
+      ...source,
+      modelSelection: {
+        modelName: 'session-model',
+        modelType: 'runtime' as const,
+        options: { collaborationMode: 'default', speed: 'standard', codexProviderId: 'provider' },
+      },
+    }
+    const { rerender } = render(fixture(predict, original))
+    await waitFor(() => expect(predict).toHaveBeenCalledTimes(1))
+
+    rerender(
+      fixture(predict, {
+        ...original,
+        modelSelection: {
+          options: { codexProviderId: 'provider', speed: 'standard', collaborationMode: 'default' },
+          modelType: 'runtime',
+          modelName: 'session-model',
+        },
+      })
+    )
+
+    expect(predict.mock.calls[0][0].signal?.aborted).toBe(false)
+    expect(predict).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('status')).toBeVisible()
+    resolve({ suggestion: '请继续' })
+    await waitFor(() => expect(screen.getByRole('button')).toHaveTextContent('请继续'))
+  })
+
   it('keeps a completed-turn prediction when a task refresh clears the active turn ID', async () => {
     let resolve!: (result: { suggestion: string }) => void
     const predict = vi.fn<Predict>(

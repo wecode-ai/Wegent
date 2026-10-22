@@ -22,20 +22,17 @@ export interface ReplyPredictionResult {
 }
 
 export function replyPredictionKey(source: ReplyPredictionSource) {
-  const selection = source.modelSelection
-  // Runtime snapshots may serialize the same model options in a different order.
-  return `${source.scope}\u0000${JSON.stringify([
-    source.latestTurnId || source.revision,
-    selection
-      ? {
-          modelName: selection.modelName,
-          modelType: selection.modelType,
-          options: Object.fromEntries(
-            Object.entries(selection.options ?? {}).sort(([a], [b]) => a.localeCompare(b))
-          ),
-        }
-      : selection,
-  ])}`
+  return `${source.scope}\u0000${JSON.stringify(
+    [source.latestTurnId || source.revision, source.modelSelection],
+    (_key, value: unknown) =>
+      value && typeof value === 'object' && !Array.isArray(value)
+        ? Object.fromEntries(
+            Object.keys(value)
+              .sort()
+              .map(key => [key, (value as Record<string, unknown>)[key]])
+          )
+        : value
+  )}`
 }
 
 type PredictionApi = NonNullable<WorkbenchServices['replyPredictionApi']>

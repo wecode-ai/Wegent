@@ -14,7 +14,9 @@ import {
   readRequestBody,
   responseCompleted,
   responseCreated,
+  streamingTextEvents,
 } from '../modules/response-protocol.mjs'
+import { textDeltaEvents } from '../modules/streaming-text-fixture.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const TITLE = `App queue identity ${process.pid}`
@@ -111,20 +113,32 @@ export function createDesktopScenario({ modelResponseTimeoutMs, workbenchReadyTi
       const isReply = isAssignment && JSON.stringify(body).includes(REPLY)
       const id = `app-queue-identity-${Date.now()}`
       const final = assistantMessage(isReply ? REPLY_RESULT : RESULT)
-      const progress = assistantMessage(PROGRESS)
-      progress.item.phase = 'commentary'
+      const progress = streamingTextEvents(id, PROGRESS, 'commentary')
       response.writeHead(200, {
         'content-type': 'text/event-stream',
         'cache-control': 'no-cache',
       })
       response.flushHeaders()
-      response.write(createSse([responseCreated(id), ...(isReply ? [progress] : [])]))
+      response.write(
+        createSse(
+          isReply
+            ? [
+                ...progress.start,
+                ...textDeltaEvents(progress.itemId, PROGRESS),
+                ...progress.finish.filter(event => event.type !== 'response.completed'),
+              ]
+            : [responseCreated(id)]
+        )
+      )
       if (isReply) await replyReleased
       if (!response.destroyed && !response.writableEnded) {
-        response.write(createSse([final]))
-        response.end(
-          createSse([responseCompleted(id, [...(isReply ? [progress.item] : []), final.item])])
-        )
+        const output = isReply
+          ? [
+              progress.finish.find(event => event.type === 'response.output_item.done').item,
+              final.item,
+            ]
+          : [final.item]
+        response.end(createSse([final]) + createSse([responseCompleted(id, output)]))
       }
       return true
     },

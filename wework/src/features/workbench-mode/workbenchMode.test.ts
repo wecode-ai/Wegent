@@ -1,83 +1,40 @@
-import { describe, expect, test, vi } from 'vitest'
-import { defaultAppPreferences } from '@/desktop/appPreferences'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { APP_PREFERENCES_CHANGED_EVENT } from '@/desktop/appPreferences'
 import { changeWorkbenchMode } from './workbenchMode'
 
-function dependencies(
-  overrides: Partial<{
-    restartPlugins: () => Promise<void>
-    updatePreferences: (patch: {
-      workbenchMode: 'focus' | 'developer'
-    }) => Promise<typeof defaultAppPreferences>
-  }> = {}
-) {
-  return {
-    restartPlugins: vi.fn().mockResolvedValue(undefined),
-    updatePreferences: vi
-      .fn()
-      .mockImplementation(async patch => ({ ...defaultAppPreferences, ...patch })),
-    ...overrides,
-  }
-}
+vi.mock('@/api/dsh/desktopHost', () => ({ invokeDesktopHost: vi.fn() }))
 
 describe('workbenchMode', () => {
-  test('persists focus mode and restarts the plugin runtime', async () => {
-    const actions = dependencies()
-
-    const preferences = await changeWorkbenchMode('developer', 'focus', actions)
-
-    expect(actions.updatePreferences).toHaveBeenCalledWith({ workbenchMode: 'focus' })
-    expect(actions.restartPlugins).toHaveBeenCalledOnce()
-    expect(preferences.workbenchMode).toBe('focus')
+  beforeEach(() => {
+    vi.mocked(invokeDesktopHost).mockReset()
   })
 
-  test('does not restart when the selected mode is unchanged', async () => {
-    const actions = dependencies()
+  test('uses one host transaction and publishes the persisted preferences', async () => {
+    vi.mocked(invokeDesktopHost).mockResolvedValue({ workbenchMode: 'focus' })
+    const changed = vi.fn()
+    window.addEventListener(APP_PREFERENCES_CHANGED_EVENT, changed)
+    try {
+      const preferences = await changeWorkbenchMode('focus')
 
-    await changeWorkbenchMode('developer', 'developer', actions)
-
-    expect(actions.restartPlugins).not.toHaveBeenCalled()
+      expect(invokeDesktopHost).toHaveBeenCalledExactlyOnceWith('runtime.changeWorkbenchMode', {
+        mode: 'focus',
+      })
+      expect(preferences.workbenchMode).toBe('focus')
+      expect(changed).toHaveBeenCalledOnce()
+      expect(changed.mock.calls[0][0].detail).toEqual(preferences)
+    } finally {
+      window.removeEventListener(APP_PREFERENCES_CHANGED_EVENT, changed)
+    }
   })
 
-  test('does not restart when saving the preference fails', async () => {
-    const actions = dependencies({
-      updatePreferences: vi.fn().mockRejectedValue(new Error('save failed')),
+  test('does not roll back an accepted mode when a reload loses the response', async () => {
+    vi.mocked(invokeDesktopHost).mockRejectedValue(new Error('response lost during reload'))
+
+    await expect(changeWorkbenchMode('focus')).rejects.toThrow('response lost during reload')
+
+    expect(invokeDesktopHost).toHaveBeenCalledExactlyOnceWith('runtime.changeWorkbenchMode', {
+      mode: 'focus',
     })
-
-    await expect(changeWorkbenchMode('developer', 'focus', actions)).rejects.toThrow('save failed')
-
-    expect(actions.restartPlugins).not.toHaveBeenCalled()
-  })
-
-  test('restores the previous preference when scheduling the restart fails', async () => {
-    const actions = dependencies({
-      restartPlugins: vi.fn().mockRejectedValue(new Error('restart failed')),
-    })
-
-    await expect(changeWorkbenchMode('developer', 'focus', actions)).rejects.toThrow(
-      'restart failed'
-    )
-    expect(actions.updatePreferences.mock.calls).toEqual([
-      [{ workbenchMode: 'focus' }],
-      [{ workbenchMode: 'developer' }],
-    ])
-  })
-
-  test('propagates both restart and preference rollback failures', async () => {
-    const restartError = new Error('restart failed')
-    const rollbackError = new Error('rollback failed')
-    const actions = dependencies({
-      restartPlugins: vi.fn().mockRejectedValue(restartError),
-      updatePreferences: vi
-        .fn()
-        .mockResolvedValueOnce({ ...defaultAppPreferences, workbenchMode: 'focus' })
-        .mockRejectedValueOnce(rollbackError),
-    })
-
-    const failure = await changeWorkbenchMode('developer', 'focus', actions).catch(
-      error => error as AggregateError
-    )
-
-    expect(failure).toBeInstanceOf(AggregateError)
-    expect(failure.errors).toEqual([restartError, rollbackError])
   })
 })
