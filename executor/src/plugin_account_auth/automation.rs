@@ -72,6 +72,16 @@ impl Reconciler {
         if intents.len() > 256 {
             return Err(AuthError("plugin_auth_invalid_response"));
         }
+        if super::e2e_reconcile_marker().is_some() {
+            crate::logging::log_executor_event(
+                "plugin auth automatic cycle",
+                &[
+                    ("installed_count", selected.len().to_string()),
+                    ("intent_count", intents.len().to_string()),
+                    ("cooldown_count", self.retries.len().to_string()),
+                ],
+            );
+        }
         let mut pending = tokio::task::JoinSet::new();
         for intent in intents {
             let key = (intent.installed_plugin_id, intent.connector_slug);
@@ -82,6 +92,18 @@ impl Reconciler {
             let home = home.to_owned();
             pending.spawn(async move {
                 let result = migrate(transport, &home, &intent.id).await;
+                crate::logging::log_executor_event(
+                    "plugin auth automatic enrollment finished",
+                    &[
+                        ("installed_plugin_id", key.0.to_string()),
+                        ("connector_slug", key.1.clone()),
+                        ("ok", result.is_ok().to_string()),
+                        (
+                            "code",
+                            result.as_ref().err().map_or("", |error| error.0).to_owned(),
+                        ),
+                    ],
+                );
                 (key, result.is_ok())
             });
             if pending.len() >= 4 {
