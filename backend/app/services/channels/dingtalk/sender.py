@@ -18,13 +18,37 @@ API Reference:
 import json
 import logging
 import uuid
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import httpx
 
 from app.schemas.dingtalk_card import AUTO_LAYOUT_PARAM, auto_layout_param
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_mention_entries(
+    values: Optional[Sequence[str]],
+) -> List[Tuple[str, str]]:
+    """Parse ``staffId[:displayName]`` entries in their original order."""
+    entries: List[Tuple[str, str]] = []
+    seen = set()
+    for value in values or []:
+        if not isinstance(value, str):
+            continue
+        raw = value.strip()
+        if not raw:
+            continue
+        user_id, display_name = raw, raw
+        head, separator, tail = raw.partition(":")
+        if separator and head.strip().isdigit():
+            user_id = head.strip()
+            display_name = tail.strip() or user_id
+        if user_id in seen:
+            continue
+        seen.add(user_id)
+        entries.append((user_id, display_name))
+    return entries
 
 
 class DingTalkRobotSender:
@@ -242,6 +266,16 @@ class DingTalkRobotSender:
         Returns:
             API response dict with outTrackId for tracking
         """
+        resolved_open_space_id = open_space_id or f"dtv1.card//IM_ROBOT.{user_id}"
+        mention_entries = (
+            _parse_mention_entries(mention_user_ids)
+            if "IM_GROUP" in resolved_open_space_id
+            else []
+        )
+        if mention_entries:
+            mention_text = " ".join(f"@{name}" for _, name in mention_entries)
+            content = f"{mention_text}\n\n{content}"
+
         card_param_map = {
             "title": title,
             "content": content,
@@ -263,7 +297,6 @@ class DingTalkRobotSender:
             return result
 
         out_track_id = result["outTrackId"]
-        resolved_open_space_id = open_space_id or f"dtv1.card//IM_ROBOT.{user_id}"
         if enable_streaming:
             # Simulate typing effect
             await self._simulate_streaming(
@@ -432,11 +465,7 @@ class DingTalkRobotSender:
                 "spaceType": "IM_GROUP",
                 "robotCode": self.client_id,
             }
-            at_user_ids = {
-                user_id.strip(): user_id.strip()
-                for user_id in mention_user_ids or []
-                if isinstance(user_id, str) and user_id.strip()
-            }
+            at_user_ids = dict(_parse_mention_entries(mention_user_ids))
             if at_user_ids:
                 payload["imGroupOpenDeliverModel"]["atUserIds"] = at_user_ids
         else:

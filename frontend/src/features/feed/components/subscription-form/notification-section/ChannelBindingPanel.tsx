@@ -255,12 +255,12 @@ export function ChannelBindingPanel({
           {groupBound && (
             <div className="mt-3 space-y-2">
               <Label htmlFor={`group-mention-users-${channelId}`}>
-                {t('notification_settings.group_mention_users', '@ 指定用户')}
+                {t('notification_settings.group_mention_users', '@ 指定用户（钉钉 staffId）')}
               </Label>
               <p className="text-xs text-text-muted">
                 {t(
                   'notification_settings.group_mention_users_hint',
-                  '仅对群聊通知生效；支持中文逗号和英文逗号分隔多个 userId'
+                  '示例：41068:陈波；群卡片会显示 @陈波 并发送提醒'
                 )}
               </p>
               <Input
@@ -280,7 +280,7 @@ export function ChannelBindingPanel({
                 }}
                 placeholder={t(
                   'notification_settings.group_mention_users_placeholder',
-                  '输入钉钉 userId，多个用中文或英文逗号分隔'
+                  '输入 staffId，可选 staffId:昵称，多个用中文或英文逗号分隔'
                 )}
               />
             </div>

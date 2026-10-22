@@ -341,19 +341,19 @@ describe('NotificationSection private binding dialog', () => {
 
     const input = screen.getByTestId('group-mention-users-410')
     expect(input).toHaveClass('h-11')
-    expect(screen.getByText('仅对群聊通知生效；支持中文逗号和英文逗号分隔多个 userId')).toBe(
+    expect(screen.getByText('示例：41068:陈波；群卡片会显示 @陈波 并发送提醒')).toBe(
       input.previousElementSibling
     )
 
     await user.type(input, 'user-1，')
     expect(input).toHaveValue('user-1，')
 
-    await user.type(input, 'user-2, user-3，user-1')
-    expect(input).toHaveValue('user-1，user-2, user-3，user-1')
+    await user.type(input, 'user-2, user-3，user-1,41068:陈波')
+    expect(input).toHaveValue('user-1，user-2, user-3，user-1,41068:陈波')
 
     await user.tab()
     const configs = JSON.parse(screen.getByTestId('binding-configs').textContent || '[]')
-    expect(configs[0].group_mention_user_ids).toEqual(['user-1', 'user-2', 'user-3'])
+    expect(configs[0].group_mention_user_ids).toEqual(['user-1', 'user-2', 'user-3', '41068:陈波'])
   })
 
   test('clears mention user IDs when group delivery is disabled', async () => {
