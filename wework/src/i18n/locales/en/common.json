@@ -5193,7 +5193,7 @@
   },
   "notifications": {
     "stand_in_retry": "Retry",
-    "stand_in_identity": "My stand-in",
+    "stand_in_handling": "Handled by stand-in",
     "stand_in_delegate": "Delegate",
     "stand_in_assignment": "Assigned to you",
     "stand_in_running": "Working",
@@ -5253,7 +5253,7 @@
     "device_unavailable": "Selected device unavailable; select again",
     "offline": "Offline",
     "cancel": "Cancel",
-    "save": "Save settings",
+    "save": "Save",
     "saving": "Saving…",
     "loading": "Loading…",
     "reload": "Reload",
@@ -5277,10 +5277,10 @@
     "default_profile": "Default stand-in",
     "copy_from": "Copy from another project",
     "choose_existing": "Choose a configuration…",
-    "copied": "Configuration copied. Saving only updates this project.",
+    "copied": "Configuration filled in. Save to apply it to this project.",
     "default_workspace": "the device default workspace",
     "goal_placeholder": "Pursue each task as a goal. Add acceptance criteria (optional)",
-    "auto_description": "Only new assignments after enabling are handled. Turning this off lets running tasks finish.",
+    "auto_description": "Takes effect after saving and handles only new assignments. Turning this off lets running tasks finish.",
     "list_description": "Manage execution preferences and automatic handling by project.",
     "configure": "Configure stand-in",
     "actions": "Actions",
@@ -5290,11 +5290,6 @@
     "action_label": "AI stand-in",
     "auto_label": "Automatically handle tasks assigned to me",
     "settings": "Stand-in settings",
-    "save_and_enable": "Save and enable automatic handling",
-    "configure_before_enable": "Complete and save your stand-in settings to enable automatic handling.",
-    "save_before_enable": "Save your pending changes before enabling automatic handling.",
-    "automatic_enabled": "Automatic handling enabled",
-    "automatic_disabled": "Automatic handling disabled",
     "personal": {
       "description": "Manage your personal stand-in’s execution settings and work sources.",
       "add_role": "Add role",
@@ -5362,5 +5357,12 @@
       "project_agent_scope": "Connected to {{project}}. This role handles tasks only in that project.",
       "current_project": "Current project: {{project}}"
     }
+  },
+  "workbench_error": {
+    "startup_title": "Wework could not start",
+    "startup_description": "The frontend could not initialize. Refresh the page to try again. If the problem persists, open the debug panel to view the logs.",
+    "crash_title": "Something went wrong in Wework",
+    "crash_description": "An unexpected error prevented this page from displaying. Refresh the page to try again; unsaved changes may be lost. If the problem persists, open the debug panel to view the logs.",
+    "reload": "Refresh page"
   }
 }

@@ -111,6 +111,7 @@ export const DESKTOP_CHECKPOINTS = [
   'release-package-startup',
   'app-update-full',
   'component-update',
+  'renderer-crash-recovery',
   'native-window-startup',
   'native-window-chrome',
   'renderer-storage',

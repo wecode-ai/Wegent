@@ -55,6 +55,14 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
       assert.ok(project)
       await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
+      await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="true"]')
+      const beforeSave = await requestExecutor(
+        control,
+        'runtime.stand_in.get',
+        { projectId: project.id, userId: USER_ID, projectStore: 'local' },
+        uiTimeoutMs
+      )
+      assert.equal(beforeSave.enabled, false, 'Automatic handling must wait for explicit save')
       await control.command('waitFor', '[data-testid="stand-in-prompt"]')
       assert.ok(
         await control.command('getValue', '[data-testid="stand-in-device"]'),
@@ -132,6 +140,14 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
       // Goal persistence is asserted above; ordinary completion uses one model response.
       await control.command('click', '[data-testid="cancel-goal-draft-button"]')
       await control.command('click', '[data-testid="stand-in-auto"]')
+      await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="false"]')
+      const beforeDisableSave = await requestExecutor(
+        control,
+        'runtime.stand_in.get',
+        { projectId: project.id, userId: USER_ID, projectStore: 'local' },
+        uiTimeoutMs
+      )
+      assert.equal(beforeDisableSave.enabled, true, 'Disabling must also wait for explicit save')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
       await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
       saved = await requestExecutor(
@@ -232,6 +248,14 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
       } finally {
         await rm(skillDirectory, { recursive: true, force: true })
       }
+      await createLocalCollaborationProject(control, CONTENT, '替身复用-' + process.pid)
+      await control.command('click', CONTENT + ' [data-testid="stand-in-open"]')
+      const reuse = '[data-testid="stand-in-reuse-select"]'
+      await control.command('waitFor', reuse, { text: PROJECT })
+      const reuseText = await control.command('getText', reuse)
+      assert.ok(reuseText.includes(PROJECT), 'Reusable settings must display their project name')
+      assert.ok(!reuseText.includes(project.id), 'Reusable settings must not display numeric IDs')
+      await control.command('click', '[data-testid="stand-in-cancel"]')
     },
   }
 }

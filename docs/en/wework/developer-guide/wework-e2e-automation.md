@@ -109,6 +109,8 @@ Tests do not mock backend APIs. When Backend is not running, the login-page smok
 
 The test does not simulate Wework, Executor, or Codex. To keep regression results deterministic and avoid requiring a real provider account, it starts only a loopback model service implementing OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages. Each interface runs a text response plus a send → `apply_patch` → tool result → completion lifecycle, while real Codex executes the tool in the isolated workspace.
 
+Reply predictions and their image-description requests are dispatched independently of the foreground scenario. A previous conversation's background image request can arrive after the protocol matrix starts. The model fixture identifies it first, retains the image-description protocol checks and response, and leaves matrix state unchanged. `desktop-reply-prediction-fixture.test.mjs` covers this cross-scenario path; foreground endpoint and model ID assertions remain intact.
+
 The model protocol matrix defines 18 combinations across execution location, model source, and protocol:
 
 - Local execution covers local custom models, built-in Codex models, and cloud Model CRDs across all three protocols, for 9 complete text and tool lifecycles.

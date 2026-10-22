@@ -1,10 +1,32 @@
 import { describe, expect, it } from 'vitest'
-import { mergeStandInNotifications, standInState } from './standInNotifications'
+import { mergeStandInNotifications, standInOrigin, standInState } from './standInNotifications'
 
 import { assignment, runtimeItem } from './standInNotifications.fixtures'
 import { RuntimeTaskMachine } from '@/features/workbench/runtimeTaskLifecycle/RuntimeTaskMachine'
 
 describe('stand-in notification projection', () => {
+  it.each(
+    ['cloudProjectId', 'loopItemId'].flatMap(field =>
+      [undefined, null, '', '   ', 42].map(value => ({ field, value }))
+    )
+  )(
+    'rejects an origin with $field=$value instead of constructing an invalid Issue link',
+    ({ field, value }) => {
+      const item = {
+        ...runtimeItem,
+        task: {
+          ...runtimeItem.task,
+          runtimeHandle: {
+            origin: { ...(runtimeItem.task.runtimeHandle!.origin as object), [field]: value },
+          },
+        },
+      }
+      expect(standInOrigin(item)).toBeNull()
+      expect(mergeStandInNotifications([], [item])).toEqual([])
+      expect(mergeStandInNotifications([assignment], [item])).toEqual([assignment])
+    }
+  )
+
   it.each([
     ['succeeded', 'completed'],
     ['failed', 'failed'],
@@ -43,7 +65,7 @@ describe('stand-in notification projection', () => {
     const result = mergeStandInNotifications([assignment], [runtimeItem])
     expect(result).toHaveLength(1)
     expect(result[0].id).toBe('assignment')
-    expect(result[0].url).toBe('wework://tasks/device/task')
+    expect(result[0].url).toBe(assignment.url)
     expect(result[0].payload.standIn?.status).toBe('running')
     expect(assignment.url).toBe('wework://boards/12/issues/ISSUE-1')
     expect(assignment.payload).not.toHaveProperty('standIn')
@@ -74,7 +96,10 @@ describe('stand-in notification projection', () => {
         },
       },
     }
-    expect(mergeStandInNotifications([], [local])[0].synthetic).toBe(true)
+    const notification = mergeStandInNotifications([], [local])[0]
+    expect(notification.synthetic).toBe(true)
+    expect(notification.url).toBe('wework://boards/local/12/issues/ISSUE-1')
+    expect(mergeStandInNotifications([], [runtimeItem])[0].url).toBe(assignment.url)
     expect(
       mergeStandInNotifications(
         [],

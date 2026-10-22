@@ -336,12 +336,35 @@ export function createDesktopScenario({
           { text: '处理完毕' }
         )
         assert.equal(await control.command('getElementCount', processing), '1')
+        await control.command('waitFor', processing, { text: '替身处理' })
+        assert.ok(
+          (await control.command('getText', processing)).includes('云端设备自动接手'),
+          'Completed stand-in notification must preserve its assignment title'
+        )
         await captureScreenshot(
           control,
           'stand-in-notifications-layout.png',
           '[data-testid="wework-notifications-popover"]'
         )
         await control.command('click', '[data-testid="wework-notifications-button"]')
+
+        // Completed cloud notifications open the original Issue, not the Runtime task.
+        await control.command('click', '[data-testid="wework-notifications-button"]')
+        await control.command(
+          'click',
+          '[data-testid="wework-notifications-category-collaboration"]'
+        )
+        const entryTestId =
+          assignmentNotification.payload.action === 'create_personal_task'
+            ? 'issue-dispatch-notification-create-task'
+            : `wework-notification-${assignmentNotification.id}`
+        await control.command('click', `${processing} [data-testid="${entryTestId}"]`)
+        await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail-title"]`)
+        assert.equal(
+          await control.command('getValue', `${CONTENT} [data-testid="cloud-todo-detail-title"]`),
+          issue.title
+        )
+        await control.command('click', `${CONTENT} [data-testid="cloud-todo-detail-close"]`)
 
         // Another device must respect an existing ordinary task binding.
         await requestExecutor(
