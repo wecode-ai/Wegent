@@ -27,6 +27,7 @@ export const DESKTOP_CHECKPOINTS = [
   'collaboration-human-round-resume',
   'collaboration-local-group-cancellation',
   'collaboration-issue-comment-mention',
+  'collaboration-issue-assignment-activity',
   'collaboration-issue-comment-attachments',
   'collaboration-issue-comment-notification',
   'collaboration-issue-mcp-comments',

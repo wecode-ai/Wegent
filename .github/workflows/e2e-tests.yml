@@ -434,6 +434,7 @@ jobs:
     name: E2E Tests (Shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
     needs:
       [
+        build-frontend-e2e,
         build-backend-rs-e2e-runtime,
         build-executor-e2e-runtime,
         prepare-platform-e2e-image,
@@ -1048,6 +1049,7 @@ jobs:
       packages: read
     needs:
       [
+        build-frontend-e2e,
         build-backend-rs-e2e-runtime,
         build-executor-e2e-runtime,
         prepare-platform-e2e-image,

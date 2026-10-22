@@ -157,7 +157,7 @@ export async function createProjectFixture(
 }
 
 export async function initializeProjectExecutionEnvironment(page: Page): Promise<void> {
-  await page.getByTestId('collaboration-tab-manage').click()
+  await selectCollaborationProjectView(page, 'manage')
   await page.getByTestId('collaboration-project-settings-environments').click()
   const initialize = page.locator(
     '[data-testid^="collaboration-project-execution-environment-initialize-"]'
@@ -186,7 +186,7 @@ export async function initializeProjectExecutionEnvironment(page: Page): Promise
 export async function addProjectMember(page: Page, userName: string): Promise<string> {
   await page.getByTestId('cloud-todo-detail-close').click()
   await expect(page.getByTestId('collaboration-issue-detail')).toHaveCount(0)
-  await page.getByTestId('collaboration-tab-manage').click()
+  await selectCollaborationProjectView(page, 'manage')
   await page.getByTestId('collaboration-project-settings-members').click()
   await page.getByTestId('cloud-project-members-toggle').click()
   await page.getByTestId('cloud-member-search').fill(userName)
@@ -215,7 +215,7 @@ export async function createProjectAgent(
     await expect(page).not.toHaveURL(/\/issues\//)
     await expect(issueDetail).toHaveCount(0)
   }
-  await page.getByTestId('collaboration-tab-manage').click()
+  await selectCollaborationProjectView(page, 'manage')
   await page.getByTestId('collaboration-project-settings-agents').click()
   await page.getByTestId('project-agent-add').click()
   await page.getByTestId('project-agent-mode-create').click()

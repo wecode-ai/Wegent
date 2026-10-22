@@ -127,6 +127,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
     './scenarios/collaboration-local-group-cancellation.scenario.mjs',
   'collaboration-issue-comment-mention':
     './scenarios/collaboration-issue-comment-mention.scenario.mjs',
+  'collaboration-issue-assignment-activity':
+    './scenarios/collaboration-issue-assignment-activity.scenario.mjs',
   'collaboration-issue-comment-attachments':
     './scenarios/collaboration-issue-comment-attachments.scenario.mjs',
   'collaboration-issue-comment-notification':
@@ -216,6 +218,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-human-round-resume',
   'collaboration-local-group-cancellation',
   'collaboration-issue-comment-mention',
+  'collaboration-issue-assignment-activity',
   'collaboration-issue-comment-attachments',
   'collaboration-issue-comment-notification',
   'collaboration-issue-mcp-comments',
