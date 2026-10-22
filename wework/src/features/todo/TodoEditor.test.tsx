@@ -1829,6 +1829,33 @@ describe('TodoEditor status history', () => {
 })
 
 describe('TodoEditor create parent resolution', () => {
+  it('centers create content and footer in one column when fullscreen', async () => {
+    const user = userEvent.setup()
+    render(
+      <TodoEditor
+        mode="create"
+        project={project}
+        initialParent={null}
+        initialStatus="inbox"
+        allItems={[]}
+        onCreated={vi.fn()}
+        onClose={vi.fn()}
+        api={api}
+        currentUserId={1}
+      />
+    )
+
+    const content = screen.getByTestId('cloud-todo-create-content')
+    const footer = screen.getByTestId('cloud-todo-create-footer')
+    expect(content).not.toHaveClass('max-w-[768px]')
+    expect(footer).not.toHaveClass('max-w-[768px]')
+
+    await user.click(screen.getByTestId('cloud-todo-create-fullscreen'))
+
+    expect(content).toHaveClass('mx-auto', 'w-full', 'max-w-[768px]')
+    expect(footer).toHaveClass('mx-auto', 'w-full', 'max-w-[768px]')
+  })
+
   it('keeps assignee management actions visible while search filters options', async () => {
     const user = userEvent.setup()
     const onAddAssigneeMember = vi.fn()
