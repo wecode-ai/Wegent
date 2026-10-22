@@ -955,7 +955,9 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
     [activePaneKey, props.visible, resolvePane, runtimePaneKeys]
   )
   useEffect(() => {
+    let disposed = false
     const listener = listenEmbeddedBrowserOpenRequests(request => {
+      if (disposed) return
       const paneKey = resolveBrowserOpenRequestPaneKey(request)
       if (!paneKey) return
       setPendingBrowserOpenRequests(current => ({
@@ -964,6 +966,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       }))
     })
     return () => {
+      disposed = true
       void listener?.then(unlisten => unlisten())
     }
   }, [resolveBrowserOpenRequestPaneKey])
