@@ -29,6 +29,7 @@ core_segments=(
   collaboration-human-round-resume
   collaboration-local-group-cancellation
   collaboration-issue-comment-mention
+  collaboration-issue-assignment-activity
   collaboration-issue-comment-attachments
   collaboration-issue-comment-notification
   collaboration-issue-mcp-comments
@@ -38,6 +39,7 @@ core_segments=(
   automation-lifecycle
   project-automation
   project-assignment-notification
+  project-member-overrides
   offline-local-project-space
   cloud-context-resilience
   cloud-login-proxy
@@ -208,7 +210,7 @@ core_shards=(
   project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,stand-in,stand-in-workspace,stand-in-controls,collaboration-local-group-coordinate,collaboration-human-round-resume
   resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-task-discovery,collaboration-app-queue-identity,collaboration-issue-archive,collaboration-board-sorting,collaboration-board-move-recovery,collaboration-local-group-cancellation
   workspace-attachments,automation-lifecycle,drawing-attachment
-  project-assignment-notification,priority-filter,collaboration-issue-comment-mention,collaboration-issue-comment-attachments,stand-in-notifications
+  project-assignment-notification,project-member-overrides,priority-filter,collaboration-issue-comment-mention,collaboration-issue-assignment-activity,collaboration-issue-comment-attachments,stand-in-notifications
   transcript-sync,background-terminals
   runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification,collaboration-issue-mcp-comments,latest-conversation-history
@@ -757,6 +759,10 @@ classify_wework_path() {
       select_target "core:project-assignment-notification"
       return
       ;;
+    wework/e2e/desktop/scenarios/project-member-overrides.scenario.mjs)
+      select_target "core:project-member-overrides"
+      return
+      ;;
     wework/e2e/desktop/scenarios/cloud-space-mention.scenario.mjs)
       select_target "core:cloud-space-mention"
       return
@@ -859,6 +865,14 @@ classify_wework_path() {
       select_target "core:collaboration-issue-comment-mention"
       return
       ;;
+    wework/src/features/todo/IssueAssignmentEvent* | \
+      wework/src/features/todo/assignmentHistoryLabels* | \
+      wework/src/features/todo/issueActivityTimeline* | \
+      wework/src/features/todo/useIssueActivityHistory* | \
+      wework/e2e/desktop/scenarios/collaboration-issue-assignment-activity.scenario.mjs)
+      select_target "core:collaboration-issue-assignment-activity"
+      return
+      ;;
     wework/e2e/desktop/scenarios/collaboration-issue-comment-attachments.scenario.mjs)
       select_target "core:collaboration-issue-comment-attachments"
       return
@@ -910,6 +924,7 @@ classify_wework_path() {
       select_target "core:task-status-sync"
       select_target "core:task-board-association"
       if [[ "$path" == wework/src/api/local/localDelivery* ]]; then
+        select_target "core:collaboration-issue-assignment-activity"
         select_target "core:collaboration-human-round-resume"
         select_target "core:collaboration-local-group-coordinate"
         select_target "core:task-board-bulk-actions"
@@ -1258,6 +1273,30 @@ classify_path() {
   local path="$1"
 
   case "$path" in
+    backend/app/api/endpoints/cloud_projects.py | \
+      backend/app/api/endpoints/workspaces.py | \
+      backend/app/schemas/cloud_project.py | backend/app/schemas/workspace.py | \
+      backend/app/services/cloud_project_visibility.py | \
+      backend/app/services/cloud_projects/* | backend/app/services/workspaces/* | \
+      backend/app/services/collaboration_permissions.py | \
+      backend/app/services/collaboration_revocation.py | \
+      backend/app/services/issue_assignments.py | \
+      backend/tests/api/test_collaboration_permission_contract.py | \
+      backend/tests/api/test_cloud_project* | \
+      backend/tests/services/test_cloud_project* | \
+      backend/tests/services/test_loop_item_assignment.py | \
+      backend/tests/test_collaboration_permission_guard.py | \
+      backend/integration_checks/test_rust_collaboration_permissions_mysql.py | \
+      packages/collaboration/src/project-manage/* | \
+      packages/collaboration/src/CollaborationApp* | \
+      packages/collaboration/src/http-api/createSharedWorkspaceHttpApi* | \
+      packages/collaboration/src/ports/SharedWorkspaceApi* | \
+      packages/collaboration/src/types*)
+      select_target "core:project-member-overrides"
+      ;;
+  esac
+
+  case "$path" in
     packages/collaboration/src/controls/ModelSelector* | \
       packages/collaboration/src/controls/ModelPowerSlider* | \
       packages/collaboration/src/controls/model-selector-utils*)
@@ -1452,6 +1491,7 @@ classify_path() {
       select_target "core:collaboration-group-onboarding"
       select_collaboration_dispatch_checkpoints
       select_target "core:collaboration-issue-comment-mention"
+      select_target "core:collaboration-issue-assignment-activity"
       select_target "core:collaboration-issue-comment-attachments"
       select_target "core:collaboration-issue-comment-notification"
       select_target "core:collaboration-board-sorting"

@@ -33,6 +33,7 @@ const imageServices: AttachmentImageServices<IssueCommentAttachment> = {
 
 /** Web persistence adapter for the same composer and attachment UI used by desktop. */
 export function IssueWebCommentComposer({
+  assignment,
   issueId,
   attachmentApi,
   canComment,
@@ -46,6 +47,7 @@ export function IssueWebCommentComposer({
   onError,
   settings,
 }: {
+  assignment?: import('./useCommentAssignment').CommentAssignment
   issueId: string
   attachmentApi?: SharedWorkspaceAttachmentsApi
   canComment: boolean
@@ -77,14 +79,8 @@ export function IssueWebCommentComposer({
   const mentionCandidates = useIssueMentionCandidates(members, agents, translate)
 
   async function submit(body: string, mentions: IssueMentionOption[]) {
-    if (
-      !canComment ||
-      loading ||
-      submitting.current ||
-      !body ||
-      !selection.isAttachmentReadyToSend
-    )
-      return
+    if (!canComment || loading || submitting.current || !body || !selection.isAttachmentReadyToSend)
+      return false
     submitting.current = true
     setSending(true)
     setError(null)
@@ -93,14 +89,16 @@ export function IssueWebCommentComposer({
         issueCommentBody(body, selection.attachments),
         ...(mentions.length ? [mentions] : [])
       )
-      if (!active.current) return
+      if (!active.current) return true
       if (comment) onSent(comment)
       setDraft('')
       selection.resetAttachments()
+      return true
     } catch (cause) {
-      if (!active.current) return
+      if (!active.current) return false
       setError(cause instanceof Error ? cause.message : translate('todo.send_failed'))
       onError()
+      return false
     } finally {
       submitting.current = false
       if (active.current) setSending(false)
@@ -109,9 +107,10 @@ export function IssueWebCommentComposer({
 
   return (
     <IssueMainCommentComposer
+      assignment={assignment}
       value={draft}
       onChange={setDraft}
-      onSubmit={(body, mentions) => void submit(body, mentions)}
+      onSubmit={submit}
       disabled={!canComment || loading}
       sending={sending}
       uploading={!selection.isAttachmentReadyToSend}

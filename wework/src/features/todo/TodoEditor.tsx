@@ -55,6 +55,7 @@ export interface TodoEditorEditProps {
   item: CloudLoopItem
   project?: CloudProject
   onUpdated: (item: CloudLoopItem) => void
+  onRead?: (item: CloudLoopItem) => void
   onAddChild?: () => void
 }
 
@@ -188,11 +189,13 @@ export function TodoEditor(props: TodoEditorProps) {
     renderActivity: context =>
       props.projectChatClient ? (
         <TaskActivityView
+          commentAssignment={context.commentAssignment}
           key={context.item.id}
           client={props.projectChatClient}
           project={context.project as CloudProject}
           task={context.item as CloudLoopItem}
           currentUserId={props.currentUserId}
+          onTaskRead={props.mode === 'edit' ? props.onRead : undefined}
           onTaskUpdated={item => context.onItemChange(item as SharedEditorIssue)}
           projectChatAgentApi={props.projectChatAgentApi}
           localProjects={props.localProjects}

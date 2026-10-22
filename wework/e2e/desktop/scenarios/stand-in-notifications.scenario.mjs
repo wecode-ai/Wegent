@@ -120,6 +120,48 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       )
       await control.command('click', '[data-testid="wework-notifications-read-all"]')
       await control.command('waitFor', '[data-testid="wework-notifications-collaboration-list"]')
+
+      // Exercise hit testing outside the title button and around inline controls.
+      const row = `${selector(`notification-processing-${id}`)} [data-testid$="-container"]`
+      await control.command('click', '[data-testid="wework-notifications-button"]')
+      await control.command('waitFor', '[data-testid="wework-notifications-popover"]', {
+        visible: false,
+      })
+      for (const target of ['icon', 'edge', 'bottom', 'processing-space']) {
+        await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+        await control.command('click', '[data-testid="wework-notifications-button"]')
+        await control.command(
+          'click',
+          '[data-testid="wework-notifications-category-collaboration"]'
+        )
+        await control.command('waitFor', row)
+        await control.command('waitFor', selector(`notification-stand-in-reply-open-${id}`))
+        const [bounds] = JSON.parse(await control.command('getElementMetrics', row))
+        const [icon] = JSON.parse(await control.command('getElementMetrics', `${row} > span`))
+        const [reply] = JSON.parse(
+          await control.command(
+            'getElementMetrics',
+            selector(`notification-stand-in-reply-open-${id}`)
+          )
+        )
+        assert.ok(bounds.width > 0 && bounds.height > 0, 'Notification row must be visible')
+        const points = {
+          icon: { x: icon.left + icon.width / 2, y: icon.top + icon.height / 2 },
+          edge: { x: bounds.left + 2, y: bounds.top + bounds.height / 2 },
+          bottom: { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height - 4 },
+          'processing-space': {
+            x: bounds.left + bounds.width - 20,
+            y: reply.top + reply.height / 2,
+          },
+        }
+        await control.command('clickAt', 'body', { value: JSON.stringify(points[target]) })
+        await control.command('waitFor', '[data-testid="wework-notifications-popover"]', {
+          visible: false,
+        })
+        await control.command('waitFor', `${CONTENT} [data-testid="message-assistant"]`, {
+          text: '已按补充要求完成检查。',
+        })
+      }
     },
   }
 }

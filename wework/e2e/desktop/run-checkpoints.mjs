@@ -94,6 +94,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'tray-lifecycle': './scenarios/tray-lifecycle.scenario.mjs',
   'project-automation': './scenarios/project-automation.scenario.mjs',
   'project-assignment-notification': './scenarios/project-assignment-notification.scenario.mjs',
+  'project-member-overrides': './scenarios/project-member-overrides.scenario.mjs',
   'offline-local-project-space': './scenarios/offline-local-project-space.scenario.mjs',
   'cloud-context-resilience': './scenarios/cloud-context-resilience.scenario.mjs',
   'cloud-login-proxy': './scenarios/cloud-login-proxy.scenario.mjs',
@@ -124,6 +125,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
     './scenarios/collaboration-local-group-cancellation.scenario.mjs',
   'collaboration-issue-comment-mention':
     './scenarios/collaboration-issue-comment-mention.scenario.mjs',
+  'collaboration-issue-assignment-activity':
+    './scenarios/collaboration-issue-assignment-activity.scenario.mjs',
   'collaboration-issue-comment-attachments':
     './scenarios/collaboration-issue-comment-attachments.scenario.mjs',
   'collaboration-issue-comment-notification':
@@ -210,6 +213,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-human-round-resume',
   'collaboration-local-group-cancellation',
   'collaboration-issue-comment-mention',
+  'collaboration-issue-assignment-activity',
   'collaboration-issue-comment-attachments',
   'collaboration-issue-comment-notification',
   'collaboration-issue-mcp-comments',
@@ -220,6 +224,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'task-attachments',
   'drawing-attachment',
   'project-assignment-notification',
+  'project-member-overrides',
   'runtime-task-queue',
   'codex-invalid-launch-cwd',
   'executor-stream-recovery',
