@@ -194,6 +194,10 @@ def test_cleanup_waits_for_index_then_cleans_once(
         result = make_backend().delete_document("kb_1", "doc_123")
 
     assert result["status"] == "deleted"
+    waiting = [r for r in caplog.records if "waiting for vector indexes" in r.message]
+    assert len(waiting) == 1
+    assert "test_kb_kb_1" in waiting[0].message
+    assert str(error) in waiting[0].message
     assert cleanup_client.load_collection.call_count == 1
     stub = cleanup_client._get_connection.return_value._stub
     stub.LoadCollection.assert_called_once()

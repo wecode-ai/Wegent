@@ -48,6 +48,11 @@ def load_for_document_cleanup(client: MilvusClient, collection_name: str) -> Non
     attempts = 1
     ready = False
     load_requested = False
+    logger.info(
+        "[Milvus] waiting for vector indexes: collection=%s last_error=%s",
+        collection_name,
+        last_error,
+    )
 
     def remaining_budget() -> float:
         remaining = deadline - time.monotonic()

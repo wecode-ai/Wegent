@@ -879,6 +879,7 @@ jobs:
           E2E_KNOWLEDGE_RUNTIME_URL: http://localhost:8200
           E2E_QDRANT_URL: http://qdrant:6333
           E2E_MILVUS_URL: http://milvus:19530
+          E2E_KNOWLEDGE_RUNTIME_LOG: ../knowledge_runtime/ci.log
           MOCK_MODEL_SERVER_URL: http://localhost:9999
           E2E_BOOTSTRAP_ADMIN_USER: admin
           PYTHONPATH: ..:.
