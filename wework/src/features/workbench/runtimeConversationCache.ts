@@ -18,6 +18,7 @@ import type {
 } from '@/types/api'
 import { summarizeRuntimeQueue } from '@/lib/runtime-create-diagnostics'
 import type {
+  ProcessingBlock,
   RuntimeConversationTurn,
   RuntimePaneQueuedMessage,
   RuntimeSubagentStatus,
@@ -426,6 +427,20 @@ export function appendAcceptedRuntimeConversationMessage(
 ): WorkbenchMessage[] {
   return updateRuntimeConversationTurns(address, turns =>
     appendAcceptedRuntimeConversationUser(turns, message, activeTurnId, turnIdsBeforeSend)
+  )
+}
+
+export function updateRuntimeConversationBlocks(
+  address: RuntimeTaskAddress,
+  update: (block: ProcessingBlock) => ProcessingBlock
+): WorkbenchMessage[] {
+  return updateRuntimeConversationTurns(address, turns =>
+    turns.map(turn => ({
+      ...turn,
+      items: turn.items.map(item =>
+        item.type === 'block' ? { ...item, block: update(item.block) } : item
+      ),
+    }))
   )
 }
 

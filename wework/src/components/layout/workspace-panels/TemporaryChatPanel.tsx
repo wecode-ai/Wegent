@@ -24,6 +24,7 @@ import { createCollaborationTranslator } from '@wegent/collaboration'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import type { RequestUserInputPayload } from '@/components/chat/RequestUserInputCard'
 import {
+  applyRequestUserInputResponseToBlock,
   findRequestUserInputPayload,
   isAsyncRequestUserInputPayload,
   requestUserInputPayloadKey,
@@ -52,8 +53,8 @@ import {
   getRuntimeConversationTurnIds,
   removeRuntimeConversationTurn,
   subscribeRuntimeConversation,
+  updateRuntimeConversationBlocks,
 } from '@/features/workbench/runtimeConversationCache'
-import { prepareRuntimeUserInputResponse } from '@/features/workbench/runtimeUserInputResponse'
 import {
   useRuntimeTaskLifecycle,
   useRuntimeTaskLifecycleStore,
@@ -799,7 +800,6 @@ export function TemporaryChatPanel({
         conversationQueue.enqueue(answerMessage)
         return sendQueuedMessageAsGuidance(answerMessage)
       }
-      const commitResponse = prepareRuntimeUserInputResponse(address, response)
       const sent = await sendRuntimePaneMessage({
         address,
         message: requestUserInputResponseText(response),
@@ -807,7 +807,11 @@ export function TemporaryChatPanel({
         ...runtimeContext,
       })
       if (!sent) return false
-      setMessages(commitResponse())
+      setMessages(
+        updateRuntimeConversationBlocks(address, block =>
+          applyRequestUserInputResponseToBlock(block, response)
+        )
+      )
       return true
     },
     [

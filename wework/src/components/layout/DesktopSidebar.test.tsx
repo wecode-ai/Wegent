@@ -1306,63 +1306,6 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('projects-section-toggle')).toBeInTheDocument()
   })
 
-  test('clears stale waiting state after the lifecycle accepts an async reply', async () => {
-    const workspacePath = '/workspace/chats/async-reply'
-    const runtimeWork: RuntimeWorkListResponse = {
-      projects: [],
-      chats: [
-        {
-          deviceId: 'local-device',
-          available: true,
-          workspacePath,
-          workspaceKind: 'chat',
-          tasks: [
-            {
-              taskId: 'async-reply-task',
-              workspacePath,
-              workspaceKind: 'chat',
-              title: 'Async reply task',
-              runtime: 'codex',
-              running: false,
-              status: 'running',
-              interactionStatus: 'awaitingUserReply',
-            },
-          ],
-        },
-      ],
-      totalTasks: 1,
-    }
-    const props = createSidebarProps({ runtimeWork })
-    const lifecycleStore = new RuntimeTaskLifecycleStore('desktop-sidebar-async-reply-waiting-test')
-    lifecycleStore.syncRuntimeWork(runtimeWork)
-    render(
-      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
-        <DesktopSidebar {...props} />
-      </RuntimeTaskLifecycleProvider>
-    )
-
-    await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
-    expect(screen.getByTestId('runtime-local-task-waiting-async-reply-task')).toBeInTheDocument()
-
-    act(() => {
-      lifecycleStore.userInputResponded({
-        deviceId: 'local-device',
-        taskId: 'async-reply-task',
-        workspacePath,
-      })
-    })
-
-    expect(
-      screen.queryByTestId('runtime-local-task-waiting-async-reply-task')
-    ).not.toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
-    await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
-
-    expect(screen.getByTestId('runtime-priority-empty')).toBeInTheDocument()
-    expect(screen.queryByTestId('runtime-local-task-row-async-reply-task')).not.toBeInTheDocument()
-  })
-
   test('keeps a read task in the active priority session and moves it to recent after reopening', async () => {
     const onMarkRuntimeTaskRead = vi.fn()
     const onOpenRuntimeTask = vi.fn()

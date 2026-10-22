@@ -392,9 +392,9 @@ vi.mock('@/features/workbench/runtimeConversationCache', () => ({
   completeRuntimeConversationHydration: () => mocks.conversationMessages,
   getRuntimeConversationMessages: () => mocks.conversationMessages,
   getRuntimeConversationTurns: () => [],
-  reconcileRuntimeConversationSnapshot: () => mocks.conversationMessages,
   removeRuntimeConversationTurn: () => [],
   subscribeRuntimeConversation: () => () => undefined,
+  updateRuntimeConversationBlocks: () => mocks.conversationMessages,
 }))
 
 vi.mock('@/features/workbench/runtimeTaskLifecycle', () => {
