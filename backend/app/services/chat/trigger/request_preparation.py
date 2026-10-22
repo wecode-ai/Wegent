@@ -703,6 +703,21 @@ def _apply_user_runtime_config(
     return status
 
 
+def web_runtime_guidance_enabled(
+    web_runtime_guidance: Optional[bool], payload: Any
+) -> bool:
+    """Resolve whether this request targets the Wegent web client.
+
+    The web client renders ``wegent://`` links, so guidance that depends on the
+    scheme system must be limited to it.
+    """
+    if web_runtime_guidance is not None:
+        return bool(web_runtime_guidance)
+    return payload is not None and (
+        getattr(payload, "client_origin", None) == CLIENT_ORIGIN_FRONTEND
+    )
+
+
 @trace_sync("chat.prepare_execution_request", tracer_name="backend.chat")
 def prepare_execution_request(
     task: TaskResource,
@@ -757,11 +772,9 @@ def prepare_execution_request(
             additional_skills = getattr(payload, "additional_skills", None)
             if additional_skills:
                 preload_skills = list(preload_skills or []) + list(additional_skills)
-        if web_runtime_guidance is None:
-            web_runtime_guidance = (
-                payload is not None
-                and getattr(payload, "client_origin", None) == CLIENT_ORIGIN_FRONTEND
-            )
+        web_runtime_guidance = web_runtime_guidance_enabled(
+            web_runtime_guidance, payload
+        )
 
         # Extract model override from task metadata labels
         # This is where force_override_bot_model is stored when task is created
