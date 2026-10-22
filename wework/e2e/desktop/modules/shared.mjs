@@ -1480,7 +1480,9 @@ async function selectE2EModel(
   composerSelector = '',
   expectedProviderId = expectedModelProviderId(modelIds)
 ) {
-  const labels = Array.isArray(modelLabels) ? modelLabels : [modelLabels]
+  const labels = (Array.isArray(modelLabels) ? modelLabels : [modelLabels]).flatMap(label =>
+    label === DEFAULT_MODEL_LABEL ? [label, 'GPT 5.6 Luna'] : [label]
+  )
   const modelSelectorButton = `${composerSelector} [data-testid="model-selector-button"]`.trim()
   await control.command('waitFor', modelSelectorButton, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
