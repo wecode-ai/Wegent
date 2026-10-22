@@ -16,6 +16,7 @@ export type IssueAssigneeTarget =
   | ""
   | `user:${number}`
   | `agent:${string}`
+  | `resource:${string}`
   | `group:${string}`
   | `team:${number}`;
 

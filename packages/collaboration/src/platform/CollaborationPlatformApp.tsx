@@ -2826,6 +2826,7 @@ function IssueHomeLauncher({
       <div
         className="flex min-h-0 flex-1"
         data-testid="collaboration-issue-home"
+        data-execution-environment-readiness={environmentReadiness.kind}
       >
         {composer}
       </div>
@@ -2835,6 +2836,7 @@ function IssueHomeLauncher({
     <section
       className="collaboration-issue-home"
       data-testid="collaboration-issue-home"
+      data-execution-environment-readiness={environmentReadiness.kind}
     >
       <div className="collaboration-issue-home-heading">
         <h1 data-testid="collaboration-issue-home-title">

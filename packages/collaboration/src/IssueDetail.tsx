@@ -35,6 +35,7 @@ import {
 } from "./issue-detail/dateTime";
 import { getCollaborationIssueActionPermissions } from "./permissions";
 import type { SharedWorkspaceApi } from "./ports/SharedWorkspaceApi";
+import type { ProjectExecutionEnvironmentReadinessKind } from "./execution-environment/issueEnvironmentReadiness";
 import { IssueExecutionDetails } from "./issue-detail/IssueExecutionDetails";
 import { IssueConversationDrawers } from "./issue-detail/IssueConversationDrawers";
 import type {
@@ -63,6 +64,7 @@ interface IssueDetailProps {
     | "assignments"
     | "members"
     | "agents"
+    | "workspaces"
     | "collaborators"
     | "taskBindings"
     | "deliveries"
@@ -97,6 +99,7 @@ interface IssueCreateProps {
   messages: Messages;
   translate?: CollaborationTranslate;
   environmentNotice?: ReactNode;
+  environmentReadiness?: ProjectExecutionEnvironmentReadinessKind;
   onClose(): void;
   onCreated(issue: CollaborationIssue): void | Promise<void>;
   onError(): void;
@@ -176,6 +179,7 @@ export function IssueCreate({
   messages,
   translate,
   environmentNotice,
+  environmentReadiness,
   onClose,
   onCreated,
   onError,
@@ -187,7 +191,10 @@ export function IssueCreate({
       messages === collaborationMessages.en ? "en" : "zh-CN",
     );
   return (
-    <div data-testid={collaborationTestIds.createIssueDialog}>
+    <div
+      data-testid={collaborationTestIds.createIssueDialog}
+      data-execution-environment-readiness={environmentReadiness}
+    >
       <SharedIssueDetailEditor
         port={port}
         mode="create"

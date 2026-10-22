@@ -5,7 +5,7 @@ import { expandCollaborationWorkspace, reloadMainWindow } from '../modules/works
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 
-export function createDesktopScenario({ uiTimeoutMs }) {
+export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) {
   let cloud
   let cloudEnvironment
   let user
@@ -55,8 +55,9 @@ export function createDesktopScenario({ uiTimeoutMs }) {
   }
 
   async function openProject(control) {
-    await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]')
-    await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+    await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-board"]', {
+      timeoutMs: workbenchReadyTimeoutMs,
+    })
     await expandCollaborationWorkspace(
       control,
       `${CONTENT} [data-testid="collaboration-workspace-toggle-${workspace.id}"]`
