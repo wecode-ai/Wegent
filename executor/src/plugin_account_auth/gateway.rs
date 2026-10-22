@@ -317,6 +317,10 @@ impl<T: LocalBackendTransport> NativeAuthGateway<T> {
                 Some("plugin_auth_transfer_pending") => "plugin_auth_transfer_pending",
                 Some("plugin_auth_source_changed") => "plugin_auth_source_changed",
                 Some("plugin_auth_keyring_unavailable") => "plugin_auth_keyring_unavailable",
+                Some("plugin_write_busy") => "plugin_write_busy",
+                Some("plugin_write_unavailable") => "plugin_write_unavailable",
+                Some("plugin_write_lease_lost") => "plugin_write_lease_lost",
+                Some("plugin_write_conflict") => "plugin_write_conflict",
                 _ => "plugin_auth_exchange_rejected",
             };
             crate::logging::log_executor_event(
@@ -445,6 +449,10 @@ mod tests {
             "plugin_auth_not_supported",
             "plugin_auth_invalid_request",
             "plugin_auth_exchange_failed",
+            "plugin_write_busy",
+            "plugin_write_unavailable",
+            "plugin_write_lease_lost",
+            "plugin_write_conflict",
         ] {
             let gateway = NativeAuthGateway::new(Transport {
                 response: json!([{"success":false,"error":code,"detail":"synthetic-secret"}]),

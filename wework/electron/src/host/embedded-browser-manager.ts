@@ -461,7 +461,13 @@ export class EmbeddedBrowserManager {
     contents.on('page-title-updated', (_event, title) => {
       if (entry.historyId) void this.history.backfillTitle(entry.historyId, title)
     })
-    contents.on('did-navigate', (_event, url) => {
+    const commitNavigation = (url: string) => {
+      // The host's bootstrap commit can arrive after the requested navigation
+      // starts. It must not replace that destination while it is still loading.
+      if (entry.initialNavigation && url === 'about:blank' && entry.requestedUrl !== url) {
+        emitPageState()
+        return
+      }
       if (entry.initialNavigation && url !== 'about:blank') {
         entry.initialNavigation = false
         const history = contents.navigationHistory
@@ -479,14 +485,10 @@ export class EmbeddedBrowserManager {
         entry.previewSourceUrl = null
       }
       emitPageState()
-    })
-    contents.on('did-navigate-in-page', (_event, url) => {
-      if (url !== entry.previewDisplayUrl) {
-        entry.requestedUrl = url
-        entry.previewDisplayUrl = null
-        entry.previewSourceUrl = null
-      }
-      emitPageState()
+    }
+    contents.on('did-navigate', (_event, url) => commitNavigation(url))
+    contents.on('did-navigate-in-page', (_event, url, isMainFrame) => {
+      if (isMainFrame) commitNavigation(url)
     })
     contents.on('did-fail-load', (_event, code, message, validatedURL, isMainFrame) => {
       if (!isMainFrame || code === NAVIGATION_ABORTED_ERROR_CODE) return
@@ -956,7 +958,6 @@ export class EmbeddedBrowserManager {
       label: normalizedLabel,
       nativeLabel: entry.nativeLabel,
     })
-    await this.waitForAttachedContents(normalizedLabel)
   }
 
   close(label: string, expectedNativeLabel?: string | null): void {

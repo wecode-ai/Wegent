@@ -86,7 +86,8 @@ export function emitResponseApiEvent(
       return;
     }
     // Native rendering addresses individual items, unlike whole-response HTTP callbacks.
-    const offset = optionalNumberField(data, "block_offset") ?? eventOffset(payload);
+    const offset =
+      optionalNumberField(data, "block_offset") ?? eventOffset(payload);
     handlers.onChatChunk?.({
       ...base,
       itemId: idField(data, "itemId") ?? idField(data, "item_id"),
@@ -192,9 +193,21 @@ export function emitResponseApiEvent(
   if (eventName === "runtime.work.changed") {
     const taskId = base.taskId;
     if (!taskId) return;
+    const cleanup = asRecord(data.archiveCleanup);
+    const workspacePath = stringField(cleanup, "workspacePath");
     handlers.onRuntimeWorkChanged?.({
       taskId,
       ...(base.deviceId ? { deviceId: base.deviceId } : {}),
+      ...(workspacePath && Array.isArray(cleanup.errors)
+        ? {
+            archiveCleanup: {
+              workspacePath,
+              errors: cleanup.errors.filter(
+                (error): error is string => typeof error === "string",
+              ),
+            },
+          }
+        : {}),
     });
     return;
   }

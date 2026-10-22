@@ -1160,6 +1160,9 @@ fn isolated_runtime_work_handler(label: &str) -> (RuntimeWorkRpcHandler, PathBuf
 #[path = "background_terminal_tests.rs"]
 mod background_terminal_tests;
 
+#[path = "streaming_transcript_tests.rs"]
+mod streaming_transcript_tests;
+
 #[test]
 fn applies_backend_connection_from_the_shared_snapshot() {
     let snapshot: Arc<Mutex<Option<ConnectionConfig>>> =
@@ -3260,6 +3263,95 @@ fn failed_responses_emit_runtime_turn_duration() {
     assert_eq!(event["payload"]["data"]["durationMs"], 2_500);
 
     let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn archived_cleanup_failure_preserves_task_and_snapshot_for_retry() {
+    async fn cleanup_event(receiver: &mut broadcast::Receiver<Value>) -> Value {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let event = receiver.recv().await.unwrap();
+                if event["payload"]["data"]["archiveCleanup"].is_object() {
+                    return event;
+                }
+            }
+        })
+        .await
+        .expect("archive cleanup must publish its result")
+    }
+
+    let _lock = crate::test_env::lock();
+    let root = tempfile::tempdir().unwrap();
+    let _home = ScalarEnv::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let source = root.path().join("source");
+            initialize_test_repository(&source);
+            let (event_tx, mut event_rx) = broadcast::channel(16);
+            let mut handler = RuntimeWorkRpcHandler::with_event_sender_deferred_startup_recovery(
+                "device-1",
+                "/bin/false",
+                event_tx.clone(),
+            );
+            handler.store = RuntimeWorkStore::new(root.path().join("fixture-runtime/index.json"));
+            handler.worktrees =
+                WorktreeManager::new(root.path().join("fixture-runtime/worktrees.json"));
+            handler
+                .worktrees
+                .update_settings(WorktreeSettingsPatch {
+                    worktree_root: Some(root.path().join("managed").display().to_string()),
+                    ..WorktreeSettingsPatch::default()
+                })
+                .unwrap();
+            let record = handler
+                .worktrees
+                .prepare(&source, "task-1", None, false)
+                .unwrap();
+            let path = Path::new(&record.path);
+            handler.worktrees.delete(path, true).unwrap();
+            handler.worktrees.restore(path).unwrap();
+            let marker = fs::read(path.join(".git")).unwrap();
+            fs::write(path.join(".git"), "gitdir: /missing/git/worktrees/task-1\n").unwrap();
+            let mut link = RuntimeTaskLink::new_pending(
+                "task-1".to_owned(),
+                record.path.clone(),
+                "Task".to_owned(),
+            );
+            link.status = "archived".to_owned();
+            handler.upsert_local_task(link.clone());
+            handler.mark_archived_link_deleted(&link);
+            event_tx
+                .send(json!({"event": "runtime.work.changed", "payload": {"taskId": "unrelated"}}))
+                .unwrap();
+
+            handler.delete_archived_link_background(link.clone()).await;
+
+            assert!(path.exists());
+            assert!(handler.local_task_link("task-1").is_some());
+            assert!(!handler.archived_link_is_deleted(&link));
+            assert!(handler.worktrees.snapshot_source_for(path).is_some());
+            let event = cleanup_event(&mut event_rx).await;
+            assert_eq!(event["event"], "runtime.work.changed");
+            assert_eq!(event["payload"]["deviceId"], "device-1");
+            assert!(!event["payload"]["data"]["archiveCleanup"]["errors"]
+                .as_array()
+                .unwrap()
+                .is_empty());
+
+            fs::write(path.join(".git"), marker).unwrap();
+            handler.delete_archived_link_background(link).await;
+            assert!(!path.exists());
+            assert!(handler.local_task_link("task-1").is_none());
+            assert!(handler.worktrees.snapshot_source_for(path).is_none());
+            let event = cleanup_event(&mut event_rx).await;
+            assert_eq!(
+                event["payload"]["data"]["archiveCleanup"]["errors"],
+                json!([])
+            );
+        });
 }
 
 #[tokio::test]

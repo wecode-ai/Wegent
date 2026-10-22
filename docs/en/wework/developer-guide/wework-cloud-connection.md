@@ -42,6 +42,8 @@ Wework resolves the Socket.IO address in this order: the URL explicitly entered 
 
 Local Wework does not render cloud username/password forms and does not call `/auth/login` or `/auth/admin-password/setup`. Cloud login, OIDC, and admin initialization all happen on the cloud Wegent Web authorization page. After login, the user must explicitly approve Wework access; only then does Backend store a one-time claimable cloud JWT in the authorization session. Local Wework claims it, verifies the user through `/users/me`, and persists the cloud connection state.
 
+After authorization succeeds, the page shows a three-second countdown and then closes automatically. Failed or cancelled authorization does not start the countdown. If the browser restricts automatic closing, the page asks the user to close it manually and return to Wework.
+
 Backend builds the authorization page URL from `WEWORK_AUTHORIZE_BASE_URL`; when unset, it falls back to `FRONTEND_URL`. Deployments with separate API and Web origins must configure the Web root URL explicitly. The Wework client only opens the complete `authorize_url` returned by Backend and does not infer the Web address itself.
 
 When the underlying Socket.IO connection closes, the local executor immediately clears its connected status and starts the existing reconnect flow. Account operations therefore do not treat the Backend as available while waiting for a heartbeat to detect the disconnect. Registration tracks the close epoch and uses the same lock to publish readiness and process close notifications, so registration cannot overwrite a recent disconnect. A stale connection's close callback cannot invalidate a newer connection.
