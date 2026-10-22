@@ -18,6 +18,27 @@ fn assistant(id: &str, turn_id: &str, content: &str) -> Value {
     })
 }
 
+fn async_question(id: &str, turn_id: &str, question: &str) -> Value {
+    let mut message = assistant(id, turn_id, "");
+    message["blocks"] = json!([{
+        "id": format!("{id}-question"), "type":"tool", "renderPayload": {
+            "kind":"request_user_input", "delivery":"async", "questions":[{"question":question}],
+        },
+    }]);
+    message
+}
+
+fn reply_with_code_comments(content: &str) -> String {
+    let comments = json!([{
+        "commentNumber":1, "source":"code_selection", "location":"File: src/example.ts, lines 1",
+        "filePath":"src/example.ts", "fileName":"example.ts", "lines":"1", "selectedText":"selected",
+        "userComment":"Check this", "createdAt":"2026-10-22T00:00:00Z",
+    }]);
+    format!(
+        "{content}\n\n<workspace_comment_context>\nThe user attached the following comments. Treat browser_annotation items as comments on parts of the visible web page, and code_selection items as comments on selected code.\n{comments}\n</workspace_comment_context>"
+    )
+}
+
 fn tool_messages(turn_id: &str, prefix: &str) -> Vec<Value> {
     (0..5)
         .map(|index| {
@@ -139,6 +160,209 @@ fn cached_async_reply_search_hydrates_distant_question_source_and_raw_answer() {
         search_cached_transcript(&cached_search_messages(&link), "**plain**", 250)["totalMatches"],
         0
     );
+}
+
+#[test]
+fn cached_async_reply_search_does_not_pair_one_line_with_a_merged_question_group() {
+    let messages = vec![
+        async_question("first", "questions", "first?"),
+        async_question("second", "questions", "needle?"),
+        json!({"id":"reply", "turnId":"reply-turn", "role":"user", "content":"yes"}),
+    ];
+    for messages in [
+        messages.clone(),
+        vec![
+            messages[0].clone(),
+            messages[2].clone(),
+            messages[1].clone(),
+        ],
+    ] {
+        for query in ["first", "needle"] {
+            assert_eq!(
+                search_cached_transcript(&messages, query, 250)["totalMatches"],
+                0
+            );
+        }
+        let answer = search_cached_transcript(&messages, "yes", 250);
+        assert_eq!(answer["totalMatches"], 1);
+        assert!(answer["matches"][0].get("replyQuestions").is_none());
+        let reply_index = messages
+            .iter()
+            .position(|message| message["id"] == "reply")
+            .unwrap();
+        assert_eq!(cached_reply_source_index(&messages, reply_index), None);
+    }
+}
+
+#[test]
+fn cached_async_reply_source_uses_visible_blocks_when_assistant_body_is_absent() {
+    for has_block_id in [false, true] {
+        let mut card = async_question("question", "question-turn", "needle?");
+        card.as_object_mut().unwrap().remove("content");
+        if !has_block_id {
+            card["blocks"][0].as_object_mut().unwrap().remove("id");
+        }
+        let messages = vec![
+            card,
+            json!({"id":"reply", "turnId":"reply-turn", "role":"user", "content":"yes"}),
+        ];
+        assert_eq!(
+            search_cached_transcript(&messages, "needle", 250)["totalMatches"],
+            usize::from(has_block_id)
+        );
+        assert_eq!(
+            cached_reply_source_index(&messages, 1),
+            has_block_id.then_some(0)
+        );
+    }
+}
+
+#[test]
+fn cached_async_reply_search_pairs_all_canonical_questions_and_hydrates_the_full_source() {
+    let mut messages = vec![assistant("lead", "questions", "Question context")];
+    messages.push(async_question("first", "questions", "first?"));
+    messages.extend(tool_messages("questions", "between"));
+    messages.push(async_question("second", "questions", "needle?"));
+    messages.extend((0..8).map(|index| {
+        assistant(
+            &format!("other-{index}"),
+            &format!("other-turn-{index}"),
+            "Other",
+        )
+    }));
+    messages.push(json!({
+        "id":"reply", "clientUserMessageId":"client-reply", "turnId":"reply-turn",
+        "role":"user", "content":"**yes**\nno",
+    }));
+    let link = cached_link(messages);
+    let messages = cached_search_messages(&link);
+    assert_eq!(
+        cached_reply_source_index(&messages, messages.len() - 1),
+        Some(0)
+    );
+    for query in ["first", "needle", "**yes**"] {
+        let result = search_cached_transcript(&messages, query, 250);
+        assert_eq!(result["totalMatches"], 1, "query={query}");
+        assert_eq!(result["matches"][0]["itemId"], "client-reply");
+        assert_eq!(
+            result["matches"][0]["replyQuestions"],
+            json!(["first?", "needle?"])
+        );
+    }
+    let result = search_cached_transcript(&messages, "?", 250);
+    assert_eq!(result["totalMatches"], 2);
+    for (occurrence, matched) in result["matches"].as_array().unwrap().iter().enumerate() {
+        assert_eq!(matched["itemId"], "client-reply");
+        assert_eq!(matched["messageId"], "client-reply");
+        assert_eq!(matched["occurrence"], occurrence);
+        let page = hydrate_cursor(&link, matched["cursor"].as_str().unwrap(), 1, false);
+        for id in ["lead", "first", "second", "reply"] {
+            assert!(message_ids(&page).contains(&id));
+        }
+        assert_eq!(
+            search_cached_transcript(page["messages"].as_array().unwrap(), "?", 250),
+            result
+        );
+        assert_complete_page_turns(&link, &page);
+    }
+}
+
+#[test]
+fn cached_async_reply_search_keeps_canonical_guidance_boundaries() {
+    let messages = vec![
+        async_question("first", "questions", "first?"),
+        async_question("second", "questions", "second?"),
+        json!({
+            "id":"guidance", "clientUserMessageId":"client-guidance", "turnId":"questions",
+            "role":"user", "runtimeGuidance":true, "content":"yes\nno",
+        }),
+        async_question("third", "questions", "needle?"),
+        json!({
+            "id":"reply", "clientUserMessageId":"client-reply", "turnId":"reply-turn",
+            "role":"user", "content":"done",
+        }),
+    ];
+    for query in ["first", "second"] {
+        let result = search_cached_transcript(&messages, query, 250);
+        assert_eq!(result["totalMatches"], 1);
+        assert_eq!(result["matches"][0]["itemId"], "client-guidance");
+        assert_eq!(
+            result["matches"][0]["replyQuestions"],
+            json!(["first?", "second?"])
+        );
+    }
+    let result = search_cached_transcript(&messages, "needle", 250);
+    assert_eq!(result["totalMatches"], 1);
+    assert_eq!(result["matches"][0]["itemId"], "client-reply");
+    assert_eq!(result["matches"][0]["replyQuestions"], json!(["needle?"]));
+    assert_eq!(cached_reply_source_index(&messages, 4), Some(3));
+}
+
+#[test]
+fn cached_search_normalizes_plan_labels_only_for_unpaired_user_messages() {
+    let content = "PLEASE IMPLEMENT THIS PLAN: hidden-needle";
+    let ordinary = vec![json!({
+        "id":"ordinary", "turnId":"ordinary-turn", "role":"user", "content":content,
+    })];
+    assert_eq!(
+        search_cached_transcript(&ordinary, "hidden-needle", 250)["totalMatches"],
+        0
+    );
+    let label = search_cached_transcript(&ordinary, "是的，执行此计划", 250);
+    assert_eq!(label["totalMatches"], 1);
+    assert_eq!(label["matches"][0]["itemId"], "ordinary");
+
+    let paired = vec![
+        async_question("question", "question-turn", "Choose?"),
+        json!({"id":"reply", "turnId":"reply-turn", "role":"user", "content":content}),
+    ];
+    for query in ["PLEASE IMPLEMENT THIS PLAN:", "hidden-needle", "Choose?"] {
+        let result = search_cached_transcript(&paired, query, 250);
+        assert_eq!(result["totalMatches"], 1, "query={query}");
+        assert_eq!(result["matches"][0]["itemId"], "reply");
+        assert_eq!(result["matches"][0]["replyQuestions"], json!(["Choose?"]));
+    }
+    assert_eq!(
+        search_cached_transcript(&paired, "是的，执行此计划", 250)["totalMatches"],
+        0
+    );
+}
+
+#[test]
+fn cached_async_reply_search_strips_code_comment_context_before_pairing() {
+    let link = cached_link(vec![
+        async_question("first", "questions", "first?"),
+        async_question("second", "questions", "second?"),
+        json!({
+            "id":"reply", "clientUserMessageId":"client-reply", "turnId":"reply-turn",
+            "role":"user", "content":reply_with_code_comments("yes\nno"),
+        }),
+    ]);
+    let messages = cached_search_messages(&link);
+    assert_eq!(
+        search_cached_transcript(&messages, "commentNumber", 250)["totalMatches"],
+        0
+    );
+    for query in ["first?\nyes", "second?\nno"] {
+        let result = search_cached_transcript(&messages, query, 250);
+        assert_eq!(result["totalMatches"], 1, "query={query}");
+        assert_eq!(result["matches"][0]["itemId"], "client-reply");
+        assert_eq!(
+            result["matches"][0]["replyQuestions"],
+            json!(["first?", "second?"])
+        );
+        let page = hydrate_cursor(
+            &link,
+            result["matches"][0]["cursor"].as_str().unwrap(),
+            1,
+            false,
+        );
+        assert_eq!(
+            search_cached_transcript(page["messages"].as_array().unwrap(), query, 250),
+            result
+        );
+        assert_complete_page_turns(&link, &page);
+    }
 }
 
 #[test]

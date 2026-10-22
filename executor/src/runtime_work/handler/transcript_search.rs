@@ -188,12 +188,95 @@ pub(super) fn cached_search_match_response(
 }
 
 fn cached_reply_source_index(messages: &[Value], reply_index: usize) -> Option<usize> {
-    let mut projection = AsyncReplySearchProjection::default();
-    for message in &messages[..=reply_index] {
-        projection.message_text(message, message["id"].as_str().unwrap_or_default());
-    }
+    let (projection, _) = cached_async_reply_search_projection(messages);
     let source = projection.reply_source(messages[reply_index]["id"].as_str()?)?;
-    messages.iter().position(|message| message["id"] == source)
+    source.parse().ok()
+}
+
+fn cached_async_reply_search_projection(
+    messages: &[Value],
+) -> (AsyncReplySearchProjection, HashMap<String, String>) {
+    let mut turns = transcript_canonical_turns(messages, TranscriptTurnItemSource::CachedMessages)
+        .into_iter()
+        .filter_map(|turn| Some((string_field(&turn, "id")?, turn)))
+        .collect::<HashMap<_, _>>();
+    let mut item_sources = HashMap::new();
+    for (index, message) in messages.iter().enumerate() {
+        if message["role"] != "assistant" {
+            continue;
+        }
+        if let Some(id) = string_field(message, "id") {
+            item_sources.insert(id, index);
+        }
+        for block in message["blocks"].as_array().into_iter().flatten() {
+            if let Some(id) = string_field(block, "id") {
+                item_sources.insert(id, index);
+            }
+        }
+    }
+    let mut projection = AsyncReplySearchProjection::default();
+    let mut user_texts = HashMap::new();
+    for message in messages {
+        if let Some(turn_id) = transcript_message_turn_id(message) {
+            if let Some(turn) = turns.remove(&turn_id) {
+                cached_turn_reply_projection(
+                    &turn,
+                    &item_sources,
+                    &mut projection,
+                    &mut user_texts,
+                );
+            }
+        } else if message["role"] == "user" {
+            if let (Some(id), Some(text)) = (
+                string_field(message, "id"),
+                projection.message_text(message, ""),
+            ) {
+                user_texts.insert(id, text);
+            }
+        }
+    }
+    (projection, user_texts)
+}
+
+// The renderer associates replies after merging each canonical assistant segment.
+fn cached_turn_reply_projection(
+    turn: &Value,
+    item_sources: &HashMap<String, usize>,
+    projection: &mut AsyncReplySearchProjection,
+    user_texts: &mut HashMap<String, String>,
+) {
+    let Some(items) = turn["items"].as_array() else {
+        return;
+    };
+    for segment in items.split_inclusive(|item| item["type"] == "user_message") {
+        let source = segment
+            .iter()
+            .filter_map(|item| item_sources.get(item["id"].as_str()?))
+            .min();
+        if let Some(source) = source {
+            let blocks = segment
+                .iter()
+                .filter(|item| item["type"] == "block")
+                .map(|item| item["block"].clone())
+                .collect::<Vec<_>>();
+            projection.message_text(
+                &json!({"role":"assistant", "blocks":blocks}),
+                &source.to_string(),
+            );
+        }
+        if let Some(message) = segment
+            .last()
+            .filter(|item| item["type"] == "user_message")
+            .map(|item| &item["message"])
+        {
+            if let (Some(id), Some(text)) = (
+                string_field(message, "id"),
+                projection.message_text(message, ""),
+            ) {
+                user_texts.insert(id, text);
+            }
+        }
+    }
 }
 
 fn cached_search_complete_turn_window(
@@ -248,7 +331,7 @@ fn search_cached_transcript(messages: &[Value], query: &str, limit: usize) -> Va
     let segment_contents = cached_assistant_segment_contents(messages);
     let mut matches = Vec::new();
     let mut total = 0;
-    let mut projection = AsyncReplySearchProjection::default();
+    let (projection, user_texts) = cached_async_reply_search_projection(messages);
     for message in messages {
         let role = string_field(message, "role").unwrap_or_default();
         if !matches!(role.as_str(), "user" | "assistant") {
@@ -258,7 +341,7 @@ fn search_cached_transcript(messages: &[Value], query: &str, limit: usize) -> Va
         let Some(message_id) = string_field(message, "id") else {
             continue;
         };
-        let user_text = projection.message_text(message, &message_id);
+        let user_text = user_texts.get(&message_id).cloned();
         for (item_id, text) in
             cached_message_search_sources(message, &role, &segment_contents, user_text)
         {

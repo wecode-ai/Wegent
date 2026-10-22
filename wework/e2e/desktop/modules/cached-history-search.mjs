@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 
 import { ACTIVE_WORKBENCH_SELECTOR, DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
 import {
+  USER_HISTORY_PROJECTION,
   waitForHighlightedHistoryMatch,
   waitForHistorySearchCount,
 } from './terminal-history-search.mjs'
@@ -11,14 +12,69 @@ const ERROR_BODY = `API error: ${ERROR_QUERY}`
 const GUIDANCE_QUERY = 'WEWORK_E2E_CACHED_GUIDANCE_BODY'
 const GUIDANCE_BODY = `API error: ${GUIDANCE_QUERY}`
 const DUPLICATE_QUERY = 'WEWORK_E2E_CACHED_DUPLICATE_BODY'
+const UNPAIRED_QUESTION_QUERY = 'WEWORK_E2E_CACHED_UNPAIRED_QUESTION_ONLY'
+const GROUP_FIRST_QUERY = 'WEWORK_E2E_CACHED_GROUP_FIRST'
+const GROUP_SECOND_QUERY = 'WEWORK_E2E_CACHED_GROUP_SECOND'
+const GROUP_SHARED_QUERY = 'WEWORK_E2E_CACHED_GROUP_SHARED'
+const GROUP_QUESTIONS = [
+  `${GROUP_FIRST_QUERY} ${GROUP_SHARED_QUERY}?`,
+  `${GROUP_SECOND_QUERY} ${GROUP_SHARED_QUERY}?`,
+]
+const GROUP_ANSWERS = [`yes ${GROUP_SHARED_QUERY}`, 'no']
+const GROUP_REPLY_TEXT = GROUP_QUESTIONS.map((question, index) =>
+  [question, GROUP_ANSWERS[index]].join('')
+).join('')
+const GROUP_REPLY_MATCH = {
+  name: 'group-reply',
+  index: 0,
+  text: GROUP_REPLY_TEXT,
+  userReply: true,
+}
+const OLD_VISIBLE_MARKERS = [
+  GROUP_FIRST_QUERY,
+  GROUP_SECOND_QUERY,
+  USER_HISTORY_PROJECTION.plan.visibleText,
+  USER_HISTORY_PROJECTION.commentedReply.query,
+]
 const LAST_ANSWER = 'Cached search answer 119'
 const FIND = '[data-testid="conversation-find-input"]'
 const ANSWERS = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`
+const USERS = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="user-message-content"]`
 const OLDER = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-older-runtime-transcript-button"]`
 const NEWER = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-newer-runtime-transcript-button"]`
 const turnId = name => `cached-search-${name}`
 const itemId = (name, index) => `${turnId(name)}-${index}`
 const CASES = [
+  { query: UNPAIRED_QUESTION_QUERY, matches: [] },
+  { query: USER_HISTORY_PROJECTION.plan.query, matches: [] },
+  {
+    query: USER_HISTORY_PROJECTION.plan.visibleText,
+    matches: [
+      { name: 'plan', index: 0, text: USER_HISTORY_PROJECTION.plan.visibleText, userMessage: true },
+    ],
+  },
+  { query: 'commentNumber', matches: [] },
+  {
+    query: USER_HISTORY_PROJECTION.commentedReply.query,
+    matches: [
+      {
+        name: 'comment-reply',
+        index: 0,
+        text: USER_HISTORY_PROJECTION.commentedReply.visibleText,
+        userReply: true,
+      },
+    ],
+  },
+  { query: GROUP_FIRST_QUERY, matches: [GROUP_REPLY_MATCH] },
+  { query: GROUP_SECOND_QUERY, matches: [GROUP_REPLY_MATCH] },
+  {
+    query: GROUP_SHARED_QUERY,
+    matches: Array.from({ length: 3 }, (_, occurrence) => ({
+      ...GROUP_REPLY_MATCH,
+      occurrence,
+    })),
+    browseContext: true,
+  },
   {
     query: 'interrupted',
     matches: [
@@ -55,8 +111,8 @@ export function createCachedHistoryTask(source) {
       createdAt: new Date(1_792_454_400_000 + messages.length * 1000).toISOString(),
       ...extra,
     })
-  const tools = name => {
-    for (let index = 1; index <= 5; index += 1) {
+  const tools = (name, count = 5) => {
+    for (let index = 1; index <= count; index += 1) {
       append(name, index, '', {
         blocks: [
           {
@@ -72,6 +128,24 @@ export function createCachedHistoryTask(source) {
       })
     }
   }
+  const question = (name, index, title) =>
+    append(name, index, '', {
+      status: 'done',
+      blocks: [
+        {
+          id: `${itemId(name, index)}-question`,
+          type: 'tool',
+          toolName: 'request_user_input',
+          status: 'done',
+          createdAt: 1_792_454_400_000 + messages.length * 1000,
+          renderPayload: {
+            kind: 'request_user_input',
+            delivery: 'async',
+            questions: [{ id: `${name}-${index}`, question: title }],
+          },
+        },
+      ],
+    })
   append('before', 0, 'Cached search earlier context')
   for (const [name, status, text] of [
     ['cancelled', 'cancelled', 'interrupted'],
@@ -102,6 +176,22 @@ export function createCachedHistoryTask(source) {
       },
     ],
   })
+  question('unpaired-group', 0, 'First unmatched grouped question?')
+  tools('unpaired-group', 60)
+  question('unpaired-group', 61, `${UNPAIRED_QUESTION_QUERY}?`)
+  append('unpaired-reply', 0, 'yes', { role: 'user' })
+  append('unpaired-reply', 1, 'Unpaired grouped reply completed', { status: 'done' })
+  append('plan', 0, USER_HISTORY_PROJECTION.plan.content, { role: 'user' })
+  append('plan', 1, 'Implementation plan accepted', { status: 'done' })
+  question('comment-question', 0, USER_HISTORY_PROJECTION.commentedReply.question)
+  append('comment-reply', 0, USER_HISTORY_PROJECTION.commentedReply.content, { role: 'user' })
+  append('comment-reply', 1, 'Commented reply completed', { status: 'done' })
+  question('paired-group', 0, GROUP_QUESTIONS[0])
+  // Both source messages must hydrate even when they span the normal cached context window.
+  tools('paired-group', 60)
+  question('paired-group', 61, GROUP_QUESTIONS[1])
+  append('group-reply', 0, GROUP_ANSWERS.join('\n'), { role: 'user' })
+  append('group-reply', 1, 'Paired grouped reply completed', { status: 'done' })
   // Keep every edge case outside even the largest normal transcript page.
   for (let index = 0; index < 120; index += 1) {
     append(`tail-${index}`, 0, `Cached search question ${index}`, { role: 'user' })
@@ -131,6 +221,10 @@ export async function verifyCachedHistorySearch(
   await control.command('waitFor', ANSWERS, { text: LAST_ANSWER, timeoutMs })
   const original = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).pane
   assert.doesNotMatch(await control.command('getText', ANSWERS), /interrupted|WEWORK_E2E_CACHED_/)
+  const originalText = await control.command('getText', ACTIVE_WORKBENCH_SELECTOR)
+  for (const marker of OLD_VISIBLE_MARKERS) {
+    assert.equal(originalText.includes(marker), false, 'The cached fixture was already loaded')
+  }
   for (const { query, matches } of CASES) {
     const result = await search(query)
     assert.equal(result.totalMatches, matches.length)
@@ -144,18 +238,35 @@ export async function verifyCachedHistorySearch(
   await control.command('nativePress', OLDER, {
     key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
   })
-  for (const { query, matches } of CASES) {
+  for (const { query, matches, browseContext } of CASES) {
     await control.command('fill', FIND, { value: '' })
     await control.command('waitFor', '[data-testid="conversation-find-next-button"][disabled]')
     await control.command('fill', FIND, { value: query })
+    if (matches.length === 0) {
+      await waitForHistorySearchCount(control, '0 个结果', timeoutMs)
+    }
     for (const [index, match] of matches.entries()) {
       if (index) {
         await control.command('clickWhenEnabled', '[data-testid="conversation-find-next-button"]')
       }
       await waitForHistorySearchCount(control, `${index + 1} / ${matches.length}`, timeoutMs)
-      const messageId = `runtime-view:${turnId(match.name)}:assistant`
-      const content = `${ACTIVE_WORKBENCH_SELECTOR} [data-message-id="${messageId}"] [data-testid="assistant-message-content"]`
-      await waitForHighlightedHistoryMatch(control, match.text, timeoutMs, content)
+      const messageId =
+        match.userReply || match.userMessage
+          ? itemId(match.name, match.index)
+          : `runtime-view:${turnId(match.name)}:assistant`
+      const target = match.userReply
+        ? 'user-message-question-reply'
+        : match.userMessage
+          ? 'user-message-content'
+          : 'assistant-message-content'
+      const content = `${ACTIVE_WORKBENCH_SELECTOR} [data-message-id="${messageId}"] [data-testid="${target}"]`
+      await waitForHighlightedHistoryMatch(
+        control,
+        match.text,
+        timeoutMs,
+        content,
+        match.occurrence
+      )
       assert.equal(
         Number(
           await control.command(
@@ -167,6 +278,45 @@ export async function verifyCachedHistorySearch(
         'Loading a cached match changed its visibility'
       )
     }
+    if (browseContext) {
+      // The UI reads five cached messages per page. The initial anchor includes tail 0;
+      // its next five-message page reaches tail 3 after expanding complete turns.
+      for (const [button, selector, text] of [
+        [OLDER, ANSWERS, 'Commented reply completed'],
+        [NEWER, USERS, 'Cached search question 3'],
+      ]) {
+        assert.equal(
+          (await control.command('getText', selector)).includes(text),
+          false,
+          'The cached context target must start outside the hydrated search window'
+        )
+        await control.command('scrollIntoView', button)
+        await control.command('clickWhenEnabled', button)
+        await control.command('waitFor', selector, { text, timeoutMs })
+        await waitForHistorySearchCount(control, '3 / 3', timeoutMs)
+      }
+      for (let occurrence = 0; occurrence < 3; occurrence += 1) {
+        await control.command('clickWhenEnabled', '[data-testid="conversation-find-next-button"]')
+        await waitForHistorySearchCount(control, `${occurrence + 1} / 3`, timeoutMs)
+        await waitForHighlightedHistoryMatch(
+          control,
+          GROUP_REPLY_TEXT,
+          timeoutMs,
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="user-message-question-reply"]`,
+          occurrence
+        )
+      }
+    }
+    assert.equal(
+      Number(
+        await control.command(
+          'getElementCount',
+          `${ACTIVE_WORKBENCH_SELECTOR} [role="alert"], [data-testid="conversation-find-retry"]`
+        )
+      ),
+      0,
+      'Cached search failed after projecting the visible user message'
+    )
   }
   await control.command('nativePress', FIND, { key: 'Escape' })
   await control.command('waitFor', ANSWERS, { text: LAST_ANSWER })
@@ -176,4 +326,8 @@ export async function verifyCachedHistorySearch(
   }
   assert.deepEqual(restored.messageSummary, original.messageSummary)
   assert.equal(Number(await control.command('getElementCount', NEWER)), 0)
+  const restoredText = await control.command('getText', ACTIVE_WORKBENCH_SELECTOR)
+  for (const marker of OLD_VISIBLE_MARKERS) {
+    assert.equal(restoredText.includes(marker), false, 'Search polluted the original cached view')
+  }
 }

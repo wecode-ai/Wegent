@@ -1,7 +1,11 @@
 import { act, fireEvent, render, renderHook } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
+import type { RuntimeTranscriptTurn } from '@wegent/chat-core/runtime'
 import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
 import { resolveAsyncRequestUserInputReplies } from '@wegent/chat-core/runtime-user-input'
+import { appendCodeCommentContexts } from '@wegent/chat-core/code-comment-context'
+import { projectRuntimeConversationTurns } from '@wegent/chat-core/runtime-conversation-turns'
+import { runtimeTranscriptTurnsToConversationTurns } from '@wegent/chat-core/runtime-transcript'
 import { createCollaborationTranslator } from '@wegent/collaboration'
 import { ConversationTranslationProvider, UserMessage } from '@wegent/collaboration/conversation'
 import { conversationSearchRanges } from '../../../../packages/collaboration/src/conversation/useConversationSearchTarget'
@@ -18,12 +22,13 @@ function message(
   return { id, content, role, status: 'done', createdAt: '2026-10-14T00:00:00Z' }
 }
 
-function questionMessage(question: string): WorkbenchMessage {
+function questionMessage(question: string, id = 'question'): WorkbenchMessage {
   return {
-    ...message('question', ''),
+    ...message(id, ''),
+    turnId: 'question-turn',
     blocks: [
       {
-        id: 'question-block',
+        id: `${id}-block`,
         subtaskId: 'question-turn',
         type: 'tool',
         toolName: 'request_user_input',
@@ -39,12 +44,148 @@ function questionMessage(question: string): WorkbenchMessage {
   }
 }
 
+function projectedReply(questions: string[], content: string) {
+  const turns: RuntimeTranscriptTurn[] = [
+    {
+      id: 'question-turn',
+      status: 'done',
+      items: questions.flatMap((question, index) =>
+        questionMessage(question, `question-${index}`).blocks!.map(block => ({
+          id: block.id,
+          type: 'block' as const,
+          block,
+        }))
+      ),
+    },
+    {
+      id: 'reply-turn',
+      status: 'done',
+      items: [
+        {
+          id: 'reply',
+          type: 'user_message',
+          message: { ...message('reply', content, 'user'), turnId: 'reply-turn' },
+        },
+      ],
+    },
+  ]
+  return projectRuntimeConversationTurns(runtimeTranscriptTurnsToConversationTurns(turns))
+}
+
+function renderReply(messages: WorkbenchMessage[], id: string) {
+  const reply = messages.find(message => message.id === id)!
+  return render(
+    <ConversationTranslationProvider translate={createCollaborationTranslator('en')}>
+      <UserMessage
+        message={reply}
+        replyQuestions={resolveAsyncRequestUserInputReplies(messages).get(reply.id)}
+        services={{ images: { identity: vi.fn(), load: vi.fn(), download: vi.fn() } }}
+      />
+    </ConversationTranslationProvider>
+  )
+}
+
 afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
 })
 
 describe('persisted async question replies', () => {
+  test('does not attribute one answer to two question blocks merged into the same assistant', () => {
+    const messages = projectedReply(['first?', 'needle?'], 'yes')
+    const assistant = messages.find(message => message.role === 'assistant')!
+    expect(assistant.blocks).toHaveLength(2)
+    expect(resolveAsyncRequestUserInputReplies(messages).has('reply')).toBe(false)
+    expect(
+      resolveConversationMatch(
+        { messageId: 'reply', occurrence: 0, cursor: 'cached-reply' },
+        messages,
+        'needle'
+      )
+    ).toBeNull()
+    const { container } = renderReply(messages, 'reply')
+    expect(container.querySelector('[data-testid="user-message-question-reply"]')).toBeNull()
+    expect(conversationSearchRanges(container, 'needle', 250)).toHaveLength(0)
+    expect(container.querySelector('[data-testid="user-message-content"]')).toHaveTextContent('yes')
+  })
+
+  test.each([
+    { query: 'first-only', count: 1 },
+    { query: 'second-only', count: 1 },
+    { query: 'needle', count: 3 },
+  ])('keeps grouped question occurrences aligned with visible $query', ({ query, count }) => {
+    const questions = ['first-only needle?', 'second-only needle?']
+    const messages = projectedReply(questions, 'yes needle\nno')
+    const { container } = renderReply(messages, 'reply')
+    expect(conversationSearchRanges(container, query, 250).map(range => range.toString())).toEqual(
+      Array(count).fill(query)
+    )
+    for (let occurrence = 0; occurrence < count; occurrence += 1) {
+      expect(
+        resolveConversationMatch(
+          { messageId: 'reply', replyQuestions: questions, occurrence, cursor: 'cached-reply' },
+          messages,
+          query
+        )
+      ).toEqual({ messageId: 'reply', occurrence })
+    }
+    expect(
+      resolveConversationMatch(
+        {
+          messageId: 'reply',
+          replyQuestions: questions,
+          occurrence: count,
+          cursor: 'cached-reply',
+        },
+        messages,
+        query
+      )
+    ).toBeNull()
+  })
+
+  test('indexes the visible implementation label instead of the hidden plan body', () => {
+    const messages = projectedReply([], 'PLEASE IMPLEMENT THIS PLAN: hidden-needle')
+    const target = { messageId: 'reply', occurrence: 0, cursor: 'plan-cursor' }
+    expect(resolveConversationMatch(target, messages, 'hidden-needle')).toBeNull()
+    expect(resolveConversationMatch(target, messages, '是的，执行此计划')).toEqual({
+      messageId: 'reply',
+      occurrence: 0,
+    })
+    const { container } = renderReply(messages, 'reply')
+    expect(conversationSearchRanges(container, 'hidden-needle', 250)).toHaveLength(0)
+    expect(conversationSearchRanges(container, '是的，执行此计划', 250)).toHaveLength(1)
+  })
+
+  test('pairs a comment-bearing reply after removing the hidden comment protocol', () => {
+    const question = 'comment-question-only: continue?'
+    const content = appendCodeCommentContexts('yes', [
+      {
+        id: 'comment-1',
+        filePath: 'src/example.ts',
+        fileName: 'example.ts',
+        startLine: 1,
+        endLine: 1,
+        selectedText: 'export const example = true',
+        comment: 'Review the selected declaration',
+        createdAt: '2026-10-20T00:00:00Z',
+      },
+    ])
+    const messages = projectedReply([question], content)
+    expect(messages.find(message => message.id === 'reply')?.content).toBe('yes')
+    const target = { messageId: 'reply', occurrence: 0, cursor: 'commented-reply' }
+    expect(resolveConversationMatch(target, messages, 'commentNumber')).toBeNull()
+    expect(resolveConversationMatch(target, messages, 'comment-question-only')).toEqual({
+      messageId: 'reply',
+      occurrence: 0,
+    })
+    const { container } = renderReply(messages, 'reply')
+    expect(conversationSearchRanges(container, 'commentNumber', 250)).toHaveLength(0)
+    expect(conversationSearchRanges(container, 'comment-question-only', 250)).toHaveLength(1)
+    expect(
+      container.querySelector('[data-testid="user-message-question-reply"]')
+    ).toHaveTextContent(`${question}yes`)
+  })
+
   for (const location of ['live', 'page'] as const) {
     test.each([
       { query: 'question-only', count: 1 },

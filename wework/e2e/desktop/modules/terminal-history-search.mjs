@@ -26,6 +26,42 @@ const ASYNC_REPLY_MATCH = {
   text: ASYNC_REPLY_TEXT,
   userReply: true,
 }
+const PLAN_TURN = 22
+const COMMENT_QUESTION_TURN = 23
+const COMMENT_REPLY_TURN = 24
+const COMMENT_QUESTION = 'WEWORK_E2E_COMMENTED_ASYNC_QUESTION: continue?'
+export const USER_HISTORY_PROJECTION = {
+  plan: {
+    query: 'WEWORK_E2E_HIDDEN_IMPLEMENTATION_PLAN',
+    content: 'PLEASE IMPLEMENT THIS PLAN: WEWORK_E2E_HIDDEN_IMPLEMENTATION_PLAN',
+    visibleText: '是的，执行此计划',
+  },
+  commentedReply: {
+    query: 'WEWORK_E2E_COMMENTED_ASYNC_QUESTION',
+    question: COMMENT_QUESTION,
+    content: [
+      'yes',
+      '',
+      '<workspace_comment_context>',
+      'The user attached the following comments. Treat browser_annotation items as comments on parts of the visible web page, and code_selection items as comments on selected code.',
+      JSON.stringify([
+        {
+          commentNumber: 1,
+          source: 'code_selection',
+          location: 'File: src/example.ts, lines 1',
+          filePath: 'src/example.ts',
+          fileName: 'example.ts',
+          lines: '1',
+          selectedText: 'export const example = true',
+          userComment: 'Review the selected declaration',
+          createdAt: '2026-10-20T00:00:00Z',
+        },
+      ]),
+      '</workspace_comment_context>',
+    ].join('\n'),
+    visibleText: `${COMMENT_QUESTION}yes`,
+  },
+}
 const PLUGIN_BODY = `${PLUGIN_QUERY} appears before the result. ${PLUGIN_QUERY} appears again.`
 // The hidden transport payload must not contribute a third occurrence.
 const PLUGIN_MARKER = `[WEGENT_PLUGIN_RESULT]${JSON.stringify({
@@ -76,6 +112,24 @@ export const TERMINAL_HISTORY_SEARCH_CASES = [
     ],
     browseReplyContext: true,
   },
+  { query: USER_HISTORY_PROJECTION.plan.query, matches: [] },
+  {
+    query: USER_HISTORY_PROJECTION.plan.visibleText,
+    matches: [
+      { index: PLAN_TURN, text: USER_HISTORY_PROJECTION.plan.visibleText, userMessage: true },
+    ],
+  },
+  { query: 'commentNumber', matches: [] },
+  {
+    query: USER_HISTORY_PROJECTION.commentedReply.query,
+    matches: [
+      {
+        index: COMMENT_REPLY_TURN,
+        text: USER_HISTORY_PROJECTION.commentedReply.visibleText,
+        userReply: true,
+      },
+    ],
+  },
   { query: 'interrupted', matches: [TURNS[2], TURNS[3]] },
   { query: ERROR_MARKER, matches: [TURNS[4]] },
   {
@@ -96,17 +150,27 @@ const FIND = '[data-testid="conversation-find-input"]'
 const COUNT =
   '[data-testid="conversation-find-bar"]:has([data-testid="conversation-find-input"]:not([aria-busy="true"])) [data-testid="conversation-find-count"]'
 const ANSWERS = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`
+const USERS = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="user-message-content"]`
 const QUESTION_REPLIES = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="user-message-question-reply"]`
 
 export const terminalHistoryTurn = index => TURNS.find(turn => turn.index === index)
 
-export const terminalHistoryUserText = (index, fallbackText) =>
-  index === ASYNC_REPLY_TURN ? ASYNC_ANSWER : fallbackText
+export const terminalHistoryUserText = (index, fallbackText) => {
+  if (index === ASYNC_REPLY_TURN) return ASYNC_ANSWER
+  if (index === PLAN_TURN) return USER_HISTORY_PROJECTION.plan.content
+  if (index === COMMENT_REPLY_TURN) return USER_HISTORY_PROJECTION.commentedReply.content
+  return fallbackText
+}
 
 export async function assertAsyncHistoryUnloaded(control) {
   assert.equal(Number(await control.command('getElementCount', QUESTION_REPLIES)), 0)
   const initialText = await control.command('getText', ACTIVE_WORKBENCH_SELECTOR)
-  for (const marker of [ASYNC_QUESTION_QUERY, ASYNC_RAW_ANSWER_QUERY]) {
+  for (const marker of [
+    ASYNC_QUESTION_QUERY,
+    ASYNC_RAW_ANSWER_QUERY,
+    USER_HISTORY_PROJECTION.plan.visibleText,
+    USER_HISTORY_PROJECTION.commentedReply.query,
+  ]) {
     assert.equal(
       initialText.includes(marker),
       false,
@@ -133,6 +197,16 @@ export function terminalHistoryAssistantParts(index, fallbackText) {
         phase: 'commentary',
       })),
       { text: 'Async question delivered', phase: 'final_answer' },
+    ]
+  }
+  if (index === COMMENT_QUESTION_TURN) {
+    return [
+      {
+        text: 'Commented reply question card',
+        phase: 'final_answer',
+        delivery: 'async',
+        questions: [{ title: COMMENT_QUESTION, options: ['yes', 'no'] }],
+      },
     ]
   }
   if (index === 46) {
@@ -368,6 +442,9 @@ export async function verifyTerminalHistorySearch(
     await control.command('fill', FIND, { value: '' })
     await control.command('waitFor', '[data-testid="conversation-find-next-button"][disabled]')
     await control.command('fill', FIND, { value: query })
+    if (matches.length === 0) {
+      await waitForHistorySearchCount(control, '0 个结果', timeoutMs)
+    }
     for (const [index, match] of matches.entries()) {
       if (index > 0) {
         await control.command('clickWhenEnabled', '[data-testid="conversation-find-next-button"]')
@@ -379,9 +456,11 @@ export async function verifyTerminalHistorySearch(
         timeoutMs,
         match.userReply
           ? QUESTION_REPLIES
-          : match.narrative
-            ? `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`
-            : ANSWERS,
+          : match.userMessage
+            ? USERS
+            : match.narrative
+              ? `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`
+              : ANSWERS,
         match.occurrence
       )
       assert.equal(
@@ -395,6 +474,16 @@ export async function verifyTerminalHistorySearch(
         'A hidden terminal body produced an unresolvable historical match'
       )
     }
+    assert.equal(
+      Number(
+        await control.command(
+          'getElementCount',
+          `${ACTIVE_WORKBENCH_SELECTOR} [role="alert"], [data-testid="conversation-find-retry"]`
+        )
+      ),
+      0,
+      'A projected user body produced an unresolvable historical match'
+    )
     if (browseReplyContext) {
       await verifyAsyncReplyContext(control, contextPrompt, timeoutMs, asyncOlderTurn)
     }

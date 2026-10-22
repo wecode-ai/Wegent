@@ -100,6 +100,111 @@ fn legacy_async_reply_search_keeps_raw_answer_and_complete_distant_question_turn
     assert_eq!(search(&bytes, "**plain**")["totalMatches"], 0);
 }
 
+fn legacy_question_reply(questions: &[&str], answer: &str) -> Vec<u8> {
+    rollout(vec![
+        event(json!({"type":"task_started", "turn_id":"question-turn"})),
+        event(json!({
+            "type":"agent_message", "message":"fallback", "phase":"final_answer", "delivery":"async",
+            "questions":questions.iter().map(|question| json!({"title":question, "options":["yes", "no"]})).collect::<Vec<_>>(),
+        })),
+        event(json!({"type":"task_complete", "turn_id":"question-turn"})),
+        event(json!({"type":"task_started", "turn_id":"reply-turn"})),
+        event(json!({"type":"user_message", "message":answer, "client_id":"client-reply"})),
+        event(json!({"type":"task_complete", "turn_id":"reply-turn"})),
+    ])
+}
+
+#[test]
+fn legacy_ordinary_plan_confirmation_searches_only_the_visible_label() {
+    let bytes = rollout(vec![event(json!({
+        "type":"user_message", "message":"PLEASE IMPLEMENT THIS PLAN: needle",
+    }))]);
+    assert_eq!(search(&bytes, "needle")["totalMatches"], 0);
+    assert_eq!(
+        search(&bytes, "PLEASE IMPLEMENT THIS PLAN:")["totalMatches"],
+        0
+    );
+    assert_eq!(search(&bytes, "是的，执行此计划")["totalMatches"], 1);
+    for content in [
+        "please implement this plan: needle",
+        "before PLEASE IMPLEMENT THIS PLAN: needle",
+    ] {
+        let bytes = rollout(vec![event(
+            json!({"type":"user_message", "message":content}),
+        )]);
+        assert_eq!(search(&bytes, "needle")["totalMatches"], 1);
+        assert_eq!(search(&bytes, "是的，执行此计划")["totalMatches"], 0);
+    }
+}
+
+#[test]
+fn legacy_async_plan_and_markdown_answers_remain_raw() {
+    for answer in [
+        "PLEASE IMPLEMENT THIS PLAN: needle",
+        "**needle** [link](url)",
+    ] {
+        let bytes = legacy_question_reply(&["question-only?"], answer);
+        let response = search(&bytes, answer);
+        assert_eq!(response["totalMatches"], 1);
+        assert_eq!(response["matches"][0]["messageId"], "client-reply");
+        assert_eq!(
+            response["matches"][0]["replyQuestions"],
+            json!(["question-only?"])
+        );
+        assert_eq!(search(&bytes, "question-only?")["totalMatches"], 1);
+        assert_eq!(search(&bytes, "是的，执行此计划")["totalMatches"], 0);
+    }
+}
+
+#[test]
+fn legacy_async_answers_filter_comment_protocol_before_counting_and_hydration() {
+    let cases: [(&[&str], &str, &str); 2] = [
+        (&["question-only?"], "yes", "question-only?\nyes"),
+        (
+            &["first question-only?", "second question-only?"],
+            "**one**\n[two](url)",
+            "first question-only?\n**one**\nsecond question-only?\n[two](url)",
+        ),
+    ];
+    for (questions, answer, expected) in cases {
+        let content = format!(
+            "{answer}\n\n<workspace_comment_context>\n{}\n{}\n</workspace_comment_context>",
+            "The user attached the following comments. Treat browser_annotation items as comments on parts of the visible web page, and code_selection items as comments on selected code.",
+            json!([{
+                "commentNumber": 1, "source": "code_selection", "location": "File: example.rs, lines 1",
+                "filePath": "example.rs", "fileName": "example.rs", "selectedText": "annotation-only needle", "userComment": "Please review",
+            }]),
+        );
+        let bytes = legacy_question_reply(questions, &content);
+        for query in ["commentNumber", "annotation-only", "needle"] {
+            assert_eq!(search(&bytes, query)["totalMatches"], 0, "{query}");
+        }
+        let response = search(&bytes, "question-only?");
+        assert_eq!(response["totalMatches"], questions.len());
+        let matched = &response["matches"][0];
+        assert_eq!(matched["messageId"], "client-reply");
+        assert_eq!(matched["replyQuestions"], json!(questions));
+        let cursor = parse_legacy_search_cursor(matched["cursor"].as_str().unwrap())
+            .unwrap()
+            .unwrap();
+        let page = context::hydrate_context_reader(Cursor::new(&bytes), &cursor, None, 3).unwrap();
+        let mut projection = AsyncReplySearchProjection::default();
+        let sources = page.thread["turns"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|turn| {
+                codex_turn_search_sources(turn, &HashMap::new(), None, &mut projection)
+            })
+            .collect::<HashMap<_, _>>();
+        assert_eq!(sources[matched["itemId"].as_str().unwrap()], expected);
+        assert_eq!(
+            search(&bytes, answer.lines().next().unwrap())["totalMatches"],
+            1
+        );
+    }
+}
+
 /// These item ids were checked against the bundled alpha.5 app-server's
 /// thread/read and turns/list using the same synthetic legacy event sequence.
 #[test]

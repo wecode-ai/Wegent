@@ -40,9 +40,10 @@ impl AsyncReplySearchProjection {
         if message["role"] != "user" {
             return None;
         }
-        let content = message["content"].as_str().unwrap_or_default();
+        let content =
+            visible_comment_request_content(message["content"].as_str().unwrap_or_default());
         if content.trim().is_empty() {
-            return Some(markdown_search_text(visible_user_request_content(content)));
+            return Some(ordinary_user_search_text(content));
         }
         let groups = std::mem::take(&mut self.pending);
         for (source, questions) in groups.into_iter().rev() {
@@ -69,8 +70,71 @@ impl AsyncReplySearchProjection {
             }
             return Some(text);
         }
-        Some(markdown_search_text(visible_user_request_content(content)))
+        Some(ordinary_user_search_text(content))
     }
+}
+
+fn ordinary_user_search_text(content: &str) -> String {
+    let content = visible_user_request_content(content);
+    // UserMessage normalizes plan confirmations only outside async reply rows.
+    let content = if content
+        .trim_start()
+        .starts_with("PLEASE IMPLEMENT THIS PLAN:")
+    {
+        "是的，执行此计划"
+    } else {
+        content
+    };
+    markdown_search_text(content)
+}
+
+/// Match chat-core's parseCodeCommentContexts before associating async answers.
+fn visible_comment_request_content(content: &str) -> &str {
+    const INSTRUCTION: &str = "The user attached the following comments. Treat browser_annotation items as comments on parts of the visible web page, and code_selection items as comments on selected code.";
+    static CONTEXT: OnceLock<Regex> = OnceLock::new();
+    let Some(block) = CONTEXT
+        .get_or_init(|| {
+            Regex::new(r"(?s)<workspace_comment_context>.*?</workspace_comment_context>\s*$")
+                .expect("valid comment context regex")
+        })
+        .find(content)
+    else {
+        return content;
+    };
+    let inner = block.as_str();
+    if !inner.contains(INSTRUCTION) {
+        return content;
+    }
+    let Some((start, end)) = inner.find('[').zip(inner.rfind(']')) else {
+        return content;
+    };
+    if end <= start {
+        return content;
+    }
+    let Ok(Value::Array(comments)) = serde_json::from_str(&inner[start..=end]) else {
+        return content;
+    };
+    if !comments.iter().any(valid_comment_context) {
+        return content;
+    }
+    content[..block.start()].trim()
+}
+
+fn valid_comment_context(comment: &Value) -> bool {
+    comment["commentNumber"].is_number()
+        && matches!(
+            comment["source"].as_str(),
+            Some("browser_annotation" | "code_selection")
+        )
+        && [
+            "location",
+            "filePath",
+            "fileName",
+            "selectedText",
+            "userComment",
+        ]
+        .iter()
+        .all(|field| comment[field].is_string())
 }
 
 fn async_question_prompts(message: &Value) -> Vec<String> {
