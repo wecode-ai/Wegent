@@ -116,9 +116,11 @@ The interaction style uses the same `config.toml` as its single source of truth.
 
 ## Managed Plugin Directory Recovery
 
-After manifest initialization and before starting Codex or backend connections, the Executor recovers managed installations using the current Home and stable plugin identity. Existing v2 manifests and manifests imported from v1 use the same flow. Historical absolute paths are migration hints, never authority to claim or remove native user directories. Shared packages must pass the existing checksum, package-record, and content checks before rebuilding caches and marketplace registration.
+The Executor runs its dedicated directory migration check only at startup, after manifest initialization and before starting Codex or backend connections, using the current Home and stable plugin identity. Unchanged paths with complete runtime directories skip package reads and content verification. Existing v2 manifests and manifests imported from v1 use the same flow. Historical absolute paths are migration hints, never authority to claim or remove native user directories. Shared packages must pass the existing checksum, package-record, and content checks before any actual cache or marketplace registration rebuild.
 
 Recovery preserves enablement, component settings, cloud installation IDs, and authorization associations, including current, previous, and retained cache ownership. Missing packages and unrelated occupied destinations affect only their installation: the manifest record remains visible as “Repair required,” and normal synchronization can retry once a verified package is available. Retained ownership or caches cannot resurrect an explicitly uninstalled plugin.
+
+Normal installation, updates, and retries process only the requested plugins, using the current Home and the verified package to update installation records. `apply_sync` does not recover all plugins; Skills and MCP synchronization do not trigger migration checks for unrelated plugins.
 
 Recovery uses the manifest lock, atomic publication, and a journal per plugin. Restart recovery distinguishes committed publication from incomplete work. Unproven ownership or later user changes preserve snapshots and report a conflict instead of overwriting unknown files. Recovery does not run before each message submission.
 

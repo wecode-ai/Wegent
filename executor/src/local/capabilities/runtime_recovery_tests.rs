@@ -6,14 +6,26 @@ use crate::services::workbench::publish_plugin_archive;
 use std::io::{Cursor, Write};
 
 #[derive(Clone)]
-struct Packages(Vec<u8>);
+pub(super) struct Packages(pub(super) Vec<u8>);
 impl CapabilityPackageProvider for Packages {
+    fn download_skill<'a>(
+        &'a self,
+        _: &'a SkillSyncSpec,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, CapabilitySyncError>> + Send + 'a>> {
+        Box::pin(async {
+            let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+            zip.start_file("SKILL.md", zip::write::FileOptions::default())
+                .unwrap();
+            zip.write_all(b"a standalone skill").unwrap();
+            Ok(zip.finish().unwrap().into_inner())
+        })
+    }
     fn stage_skill<'a>(
         &'a self,
         _: &'a SkillSyncSpec,
         _: &'a Path,
     ) -> Pin<Box<dyn Future<Output = Result<(), CapabilitySyncError>> + Send + 'a>> {
-        Box::pin(async { panic!("plugin test must not install skills") })
+        Box::pin(async { panic!("shared sync must request archive bytes") })
     }
     fn download_plugin<'a>(
         &'a self,
@@ -22,7 +34,7 @@ impl CapabilityPackageProvider for Packages {
         Box::pin(async { Ok(self.0.clone()) })
     }
 }
-fn archive(name: &str) -> Vec<u8> {
+pub(super) fn archive(name: &str) -> Vec<u8> {
     archive_payload(name, "plugin capability")
 }
 fn archive_payload(name: &str, content: &str) -> Vec<u8> {
@@ -40,7 +52,7 @@ fn archive_payload(name: &str, content: &str) -> Vec<u8> {
     }
     zip.finish().unwrap().into_inner()
 }
-fn store(root: &Path, codex_only: bool) -> GlobalCapabilityStore {
+pub(super) fn store(root: &Path, codex_only: bool) -> GlobalCapabilityStore {
     let store = GlobalCapabilityStore::new(
         root.join("executor/capabilities/manifest-v2.json"),
         root.join("claude/skills"),
@@ -55,10 +67,10 @@ fn store(root: &Path, codex_only: bool) -> GlobalCapabilityStore {
         store
     }
 }
-fn payload(name: &str) -> Value {
+pub(super) fn payload(name: &str) -> Value {
     json!({"scope":"plugins","plugins":[{"name":name,"marketplace":"wegent","installed_plugin_id":41,"cloud_plugin_id":7,"enabled":false,"version":"1.0","download_path":"/archive","component_states":{"skill:demo":false}}]})
 }
-async fn installed(root: &Path, codex_only: bool) -> GlobalCapabilityStore {
+pub(super) async fn installed(root: &Path, codex_only: bool) -> GlobalCapabilityStore {
     let store = store(root, codex_only);
     let handler =
         CapabilitySyncHandler::with_package_provider("", store.clone(), Packages(archive("demo")));
@@ -395,6 +407,8 @@ async fn owned_runtime_with_nested_symlink_is_never_snapshotted_or_materialized(
     fs::write(external.join("sentinel"), "private").unwrap();
     let target = store.plugin_codex_link(&spec);
     std::os::unix::fs::symlink(&external, target.join("user-source")).unwrap();
+    manifest["plugins"][&spec.key]["runtime"]["codex_link"] =
+        json!(temp.path().join("old/codex/plugins/cache/wegent/demo/1.0"));
     manifest["plugins"][&spec.key]["runtime_recovery_error"] = json!("force recovery");
     store.manifest.save(manifest).unwrap();
     let report = store.reconcile_managed_plugin_runtimes().unwrap();
@@ -759,6 +773,8 @@ async fn planned_publication_preserves_current_skill_selector_over_older_selecto
     let mut text = fs::read_to_string(&config).unwrap();
     text.push_str(&format!("\n[[skills.config]]\npath = {}\nenabled = false\n\n[[skills.config]]\npath = {}\nenabled = true\n",serde_json::to_string(&historical).unwrap(),serde_json::to_string(&current).unwrap()));
     fs::write(&config, text).unwrap();
+    manifest["plugins"]["demo@wegent"]["runtime"]["codex_link"] =
+        json!(historical.ancestors().nth(3).unwrap());
     manifest["plugins"]["demo@wegent"]["runtime_recovery_error"] = json!("repair requested");
     store.manifest.save(manifest).unwrap();
     let report = store.reconcile_managed_plugin_runtimes().unwrap();
@@ -906,3 +922,6 @@ async fn failed_authoritative_sync_does_not_supersede_a_pending_journal() {
         .join(&journal.transaction_id)
         .exists());
 }
+
+#[path = "runtime_sync_tests.rs"]
+mod sync_scope;

@@ -4,6 +4,121 @@
 use super::*;
 
 impl GlobalCapabilityStore {
+    pub(in crate::local::capabilities) fn prepare_relocated_runtime_ownership(
+        &self,
+        spec: &PluginSyncSpec,
+        package: &Path,
+        manifest: &mut Value,
+    ) -> Result<(), CapabilitySyncError> {
+        let relocated =
+            object_map(manifest.get("plugin_runtime_relocated_owners")).unwrap_or_default();
+        let pending = self
+            .plugin_runtime_targets(spec)
+            .into_iter()
+            .filter(|(path, field)| {
+                let historical = manifest
+                    .get("plugins")
+                    .and_then(|plugins| plugins.get(&spec.key))
+                    .filter(|entry| entry.get("managed").and_then(Value::as_bool) == Some(true))
+                    .and_then(|entry| entry.get("runtime"))
+                    .and_then(|runtime| runtime.get(*field))
+                    .and_then(Value::as_str)
+                    .map(Path::new)
+                    .is_some_and(|old| old != path && historical_cache_path(old, spec, field));
+                historical
+                    || relocated
+                        .get(&path.to_string_lossy().into_owned())
+                        .and_then(Value::as_str)
+                        == Some(&spec.key)
+            })
+            .collect::<Vec<_>>();
+        if pending.is_empty() {
+            return Ok(());
+        }
+        for (path, _) in &pending {
+            self.ensure_runtime_path(path, true)?;
+            if manifest
+                .get("plugin_runtime_owners")
+                .and_then(|owners| owners.get(path.to_string_lossy().as_ref()))
+                .and_then(Value::as_str)
+                .is_some_and(|owner| owner != spec.key)
+            {
+                return Err(CapabilitySyncError::invalid_payload(
+                    "Plugin runtime belongs to another managed install",
+                ));
+            }
+        }
+        if pending.iter().any(|(path, _)| exists(path)) {
+            let staging = tempfile::tempdir()?;
+            let template = staging.path().join("runtime");
+            copy_dir_atomic(package, &template)?;
+            ensure_dual_plugin_manifests(&template)?;
+            ensure_plugin_hook_permissions(&template)?;
+            for (path, field) in &pending {
+                if exists(path)
+                    && !same_runtime_contents(path, &template)?
+                    && !self.relocated_runtime_matches_previous(spec, path, field, manifest)?
+                {
+                    return Err(CapabilitySyncError::invalid_payload(
+                        "Retained plugin destination is occupied by unrelated data; preserving it",
+                    ));
+                }
+            }
+        }
+        for (path, _) in pending {
+            let path = path.to_string_lossy().into_owned();
+            ensure_object_field(manifest, "plugin_runtime_relocated_owners").remove(&path);
+            ensure_object_field(manifest, "plugin_runtime_owners").insert(path, json!(spec.key));
+        }
+        Ok(())
+    }
+
+    fn relocated_runtime_matches_previous(
+        &self,
+        spec: &PluginSyncSpec,
+        path: &Path,
+        field: &str,
+        manifest: &Value,
+    ) -> Result<bool, CapabilitySyncError> {
+        let Some(entry) = manifest
+            .get("plugins")
+            .and_then(|plugins| plugins.get(&spec.key))
+            .filter(|entry| entry.get("managed").and_then(Value::as_bool) == Some(true))
+        else {
+            return Ok(false);
+        };
+        let previous = checked_spec(&spec.key, entry)?;
+        let recorded = entry
+            .get("runtime")
+            .and_then(|runtime| runtime.get(field))
+            .and_then(Value::as_str)
+            .map(Path::new);
+        if previous.version != spec.version
+            || previous.checksum == spec.checksum
+            || !recorded.is_some_and(|old| historical_cache_path(old, &previous, field))
+            || !self
+                .plugin_runtime_targets(&previous)
+                .iter()
+                .any(|(target, target_field)| target == path && *target_field == field)
+        {
+            return Ok(false);
+        }
+        let Some(hash) = previous.checksum.as_deref() else {
+            return Ok(false);
+        };
+        // A same-version update can change bytes while keeping the Codex cache
+        // path. Prove the moved cache against this installation's verified old
+        // package before replacing it with the new package.
+        let package = self.verified_plugin_package(hash)?;
+        validate_package_identity(&package.path, &previous)?;
+        let staging = tempfile::tempdir()?;
+        let template = staging.path().join("runtime");
+        copy_dir_atomic(&package.path, &template)?;
+        ensure_dual_plugin_manifests(&template)?;
+        ensure_plugin_hook_permissions(&template)?;
+        same_runtime_contents(path, &template)
+    }
+
     pub(in crate::local::capabilities) fn can_remove_personal_marketplace_plugin(
         &self,
         key: &str,

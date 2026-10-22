@@ -159,68 +159,6 @@ impl GlobalCapabilityStore {
         }
     }
 
-    pub(super) fn prepare_relocated_runtime_ownership(
-        &self,
-        spec: &PluginSyncSpec,
-        package: &Path,
-        manifest: &mut Value,
-    ) -> Result<(), CapabilitySyncError> {
-        let relocated =
-            object_map(manifest.get("plugin_runtime_relocated_owners")).unwrap_or_default();
-        let pending = self
-            .plugin_runtime_targets(spec)
-            .into_iter()
-            .filter(|(path, field)| {
-                let historical = manifest
-                    .get("plugins")
-                    .and_then(|plugins| plugins.get(&spec.key))
-                    .filter(|entry| entry.get("managed").and_then(Value::as_bool) == Some(true))
-                    .and_then(|entry| entry.get("runtime"))
-                    .and_then(|runtime| runtime.get(*field))
-                    .and_then(Value::as_str)
-                    .map(Path::new)
-                    .is_some_and(|old| old != path && historical_cache_path(old, spec, field));
-                historical
-                    || relocated
-                        .get(&path.to_string_lossy().into_owned())
-                        .and_then(Value::as_str)
-                        == Some(&spec.key)
-            })
-            .collect::<Vec<_>>();
-        if pending.is_empty() {
-            return Ok(());
-        }
-        let staging = tempfile::tempdir()?;
-        let template = staging.path().join("runtime");
-        copy_dir_atomic(package, &template)?;
-        ensure_dual_plugin_manifests(&template)?;
-        ensure_plugin_hook_permissions(&template)?;
-        for (path, _) in &pending {
-            self.ensure_runtime_path(path, true)?;
-            if exists(path) && !same_runtime_contents(path, &template)? {
-                return Err(CapabilitySyncError::invalid_payload(
-                    "Retained plugin destination is occupied by unrelated data; preserving it",
-                ));
-            }
-        }
-        for (path, _) in pending {
-            let path = path.to_string_lossy().into_owned();
-            if manifest
-                .get("plugin_runtime_owners")
-                .and_then(|owners| owners.get(&path))
-                .and_then(Value::as_str)
-                .is_some_and(|owner| owner != spec.key)
-            {
-                return Err(CapabilitySyncError::invalid_payload(
-                    "Plugin runtime belongs to another managed install",
-                ));
-            }
-            ensure_object_field(manifest, "plugin_runtime_relocated_owners").remove(&path);
-            ensure_object_field(manifest, "plugin_runtime_owners").insert(path, json!(spec.key));
-        }
-        Ok(())
-    }
-
     fn recover_plugin(
         &self,
         key: &str,
@@ -238,6 +176,14 @@ impl GlobalCapabilityStore {
         if !self.shared_packages {
             return Ok(false);
         }
+        let mut next = entry.clone();
+        self.rebase_plugin_entry(&mut next, true)?;
+        if self.plugin_paths_current(entry, &next, &spec)? {
+            let cleared_error = manifest["plugins"][key]
+                .as_object_mut()
+                .is_some_and(|entry| entry.remove("runtime_recovery_error").is_some());
+            return Ok(cleared_error);
+        }
         let checksum = spec.checksum.as_deref().ok_or_else(|| {
             CapabilitySyncError::invalid_payload(
                 "Managed plugin needs a verified package; retry its installation online",
@@ -245,12 +191,7 @@ impl GlobalCapabilityStore {
         })?;
         let package = self.verified_plugin_package(checksum)?;
         validate_package_identity(&package.path, &spec)?;
-        let mut next = entry.clone();
-        self.rebase_plugin_entry(&mut next)?;
         next["store_path"] = json!(package.path);
-        if self.plugin_paths_current(entry, &next, &spec) {
-            return Ok(false);
-        }
         let normalized = tempfile::tempdir()?;
         let template = normalized.path().join("runtime");
         copy_dir_atomic(&package.path, &template)?;
@@ -324,17 +265,10 @@ impl GlobalCapabilityStore {
         hash: &str,
     ) -> Result<crate::services::workbench::PublishedPackage, CapabilitySyncError> {
         let root = self.shared_root()?;
-        let digest = hash
-            .strip_prefix("sha256:")
-            .unwrap_or(hash)
-            .to_ascii_lowercase();
-        if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return Err(CapabilitySyncError::invalid_payload(
-                "Invalid plugin package SHA256",
-            ));
-        }
+        let path = self.current_shared_plugin_path(hash)?;
+        let digest = path.file_name().unwrap().to_string_lossy().into_owned();
         for path in [
-            root.join("shared/plugins").join(&digest),
+            path,
             root.join("shared/metadata")
                 .join(format!("plugins-{digest}.json")),
             root.join("shared/locks")
@@ -346,20 +280,45 @@ impl GlobalCapabilityStore {
             .map_err(CapabilitySyncError::invalid_payload)
     }
 
-    fn plugin_paths_current(&self, old: &Value, next: &Value, spec: &PluginSyncSpec) -> bool {
-        old.get("runtime_recovery_error").is_none()
-            && old.get("runtime") == next.get("runtime")
-            && old.get("store_path") == next.get("store_path")
+    fn current_shared_plugin_path(&self, hash: &str) -> Result<PathBuf, CapabilitySyncError> {
+        let digest = hash
+            .strip_prefix("sha256:")
+            .unwrap_or(hash)
+            .to_ascii_lowercase();
+        if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(CapabilitySyncError::invalid_payload(
+                "Invalid plugin package SHA256",
+            ));
+        }
+        Ok(self.shared_root()?.join("shared/plugins").join(digest))
+    }
+
+    fn plugin_paths_current(
+        &self,
+        old: &Value,
+        next: &Value,
+        spec: &PluginSyncSpec,
+    ) -> Result<bool, CapabilitySyncError> {
+        // An unchanged private installation does not need a shared publication.
+        // Its next online installation can publish the archive through the normal flow.
+        let store_current = old.get("store_path") == next.get("store_path")
+            || self.current_recorded_store_path(old)?.is_some();
+        Ok(old.get("runtime") == next.get("runtime")
+            && store_current
             && old.get("previous") == next.get("previous")
             && self.plugin_runtime_targets(spec).iter().all(|(path, _)| {
                 path.is_dir()
                     && !path.is_symlink()
                     && path.join(CODEX_PLUGIN_MANIFEST_PATH).is_file()
                     && path.join(CLAUDE_PLUGIN_MANIFEST_PATH).is_file()
-            })
+            }))
     }
 
-    fn rebase_plugin_entry(&self, entry: &mut Value) -> Result<(), CapabilitySyncError> {
+    fn rebase_plugin_entry(
+        &self,
+        entry: &mut Value,
+        active: bool,
+    ) -> Result<(), CapabilitySyncError> {
         let key = value_string(entry.get("key"))
             .or_else(|| {
                 entry
@@ -380,15 +339,18 @@ impl GlobalCapabilityStore {
         }
         runtime.insert("codex_link".into(), json!(self.plugin_codex_link(&spec)));
         if let Some(hash) = spec.checksum.as_deref() {
-            if let Ok(package) = self.verified_plugin_package(hash) {
-                validate_package_identity(&package.path, &spec)?;
-                entry["store_path"] = json!(package.path);
+            match self.current_shared_plugin_path(hash) {
+                Ok(path) => entry["store_path"] = json!(path),
+                Err(error) if active => return Err(error),
+                // Invalid archived metadata does not prevent the active plugin
+                // from recovering; no historical package path is accessed.
+                Err(_) => (),
             }
         }
         if let Some(previous) = entry.get_mut("previous").filter(|value| value.is_object()) {
             // Previous records may predate the explicit key field.
             previous["key"] = json!(key);
-            self.rebase_plugin_entry(previous)?;
+            self.rebase_plugin_entry(previous, false)?;
         }
         if let Some(object) = entry.as_object_mut() {
             object.remove("runtime_recovery_error");
@@ -869,7 +831,16 @@ pub(super) fn safe_managed_path(
     let relative = path.strip_prefix(root).map_err(|_| {
         CapabilitySyncError::invalid_payload("Plugin path is outside its current managed root")
     })?;
-    let mut current = root.to_owned();
+    // The caller supplies the current configured root. Wework deliberately keeps
+    // a relocated Claude home as an alias for its Keychain identity. Resolve only
+    // that trusted anchor; symlinks below it remain forbidden.
+    let root = if root.is_symlink() {
+        fs::canonicalize(root)?
+    } else {
+        root.to_owned()
+    };
+    let target = root.join(relative);
+    let mut current = root;
     for component in std::iter::once(None).chain(relative.components().map(Some)) {
         if let Some(component) = component {
             current.push(component);
@@ -879,12 +850,12 @@ pub(super) fn safe_managed_path(
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
             Err(error) => return Err(error.into()),
         };
-        if metadata.file_type().is_symlink() && !(leaf_link && current == path) {
+        if metadata.file_type().is_symlink() && !(leaf_link && current == target) {
             return Err(CapabilitySyncError::invalid_payload(
                 "Refusing to traverse a managed plugin path symlink",
             ));
         }
-        if current != path && !metadata.is_dir() {
+        if current != target && !metadata.is_dir() {
             return Err(CapabilitySyncError::invalid_payload(
                 "Managed plugin parent is not a directory",
             ));
@@ -949,3 +920,7 @@ fn same_runtime_contents(left: &Path, right: &Path) -> Result<bool, CapabilitySy
 #[cfg(test)]
 #[path = "runtime_recovery_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "runtime_recovery_startup_tests.rs"]
+mod startup_tests;

@@ -1343,8 +1343,6 @@ where
             self.remove_stale_managed_plugins(&desired_plugins, &mut manifest, plugins_only)?;
         }
 
-        self.store.recover_managed_plugin_paths(&mut manifest);
-
         let mut skill_results = Vec::with_capacity(skill_specs.len());
         for spec in &skill_specs {
             skill_results.push(self.sync_skill(spec, &mut manifest).await);

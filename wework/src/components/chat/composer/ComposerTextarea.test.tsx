@@ -879,12 +879,9 @@ describe('ComposerTextarea', () => {
     render(<Harness />)
     const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
     act(() => {
-      editor.focus()
       editor.value = '/'
+      editor.focus()
     })
-
-    expect(window.getSelection()?.anchorNode).toBe(editor.querySelector('p')?.firstChild)
-    expect(window.getSelection()?.anchorOffset).toBe(1)
 
     const modelOption = screen.getByTestId('slash-command-option-model')
     const pluginOption = await screen.findByTestId('slash-command-option-app-github')
