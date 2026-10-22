@@ -75,6 +75,7 @@ export interface CollaborationIssueDetailRenderContext {
   defaultAssistant?: CollaborationHostAdapter["defaultAssistant"];
   onClose(): void;
   onChange(issue: CollaborationIssue): void;
+  onRead(issue: CollaborationIssue): void;
   onCreateTask?(): void;
   /** Present only for completed Issues when archiving is enabled. */
   onDelete?(): void;
@@ -1225,6 +1226,7 @@ export function CollaborationApp({
                   });
                 },
                 onChange: commands.replaceIssue,
+                onRead: commands.confirmIssueRead,
                 onCreateTask: onCreateTask
                   ? () => onCreateTask(project, selectedIssue)
                   : undefined,
@@ -1258,6 +1260,7 @@ export function CollaborationApp({
                   });
                 }}
                 onChange={commands.replaceIssue}
+                onRead={commands.confirmIssueRead}
                 onCommentsChange={(nextComments) =>
                   commands.replaceComments(selectedIssue.id, nextComments)
                 }

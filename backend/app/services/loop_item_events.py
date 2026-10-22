@@ -5,6 +5,7 @@
 
 import asyncio
 import logging
+from concurrent.futures import Future
 
 from sqlalchemy.orm import Session
 
@@ -19,6 +20,7 @@ from app.services.loop_item_executions.wake import get_socketio_loop
 logger = logging.getLogger(__name__)
 
 LOOP_ITEM_CHANGED_EVENT = "wework:loop_item:changed"
+_LOG_CONTEXT = "project=%s issue=%s version=%s reason=%s recipients=%s"
 
 
 def publish_loop_item_changed(
@@ -56,9 +58,22 @@ def publish_loop_item_changed(
         if value
     )
     recipient_ids.discard(0)
+    log_context = (project_id, item_id, item_version, reason, len(recipient_ids))
 
     loop = get_socketio_loop()
-    if loop is None or loop.is_closed() or not recipient_ids:
+    skip_cause = None
+    if loop is None:
+        skip_cause = "loop_unavailable"
+    elif loop.is_closed():
+        skip_cause = "loop_closed"
+    elif not recipient_ids:
+        skip_cause = "no_recipients"
+    if skip_cause:
+        logger.info(
+            "[LoopItemInvalidation] skipped " + _LOG_CONTEXT + " cause=%s",
+            *log_context,
+            skip_cause,
+        )
         return
 
     async def _emit() -> None:
@@ -84,15 +99,27 @@ def publish_loop_item_changed(
 
     try:
         future = asyncio.run_coroutine_threadsafe(_emit(), loop)
-        future.add_done_callback(_log_emit_failure)
+        future.add_done_callback(
+            lambda completed: _log_emit_result(completed, log_context)
+        )
     except Exception:
         logger.warning(
-            "Failed to schedule loop-item invalidation item=%s", item_id, exc_info=True
+            "[LoopItemInvalidation] schedule_failed " + _LOG_CONTEXT,
+            *log_context,
+            exc_info=True,
         )
 
 
-def _log_emit_failure(future: "asyncio.Future[None]") -> None:
+def _log_emit_result(
+    future: Future[None], context: tuple[str, str, int, str, int]
+) -> None:
     try:
         future.result()
     except Exception:
-        logger.warning("Loop-item invalidation emit failed", exc_info=True)
+        logger.warning(
+            "[LoopItemInvalidation] emit_failed " + _LOG_CONTEXT,
+            *context,
+            exc_info=True,
+        )
+    else:
+        logger.info("[LoopItemInvalidation] emitted " + _LOG_CONTEXT, *context)

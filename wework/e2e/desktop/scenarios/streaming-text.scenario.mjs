@@ -1,4 +1,8 @@
 import {
+  createMarkdownLinkChecks,
+  MARKDOWN_LINKS_PROMPT,
+} from '../modules/streaming-text-markdown-links.mjs'
+import {
   ACTIVE_WORKBENCH_SELECTOR,
   SUBAGENT_CHILD_STARTUP_TIMEOUT_MS,
   SUBAGENT_CHILD_TOOL_TIMEOUT_MS,
@@ -99,6 +103,7 @@ export function createDesktopScenario({
   recordScenarioRequest,
   workspacePath,
 }) {
+  const markdownLinks = createMarkdownLinkChecks({ captureScreenshot, workspacePath, uiTimeoutMs })
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
   const captureSubagent = (control, name) => captureScreenshot(control, name, 'body')
   const subagentToolRenderTimeoutMs =
@@ -316,6 +321,18 @@ export function createDesktopScenario({
       const body = await readJson(request)
       const responseId = `wework-streaming-text-${Date.now()}`
       const latestInput = latestModelInputText(body)
+      if (latestInput.includes(MARKDOWN_LINKS_PROMPT)) {
+        recordScenarioRequest('markdown_original_links', body)
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([
+            responseCreated(responseId),
+            assistantMessage(markdownLinks.completion),
+            responseCompleted(responseId),
+          ])
+        )
+        return true
+      }
       const followUpNumber = orderFollowUpNumber(body)
       if (isCollaborationSubagentRequest(request.headers)) {
         resolveSubagentChildRequestStarted()
@@ -849,7 +866,13 @@ export function createDesktopScenario({
 
       const checks = new Map([
         ['streaming-content', verifyContent],
-        ['streaming-tools', verifyTools],
+        [
+          'streaming-tools',
+          async control => {
+            await markdownLinks.verify(control)
+            await verifyTools(control)
+          },
+        ],
         ['streaming-timers', verifyTimers],
         ['streaming-scroll', verifyScroll],
         ['streaming-message-order', verifyStoppedTurnOrder],

@@ -85,6 +85,7 @@ interface IssueDetailProps {
   /** Present only when the host enables this Issue lifecycle action. */
   onDelete?(): void;
   onChange(issue: CollaborationIssue): void;
+  onRead(issue: CollaborationIssue): void;
   onCommentsChange(comments: CollaborationComment[]): void;
   onAssignmentsChange?(assignments: CollaborationAssignment[]): void;
   onCreateTask?(): void;
@@ -247,6 +248,7 @@ function BrowserIssueDetail({
   onClose,
   onDelete,
   onChange,
+  onRead,
   onCommentsChange,
   onCreateTask,
   onConflict,
@@ -344,6 +346,7 @@ function BrowserIssueDetail({
                   issue={issue}
                   project={project}
                   onTaskUpdated={onChange}
+                  onTaskRead={onRead}
                   members={members}
                   agents={agents}
                   assignments={assignments}
