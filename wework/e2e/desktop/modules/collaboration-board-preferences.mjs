@@ -25,14 +25,19 @@ async function assertPreference(control, userId, store, projectId, expected) {
 }
 
 async function switchAccount(control, restartDesktopApp, token, user) {
-  await control.command('hover', '[data-testid="sidebar-cloud-connection-button"]')
-  await control.command('click', '[data-testid="sidebar-cloud-management-button"]')
-  await control.command('waitFor', '[data-testid="settings-cloud-disconnect-button"]')
-  await control.command('click', '[data-testid="settings-cloud-disconnect-button"]')
-  await control.command('waitFor', '[data-testid="settings-cloud-connect-button"]')
+  await control.command('click', '[data-testid="settings-button"]')
+  await control.command('waitFor', '[data-testid="logout-menu-button"]')
+  await control.command('click', '[data-testid="logout-menu-button"]')
+  await control.command('click', '[data-testid="settings-button"]')
+  await control.command('waitFor', '[data-testid="login-menu-button"]')
+  assert.equal(
+    await control.command('getLocalStorageItem', 'body', { value: 'wework.cloudConnection' }),
+    '',
+    'Logging out did not clear the previous cloud connection'
+  )
   // Bootstrap authenticates this real backend token with /users/me before mounting the workbench.
   await restartDesktopApp({ appEnvironmentOverrides: { WEWORK_E2E_CLOUD_TOKEN: token } })
-  await control.command('waitFor', '[data-testid="sidebar-cloud-connection-button"]', {
+  await control.command('waitFor', '[data-testid="settings-button"]', {
     text: user.user_name,
   })
   const connection = JSON.parse(
