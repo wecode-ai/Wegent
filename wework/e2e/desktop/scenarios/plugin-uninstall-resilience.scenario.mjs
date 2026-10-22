@@ -4,6 +4,7 @@ import { dirname, join, resolve } from 'node:path'
 import { CLOUD_DEVICE_ID } from '../modules/shared.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 import { verifyPluginWriteCoordination } from '../modules/plugin-write-coordination.mjs'
+import { verifyPluginRegistrationCoordination } from '../modules/plugin-registration-coordination.mjs'
 import {
   accountPlugin,
   assertInstallButton,
@@ -289,6 +290,17 @@ export async function createDesktopScenario({
       )
       try {
         const checks = new Map([
+          [
+            'plugin-registration-coordination',
+            control =>
+              verifyPluginRegistrationCoordination({
+                cloud,
+                control,
+                localDeviceId: local.device_id,
+                evidence,
+                timeoutMs: workbenchReadyTimeoutMs,
+              }),
+          ],
           [
             'plugin-write-coordination',
             control =>

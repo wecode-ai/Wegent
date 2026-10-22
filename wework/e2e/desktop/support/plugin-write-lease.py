@@ -14,6 +14,7 @@ from collections.abc import Callable
 from queue import SimpleQueue
 from urllib.parse import urlparse
 
+import pymysql
 from redis import Redis
 
 _output_lock = threading.Lock()
@@ -36,6 +37,44 @@ def main() -> None:
         raise ValueError("The lease fixture requires a positive user ID")
     key = f"wegent:plugin-write:{user_id}"
     client = Redis.from_url(url, socket_connect_timeout=1, socket_timeout=2)
+    mode = os.environ.get("WEWORK_E2E_PLUGIN_FAULT", "lease")
+    if mode == "user-row":
+        options = json.loads(os.environ["WEWORK_E2E_PLUGIN_MYSQL"])
+        if options["host"] != "127.0.0.1" or not options["database"].startswith(
+            "wework_e2e_"
+        ):
+            raise ValueError("The row lock requires the isolated E2E MySQL")
+        with pymysql.connect(**options, user="root", autocommit=False) as db:
+            try:
+                with db.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT id FROM users WHERE id = %s FOR UPDATE", (user_id,)
+                    )
+                    if cursor.fetchone() is None:
+                        raise ValueError("The fixture user does not exist")
+                emit("ready")
+                if sys.stdin.read():
+                    raise ValueError("The row lock accepts only stdin closure")
+            finally:
+                db.rollback()
+                client.close()
+                emit("released")
+        return
+    if mode == "redis-unavailable":
+        # Deny real SET commands without disrupting reads needed by routing.
+        # This Redis is private to this checkpoint, with the default open ACL.
+        try:
+            client.execute_command("ACL", "SETUSER", "default", "-set")
+            emit("ready")
+            if sys.stdin.read():
+                raise ValueError("The Redis fault accepts only stdin closure")
+        finally:
+            client.execute_command("ACL", "SETUSER", "default", "+set")
+            client.close()
+            emit("released")
+        return
+    if mode != "lease":
+        raise ValueError("Unknown coordination fault")
     lock = client.lock(key, timeout=30, blocking_timeout=10, thread_local=False)
     if not lock.acquire():
         raise RuntimeError("The fixture could not acquire the plugin write lease")

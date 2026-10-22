@@ -49,6 +49,10 @@ Python and the migrated Rust plugin writers use the same protocol:
   rolls back the whole transaction and releases acquired locks without partial
   revocation. Policy reads count toward this budget, but synchronous I/O cannot
   be interrupted; business changes do not start after the budget is exhausted.
+  Each revocation or deletion supports at most 20 installation records, including
+  the owner's installation during deletion. Larger operations return HTTP 409
+  before acquiring leases or changing grants or catalog state, preserving all
+  records and bounding the number of transactional CAS writes.
 - Renewal, ownership checks, and release compare tokens. An old worker must not
   release its successor's lock.
 - After acquiring the lock, reread policies, installations, connections, and other
@@ -172,6 +176,20 @@ a version that relies on that index to prevent duplicates. Client interfaces
 retain their existing protocol; no client release is required.
 
 ## Regression verification
+
+Two independent desktop checkpoints prepare their own plugin and device fixtures
+and run in the existing Cloud CI shard 20:
+
+| Checkpoint                         | Preconditions and steps                                                                                                                                                                                  | Expected results and recovery                                                                                                                                                                                                |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `plugin-account-auth-coordination` | Real Electron, Executor, MySQL and Redis; log in and out while holding the user row; repeat with a plugin lease and denied Redis SET; pause credential export after reading the credential, then log out | Login, enrollment and logout complete within 15 seconds; failures preserve account state and return explicit codes; explicit retries succeed after recovery; delayed enrollment leaves credentials and device grants cleared |
+| `plugin-registration-coordination` | Install a real plugin and old Skills/MCP; disable old capabilities and add new ones; reconnect the real Executor under a held plugin lease, then reconnect after release                                 | The partial round merges new Skills/MCP, retains the plugin and old capabilities, and writes no plugin ACK; recovery replaces obsolete capabilities and converges plugin installation state                                  |
+
+Fault helpers roll back the user row lock, restore the isolated Redis SET
+permission, and release leases in `finally`; the export fence is also removed
+in `finally`. Evidence contains only status, digests and revisions, never
+credentials. This revision passed 152 focused backend regressions; the new desktop
+checkpoints have not been executed locally.
 
 Plugin, shared-lock, API, and model compatibility tests, plus real MySQL/Redis
 concurrency regressions, have local validation. Rust passed 2789 unit tests,

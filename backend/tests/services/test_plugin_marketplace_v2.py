@@ -1648,7 +1648,7 @@ def test_personal_plugin_delete_requires_impact_confirmation_and_revokes_usage(
 
 @pytest.fixture
 def shared_personal_plugin(
-    test_db: Session, test_user: User
+    test_db: Session, test_user: User, request: pytest.FixtureRequest
 ) -> tuple[PluginMarketplaceService, Plugin, list[User], list[Kind]]:
     recipients = [
         User(
@@ -1657,7 +1657,7 @@ def shared_personal_plugin(
             email=f"bulk-plugin-recipient-{index}@example.com",
             is_active=True,
         )
-        for index in range(3)
+        for index in range(getattr(request, "param", 3))
     ]
     plugin = Plugin(
         slug="bulk-revocation",
@@ -1743,6 +1743,7 @@ def _revoke_personal_plugin_usage(
 
 
 @pytest.mark.parametrize("operation", ["access", "delete"])
+@pytest.mark.parametrize("shared_personal_plugin", [3, 20], indirect=True)
 def test_personal_plugin_revocation_updates_all_recipients_atomically(
     test_db, test_user, shared_personal_plugin, plugin_write_backend, operation
 ):
@@ -1773,6 +1774,56 @@ def test_personal_plugin_revocation_updates_all_recipients_atomically(
     policies = test_db.query(Kind).filter(Kind.kind == "ConnectorAuthPolicy").all()
     assert {row.user_id for row in policies} == {user.id for user in recipients}
     assert all(row.json["spec"]["revision"] == 4 for row in policies)
+    assert not plugin_write_backend.values
+
+
+@pytest.mark.parametrize("operation", ["access", "delete"])
+@pytest.mark.parametrize("shared_personal_plugin", [21], indirect=True)
+def test_personal_plugin_revocation_rejects_excessive_fanout_before_locks(
+    test_db,
+    test_user,
+    shared_personal_plugin,
+    plugin_write_backend,
+    monkeypatch,
+    operation,
+):
+    service, plugin, recipients, installations = shared_personal_plugin
+    lock_factory = Mock(wraps=plugin_write_backend.lock)
+    monkeypatch.setattr(plugin_write_backend, "lock", lock_factory)
+    original_grants = {
+        (grant.id, grant.entity_id)
+        for grant in service._plugin_grants(test_db, plugin.id)
+    }
+
+    with pytest.raises(HTTPException) as exc_info:
+        _revoke_personal_plugin_usage(
+            test_db, service, plugin.id, test_user.id, operation
+        )
+
+    assert exc_info.value.status_code == 409
+    assert "at most 20 installations" in exc_info.value.detail
+    lock_factory.assert_not_called()
+    assert not test_db.dirty
+    assert not test_db.new
+    assert not test_db.deleted
+    # Even a caller committing after rejection must persist no partial changes.
+    test_db.commit()
+    test_db.refresh(plugin)
+    assert plugin.status == "published"
+    assert plugin.allow_copy is True
+    assert {
+        (grant.id, grant.entity_id)
+        for grant in service._plugin_grants(test_db, plugin.id)
+    } == original_grants
+    for installed in installations:
+        test_db.refresh(installed)
+        assert installed.is_active is True
+        assert installed.json["spec"]["revision"] == 4
+        assert installed.json["spec"]["enabled"] is True
+        assert installed.json["spec"]["installState"] == "installed"
+    policies = test_db.query(Kind).filter(Kind.kind == "ConnectorAuthPolicy").all()
+    assert {row.user_id for row in policies} == {user.id for user in recipients}
+    assert all(row.json["spec"]["revision"] == 3 for row in policies)
     assert not plugin_write_backend.values
 
 

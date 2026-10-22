@@ -166,6 +166,8 @@ cloud_segments=(
   plugin-uninstall-restart-recovery
   plugin-uninstall-reinstall-race
   plugin-write-coordination
+  plugin-registration-coordination
+  plugin-account-auth-coordination
   plugin-composer-long-list
   plugin-workspace-publication
   plugin-toggle-persistence
@@ -193,7 +195,7 @@ cloud_shards=(
   plugin-composer-long-list
   plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github
   plugin-uninstall-restart-recovery,plugin-uninstall-reinstall-race,plugin-toggle-persistence
-  plugin-write-coordination
+  plugin-write-coordination,plugin-registration-coordination,plugin-account-auth-coordination
 )
 # Group checkpoints by observed parallel CI duration while reusing the same
 # prebuilt application. Rendering runs apart from terminal/transcript workloads.
@@ -354,6 +356,7 @@ select_account_auth_checkpoints() {
   select_target "cloud:plugin-account-auth-dws"
   select_target "cloud:plugin-account-auth-conversation"
   select_target "cloud:plugin-account-auth-github"
+  select_target "cloud:plugin-account-auth-coordination"
 }
 
 select_uninstall_checkpoints() {
@@ -362,6 +365,8 @@ select_uninstall_checkpoints() {
   select_target "cloud:plugin-uninstall-restart-recovery"
   select_target "cloud:plugin-uninstall-reinstall-race"
   select_target "cloud:plugin-write-coordination"
+  select_target "cloud:plugin-registration-coordination"
+  select_target "cloud:plugin-account-auth-coordination"
 }
 
 select_rendering_checkpoints() {
@@ -465,7 +470,8 @@ classify_wework_path() {
       select_target "cloud:cloud-device-lifecycle"
       return
       ;;
-    wework/e2e/desktop/modules/plugin-account-auth-fixture.mjs | \
+    wework/e2e/desktop/modules/plugin-auth-coordination.mjs | \
+      wework/e2e/desktop/modules/plugin-account-auth-fixture.mjs | \
       wework/src/components/plugins/PluginAccountConnections* | \
       wework/src/api/cloud/pluginAccountConnections* | \
       wework/e2e/desktop/modules/dws-account-auth.mjs | \
@@ -1314,6 +1320,8 @@ classify_path() {
       select_target "cloud:plugin-composer-long-list"
       ;;
     wework/e2e/desktop/scenarios/plugin-uninstall-resilience.scenario.mjs | \
+      wework/e2e/desktop/modules/plugin-registration-coordination.mjs | \
+      wework/e2e/desktop/support/registration-capabilities.py | \
       wework/e2e/desktop/modules/plugin-write-coordination.mjs | \
       wework/e2e/desktop/modules/plugin-write-lease.mjs | \
       wework/e2e/desktop/support/plugin-write-lease.py | \

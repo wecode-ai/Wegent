@@ -9,6 +9,11 @@ const repoDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
 
 /** A separate process owns a real token-checked lease, never a fake response. */
 export async function holdPluginWriteLease(cloud, userId = 1) {
+  return holdPluginCoordinationFault(cloud, 'lease', userId)
+}
+
+export async function holdPluginCoordinationFault(cloud, mode, userId = 1) {
+  assert.ok(['lease', 'user-row', 'redis-unavailable'].includes(mode))
   const redisUrl = `redis://127.0.0.1:${cloud.redisPort}/0`
   assert.equal(cloud.backendEnv.REDIS_URL, redisUrl)
   const child = spawn(
@@ -27,6 +32,11 @@ export async function holdPluginWriteLease(cloud, userId = 1) {
         WEWORK_E2E_PLUGIN_REDIS_URL: redisUrl,
         WEWORK_E2E_PLUGIN_REDIS_PORT: String(cloud.redisPort),
         WEWORK_E2E_PLUGIN_USER_ID: String(userId),
+        WEWORK_E2E_PLUGIN_FAULT: mode,
+        WEWORK_E2E_PLUGIN_MYSQL: JSON.stringify({
+          ...cloud.mysqlConnectionOptions,
+          database: cloud.databaseName,
+        }),
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     }
