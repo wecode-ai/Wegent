@@ -393,7 +393,11 @@ impl JsonRpcConnection {
         )
         .await?;
         if let Some(sender) = notifications {
-            let _ = sender.send(super::elicitation::settled(message, result.status));
+            let _ = sender.send(super::elicitation::settled(
+                message,
+                result.status,
+                result.response.as_ref(),
+            ));
         }
         self.write_message(json!({
             "id": request_id,

@@ -3218,7 +3218,11 @@ fn spawn_shared_mcp_server_elicitation_response(
             .await?
             {
                 if let Some(sender) = notifications.as_ref().and_then(|sender| sender.upgrade()) {
-                    let _ = sender.send(elicitation::settled(&message, result.status));
+                    let _ = sender.send(elicitation::settled(
+                        &message,
+                        result.status,
+                        result.response.as_ref(),
+                    ));
                 }
                 client.send_response(request_id, result.result).await?;
             }
@@ -6502,12 +6506,13 @@ async fn receive_mcp_server_elicitation_response(
             return Ok(url_elicitation::ElicitationResult {
                 result: json!({"action": "cancel"}),
                 status: "expired",
+                response: None,
             });
         }
     }
     .ok_or_else(|| "mcp elicitation response channel closed".to_owned())?;
     mcp_server_elicitation_response(message, Some(&response))
-        .map(url_elicitation::ElicitationResult::from_result)
+        .map(|result| url_elicitation::ElicitationResult::from_response(result, response))
 }
 
 fn mcp_server_tool_call_approval_response(message: &Value) -> Result<Value, String> {

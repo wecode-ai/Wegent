@@ -97,6 +97,156 @@ fn mcp_elicitation_terminal_turn_and_expired_deadline_cannot_restore_pending_car
 }
 
 #[tokio::test]
+async fn mcp_elicitation_completed_history_restores_answers_after_active_cache_is_cleared() {
+    for completion_notification in [false, true] {
+        let (handler, root) = isolated_runtime_work_handler("elicitation-answered-history");
+        let mut link = RuntimeTaskLink::new_pending(
+            "task-1".to_owned(),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+        );
+        link.thread_id = Some("thread-1".to_owned());
+        handler.upsert_local_task(link);
+        start_test_execution(&handler, "task-1");
+        handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
+        let cases = [
+            (
+                "form",
+                "answered",
+                Some(json!({"action": {"answers": ["preview"]}})),
+            ),
+            (
+                "url",
+                "answered",
+                Some(json!({"__mcp_url": {"answers": ["accept"]}})),
+            ),
+            ("form", "cancelled", Some(json!({}))),
+            ("url", "expired", None),
+        ];
+        for (index, (mode, status, answers)) in cases.iter().enumerate() {
+            let mut pending = request();
+            pending["id"] = json!(index);
+            pending["params"]["mode"] = json!(mode);
+            if *mode == "url" {
+                pending["params"]["url"] = json!("https://example.com/authorize");
+                pending["params"]["elicitationId"] = json!("authorize-1");
+            }
+            handler.record_active_codex_transcript_item("task-1", "turn-1", &pending);
+            let mut settled = pending;
+            settled["method"] = json!("wegent/mcpElicitation/settled");
+            settled["params"]["interactionStatus"] = json!(status);
+            settled["params"]["settledAtUnixMs"] = json!(now_ms());
+            if let Some(answers) = answers {
+                settled["params"]["response"] = json!({
+                    "requestId": index, "interactionScope": "turn-1", "answers": answers
+                });
+            }
+            handler.record_active_codex_transcript_item("task-1", "turn-1", &settled);
+        }
+        if completion_notification {
+            handler.persist_completed_codex_turn_from_notification(
+                "task-1",
+                &json!({
+                    "method": "turn/completed", "params": {
+                        "threadId": "thread-1",
+                        "turn": {"id": "turn-1", "status": "completed", "items": []}
+                    }
+                }),
+            );
+        } else {
+            handler.persist_and_clear_active_codex_transcript("task-1", "completed");
+        }
+        handler.clear_active_codex_transcript("task-1");
+        assert!(handler
+            .active_codex_transcript_messages("task-1")
+            .is_empty());
+
+        // WebView reload reads Runtime history without any renderer or active-turn cache.
+        let transcript = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.tasks.transcript",
+                "payload": {"taskId": "task-1", "workspacePath": "/tmp/project"}
+            }))
+            .await
+            .unwrap();
+        let blocks = transcript["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|message| message["blocks"].as_array().into_iter().flatten())
+            .filter(|block| block["tool_name"] == "request_user_input")
+            .collect::<Vec<_>>();
+        assert_eq!(blocks.len(), cases.len());
+        for (index, (_, status, answers)) in cases.iter().enumerate() {
+            let payload = &blocks[index]["render_payload"];
+            assert_eq!(blocks[index]["status"], "done");
+            assert_eq!(payload["interactionStatus"], *status);
+            assert_eq!(payload["requestId"], index);
+            assert_eq!(payload["interactionScope"], "turn-1");
+            if let Some(answers) = answers {
+                assert_eq!(
+                    payload["response"],
+                    json!({
+                        "requestId": index, "interactionScope": "turn-1", "answers": answers
+                    })
+                );
+            } else {
+                assert!(payload.get("response").is_none());
+            }
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+}
+
+#[test]
+fn mcp_elicitation_history_keeps_reused_request_ids_scoped_to_their_turn() {
+    let (handler, root) = isolated_runtime_work_handler("elicitation-answer-turn-scope");
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-1".to_owned());
+    handler.upsert_local_task(link);
+    let mut previous_settled = None;
+    for (turn_id, choice) in [("turn-1", "preview"), ("turn-2", "production")] {
+        handler.begin_active_codex_transcript("task-1", "thread-1", turn_id);
+        let mut pending = request();
+        pending["params"]["turnId"] = json!(turn_id);
+        handler.record_active_codex_transcript_item("task-1", turn_id, &pending);
+        if let Some(previous) = &previous_settled {
+            handler.record_active_codex_transcript_item("task-1", turn_id, previous);
+            let messages = handler.active_codex_transcript_messages("task-1");
+            let payload = &messages[0]["blocks"][0]["render_payload"];
+            assert_eq!(payload["interactionStatus"], "pending");
+            assert!(payload.get("response").is_none());
+        }
+        let mut settled = pending;
+        settled["method"] = json!("wegent/mcpElicitation/settled");
+        settled["params"]["interactionStatus"] = json!("answered");
+        settled["params"]["response"] = json!({
+            "requestId": 0, "interactionScope": turn_id,
+            "answers": {"action": {"answers": [choice]}}
+        });
+        handler.record_active_codex_transcript_item("task-1", turn_id, &settled);
+        handler.persist_and_clear_active_codex_transcript("task-1", "completed");
+        previous_settled = Some(settled);
+    }
+    let history = completed_transcript_messages(&handler.local_task_link("task-1").unwrap());
+    assert_eq!(history.len(), 2);
+    for (index, (turn_id, choice)) in [("turn-1", "preview"), ("turn-2", "production")]
+        .iter()
+        .enumerate()
+    {
+        let response = &history[index]["blocks"][0]["render_payload"]["response"];
+        assert_eq!(response["requestId"], 0);
+        assert_eq!(response["interactionScope"], *turn_id);
+        assert_eq!(response["answers"]["action"]["answers"][0], *choice);
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
 async fn mcp_elicitation_rejects_late_answers_and_answers_from_previous_turn() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");

@@ -9,12 +9,24 @@ use std::sync::Arc;
 pub(super) struct ElicitationResult {
     pub result: Value,
     pub status: &'static str,
+    pub response: Option<Value>,
 }
 
 impl ElicitationResult {
     pub(super) fn from_result(result: Value) -> Self {
         let status = elicitation::response_status(&result);
-        Self { result, status }
+        Self {
+            result,
+            status,
+            response: None,
+        }
+    }
+
+    pub(super) fn from_response(result: Value, response: Value) -> Self {
+        Self {
+            response: Some(response),
+            ..Self::from_result(result)
+        }
     }
 }
 
@@ -52,6 +64,7 @@ pub(super) async fn shared_response(
                 return Ok(Some(ElicitationResult {
                     result: json!({"action": "cancel"}),
                     status: "expired",
+                    response: None,
                 }));
             }
         };
@@ -59,7 +72,7 @@ pub(super) async fn shared_response(
         return Ok(None);
     };
     mcp_server_elicitation_response(message, Some(&response))
-        .map(ElicitationResult::from_result)
+        .map(|result| ElicitationResult::from_response(result, response))
         .map(Some)
 }
 
@@ -132,6 +145,7 @@ mod tests {
         let outcome = task.await.unwrap().unwrap().unwrap();
         assert_eq!(outcome.status, "expired");
         assert_eq!(outcome.result, json!({"action": "cancel"}));
+        assert!(outcome.response.is_none());
         sender
             .send(json!({"requestId": 0, "answers": {"action": {"answers": ["production"]}}}))
             .await
@@ -162,6 +176,87 @@ mod tests {
                 .unwrap();
             assert_eq!(outcome.result["action"], expected_action);
             assert_eq!(outcome.status, expected_status);
+        }
+    }
+
+    #[tokio::test]
+    async fn mcp_elicitation_keeps_display_answers_in_shared_and_dedicated_history() {
+        let mut form = form();
+        form["params"]["requestedSchema"]["properties"]["action"]["enumNames"] =
+            json!(["Publish", "Preview"]);
+        let url = json!({"id": 0, "params": {
+            "mode": "url", "threadId": "thread-1", "turnId": "turn-1",
+            "url": "https://example.com/authorize", "elicitationId": "authorize-1"
+        }});
+        for dedicated in [false, true] {
+            for (message, answers, action, status) in [
+                (
+                    &form,
+                    json!({"action": {"answers": ["Preview"]}}),
+                    "accept",
+                    "answered",
+                ),
+                (&form, json!({}), "cancel", "cancelled"),
+                (
+                    &url,
+                    json!({"__mcp_url": {"answers": ["accept"]}}),
+                    "accept",
+                    "answered",
+                ),
+                (
+                    &url,
+                    json!({"__mcp_url": {"answers": ["cancel"]}}),
+                    "cancel",
+                    "cancelled",
+                ),
+                (
+                    &url,
+                    json!({"__mcp_url": {"answers": ["decline"]}}),
+                    "decline",
+                    "cancelled",
+                ),
+            ] {
+                let response = json!({
+                    "requestId": "0", "interactionScope": "turn-1", "answers": answers
+                });
+                let (sender, mut receiver) = mpsc::channel(1);
+                sender.send(response.clone()).await.unwrap();
+                let outcome = if dedicated {
+                    super::super::receive_mcp_server_elicitation_response(
+                        message,
+                        Some(&mut receiver),
+                        false,
+                    )
+                    .await
+                    .unwrap()
+                } else {
+                    shared_response(
+                        message,
+                        Some(InteractionAnswerRouter::new(receiver)),
+                        "0".to_owned(),
+                        false,
+                    )
+                    .await
+                    .unwrap()
+                    .unwrap()
+                };
+                assert_eq!(outcome.result["action"], action);
+                assert_eq!(outcome.response.as_ref(), Some(&response));
+                if message["params"]["mode"] == "form" && action == "accept" {
+                    assert_eq!(outcome.result["content"]["action"], "preview");
+                }
+                let settled =
+                    elicitation::settled(message, outcome.status, outcome.response.as_ref());
+                let payload =
+                    mcp_server_elicitation_request_user_input_params(&settled["params"]).unwrap();
+                assert_eq!(payload["interactionStatus"], status);
+                assert_eq!(
+                    payload["response"],
+                    json!({
+                        "requestId": 0, "interactionScope": "turn-1", "answers": answers
+                    })
+                );
+            }
         }
     }
 }

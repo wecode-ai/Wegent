@@ -91,6 +91,29 @@ async function completeElicitation(result) {
   }
 }
 
+async function completeTimeoutElicitation(result) {
+  for (const [callId, pending] of pendingToolCalls) {
+    if (!pending.scenario) continue
+    await appendFile(
+      evidencePath,
+      `${JSON.stringify({
+        event: 'timeout_elicitation_result',
+        scenario: pending.scenario,
+        elapsedMs: Date.now() - pending.startedAt,
+        result,
+      })}\n`,
+      'utf8'
+    )
+    pendingToolCalls.delete(callId)
+    const marker = `E2E_MCP_ELICITATION_TIMEOUT:${pending.scenario}:${result?.action}`
+    respond(callId, {
+      content: [{ type: 'text', text: marker }],
+      structuredContent: { marker, action: result?.action },
+      isError: false,
+    })
+  }
+}
+
 const input = readline.createInterface({
   input: process.stdin,
   crlfDelay: Infinity,
@@ -111,6 +134,11 @@ input.on('line', async line => {
     [URL_ELICITATION_ID, URL_ACCEPT_ELICITATION_ID].includes(message.id) &&
     ('result' in message || 'error' in message)
   ) {
+    if ([...pendingToolCalls.values()].some(pending => pending.scenario === 'url_timeout')) {
+      if (message.error) throw new Error('URL timeout returned a protocol error instead of cancel')
+      await completeTimeoutElicitation(message.result)
+      return
+    }
     const expected = message.id === URL_ELICITATION_ID ? 'cancel' : 'accept'
     if (message.error || message.result?.action !== expected) {
       throw new Error('The URL authorization regression returned an unexpected action')
@@ -134,7 +162,11 @@ input.on('line', async line => {
   if (message.id === ELICITATION_ID && ('result' in message || 'error' in message)) {
     try {
       if (message.error) throw new Error(JSON.stringify(message.error))
-      await completeElicitation(message.result)
+      if ([...pendingToolCalls.values()].some(pending => pending.scenario === 'form_timeout')) {
+        await completeTimeoutElicitation(message.result)
+      } else {
+        await completeElicitation(message.result)
+      }
     } catch (error) {
       console.error(`[mcp-elicitation] Failed to complete elicitation: ${String(error)}`)
       process.exitCode = 1
@@ -157,7 +189,11 @@ input.on('line', async line => {
         {
           name: TOOL_NAME,
           description: 'Ask the user to confirm the inner-site access audience.',
-          inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+          inputSchema: {
+            type: 'object',
+            properties: { scenario: { type: 'string', enum: ['url_timeout', 'form_timeout'] } },
+            additionalProperties: false,
+          },
         },
       ],
     })
@@ -168,10 +204,29 @@ input.on('line', async line => {
       respondError(message.id, -32601, `Unknown tool: ${String(message.params?.name)}`)
       return
     }
-    pendingToolCalls.set(message.id, true)
+    const scenario = message.params?.arguments?.scenario
+    if (scenario !== undefined && !['url_timeout', 'form_timeout'].includes(scenario)) {
+      respondError(message.id, -32602, 'Unknown elicitation scenario')
+      return
+    }
+    const startedAt = Date.now()
+    pendingToolCalls.set(message.id, { scenario, startedAt })
+    if (scenario) {
+      await appendFile(
+        evidencePath,
+        `${JSON.stringify({ event: 'timeout_elicitation_request', scenario, startedAt })}\n`,
+        'utf8'
+      )
+    }
+    if (scenario === 'form_timeout') {
+      sendElicitation()
+      return
+    }
     sendUrlElicitation(
       URL_ELICITATION_ID,
-      'E2E browser authorization: cancel before explicitly opening'
+      scenario === 'url_timeout'
+        ? 'E2E browser authorization: wait for the ten-minute deadline'
+        : 'E2E browser authorization: cancel before explicitly opening'
     )
     return
   }

@@ -21,6 +21,7 @@ import {
   reloadMainWindow,
   waitForWorkbenchDebugState,
 } from './workspace-flows.mjs'
+import { findRuntimeWorkTask } from './runtime-task-evidence.mjs'
 
 async function verifyMcpElicitationInFullAccess(control) {
   const evidencePath = join(resultDir, 'mcp-elicitation-result.jsonl')
@@ -85,6 +86,7 @@ async function verifyMcpElicitationInFullAccess(control) {
   const runningSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
   const taskId = runningSnapshot.workbench?.currentRuntimeTask?.taskId
   assert.ok(taskId, 'The MCP elicitation form was not attached to a runtime task')
+  const firstForm = await readPendingElicitation(control, taskId)
 
   await control.command('click', '[data-testid="request-user-input-option-audience-1"]')
   await control.command('waitFor', '[data-testid="message-assistant"]', {
@@ -130,7 +132,10 @@ async function verifyMcpElicitationInFullAccess(control) {
     'The MCP fixture did not receive the accepted stable audience value'
   )
   await captureVerificationScreenshot(control, 'permission-08-mcp-elicitation-complete.png')
+  await verifyAnsweredElicitationReload(control, taskId, firstForm, 1)
   await verifyFollowUpElicitationRecovery(control, taskId, evidencePath)
+  await verifyElicitationTimeout(control, taskId, evidencePath, 'url_timeout', 3, 600_000)
+  await verifyElicitationTimeout(control, taskId, evidencePath, 'form_timeout', 4, 300_000)
 }
 
 async function readElicitationEvidence(evidencePath) {
@@ -219,6 +224,7 @@ async function verifyFollowUpElicitationRecovery(control, taskId, evidencePath) 
     'Reload answered the pending form without user input'
   )
   await captureVerificationScreenshot(control, 'permission-11-mcp-pending-reloaded.png')
+  const secondForm = await readPendingElicitation(control, taskId)
 
   // Reload restores the chat with the workspace panel closed. Expand it again
   // so the second response also exercises answering above an expanded panel.
@@ -253,6 +259,227 @@ async function verifyFollowUpElicitationRecovery(control, taskId, evidencePath) 
   )
   await captureVerificationScreenshot(control, 'permission-12-mcp-follow-up-complete.png')
   await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
+  await verifyAnsweredElicitationReload(control, taskId, secondForm, 2)
+}
+
+async function readMcpInteractions(control, taskId) {
+  const transcript = JSON.parse(
+    await control.command('getLocalRuntimeTranscript', 'body', {
+      value: JSON.stringify({ taskId }),
+    })
+  )
+  assert.equal(transcript.success, true, 'The real executor could not read the task transcript')
+  assert.ok(Array.isArray(transcript.messages), 'The executor transcript omitted its messages')
+  return transcript.messages
+    .flatMap(message => message.blocks ?? [])
+    .map(block => block.render_payload)
+    .filter(payload => payload?.kind === 'request_user_input' && payload.interactionScope)
+}
+
+async function readPendingElicitation(control, taskId) {
+  const pending = (await readMcpInteractions(control, taskId)).filter(
+    payload => payload.interactionStatus === 'pending'
+  )
+  assert.equal(pending.length, 1, 'The executor must expose exactly one pending MCP interaction')
+  assert.ok(pending[0].requestId !== undefined, 'The interaction lost its real request ID')
+  return pending[0]
+}
+
+async function readMatchingElicitation(control, taskId, original) {
+  const matching = (await readMcpInteractions(control, taskId)).filter(
+    payload =>
+      String(payload.requestId) === String(original.requestId) &&
+      payload.interactionScope === original.interactionScope
+  )
+  assert.equal(matching.length, 1, 'The transcript lost or duplicated the exact turn/request')
+  return matching[0]
+}
+
+async function revealElicitationSummary(control, round) {
+  const text = `${MCP_ELICITATION_COMPLETION_TEXT}:${round}`
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text,
+    visible: true,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  // Mark the rendered message after scrolling/rendering settles; reload calls this again.
+  const anchorId = `mcp-elicitation-completion-${round}`
+  await control.command('markElementWithText', '[data-testid="message-assistant"]', {
+    text,
+    value: anchorId,
+    visible: true,
+  })
+  const anchor = `[data-e2e-anchor-id="${anchorId}"]`
+  const collapsed = `${anchor} [data-testid="final-processing-toggle"][aria-expanded="false"]`
+  if (Number(await control.command('getElementCount', collapsed))) {
+    await control.command('click', collapsed)
+  }
+  return anchor
+}
+
+async function verifyAnsweredElicitationReload(control, taskId, original, round) {
+  await reloadMainWindow(control, 'The WebView did not reconnect after answering the MCP form')
+  await waitForWorkbenchDebugState(
+    control,
+    state =>
+      state.workbench?.currentRuntimeTask?.taskId === taskId &&
+      state.pane?.status?.isBusy === false,
+    'Reload did not restore the completed elicitation chat'
+  )
+  const restored = await readMatchingElicitation(control, taskId, original)
+  assert.equal(restored.interactionStatus, 'answered')
+  assert.deepEqual(
+    restored.response,
+    {
+      requestId: original.requestId,
+      interactionScope: original.interactionScope,
+      answers: { audience: { answers: ['仅自己'] } },
+    },
+    'Reload lost the selected value for this exact turn/request'
+  )
+  const anchor = await revealElicitationSummary(control, round)
+  await control.command('waitFor', `${anchor} [data-testid="request-user-input-summary"]`, {
+    text: '仅自己',
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    Number(await control.command('getElementCount', '[data-testid="request-user-input-card"]')),
+    0
+  )
+  await captureVerificationScreenshot(control, `permission-mcp-answered-${round}-reloaded.png`)
+}
+
+async function waitForRealMcpTimeout(evidencePath, scenario, durationMs) {
+  const deadline = Date.now() + durationMs + DEFAULT_STEP_TIMEOUT_MS
+  let nextProgress = Date.now() + 60_000
+  while (Date.now() < deadline) {
+    const records = (await readElicitationEvidence(evidencePath)).filter(
+      record => record.scenario === scenario && record.event === 'timeout_elicitation_result'
+    )
+    if (records.length) {
+      assert.equal(records.length, 1, 'The real MCP server received duplicate timeout results')
+      assert.deepEqual(records[0].result, { action: 'cancel' })
+      assert.ok(
+        records[0].elapsedMs >= durationMs,
+        `The ${scenario} was cancelled before its production ${durationMs}ms deadline`
+      )
+      return
+    }
+    if (Date.now() >= nextProgress) {
+      console.log(`Waiting for the real ${scenario} deadline; no clock or timeout overrides`)
+      nextProgress += 60_000
+    }
+    await new Promise(resolve => setTimeout(resolve, 1000))
+  }
+  throw new Error(`The real MCP server did not receive cancel after ${scenario}`)
+}
+
+async function assertExpiredElicitation(control, taskId, original, round) {
+  const restored = await readMatchingElicitation(control, taskId, original)
+  assert.equal(restored.interactionStatus, 'expired')
+  assert.equal(restored.expiresAtUnixMs, original.expiresAtUnixMs)
+  assert.equal(restored.response, undefined, 'An expired interaction acquired an answer')
+  const anchor = await revealElicitationSummary(control, round)
+  await control.command('waitFor', `${anchor} [data-testid="request-user-input-expired"]`, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  for (const testId of [
+    'request-user-input-card',
+    'request-user-input-option-audience-1',
+    'request-user-input-submit-button',
+    'mcp-url-authorization-open',
+  ]) {
+    assert.equal(
+      Number(await control.command('getElementCount', `[data-testid="${testId}"]`)),
+      0,
+      `Expired elicitation still exposes ${testId}`
+    )
+  }
+  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const task = findRuntimeWorkTask(
+    JSON.parse(await control.command('getLocalRuntimeWork', 'body')),
+    taskId
+  )
+  assert.ok(task, 'The executor lost the owning task')
+  assert.equal(task.running, false, 'Timeout left the task running')
+  assert.equal(task.interactionStatus, null, 'Timeout left the task waiting for input')
+}
+
+async function verifyElicitationTimeout(
+  control,
+  taskId,
+  evidencePath,
+  scenario,
+  round,
+  durationMs
+) {
+  const isUrl = scenario === 'url_timeout'
+  await sendPromptUntilScenarioRequest(
+    control,
+    ACTIVE_COMPOSER_SELECTOR,
+    `${MCP_ELICITATION_PROMPT} ${scenario}`,
+    'mcp_elicitation'
+  )
+  await control.command('waitFor', '[data-testid="request-user-input-card"]', {
+    text: isUrl ? 'example.com' : '访问范围',
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.match(
+    await control.command('getText', '[data-testid="request-user-input-deadline"]'),
+    isUrl ? /(?:10:00|9:[0-5]\d)/ : /(?:5:00|4:[0-5]\d)/
+  )
+  const original = await readPendingElicitation(control, taskId)
+  assert.equal(original.interactionKind === 'mcp_url', isUrl)
+  const requests = (await readElicitationEvidence(evidencePath)).filter(
+    record => record.event === 'timeout_elicitation_request' && record.scenario === scenario
+  )
+  assert.equal(requests.length, 1)
+  assert.ok(original.expiresAtUnixMs >= requests[0].startedAt + durationMs)
+  assert.ok(
+    original.expiresAtUnixMs <= requests[0].startedAt + durationMs + DEFAULT_STEP_TIMEOUT_MS
+  )
+  await captureVerificationScreenshot(control, `permission-mcp-${scenario}-pending.png`)
+  await waitForRealMcpTimeout(evidencePath, scenario, durationMs)
+  await waitForWorkbenchDebugState(
+    control,
+    state =>
+      state.workbench?.currentRuntimeTask?.taskId === taskId &&
+      state.pane?.status?.isBusy === false,
+    `${scenario} did not release the waiting session after the real MCP cancel`
+  )
+  await assertExpiredElicitation(control, taskId, original, round)
+  const recordsBeforeLateAnswer = await readElicitationEvidence(evidencePath)
+  const response = JSON.parse(
+    await control.command('answerRuntimeUserInputDirectly', 'body', {
+      value: JSON.stringify({
+        taskId,
+        requestUserInputResponse: {
+          requestId: original.requestId,
+          interactionScope: original.interactionScope,
+          answers: isUrl
+            ? { __mcp_url: { answers: ['accept'] } }
+            : { audience: { answers: ['仅自己'] } },
+        },
+      }),
+    })
+  )
+  assert.equal(response.success, false, 'The real executor accepted a late response')
+  assert.ok(['missing_request_user_input', 'stale_request_user_input'].includes(response.code))
+  await reloadMainWindow(control, `Reload failed after ${scenario}`)
+  await assertExpiredElicitation(control, taskId, original, round)
+  assert.deepEqual(
+    await readElicitationEvidence(evidencePath),
+    recordsBeforeLateAnswer,
+    'A late answer or reload sent another response to the real MCP server'
+  )
+  await captureVerificationScreenshot(control, `permission-mcp-${scenario}-expired-reloaded.png`)
 }
 
 export { verifyMcpElicitationInFullAccess }

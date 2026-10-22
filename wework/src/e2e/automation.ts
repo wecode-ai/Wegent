@@ -1945,6 +1945,27 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       )
     case 'getLocalRuntimeWork':
       return JSON.stringify(await requestLocalExecutor('runtime.tasks.list', {}))
+    case 'getLocalRuntimeTranscript':
+      return JSON.stringify(
+        await requestLocalExecutor('runtime.tasks.transcript', JSON.parse(command.value ?? '{}'))
+      )
+    case 'answerRuntimeUserInputDirectly': {
+      const { taskId, requestUserInputResponse } = JSON.parse(command.value ?? '{}')
+      if (
+        typeof taskId !== 'string' ||
+        !taskId.trim() ||
+        !requestUserInputResponse ||
+        typeof requestUserInputResponse !== 'object' ||
+        Array.isArray(requestUserInputResponse)
+      ) {
+        throw new Error(
+          'answerRuntimeUserInputDirectly requires taskId and requestUserInputResponse'
+        )
+      }
+      return JSON.stringify(
+        await requestLocalExecutor('runtime.tasks.send', { taskId, requestUserInputResponse })
+      )
+    }
     case 'restartLocalCodexAppServerIfIdle':
       return JSON.stringify(
         await requestLocalExecutor('runtime.codex.app_server.restart', { ifIdle: true })

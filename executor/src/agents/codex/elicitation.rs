@@ -59,11 +59,18 @@ pub(super) fn log_event(event: &str, message: &Value) {
     );
 }
 
-pub(super) fn settled(message: &Value, status: &str) -> Value {
+pub(super) fn settled(message: &Value, status: &str, response: Option<&Value>) -> Value {
     let mut notification = message.clone();
     notification["method"] = json!("wegent/mcpElicitation/settled");
     notification["params"]["interactionStatus"] = json!(status);
     notification["params"]["settledAtUnixMs"] = json!(now_ms());
+    if let Some(answers) = response.and_then(|response| response.get("answers")) {
+        notification["params"]["response"] = json!({
+            "requestId": message["id"],
+            "interactionScope": message["params"]["turnId"],
+            "answers": answers,
+        });
+    }
     notification
 }
 
@@ -78,7 +85,12 @@ pub(super) fn copy_lifecycle(params: &Value, payload: &mut Value) {
     if let Some(scope) = params.get("turnId") {
         payload["interactionScope"] = scope.clone();
     }
-    for key in ["expiresAtUnixMs", "interactionStatus", "settledAtUnixMs"] {
+    for key in [
+        "expiresAtUnixMs",
+        "interactionStatus",
+        "settledAtUnixMs",
+        "response",
+    ] {
         if let Some(value) = params.get(key) {
             payload[key] = value.clone();
         }

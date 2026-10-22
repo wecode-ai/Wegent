@@ -234,6 +234,11 @@ impl RuntimeWorkRpcHandler {
             return;
         }
         let interaction = super::super::mcp_elicitation::item(message);
+        if interaction.is_some()
+            && notification.params.get("turnId").and_then(Value::as_str) != Some(turn_id)
+        {
+            return;
+        }
         if interaction.is_none()
             && !matches!(
                 notification.method.as_str(),
