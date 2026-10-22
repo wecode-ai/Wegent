@@ -81,6 +81,22 @@ describe('Stand-in list page', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument()
   })
 
+  it('explains an older Executor and can retry after it is updated', async () => {
+    const { props, list } = fixture()
+    list.mockRejectedValueOnce(
+      new Error('runtime_rpc_failed: Unsupported runtime RPC method: runtime.stand_in.list')
+    )
+    render(<StandInSettingsPage {...props} />)
+
+    const error = await screen.findByTestId('stand-in-list-error')
+    expect(error).toHaveTextContent('更新并重新打开 Wework')
+    expect(error).not.toHaveTextContent('runtime.stand_in.list')
+
+    await userEvent.click(screen.getByTestId('stand-in-list-retry'))
+    await screen.findByTestId('stand-in-list-empty')
+    expect(list).toHaveBeenCalledTimes(2)
+  })
+
   it('lists project, device, workspace and automatic state, and edits that exact configuration', async () => {
     const { props, list } = fixture([
       {

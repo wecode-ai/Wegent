@@ -9,6 +9,13 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { StandInPopover } from './StandInPopover'
 import { StandInIcon } from './StandInIcon'
 
+function standInListError(cause: unknown, outdatedMessage: string) {
+  const message = cause instanceof Error ? cause.message : String(cause)
+  return /Unsupported runtime RPC method: runtime\.stand_in\./.test(message)
+    ? outdatedMessage
+    : message
+}
+
 export function StandInSettingsPage({
   api,
   projects,
@@ -73,7 +80,10 @@ export function StandInSettingsPage({
       setResult({
         key: requestKey,
         rows: results.flatMap(result => (result.status === 'fulfilled' ? result.value : [])),
-        error: failure?.status === 'rejected' ? String(failure.reason) : null,
+        error:
+          failure?.status === 'rejected'
+            ? standInListError(failure.reason, t('standIn.executor_update_required'))
+            : null,
       })
     })().catch(cause => {
       if (active) setResult({ key: requestKey, rows: [], error: String(cause) })
@@ -81,7 +91,7 @@ export function StandInSettingsPage({
     return () => {
       active = false
     }
-  }, [services, userId, deviceKeys, devices, revision, requestKey])
+  }, [services, userId, deviceKeys, devices, revision, requestKey, t])
   const visibleRows = rows.filter(row =>
     projects.some(
       project =>
@@ -111,9 +121,21 @@ export function StandInSettingsPage({
           </button>
         </header>
         {error && (
-          <p role="alert" className="mb-3 text-sm text-error">
-            {error}
-          </p>
+          <div
+            role="alert"
+            data-testid="stand-in-list-error"
+            className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-error"
+          >
+            <p>{error}</p>
+            <button
+              type="button"
+              data-testid="stand-in-list-retry"
+              onClick={() => setRevision(value => value + 1)}
+              className="underline"
+            >
+              {t('standIn.reload')}
+            </button>
+          </div>
         )}
         {loading ? (
           <p role="status" className="text-sm text-text-muted">

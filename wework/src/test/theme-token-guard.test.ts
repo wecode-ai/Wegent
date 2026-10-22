@@ -160,7 +160,7 @@ describe('theme token guard', () => {
 
   test('native scrollbars share the quiet workbench colors without requiring a utility class', () => {
     const globalsPath = resolve(process.cwd(), 'src/styles/globals.css')
-    const source = readFileSync(globalsPath, 'utf8')
+    const source = readFileSync(globalsPath, 'utf8').replace(/\r\n/g, '\n')
 
     expect(source).toContain('*,\n  .scrollbar-soft {')
     expect(source).toContain('scrollbar-color: rgb(var(--color-scrollbar-thumb)) transparent;')

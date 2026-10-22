@@ -19,6 +19,14 @@ export function createDesktopScenario({ uiTimeoutMs }) {
     async verify(control) {
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+      await control.command('click', `${CONTENT} [data-testid="collaboration-primary-stand-in"]`)
+      await control.command('waitFor', '[data-testid="stand-in-page"]')
+      await control.command('waitFor', '[data-testid="stand-in-list-empty"]')
+      assert.equal(
+        await control.command('getElementCount', '[data-testid="stand-in-list-error"]'),
+        '0',
+        'Opening My Stand-in must not surface a Runtime RPC error'
+      )
       await createLocalCollaborationProject(control, CONTENT, PROJECT)
       await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
       await control.command('click', `${CONTENT} [data-testid="collaboration-tab-board"]`)
@@ -88,6 +96,18 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       await control.command('waitFor', `${AUTO}[aria-checked="false"]`)
       await cancel()
       assert.equal((await read()).enabled, false, 'Cancel must not undo a persisted toggle')
+
+      await control.command('click', `${CONTENT} [data-testid="collaboration-primary-stand-in"]`)
+      await control.command('waitFor', `[data-testid="stand-in-list-row-${project.id}"]`)
+      assert.equal(
+        await control.command('getElementCount', '[data-testid="stand-in-list-error"]'),
+        '0',
+        'The saved Stand-in must be readable from the top-level page'
+      )
+      await control.command('click', `[data-testid="stand-in-list-edit-${project.id}"]`)
+      await control.command('waitFor', PROMPT)
+      assert.equal(await control.command('getValue', PROMPT), 'Confirmed new settings')
+      await control.command('click', '[data-testid="stand-in-page-editor-close"]')
     },
   }
 }

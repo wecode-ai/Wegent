@@ -5257,6 +5257,7 @@
     "saving": "Saving…",
     "loading": "Loading…",
     "reload": "Reload",
+    "executor_update_required": "This device's Wework runtime is out of date, so Stand-in settings cannot load. Update Wework, reopen it, and try again.",
     "saved": "Stand-in settings saved",
     "enabled": "My Stand-in · Automatic handling enabled",
     "project_enabled": "Automatic handling enabled",
