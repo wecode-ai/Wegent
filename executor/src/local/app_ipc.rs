@@ -3268,6 +3268,16 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             &["git", "remote", "get-url", "origin"],
             None,
         )),
+        "git_github_pull_request_view" => Some(command_definition(
+            "gh pr view --json <status-fields> <url>",
+            &["gh", "pr", "view", "--json", "number,url,title,state,isDraft,statusCheckRollup,mergeable,mergeStateStatus,mergedAt,updatedAt"],
+            Some(PostProcessor::Json),
+        )),
+        "git_gitlab_merge_request_view" => Some(command_definition(
+            "glab mr view --output json <iid> --repo <url>",
+            &["glab", "mr", "view", "--output", "json"],
+            Some(PostProcessor::Json),
+        )),
         "git_github_pull_requests" => Some(command_definition(
             "gh pr list --state all --head <branch>",
             &[
@@ -3967,6 +3977,16 @@ mod tests {
             .await
             .expect("client input should close");
         serving.await.expect("app IPC task should finish");
+    }
+
+    #[test]
+    fn linked_change_request_commands_accept_explicit_repository_urls() {
+        let github = local_app_command("git_github_pull_request_view").unwrap();
+        assert_eq!(&github.argv[..4], &["gh", "pr", "view", "--json"]);
+        assert!(github.argv[4].contains("statusCheckRollup"));
+        assert!(github.argv[4].contains("mergedAt"));
+        let gitlab = local_app_command("git_gitlab_merge_request_view").unwrap();
+        assert_eq!(gitlab.argv, &["glab", "mr", "view", "--output", "json"]);
     }
 
     #[test]

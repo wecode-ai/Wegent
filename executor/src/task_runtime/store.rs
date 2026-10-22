@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 mod code_projects;
 pub(crate) mod execution_workspace;
+mod issue_badges;
 mod ordering;
 
 use super::credentials::{encrypt_provider_config, update_provider_config};
@@ -549,6 +550,11 @@ impl LocalTaskStore {
         };
         let completed_at = (status == "completed").then(|| now.clone());
         let mut metadata = json!({"tags": input.tags});
+        issue_badges::update_source(
+            &mut metadata,
+            "issue",
+            &format!("{}\n{}", input.title, input.description),
+        );
         if let Some(start_at) = start_at {
             metadata["start_at"] = json!(start_at);
         }
@@ -733,6 +739,11 @@ impl LocalTaskStore {
                 None
             };
         let mut metadata = current.metadata;
+        issue_badges::update_source(
+            &mut metadata,
+            "issue",
+            &format!("{}\n{}", title.as_deref().unwrap_or_default(), description),
+        );
         if let Some(group_id) = &input.assignee_group_id {
             metadata["collaboration_group"] = if group_id.is_some() {
                 selected_collaboration_group
@@ -1257,8 +1268,11 @@ impl LocalTaskStore {
         &self,
         create: &LocalCommentCreate,
     ) -> Result<LocalComment, TaskRuntimeError> {
-        let connection = self.connection()?;
-        insert_comment(&connection, create, "completed")
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let comment = insert_comment(&transaction, create, "completed")?;
+        transaction.commit()?;
+        Ok(comment)
     }
 
     pub fn start_runtime_comment(
@@ -1392,7 +1406,14 @@ impl LocalTaskStore {
             params![execution_id],
             |row| row.get::<_, String>(0),
         )?;
-        Ok(Some(comment_row(&connection, &message_id)?))
+        let comment = comment_row(&connection, &message_id)?;
+        issue_badges::update_stored_source(
+            &connection,
+            &comment.task_id,
+            &format!("comment:{message_id}"),
+            &comment.content,
+        )?;
+        Ok(Some(comment))
     }
 
     // ------------------------------------------------------------------
@@ -4705,6 +4726,12 @@ fn insert_comment(
         ],
     )?;
     refresh_runtime_projection_additional_context(connection, &create.task_id)?;
+    issue_badges::update_stored_source(
+        connection,
+        &create.task_id,
+        &format!("comment:{message_id}"),
+        &create.content,
+    )?;
     comment_row(connection, &message_id)
 }
 
@@ -5225,6 +5252,19 @@ fn update_agent_comment(
            AND json_extract(metadata, '$.execution_id') = ?4",
         params![status, content, updated_at, execution_id],
     )?;
+    let mut statement = connection.prepare("SELECT task_id, message_id FROM loop_item_comments WHERE deleted_at IS NULL AND json_extract(metadata, '$.execution_id') = ?1")?;
+    let comments = statement.query_map([execution_id], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    for comment in comments {
+        let (task_id, message_id) = comment?;
+        issue_badges::update_stored_source(
+            connection,
+            &task_id,
+            &format!("comment:{message_id}"),
+            content,
+        )?;
+    }
     Ok(())
 }
 

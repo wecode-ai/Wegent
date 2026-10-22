@@ -32,7 +32,6 @@ export interface IssueBoardCardProps<T extends IssueBoardCardTask> extends Omit<
   | "menu"
   | "titleTrailing"
   | "afterContent"
-  | "summary"
   | "detailFlushBottom"
   | "renderAssigneeTooltip"
   | "item"
@@ -53,6 +52,7 @@ export interface IssueBoardCardProps<T extends IssueBoardCardTask> extends Omit<
   goal?: { bindingId: string | number; objective: string } | null;
   /** Bind task data to IssueCardTaskSummary; card and popup markup stay shared. */
   renderTaskSummary?: (binding: T, compact: boolean) => ReactNode;
+  onVisibilityChange?: (visible: boolean) => void;
 }
 
 export function IssueBoardCard<T extends IssueBoardCardTask>({
@@ -73,6 +73,8 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
   progressTaskBindings = [],
   goal,
   renderTaskSummary,
+  summary,
+  onVisibilityChange,
   cardStyle,
   cardClassName,
   dragging: draggingOverride = false,
@@ -112,6 +114,15 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
   );
   const popupRef = useRef<HTMLDivElement>(null);
   const cardContainerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const element = cardContainerRef.current;
+    if (!element || !onVisibilityChange) return;
+    const observer = new IntersectionObserver(([entry]) =>
+      onVisibilityChange(entry.isIntersecting),
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [onVisibilityChange]);
   const markReadRef = useRef(onMarkRead);
   useEffect(() => {
     markReadRef.current = onMarkRead;
@@ -167,17 +178,22 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
         ) : null
       }
       summary={
-        hasProgress ? (
-          <div
-            data-testid={`cloud-todo-card-tasks-${item.id}`}
-            className="min-w-0"
-          >
-            {progressTaskBindings.map((binding) => (
-              <Fragment key={binding.id}>
-                {renderTaskSummary?.(binding, true)}
-              </Fragment>
-            ))}
-          </div>
+        summary || hasProgress ? (
+          <>
+            {summary}
+            {hasProgress ? (
+              <div
+                data-testid={`cloud-todo-card-tasks-${item.id}`}
+                className="min-w-0"
+              >
+                {progressTaskBindings.map((binding) => (
+                  <Fragment key={binding.id}>
+                    {renderTaskSummary?.(binding, true)}
+                  </Fragment>
+                ))}
+              </div>
+            ) : null}
+          </>
         ) : null
       }
       cardRef={drag.setNodeRef}

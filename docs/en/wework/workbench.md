@@ -101,6 +101,8 @@ Board cards continue to represent issues; Wework does not create separate PR or 
 
 Status lookup runs through the Executor on the device that owns the task. A local task uses the locally authenticated `gh` or `glab` CLI and does not require separate REST task authentication for the board. Wework batches branch lookups by repository and stores results in a local cache instead of querying once per task. Visible pages refresh periodically and check again when the app regains focus.
 
+When a description, comment, or AI reply is written, GitHub PR and GitLab MR links in that content are recorded in the issue's generic `metadata.badges`. Board cards show a compact status icon and request number without requiring a linked runtime task; selecting the icon reveals status details. Opening a board reads saved badges without fetching each issue's comments. Historical content is not scanned or migrated. Link status uses the local `gh` or `glab` CLI, subscribes to refresh only for visible cards, and shares queries and cached results for identical links. Disabling PR/MR status lookup keeps the link badges visible.
+
 When checks fail, a merge conflict exists, or Merge Queue enters an abnormal state, the status menu provides **Continue with AI repair**. This action continues the original runtime-task conversation with the failure context instead of creating another task. Closed PRs and MRs do not expose the repair action.
 
 ## Use the project sidebar

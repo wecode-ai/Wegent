@@ -16,7 +16,7 @@ interface CachedSnapshots {
 }
 
 function targetKey(target: TaskChangeRequestTarget): string {
-  return `${target.deviceId}\0${target.remoteUrl}\0${target.branch}`
+  return `${target.deviceId}\0${target.remoteUrl}\0${target.changeRequestUrl ?? target.branch}`
 }
 
 function gitInfoString(task: RuntimeTaskSummary, keys: string[]): string | null {
@@ -212,24 +212,35 @@ export function getChangeRequestMonitor(api: DeviceCommandApi): ChangeRequestMon
 
 export function useTaskChangeRequest(
   monitor: ChangeRequestMonitor | null,
-  target: TaskChangeRequestTarget | null
+  target: TaskChangeRequestTarget | null,
+  enabled = true
 ): TaskChangeRequestSnapshot | null {
   const deviceId = target?.deviceId ?? null
   const taskId = target?.taskId ?? null
   const workspacePath = target?.workspacePath ?? null
   const remoteUrl = target?.remoteUrl ?? null
   const branch = target?.branch ?? null
+  const changeRequestUrl = target?.changeRequestUrl
 
   useEffect(() => {
-    if (!monitor || !deviceId || !taskId || !workspacePath || !remoteUrl || !branch) return
+    if (
+      !enabled ||
+      !monitor ||
+      !deviceId ||
+      !taskId ||
+      !remoteUrl ||
+      (!changeRequestUrl && (!workspacePath || !branch))
+    )
+      return
     return monitor.register({
       deviceId,
       taskId,
-      workspacePath,
+      workspacePath: workspacePath ?? '',
       remoteUrl,
-      branch,
+      branch: branch ?? '',
+      ...(changeRequestUrl ? { changeRequestUrl } : {}),
     })
-  }, [branch, deviceId, monitor, remoteUrl, taskId, workspacePath])
+  }, [branch, changeRequestUrl, deviceId, enabled, monitor, remoteUrl, taskId, workspacePath])
 
   return useSyncExternalStore(
     listener => monitor?.subscribe(listener) ?? (() => undefined),

@@ -611,13 +611,11 @@ export function CloudTodoWorkspace({
   const preferences = useAppPreferencesState()
   const changeRequestStatusEnabled =
     taskStatusExtensionsAvailable && (preferences?.preferences.changeRequestStatusEnabled ?? true)
-  const changeRequestMonitor = useMemo(
-    () =>
-      changeRequestStatusEnabled && services.deviceApi
-        ? getChangeRequestMonitor(services.deviceApi)
-        : null,
-    [changeRequestStatusEnabled, services.deviceApi]
-  )
+  const issueChangeRequestMonitor =
+    services.deviceApi && (preferences?.preferences.changeRequestStatusEnabled ?? true)
+      ? getChangeRequestMonitor(services.deviceApi)
+      : null
+  const changeRequestMonitor = changeRequestStatusEnabled ? issueChangeRequestMonitor : null
   const cloudWorkspaceApi = services.sharedWorkspaceApi
   const deviceNamesById = useMemo(() => getRuntimeWorkDeviceNamesById(runtimeWork), [runtimeWork])
   const runtimeTaskExecutionStatusByAddress = useMemo(
@@ -4961,6 +4959,7 @@ export function CloudTodoWorkspace({
                             archiveDisabled={isAITableProject}
                             progressDisplay={progressDisplay}
                             changeRequestMonitor={changeRequestMonitor}
+                            issueChangeRequestMonitor={issueChangeRequestMonitor}
                             onContinueChangeRequestRepair={
                               workbench ? continueChangeRequestRepair : undefined
                             }

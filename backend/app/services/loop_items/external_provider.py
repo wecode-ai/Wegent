@@ -42,6 +42,7 @@ from app.services.cloud_projects.access import (
     require_issue_action,
 )
 from app.services.delivery.storage import delivery_storage
+from app.services.issue_badges import issue_badges
 from app.services.loop_item_executions.service import (
     execution_ai_state,
     execution_display_state,
@@ -51,6 +52,7 @@ from app.services.loop_items.access import default_issue_security, is_related_it
 from app.services.loop_items.assignment_notification import (
     notify_project_task_assignee,
 )
+from app.services.loop_items.change_requests import persist_external_badge_source
 from app.services.notification_copy import NotificationTarget
 from app.services.project_automation_domain import runnable_wegent_team
 
@@ -129,10 +131,13 @@ class ExternalLoopItemProvider:
                 access,
                 user_id,
                 include_description=False,
+                include_badges=False,
             )
             for issue in issues
         ]
-        return [response for response in responses if response["can_view_detail"]]
+        return self._attach_badges(
+            db, [response for response in responses if response["can_view_detail"]]
+        )
 
     def list_page(
         self,
@@ -204,11 +209,14 @@ class ExternalLoopItemProvider:
                 access,
                 user_id,
                 include_description=False,
+                include_badges=False,
             )
             for issue in matched
         ]
         return (
-            [response for response in responses if response["can_view_detail"]],
+            self._attach_badges(
+                db, [response for response in responses if response["can_view_detail"]]
+            ),
             next_cursor,
         )
 
@@ -311,6 +319,13 @@ class ExternalLoopItemProvider:
         )
         self._invalidate_issue_page_cache(project.id)
         item_id = f"{project.project_key}-{self._number(issue)}"
+        persist_external_badge_source(
+            db,
+            project_id=str(project.id),
+            item_id=item_id,
+            source="issue",
+            content=f"{values.title}\n{values.description}",
+        )
         if values.assignee_agent_id:
             agent = db.get(ProjectChatAgent, values.assignee_agent_id)
             if agent is None:  # Already validated while building the label.
@@ -385,6 +400,7 @@ class ExternalLoopItemProvider:
                 user_id=user_id,
             )
             db.commit()
+        db.commit()
         return self._response(db, project, issue, access, user_id)
 
     def attach_gitlab_upload(
@@ -780,6 +796,15 @@ class ExternalLoopItemProvider:
         if "status" in dumped:
             payload["state"] = self._open_state(project)
         issue = current if not payload else self._update_issue(project, number, payload)
+        if "title" in dumped or "description" in dumped:
+            persist_external_badge_source(
+                db,
+                project_id=str(project.id),
+                item_id=item_id,
+                source="issue",
+                content=f"{issue.get('title') or ''}\n{issue.get(self._body_key(project)) or ''}",
+            )
+            db.commit()
         if payload:
             self._invalidate_issue_page_cache(project.id)
         if (
@@ -1795,7 +1820,22 @@ class ExternalLoopItemProvider:
             issue_creator_user_id=self._creator_id(self._labels(issue)),
             user_id=user_id,
         )
-        return self._create_comment(project, number, body)
+        comment = self._create_comment(project, number, body)
+        row = persist_external_badge_source(
+            db,
+            project_id=str(project.id),
+            item_id=item_id,
+            source=f"provider-comment:{comment['id']}",
+            content=body,
+        )
+        db.commit()
+        if row is not None:
+            from app.services.loop_item_events import publish_loop_item_changed
+
+            publish_loop_item_changed(
+                db, item=row, reason="badges", actor_user_id=user_id
+            )
+        return comment
 
     def list_comments(
         self, db: Session, item_id: str, user_id: int
@@ -1816,6 +1856,7 @@ class ExternalLoopItemProvider:
         user_id: int,
         *,
         include_description: bool = True,
+        include_badges: bool = True,
     ) -> dict[str, object]:
         """Provider view merged with the active Wegent-side execution run."""
 
@@ -1827,7 +1868,30 @@ class ExternalLoopItemProvider:
             user_id,
             include_description=include_description,
         )
-        return self._with_execution_state(db, values, user_id)
+        response = self._with_execution_state(db, values, user_id)
+        return self._attach_badges(db, [response])[0] if include_badges else response
+
+    @staticmethod
+    def _attach_badges(
+        db: Session, responses: list[dict[str, object]]
+    ) -> list[dict[str, object]]:
+        ids = [str(value["id"]) for value in responses if value.get("can_view_detail")]
+        metadata = (
+            dict(
+                db.query(LoopItem.id, LoopItem.metadata_json)
+                .filter(LoopItem.id.in_(ids))
+                .all()
+            )
+            if ids
+            else {}
+        )
+        for value in responses:
+            value["badges"] = (
+                issue_badges(metadata.get(str(value["id"])))
+                if value.get("can_view_detail")
+                else []
+            )
+        return responses
 
     @staticmethod
     def _derived_version(updated_at: str) -> int:

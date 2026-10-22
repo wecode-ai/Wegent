@@ -41,6 +41,7 @@ import {
   type UseBoardRuntimeConversationsOptions,
 } from './useBoardRuntimeConversations'
 import { Archive, CircleCheck } from 'lucide-react'
+import { IssueBadges } from './IssueBadges'
 
 export interface BoardCardDisplaySettings {
   showAssignee: boolean
@@ -142,6 +143,7 @@ interface CloudTodoBoardCardProps {
   }
   progressDisplay?: BoardCardProgressDisplay
   changeRequestMonitor?: ChangeRequestMonitor | null
+  issueChangeRequestMonitor?: ChangeRequestMonitor | null
   onContinueChangeRequestRepair?: (
     binding: CloudTodoBoardTaskBinding,
     snapshot: TaskChangeRequestSnapshot
@@ -171,9 +173,13 @@ export function CloudTodoBoardCard({
   cardAction,
   progressDisplay = 'compact',
   changeRequestMonitor = null,
+  issueChangeRequestMonitor = changeRequestMonitor,
   onContinueChangeRequestRepair,
 }: CloudTodoBoardCardProps) {
   const t = useBoardTranslate()
+  const [prVisible, setPrVisible] = useState(false)
+  const prEnabled =
+    Boolean(issueChangeRequestMonitor) && prVisible && item.can_view_detail !== false
   const editable = canEditProjectSpaceIssue(item)
   const hasActiveTask = isLoopItemExecutionActive(item)
   const taskBindingsByConversation = new Map<string, CloudTodoBoardTaskBinding>()
@@ -248,6 +254,20 @@ export function CloudTodoBoardCard({
       dragEnabled={editable && !dragDisabled}
       cardClassName="group/cloud-todo-card"
       onOpen={onClick}
+      onVisibilityChange={
+        issueChangeRequestMonitor && item.can_view_detail !== false ? setPrVisible : undefined
+      }
+      summary={
+        item.can_view_detail !== false && item.badges?.length ? (
+          <IssueBadges
+            badges={item.badges}
+            monitor={issueChangeRequestMonitor}
+            compact
+            active={prEnabled}
+            testId={`cloud-todo-card-badges-${item.id}`}
+          />
+        ) : null
+      }
       childrenAction={
         cardAction ? (
           <span className="absolute right-2 top-2 z-20">

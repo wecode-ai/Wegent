@@ -153,6 +153,7 @@ export function ChangeRequestStatusIcon({
   popoverAlign = 'right',
   glyphSize = 'compact',
   mainIconTestId,
+  showNumber = false,
 }: {
   snapshot: ChangeRequestStatusSnapshot | null
   testId: string
@@ -162,6 +163,7 @@ export function ChangeRequestStatusIcon({
   popoverAlign?: 'left' | 'right'
   glyphSize?: 'compact' | 'environment'
   mainIconTestId?: string
+  showNumber?: boolean
 }) {
   const { t } = useTranslation('common')
   const [open, setOpen] = useState(false)
@@ -220,13 +222,22 @@ export function ChangeRequestStatusIcon({
           aria-label={`${prefix}${changeRequest.number} · ${label}`}
           aria-expanded={open}
           onClick={() => setOpen(current => !current)}
-          className="flex h-6 w-6 items-center justify-center rounded-md hover:bg-muted"
+          className={cn(
+            'flex h-6 items-center justify-center rounded-md hover:bg-muted',
+            showNumber ? 'gap-1.5 bg-muted/40 px-1.5 text-xs text-text-secondary' : 'w-6'
+          )}
         >
           <ChangeRequestStatusGlyph
             changeRequest={changeRequest}
             size={glyphSize}
             mainIconTestId={mainIconTestId}
           />
+          {showNumber ? (
+            <span>
+              {prefix}
+              {changeRequest.number}
+            </span>
+          ) : null}
         </button>
       </Tooltip>
       {open && typeof document !== 'undefined'
