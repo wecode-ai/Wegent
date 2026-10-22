@@ -79,6 +79,7 @@ core_segments=(
   release-package-startup
   component-update
   native-window-startup
+  renderer-crash-recovery
   native-window-chrome
   renderer-storage
   application-menu
@@ -219,7 +220,7 @@ core_shards=(
   workspace-attachments,automation-lifecycle,drawing-attachment
   project-assignment-notification,project-member-overrides,priority-filter,collaboration-issue-comment-mention,collaboration-issue-assignment-activity,collaboration-issue-comment-attachments,stand-in-notifications
   transcript-sync,background-terminals
-  runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
+  runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-crash-recovery,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification,collaboration-issue-mcp-comments,latest-conversation-history
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,model-overload-recovery
   model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy
