@@ -45,6 +45,7 @@ import { issueActivityEntries } from './issueActivityEntries'
 import { activityDisplayBody } from './activityDisplayBody'
 
 export function IssueActivityPanel({
+  commentAssignment,
   api,
   issue,
   project,
@@ -65,6 +66,7 @@ export function IssueActivityPanel({
   taskBindings = [],
   onOpenTaskConversation,
 }: {
+  commentAssignment?: import('./useCommentAssignment').CommentAssignment
   api: Pick<SharedWorkspaceApi, 'assignments' | 'comments' | 'activity'> &
     Partial<Pick<SharedWorkspaceApi, 'attachments' | 'runtime' | 'taskBindings' | 'issues'>>
   issue: CollaborationIssue
@@ -183,6 +185,7 @@ export function IssueActivityPanel({
           api.issues &&
           project ? (
             <BrowserIssueCommentComposer
+              assignment={commentAssignment}
               key={issue.id}
               api={{
                 attachments: api.attachments,
@@ -209,6 +212,7 @@ export function IssueActivityPanel({
             />
           ) : (
             <IssueWebCommentComposer
+              assignment={commentAssignment}
               key={issue.id}
               issueId={issue.id}
               attachmentApi={api.attachments}
