@@ -205,3 +205,14 @@ for (const fault of ['drop-response', 'hold-response']) {
     assert.equal(hasScopedNativeFault([{ ...scoped[0], method: 'OPTIONS' }], fault), false)
   })
 }
+
+test('a reset destructive request never reaches the upstream and an explicit retry can recover', async t => {
+  const { proxy, received } = await fixture(t)
+  proxy.rule = () => 'reset-request'
+  await assert.rejects(fetch(`${proxy.url}/api/teams/1`, { method: 'DELETE' }))
+  assert.equal(received.length, 0)
+  proxy.rule = () => null
+  const response = await fetch(`${proxy.url}/api/teams/1`, { method: 'DELETE' })
+  assert.equal(response.status, 204)
+  assert.deepEqual(received, [{ method: 'DELETE', url: '/api/teams/1' }])
+})

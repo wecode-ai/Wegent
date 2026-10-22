@@ -435,7 +435,10 @@ export function createWeworkPlatformApi(
         ])
         if (local.status === 'rejected') throw local.reason
         const localResources = local.value
-        if (cloud.status === 'rejected' || !cloud.value) return localResources
+        if (cloud.status === 'rejected') {
+          return { ...localResources, unavailable_sources: ['cloud' as const] }
+        }
+        if (!cloud.value) return localResources
         const cloudResources = cloud.value
         return {
           agents: [

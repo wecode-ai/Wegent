@@ -1862,6 +1862,20 @@ function RuntimePaneSessionIdentityProbe() {
       >
         rebuild same runtime address
       </button>
+      <button
+        type="button"
+        onClick={() => setAddress(current => ({ ...current, taskId: 'runtime-b' }))}
+      >
+        switch runtime session
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          void paneSession.sendRequestUserInputResponse({ requestId: 'request-1', answers: {} })
+        }
+      >
+        submit runtime question
+      </button>
     </div>
   )
 }
@@ -15674,6 +15688,88 @@ describe('WorkbenchProvider runtime tasks', () => {
       })
     )
   })
+
+  test.each([false, true])(
+    'retains an accepted answer when switching tasks is %s',
+    async switchTask => {
+      const delivery = deferred<{ accepted: boolean; taskId: string }>()
+      const sendRuntimeMessage = vi.fn(() => delivery.promise)
+      const runtimeWorkApi = createRuntimeWorkApiMock({
+        sendRuntimeMessage,
+        getRuntimeTranscript: vi.fn(async (address: RuntimeTaskAddress) => ({
+          taskId: address.taskId,
+          workspacePath: '/workspace/project-alpha',
+          runtime: 'codex',
+          messages: [
+            {
+              id: `${address.taskId}:assistant:1`,
+              subtaskId: 'turn-a',
+              role: 'assistant',
+              content: address.taskId,
+            },
+          ],
+        })),
+      })
+      const services = createWorkbenchServices({
+        runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      })
+      const address: RuntimeTaskAddress = {
+        deviceId: 'device-1',
+        workspacePath: '/workspace/project-alpha',
+        taskId: 'runtime-a',
+      }
+      renderWorkbench(<RuntimePaneSessionIdentityProbe />, services)
+      await waitFor(() =>
+        expect(screen.getByTestId('runtime-session-messages')).toHaveTextContent('runtime-a')
+      )
+      act(() => {
+        applyRuntimeConversationAction(address, {
+          type: 'block_created',
+          subtaskId: 'turn-a',
+          block: {
+            id: 'request-1',
+            type: 'tool',
+            toolName: 'request_user_input',
+            status: 'pending',
+            renderPayload: { kind: 'request_user_input', requestId: 'request-1' },
+          },
+        })
+      })
+      await userEvent.click(screen.getByText('submit runtime question'))
+      await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(1))
+      if (switchTask) {
+        await userEvent.click(screen.getByText('switch runtime session'))
+        await waitFor(() =>
+          expect(screen.getByTestId('runtime-session-messages')).toHaveTextContent('runtime-b')
+        )
+      }
+
+      await act(async () => {
+        delivery.resolve({ accepted: true, taskId: 'runtime-a' })
+        await delivery.promise
+      })
+      await waitFor(() =>
+        expect(
+          getRuntimeConversationMessages(address).flatMap(message => message.blocks ?? [])
+        ).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              id: 'request-1',
+              renderPayload: expect.objectContaining({
+                response: { requestId: 'request-1', answers: {} },
+              }),
+            }),
+          ])
+        )
+      )
+      expect(screen.getByTestId('runtime-session-messages')).toHaveTextContent(
+        switchTask ? 'runtime-b' : 'runtime-a'
+      )
+      if (switchTask) {
+        expect(screen.getByTestId('runtime-session-messages')).not.toHaveTextContent('runtime-a')
+      }
+    }
+  )
 
   test('sends runtime model fields with implementation plan confirmations', async () => {
     const sendRuntimeMessage = vi.fn().mockResolvedValue({

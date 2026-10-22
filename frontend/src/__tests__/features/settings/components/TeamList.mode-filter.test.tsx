@@ -468,23 +468,58 @@ describe('TeamList mode filter', () => {
     })
   })
 
-  it('deletes an owned agent with name confirmation and no running-task scan', async () => {
-    ;(mockTeams as jest.Mock).mockResolvedValue([makeTeam(1, 'deletable-agent', ['chat'])])
-    ;(deleteTeam as jest.Mock).mockResolvedValue(undefined)
+  it.each([false, true])(
+    'deletes an owned agent with name confirmation (compact=%s)',
+    async compact => {
+      ;(mockTeams as jest.Mock).mockResolvedValue([makeTeam(1, 'deletable-agent', ['chat'])])
+      ;(deleteTeam as jest.Mock).mockResolvedValue(undefined)
 
+      render(<TeamList scope="personal" compact={compact} />)
+
+      const card = await screen.findByTestId('team-card-1')
+      fireEvent.click(
+        compact
+          ? within(card).getByRole('button', { name: 'Delete Agent' })
+          : within(card).getByTitle('Delete Agent')
+      )
+      expect(screen.getByTestId('confirm-team-identity-change')).toBeDisabled()
+      fireEvent.change(screen.getByTestId('team-identity-confirmation-input'), {
+        target: { value: 'wrong-name' },
+      })
+      expect(screen.getByTestId('confirm-team-identity-change')).toBeDisabled()
+      expect(deleteTeam).not.toHaveBeenCalled()
+      fireEvent.change(screen.getByTestId('team-identity-confirmation-input'), {
+        target: { value: 'deletable-agent' },
+      })
+      fireEvent.click(screen.getByTestId('confirm-team-identity-change'))
+
+      await waitFor(() => {
+        expect(deleteTeam).toHaveBeenCalledWith(1, 'deletable-agent')
+      })
+      expect(checkTeamRunningTasks).not.toHaveBeenCalled()
+      await waitFor(() => expect(screen.queryByTestId('team-card-1')).not.toBeInTheDocument())
+    }
+  )
+
+  it('keeps the agent and confirmation available after a failed deletion', async () => {
+    mockTeams.mockResolvedValue([makeTeam(1, 'retry-agent', ['chat'])])
+    ;(deleteTeam as jest.Mock)
+      .mockRejectedValueOnce(new Error('Server unavailable'))
+      .mockResolvedValueOnce(undefined)
     render(<TeamList scope="personal" />)
-
-    const card = await screen.findByTestId('team-card-1')
-    fireEvent.click(within(card).getByTitle('Delete Agent'))
+    fireEvent.click(within(await screen.findByTestId('team-card-1')).getByTitle('Delete Agent'))
     fireEvent.change(screen.getByTestId('team-identity-confirmation-input'), {
-      target: { value: 'deletable-agent' },
+      target: { value: 'retry-agent' },
     })
     fireEvent.click(screen.getByTestId('confirm-team-identity-change'))
-
-    await waitFor(() => {
-      expect(deleteTeam).toHaveBeenCalledWith(1, 'deletable-agent')
-    })
-    expect(checkTeamRunningTasks).not.toHaveBeenCalled()
+    await waitFor(() =>
+      expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ variant: 'destructive' }))
+    )
+    expect(screen.getByTestId('team-card-1')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('confirm-team-identity-change')).toBeEnabled())
+    fireEvent.click(screen.getByTestId('confirm-team-identity-change'))
+    await waitFor(() => expect(screen.queryByTestId('team-card-1')).not.toBeInTheDocument())
+    expect(deleteTeam).toHaveBeenCalledTimes(2)
   })
 
   it('shows the owning group for group resources when listing all groups', async () => {

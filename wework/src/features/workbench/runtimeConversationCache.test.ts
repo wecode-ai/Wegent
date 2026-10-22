@@ -27,6 +27,7 @@ import {
   isRuntimeGoalSnapshotCurrent,
   markRuntimeConversationGuidanceInterrupted,
   optimisticallyInterruptRuntimeConversation,
+  prepareRuntimeConversationUserInputResponse,
   reconcileRuntimeConversationSnapshot,
   removeOptimisticRuntimeConversationGuidance,
   reconcileRuntimeConversationQueueAfterTransportReplacement,
@@ -444,6 +445,91 @@ describe('runtimeConversationCache', () => {
         ]),
       }),
     ])
+  })
+
+  test.each(['before', 'after'])(
+    'preserves accepted input when terminal history arrives %s the send response',
+    historyOrder => {
+      const response = { requestId: 2, answers: { audience: { answers: ['仅自己'] } } }
+      reconcileRuntimeConversationSnapshot(address, [
+        {
+          id: 'terminal-turn',
+          status: 'streaming',
+          items: [
+            {
+              id: 'request-2',
+              type: 'block',
+              block: {
+                id: 'request-2',
+                type: 'tool',
+                toolName: 'request_user_input',
+                status: 'pending',
+                createdAt: 1,
+                renderPayload: {
+                  kind: 'request_user_input',
+                  requestId: 2,
+                  questions: [{ id: 'audience', question: '访问范围' }],
+                },
+              },
+            },
+            {
+              id: 'obsolete-tool',
+              type: 'block',
+              block: { id: 'obsolete-tool', type: 'tool', toolName: 'exec', status: 'streaming' },
+            },
+          ],
+        },
+      ])
+      const commitResponse = prepareRuntimeConversationUserInputResponse(address, response)
+      expect(getRuntimeConversationTurns(address)[0].items[0]).not.toHaveProperty(
+        'block.renderPayload.response'
+      )
+      if (historyOrder === 'after') commitResponse()
+
+      replaceRuntimeConversationSnapshot(address, [
+        {
+          id: 'terminal-turn',
+          status: 'done',
+          durationMs: 500,
+          items: [{ id: 'final', type: 'assistant_text', content: 'Complete' }],
+        },
+      ])
+      if (historyOrder === 'before') commitResponse()
+
+      const turn = getRuntimeConversationTurns(address)[0]
+      expect(turn).toMatchObject({ status: 'done', durationMs: 500 })
+      expect(turn.items.map(item => item.id)).toEqual(
+        expect.arrayContaining(['request-2', 'final'])
+      )
+      expect(turn.items.some(item => item.id === 'obsolete-tool')).toBe(false)
+      expect(turn.items.find(item => item.id === 'request-2')).toMatchObject({
+        block: { status: 'done', renderPayload: { requestId: 2, response } },
+      })
+      replaceRuntimeConversationSnapshot(address, [{ ...turn, items: [] }])
+      expect(getRuntimeConversationTurns(address)[0].items).toHaveLength(1)
+    }
+  )
+
+  test('does not restore an evicted conversation after an input send settles', () => {
+    applyRuntimeConversationAction(address, {
+      type: 'block_created',
+      subtaskId: 'turn-1',
+      block: {
+        id: 'request-2',
+        type: 'tool',
+        toolName: 'request_user_input',
+        status: 'pending',
+        createdAt: 1,
+        renderPayload: { kind: 'request_user_input', requestId: 2 },
+      },
+    })
+    const commitResponse = prepareRuntimeConversationUserInputResponse(address, {
+      requestId: 2,
+      answers: {},
+    })
+    evictRuntimeConversation(address)
+    expect(commitResponse()).toEqual([])
+    expect(getRuntimeConversationCacheStats().messageEntries).toBe(0)
   })
 
   test('invalidates a projection when the same snapshot reference is replaced', () => {

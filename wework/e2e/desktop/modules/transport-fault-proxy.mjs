@@ -41,6 +41,11 @@ export class TransportFaultProxy {
     this.requests.push(entry)
     const fault = this.rule(entry)
     entry.fault = fault
+    if (fault === 'reset-request') {
+      request.resume()
+      response.destroy()
+      return
+    }
     if (fault === 'hold-request') {
       request.resume()
       // A canceled destructive request must never be replayed when the fault is lifted.

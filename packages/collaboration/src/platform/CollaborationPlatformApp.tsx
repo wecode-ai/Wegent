@@ -39,6 +39,10 @@ import { IssueExecutionEnvironmentNotice } from "../execution-environment/IssueE
 import { useProjectExecutionEnvironmentReadiness } from "../execution-environment/issueEnvironmentReadiness";
 import { canAccessCollaborationProjectView } from "../permissions";
 import { ProjectArchiveDialog } from "./ProjectArchiveDialog";
+import {
+  AgentDeleteDialog,
+  type AgentDeleteAction,
+} from "../agent-form/AgentDeleteDialog";
 import { Tooltip } from "../issue-detail/Tooltip";
 import { truncateRuntimeTaskTitle } from "@wegent/chat-core/runtime-task-title";
 import { IssueHomeComposer } from "./IssueHomeComposer";
@@ -271,6 +275,8 @@ const platformMessages = {
     ownerHint: "决定空间内新建智能体和其他资源的默认归属。",
     workspaceSettingsHint: "管理空间基本信息、成员和协作资源。",
     loadFailed: "加载协作空间失败",
+    resourcesLoadFailed:
+      "部分资源加载失败，列表可能不完整。请重新打开列表重试。",
     navigationLoadFailed: "部分空间或项目加载失败，列表可能不完整。",
     retryNavigation: "重试",
     searchSpaces: "搜索空间",
@@ -498,6 +504,8 @@ const platformMessages = {
     workspaceSettingsHint:
       "Manage the workspace profile, members, and collaboration resources.",
     loadFailed: "Failed to load collaboration spaces",
+    resourcesLoadFailed:
+      "Some resources could not be loaded. Reopen the list to retry.",
     navigationLoadFailed:
       "Some spaces or projects could not load. The list may be incomplete.",
     retryNavigation: "Retry",
@@ -539,6 +547,24 @@ const platformMessages = {
 } as const;
 
 type PlatformMessages = (typeof platformMessages)[CollaborationLocale];
+
+function agentDeletionAction(
+  agent: CollaborationOwnedAgent,
+  messages: PlatformMessages,
+  onDelete: (agent: CollaborationOwnedAgent) => Promise<void>,
+): AgentDeleteAction {
+  return {
+    name: agent.name,
+    labels: {
+      cancel: messages.cancel,
+      confirm: messages.deleteAgent,
+      description: messages.deleteAgentConfirm,
+      failed: messages.deleteFailed,
+      pending: messages.deleting,
+    },
+    onDelete: () => onDelete(agent),
+  };
+}
 
 export type CollaborationProjectRendererWorkspaceContext =
   | CollaborationWorkspace
@@ -2067,75 +2093,10 @@ function ResourceCatalogPage({
         </div>
       ) : null}
       {deletingAgent ? (
-        <div
-          className="collaboration-resource-dialog-backdrop"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget && !deleteBusy) {
-              setDeletingAgent(null);
-              setDeleteError(null);
-            }
-          }}
-        >
-          <section
-            className="collaboration-resource-dialog collaboration-delete-agent-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="collaboration-delete-agent-title"
-            data-testid="collaboration-delete-agent-dialog"
-          >
-            <header>
-              <div>
-                <h2 id="collaboration-delete-agent-title">
-                  {messages.deleteAgent}
-                </h2>
-                <p>
-                  <strong>{deletingAgent.name}</strong>
-                  <br />
-                  {messages.deleteAgentConfirm}
-                </p>
-              </div>
-              <button
-                type="button"
-                className="collaboration-resource-dialog-close"
-                aria-label={messages.cancel}
-                disabled={deleteBusy}
-                onClick={() => setDeletingAgent(null)}
-              >
-                <X aria-hidden="true" />
-              </button>
-            </header>
-            {deleteError ? (
-              <p className="collaboration-resource-form-error">{deleteError}</p>
-            ) : null}
-            <div className="collaboration-resource-form-actions collaboration-delete-agent-actions">
-              <button
-                type="button"
-                className="collaboration-secondary-button"
-                disabled={deleteBusy}
-                onClick={() => setDeletingAgent(null)}
-              >
-                {messages.cancel}
-              </button>
-              <button
-                type="button"
-                className="collaboration-primary-button"
-                data-testid="collaboration-delete-agent-confirm"
-                disabled={deleteBusy}
-                onClick={() => {
-                  setDeleteBusy(true);
-                  setDeleteError(null);
-                  void onDeleteAgent(deletingAgent)
-                    .then(() => setDeletingAgent(null))
-                    .catch(() => setDeleteError(messages.deleteFailed))
-                    .finally(() => setDeleteBusy(false));
-                }}
-              >
-                {deleteBusy ? messages.deleting : messages.deleteAgent}
-              </button>
-            </div>
-          </section>
-        </div>
+        <AgentDeleteDialog
+          action={agentDeletionAction(deletingAgent, messages, onDeleteAgent)}
+          onClose={() => setDeletingAgent(null)}
+        />
       ) : null}
       {deletingTeam ? (
         <div
@@ -3769,8 +3730,29 @@ export function CollaborationPlatformApp({
       namespace: agent.owner_type === "user" ? "default" : agent.owner_id,
       ownerLabel,
       teamId: agent.team_id,
+      resourceId: agent.id,
     });
   };
+  const deleteRootAgent = async (agent: CollaborationOwnedAgent) => {
+    if (!api.resources?.removeAgent) throw new Error(messages.deleteFailed);
+    await api.resources.removeAgent(agent);
+    setRootAgentForm(null);
+    await commands.reload();
+  };
+  const editingRootAgent =
+    rootAgentForm?.mode === "edit"
+      ? state.resources.agents.find(
+          (agent) =>
+            agent.id === rootAgentForm.resourceId &&
+            (agent.location ?? "cloud") === rootAgentForm.source,
+        )
+      : undefined;
+  const rootAgentDeletion =
+    editingRootAgent &&
+    editingRootAgent.deletable !== false &&
+    api.resources?.removeAgent
+      ? agentDeletionAction(editingRootAgent, messages, deleteRootAgent)
+      : undefined;
   let content: React.ReactNode;
   if (state.loading && !isDevicePage) {
     content = (
@@ -3920,13 +3902,7 @@ export function CollaborationPlatformApp({
             setRootTeamEditingId(undefined);
             setRootTeamCreationWorkspaceId(workspaceId);
           }}
-          onDeleteAgent={async (agent) => {
-            if (!api.resources?.removeAgent) {
-              throw new Error(messages.deleteFailed);
-            }
-            await api.resources.removeAgent(agent);
-            await commands.reload();
-          }}
+          onDeleteAgent={deleteRootAgent}
           onDeleteTeam={async (group) => {
             if (group.owner_type === "project") {
               if (!api.projects.removeCollaborationGroup) {
@@ -4427,6 +4403,15 @@ export function CollaborationPlatformApp({
           </button>
         </div>
       )}
+      {state.resourceLoadFailed && (
+        <div
+          className="collaboration-alert"
+          role="alert"
+          data-testid="collaboration-resource-load-error"
+        >
+          {messages.resourcesLoadFailed}
+        </div>
+      )}
       {content}
       {archiveProject && (
         <ProjectArchiveDialog
@@ -4751,6 +4736,7 @@ export function CollaborationPlatformApp({
       host.projectAgentConfiguration?.renderLocalAgentEditor
         ? host.projectAgentConfiguration.renderLocalAgentEditor({
             resourceId: rootAgentForm.resourceId ?? "",
+            deletion: rootAgentDeletion,
             onClose: () => setRootAgentForm(null),
             onSaved: async () => {
               setRootAgentForm(null);
@@ -4816,6 +4802,7 @@ export function CollaborationPlatformApp({
       host.projectAgentConfiguration?.renderAgentEditor
         ? host.projectAgentConfiguration.renderAgentEditor({
             agent: { teamId: rootAgentForm.teamId },
+            deletion: rootAgentDeletion,
             namespace: rootAgentForm.namespace,
             workspaceName: rootAgentForm.ownerLabel,
             onClose: () => setRootAgentForm(null),

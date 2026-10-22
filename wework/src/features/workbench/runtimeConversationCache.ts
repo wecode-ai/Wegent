@@ -13,12 +13,12 @@ import type {
   RuntimeGoalContinuationPayload,
   RuntimeGuidanceAppliedPayload,
   RuntimePlanEventPayload,
+  RequestUserInputResponse,
   RuntimeSubagentActivityPayload,
   RuntimeTaskAddress,
 } from '@/types/api'
 import { summarizeRuntimeQueue } from '@/lib/runtime-create-diagnostics'
 import type {
-  ProcessingBlock,
   RuntimeConversationTurn,
   RuntimePaneQueuedMessage,
   RuntimeSubagentStatus,
@@ -32,6 +32,7 @@ import {
   reduceRuntimeConversationTurns,
 } from './runtimeConversationTurns'
 import {
+  applyRequestUserInputResponseToBlock,
   isAnsweredRequestUserInputBlock,
   isRequestUserInputBlock,
   requestUserInputPayloadKey,
@@ -430,18 +431,30 @@ export function appendAcceptedRuntimeConversationMessage(
   )
 }
 
-export function updateRuntimeConversationBlocks(
+export function prepareRuntimeConversationUserInputResponse(
   address: RuntimeTaskAddress,
-  update: (block: ProcessingBlock) => ProcessingBlock
-): WorkbenchMessage[] {
-  return updateRuntimeConversationTurns(address, turns =>
-    turns.map(turn => ({
-      ...turn,
-      items: turn.items.map(item =>
-        item.type === 'block' ? { ...item, block: update(item.block) } : item
-      ),
-    }))
-  )
+  response: RequestUserInputResponse
+): () => WorkbenchMessage[] {
+  const answeredTurns = getRuntimeConversationTurns(address).flatMap(turn => {
+    const items = turn.items.flatMap(item => {
+      if (item.type !== 'block') return []
+      const block = applyRequestUserInputResponseToBlock(item.block, response)
+      return block === item.block ? [] : [{ ...item, block }]
+    })
+    return items.length > 0 ? [{ ...turn, items }] : []
+  })
+  // Native history can omit transient forms before the accepted send returns.
+  // Capture only the answered blocks, then merge them with the current history.
+  return () => {
+    const currentTurns = getRuntimeConversationTurns(address)
+    const retainedAnswers = answeredTurns.filter(answered =>
+      currentTurns.some(turn => turn.id === answered.id)
+    )
+    if (retainedAnswers.length === 0) return getRuntimeConversationMessages(address)
+    return updateRuntimeConversationTurns(address, turns =>
+      mergeRuntimeConversationTurns(retainedAnswers, turns)
+    )
+  }
 }
 
 export function removeRuntimeConversationTurn(

@@ -43,6 +43,20 @@ create_stub() {
     cat > "$path" <<'STUB'
 #!/usr/bin/env bash
 printf '%s %s\n' "$(basename "$0")" "$*" >> "$CALL_LOG"
+if [ "$(basename "$0")" = pnpm ] && [ "${PUSH_GATE_TEST_ELECTRON_ORDER:-0}" = 1 ]; then
+    case "$*" in
+        '--dir wework/electron typecheck')
+            sleep 0.2
+            printf 'electron-typecheck-finished\n' >> "$CALL_LOG"
+            ;;
+        '--dir wework/electron test')
+            if ! grep -q '^electron-typecheck-finished$' "$CALL_LOG"; then
+                echo 'Electron tests started before typecheck finished staging shared sources.' >&2
+                exit 1
+            fi
+            ;;
+    esac
+fi
 exit 0
 STUB
     chmod +x "$path"
@@ -286,11 +300,14 @@ ELECTRON_TREE=$(GIT_INDEX_FILE="$ELECTRON_INDEX" git write-tree)
 ELECTRON_LOCAL_SHA=$(printf 'electron pre-push fixture\n' |
     git commit-tree "$ELECTRON_TREE" -p "$ELECTRON_BASE_SHA")
 
-AI_VERIFIED=1 \
+if ! PUSH_GATE_TEST_ELECTRON_ORDER=1 AI_VERIFIED=1 \
 PATH="$TMP_DIR/bin:$PATH" \
-bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$WEWORK_ELECTRON_TEST_OUT" 2>&1
+bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$WEWORK_ELECTRON_TEST_OUT" 2>&1; then
 refs/heads/topic $ELECTRON_LOCAL_SHA refs/heads/topic $ELECTRON_BASE_SHA
 EOF
+    cat "$WEWORK_ELECTRON_TEST_OUT"
+    exit 1
+fi
 
 if ! grep -qE '^pnpm --filter wework run prepare:electron$' "$CALL_LOG"; then
     echo "Expected Electron changes to prepare the Electron package."

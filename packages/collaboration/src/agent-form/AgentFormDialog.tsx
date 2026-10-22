@@ -3,9 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { ChevronRight, LoaderCircle, SlidersHorizontal, X } from 'lucide-react'
-import { useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 import { DialogForm } from '../controls/DialogForm'
+import { AgentDeleteDialog, type AgentDeleteAction } from './AgentDeleteDialog'
 
 function classes(...values: Array<string | undefined>): string {
   return values.filter(Boolean).join(' ')
@@ -67,6 +68,7 @@ export function AgentFormDialog({
   busy,
   capabilities,
   description,
+  deletion,
   displayName,
   error,
   footerHint,
@@ -99,6 +101,7 @@ export function AgentFormDialog({
   busy: boolean
   capabilities?: ReactNode
   description: string
+  deletion?: AgentDeleteAction
   displayName?: AgentFormField
   error?: string | null
   footerHint?: string
@@ -128,6 +131,16 @@ export function AgentFormDialog({
   title: string
 }) {
   const titleId = `${testIds.dialog}-title`
+  const [confirmingDeletion, setConfirmingDeletion] = useState(false)
+  const deletionOpen = confirmingDeletion && Boolean(deletion)
+  const deleteTrigger = useRef<HTMLButtonElement>(null)
+  const restoreDeleteFocus = useRef(false)
+  useEffect(() => {
+    if (!deletionOpen && restoreDeleteFocus.current) {
+      restoreDeleteFocus.current = false
+      deleteTrigger.current?.focus()
+    }
+  }, [deletionOpen])
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<'basic' | 'runtime'>('basic')
   const identityField = displayName ?? name
@@ -139,13 +152,21 @@ export function AgentFormDialog({
       className="fixed inset-0 z-modal flex items-center justify-center bg-black/30 p-3 md:p-5"
       data-testid={testIds.backdrop}
       onMouseDown={event => {
-        if (event.target === event.currentTarget && !busy) onClose()
+        if (event.target === event.currentTarget && !busy && !deletionOpen) onClose()
       }}
     >
+      {deletionOpen && deletion ? (
+        <AgentDeleteDialog action={deletion} onClose={() => setConfirmingDeletion(false)} />
+      ) : null}
       <DialogForm
+        hidden={deletionOpen}
+        inert={deletionOpen || undefined}
         aria-labelledby={titleId}
         aria-modal="true"
-        className="flex max-h-[90dvh] w-full max-w-[560px] flex-col overflow-hidden rounded-xl border border-border bg-popover text-text-primary shadow-xl"
+        className={classes(
+          'max-h-[90dvh] w-full max-w-[560px] flex-col overflow-hidden rounded-xl border border-border bg-popover text-text-primary shadow-xl',
+          deletionOpen ? 'hidden' : 'flex'
+        )}
         data-agent-form="shared"
         data-testid={testIds.dialog}
         onSubmit={event => {
@@ -329,6 +350,21 @@ export function AgentFormDialog({
             <p className="max-w-sm text-xs leading-4 text-text-muted">{footerHint}</p>
           ) : null}
           <div className="ml-auto flex shrink-0 items-center gap-2">
+            {deletion ? (
+              <button
+                className="h-11 rounded-lg px-3 text-sm text-destructive hover:bg-destructive/10 disabled:opacity-40 md:h-9"
+                data-testid={`${testIds.dialog}-delete`}
+                disabled={busy || loading}
+                onClick={() => {
+                  restoreDeleteFocus.current = true
+                  setConfirmingDeletion(true)
+                }}
+                ref={deleteTrigger}
+                type="button"
+              >
+                {deletion.labels.confirm}
+              </button>
+            ) : null}
             <button
               className="h-11 rounded-lg px-3 text-sm text-text-primary hover:bg-muted disabled:opacity-40 md:h-9"
               disabled={busy}

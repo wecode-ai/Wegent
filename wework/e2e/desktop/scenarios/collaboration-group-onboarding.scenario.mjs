@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { inCollaborationSidebar, inProjectCreateDialog } from '../modules/workspace-flows.mjs'
+import {
+  inCollaborationSidebar,
+  inProjectCreateDialog,
+  selectProjectRunnerModel,
+  waitForTestIdByText,
+} from '../modules/workspace-flows.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
@@ -336,6 +341,89 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         text: GROUP_NAME,
         timeoutMs: uiTimeoutMs,
       })
+
+      // Exercise the settings action through the real local Agent store.
+      await control.command('click', sidebarScoped('[data-testid="collaboration-primary-agents"]'))
+      await control.command('waitFor', scoped('[data-testid="collaboration-agents-page"]'))
+      const agentName = `设置删除验收-${process.pid}`
+      await control.command('click', scoped('[data-testid="collaboration-agents-create"]'))
+      const editor = '[data-testid="cloud-project-chat-agent-editor"]'
+      await control.command('waitFor', editor)
+      assert.equal(
+        Number(await control.command('getElementCount', `${editor} [data-testid$="-delete"]`)),
+        0,
+        'New Agent forms must not offer deletion'
+      )
+      await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
+        value: agentName,
+      })
+      await selectProjectRunnerModel(control, uiTimeoutMs)
+      await control.command('clickWhenEnabled', '[data-testid="cloud-project-chat-agent-save"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', editor, { visible: false })
+      await control.command('waitFor', scoped('[data-testid="collaboration-agents-page"]'))
+      const agentRowId = await waitForTestIdByText(
+        control,
+        scoped('[data-testid="collaboration-agents-page"]'),
+        'collaboration-agents-row-',
+        agentName,
+        uiTimeoutMs
+      )
+      const resourceId = agentRowId.slice('collaboration-agents-row-'.length)
+      await control.command(
+        'click',
+        scoped(`[data-testid="collaboration-agents-settings-${resourceId}"]`)
+      )
+      const deleteButton = '[data-testid="cloud-project-chat-agent-editor-delete"]'
+      await control.command('waitFor', deleteButton)
+      await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
+        value: `${agentName}-unsaved`,
+      })
+      await control.command('clickWhenEnabled', deleteButton)
+      await control.command('waitFor', '[data-testid="collaboration-delete-agent-dialog"]', {
+        text: agentName,
+      })
+      await control.command('click', '[data-testid="collaboration-delete-agent-cancel"]')
+      await control.command('waitFor', editor)
+      assert.equal(
+        await control.command('getValue', '[data-testid="cloud-project-chat-agent-display-name"]'),
+        `${agentName}-unsaved`,
+        'Cancelling deletion discarded the settings draft'
+      )
+      await control.command('click', deleteButton)
+      await control.command('click', '[data-testid="collaboration-delete-agent-confirm"]')
+      await control.command('waitFor', editor, { visible: false })
+      await control.command('waitFor', scoped(`[data-testid="${agentRowId}"]`), { visible: false })
+      await control.command('click', sidebarScoped('[data-testid="collaboration-primary-home"]'))
+      await control.command('click', sidebarScoped('[data-testid="collaboration-primary-agents"]'))
+      await control.command('waitFor', scoped('[data-testid="collaboration-agents-page"]'), {
+        text: '当前设备智能体',
+      })
+      assert.equal(
+        Number(await control.command('getElementCount', scoped(`[data-testid="${agentRowId}"]`))),
+        0,
+        'The deleted Agent returned after reopening the catalog'
+      )
+      const defaultRow = await waitForTestIdByText(
+        control,
+        scoped('[data-testid="collaboration-agents-page"]'),
+        'collaboration-agents-row-',
+        '当前设备智能体',
+        uiTimeoutMs
+      )
+      const defaultId = defaultRow.slice('collaboration-agents-row-'.length)
+      await control.command(
+        'click',
+        scoped(`[data-testid="collaboration-agents-settings-${defaultId}"]`)
+      )
+      await control.command('waitFor', editor)
+      assert.equal(
+        Number(await control.command('getElementCount', deleteButton)),
+        0,
+        'The default current-device Agent offered settings deletion'
+      )
+      await control.command('click', '[data-testid="cloud-project-chat-agent-cancel"]')
     },
 
     diagnostics() {

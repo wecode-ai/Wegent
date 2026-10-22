@@ -275,6 +275,8 @@ export interface CollaborationOwnedAgent extends CollaborationAgent {
 }
 
 export interface CollaborationPlatformResources {
+  /** Sources whose resources could not be loaded; available sources remain usable. */
+  unavailable_sources?: Array<"local" | "cloud">;
   agents: CollaborationOwnedAgent[];
   execution_environments: CollaborationExecutionEnvironment[];
 }

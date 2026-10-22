@@ -13,6 +13,7 @@ import {
   agentPluginBinding,
   createAgentResourceName,
   resolveAgentPromptCapabilityReferences,
+  type AgentDeleteAction,
   type UnifiedAgentCapabilityMode,
 } from '@wegent/collaboration'
 
@@ -62,6 +63,7 @@ export function ProjectChatAgentEditor({
   api,
   deviceApi,
   editingAgentId,
+  deletion,
   modelApi,
   pluginApi,
   projectId = DEFAULT_WORK_ITEM_PROJECT_ID,
@@ -72,6 +74,7 @@ export function ProjectChatAgentEditor({
   api: LocalAgentApi
   deviceApi?: Pick<WorkbenchServices['deviceApi'], 'listDevices' | 'listSkills'>
   editingAgentId?: string
+  deletion?: AgentDeleteAction
   modelApi: WorkbenchServices['modelApi']
   pluginApi?: ProjectPluginCatalogApi
   projectId?: string
@@ -410,6 +413,7 @@ export function ProjectChatAgentEditor({
 
   return (
     <AgentFormDialog
+      deletion={editing && !defaultDeviceAgent ? deletion : undefined}
       onAdvancedOpen={() => setCapabilitiesActive(true)}
       runtimeTab={
         defaultDeviceAgent

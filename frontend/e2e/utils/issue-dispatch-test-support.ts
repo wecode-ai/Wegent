@@ -196,9 +196,7 @@ export async function addProjectMember(page: Page, userName: string): Promise<st
   const userId = resultTestId?.replace('cloud-member-result-', '')
   if (!userId) throw new Error(`Member search result for ${userName} did not expose a user ID`)
   await result.click()
-  await expect(
-    page.locator('[data-testid^="cloud-project-member-"]').filter({ hasText: userName })
-  ).toBeVisible()
+  await expect(page.getByTestId(`cloud-project-member-${userId}`)).toBeVisible()
   return userId
 }
 

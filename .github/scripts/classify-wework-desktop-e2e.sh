@@ -91,6 +91,10 @@ core_segments=(
   system-pac
   environment-panel-scroll
   temporary-chat
+  request-input-main-before-history
+  request-input-main-after-history
+  request-input-temporary-before-history
+  request-input-temporary-after-history
   workspace-attachments
   rendering-extensions
   streaming-content
@@ -133,6 +137,7 @@ cloud_worktree_segments=(
   cloud-worktree-archive-restore
 )
 cloud_segments=(
+  agent-settings-deletion
   cloud-model-recovery
   task-model-deletion
   cloud-model-presets
@@ -193,6 +198,7 @@ cloud_shards=(
   plugin-composer-long-list
   plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github
   plugin-uninstall-restart-recovery,plugin-uninstall-reinstall-race,plugin-toggle-persistence
+  agent-settings-deletion
 )
 # Group checkpoints by observed parallel CI duration while reusing the same
 # prebuilt application. Rendering runs apart from terminal/transcript workloads.
@@ -220,6 +226,8 @@ core_shards=(
   streaming-scroll,streaming-message-order,streaming-subagents
   # Preserve the fixed interaction latency budget without CPU contention from other apps.
   split-workbench
+  request-input-main-before-history,request-input-main-after-history
+  request-input-temporary-before-history,request-input-temporary-after-history
 )
 
 validate_core_shards() {
@@ -407,6 +415,11 @@ classify_wework_path() {
   local path="$1"
 
   case "$path" in
+    wework/e2e/desktop/scenarios/request-input-history.scenario.mjs | \
+      wework/e2e/desktop/modules/executor-network-order.mjs | \
+      wework/e2e/desktop/scenarios/agent-settings-deletion.scenario.mjs)
+      return
+      ;;
     wework/e2e/desktop/scenarios/split-workbench.scenario.mjs)
       select_target "core:split-workbench"
       return
@@ -1266,6 +1279,34 @@ classify_wework_path() {
 
 classify_path() {
   local path="$1"
+
+  case "$path" in
+    wework/src/features/workbench/runtimeConversationCache* | \
+      wework/e2e/desktop/scenarios/request-input-history.scenario.mjs | \
+      wework/e2e/desktop/modules/executor-network-order.mjs)
+      select_target "core:request-input-main-before-history"
+      select_target "core:request-input-main-after-history"
+      select_target "core:request-input-temporary-before-history"
+      select_target "core:request-input-temporary-after-history"
+      ;;
+    wework/src/components/layout/useWorkbenchPaneSession*)
+      select_target "core:request-input-main-before-history"
+      select_target "core:request-input-main-after-history"
+      ;;
+    wework/src/components/layout/workspace-panels/TemporaryChatPanel*)
+      select_target "core:request-input-temporary-before-history"
+      select_target "core:request-input-temporary-after-history"
+      ;;
+  esac
+  case "$path" in
+    packages/collaboration/src/platform/* | packages/collaboration/src/agent-form/* | \
+      wework/src/features/todo/weworkPlatformApi* | \
+      wework/src/features/collaboration/WeworkAgentResourceForm* | \
+      wework/src/features/todo/ProjectChatAgentEditor* | \
+      wework/e2e/desktop/scenarios/agent-settings-deletion.scenario.mjs)
+      select_target "cloud:agent-settings-deletion"
+      ;;
+  esac
 
   case "$path" in
     packages/collaboration/src/controls/ModelSelector* | \

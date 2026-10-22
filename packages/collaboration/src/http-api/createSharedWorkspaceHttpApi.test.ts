@@ -66,14 +66,15 @@ describe("createSharedWorkspaceHttpApi", () => {
     expect(get).toHaveBeenCalledExactlyOnceWith("/devices");
   });
 
-  it("deletes a cloud Agent through its Team resource", async () => {
-    const { transport, remove } = createTransport();
+  it("deletes a cloud Agent using its current technical name instead of its display name", async () => {
+    const { transport, get, remove } = createTransport();
+    get.mockResolvedValue({ name: "review-agent" });
     const api = createSharedWorkspaceHttpApi(transport);
 
     await api.resources.removeAgent?.({
       id: "team-kind-12",
       team_id: 12,
-      name: "review-agent",
+      name: "Review Assistant",
       owner_type: "user",
       owner_id: "8",
       owner_name: "王芳",
@@ -81,7 +82,8 @@ describe("createSharedWorkspaceHttpApi", () => {
       execution_environment_ids: [],
     });
 
-    expect(remove).toHaveBeenCalledWith(
+    expect(get).toHaveBeenCalledExactlyOnceWith("/teams/12");
+    expect(remove).toHaveBeenCalledExactlyOnceWith(
       "/teams/12?force=true&confirm_name=review-agent",
     );
   });

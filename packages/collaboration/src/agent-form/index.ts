@@ -5,6 +5,7 @@
 export * from "./AgentCapabilitiesSelector";
 export * from "./AgentCapabilityModeSelector";
 export * from "./AgentFormDialog";
+export * from "./AgentDeleteDialog";
 export * from "./AgentPromptEditor";
 export * from "./resourceName";
 export * from "./types";

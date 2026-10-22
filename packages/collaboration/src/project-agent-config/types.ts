@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ReactNode } from "react";
+import type { AgentDeleteAction } from "../agent-form/AgentDeleteDialog";
 
 export type ProjectAgentMode = "existing" | "create";
 
@@ -36,6 +37,7 @@ export interface ProjectAgentConfigurationHost {
    * cannot reach the resource library omit it and no edit action is rendered.
    */
   renderAgentEditor?(props: {
+    deletion?: AgentDeleteAction;
     projectId?: string;
     agent: { teamId: number };
     namespace: string;
@@ -44,6 +46,7 @@ export interface ProjectAgentConfigurationHost {
     workspaceName: string;
   }): ReactNode;
   renderLocalAgentEditor?(props: {
+    deletion?: AgentDeleteAction;
     projectId?: string;
     resourceId: string;
     onClose(): void;

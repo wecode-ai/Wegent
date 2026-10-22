@@ -668,6 +668,12 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
             fi
         fi
 
+        # Both Electron commands stage the same generated source directory.
+        if [ -n "$ELECTRON_TSC_PID" ]; then
+            wait "$ELECTRON_TSC_PID"
+            ELECTRON_TSC_EXIT=$?
+        fi
+
         run_wework_unit_tests &
         WEWORK_TEST_PID=$!
 
@@ -677,11 +683,6 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
         if [ -n "$TSC_PID" ]; then
             wait "$TSC_PID"
             TSC_EXIT=$?
-        fi
-
-        if [ -n "$ELECTRON_TSC_PID" ]; then
-            wait "$ELECTRON_TSC_PID"
-            ELECTRON_TSC_EXIT=$?
         fi
 
         wait "$WEWORK_TEST_PID"

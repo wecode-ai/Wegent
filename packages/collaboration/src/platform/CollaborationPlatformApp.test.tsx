@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { IssueDetail } from "../IssueDetail";
 import { ResourceDestinationDialog } from "./ResourceDestinationDialog";
+import { AgentFormDialog, type AgentDeleteAction } from "../agent-form";
 import { collaborationMessages, type CollaborationLocale } from "../i18n";
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import { createSharedAgentBindingInput } from "../project-agent-config";
@@ -21,6 +22,7 @@ import type {
   CollaborationIssue,
   CollaborationMember,
   CollaborationOwnedAgent,
+  CollaborationPlatformResources,
   CollaborationProject,
   CollaborationWorkspace,
 } from "../types";
@@ -774,6 +776,43 @@ async function change(
   });
 }
 
+function AgentSettingsEditor({ deletion }: { deletion?: AgentDeleteAction }) {
+  return (
+    <AgentFormDialog
+      busy={false}
+      deletion={deletion}
+      description="Agent settings"
+      labels={{
+        advanced: "Advanced",
+        advancedDescription: "",
+        cancel: "Cancel",
+        close: "Close",
+        owner: "Owner",
+      }}
+      onClose={() => undefined}
+      onSave={() => undefined}
+      ownerLabel="Personal"
+      prompt={{
+        label: "Prompt",
+        onChange: () => undefined,
+        testId: "agent-settings-prompt",
+        value: "",
+      }}
+      saveDisabled={false}
+      saveLabel="Save"
+      savingLabel="Saving"
+      testIds={{
+        backdrop: "agent-settings-backdrop",
+        close: "agent-settings-close",
+        dialog: "agent-settings",
+        error: "agent-settings-error",
+        save: "agent-settings-save",
+      }}
+      title="Agent settings"
+    />
+  );
+}
+
 function PlatformHarness({
   cloudAccess,
   api,
@@ -1070,6 +1109,141 @@ describe("CollaborationPlatformApp real component flow", () => {
       ),
     ).toBeNull();
   });
+  it.each(["local", "cloud"] as const)(
+    "deletes a %s agent from its settings through the resource API",
+    async (location) => {
+      const resource = { ...agent, location, version: 3 };
+      const { api } = createApi({
+        initialResources: { agents: [resource], execution_environments: [] },
+      });
+      const editor = vi.fn((props: { deletion?: AgentDeleteAction }) => (
+        <AgentSettingsEditor deletion={props.deletion} />
+      ));
+      await render(
+        <PlatformHarness
+          api={api}
+          projectAgentConfiguration={
+            {
+              renderAgentEditor: editor,
+              renderLocalAgentEditor: editor,
+            } as unknown as CollaborationPlatformHostAdapter["projectAgentConfiguration"]
+          }
+        />,
+      );
+      await click(byTestId("collaboration-primary-agents"));
+      await click(byTestId(`collaboration-agents-settings-${resource.id}`));
+      await click(byTestId("agent-settings-delete"));
+      expect(api.resources?.removeAgent).not.toHaveBeenCalled();
+      await click(byTestId("collaboration-delete-agent-confirm"));
+      expect(api.resources?.removeAgent).toHaveBeenCalledExactlyOnceWith(
+        resource,
+      );
+      expect(
+        container.querySelector('[data-testid="agent-settings"]'),
+      ).toBeNull();
+      expect(
+        container.querySelector(
+          `[data-testid="collaboration-agents-row-${resource.id}"]`,
+        ),
+      ).toBeNull();
+    },
+  );
+
+  it("keeps protected local agents undeletable in settings", async () => {
+    const resource = { ...agent, location: "local" as const, deletable: false };
+    const { api } = createApi({
+      initialResources: { agents: [resource], execution_environments: [] },
+    });
+    const editor = vi.fn((props: { deletion?: AgentDeleteAction }) => (
+      <AgentSettingsEditor deletion={props.deletion} />
+    ));
+    await render(
+      <PlatformHarness
+        api={api}
+        projectAgentConfiguration={
+          {
+            renderLocalAgentEditor: editor,
+          } as unknown as CollaborationPlatformHostAdapter["projectAgentConfiguration"]
+        }
+      />,
+    );
+    await click(byTestId("collaboration-primary-agents"));
+    await click(byTestId(`collaboration-agents-settings-${resource.id}`));
+    expect(
+      container.querySelector('[data-testid="agent-settings-delete"]'),
+    ).toBeNull();
+    expect(api.resources?.removeAgent).not.toHaveBeenCalled();
+  });
+
+  it.each(["before", "after"])(
+    "reports a resource refresh failure %s navigation settles without reopening settings",
+    async (timing) => {
+      const { api } = createApi();
+      const editor = (props: { deletion?: AgentDeleteAction }) => (
+        <AgentSettingsEditor deletion={props.deletion} />
+      );
+      await render(
+        <PlatformHarness
+          api={api}
+          projectAgentConfiguration={
+            {
+              renderAgentEditor: editor,
+            } as unknown as CollaborationPlatformHostAdapter["projectAgentConfiguration"]
+          }
+        />,
+      );
+      await click(byTestId("collaboration-primary-agents"));
+      await click(byTestId(`collaboration-agents-settings-${agent.id}`));
+      await click(byTestId("agent-settings-delete"));
+      const refresh = deferred<CollaborationPlatformResources>();
+      const projects = deferred<CollaborationProject[]>();
+      const workspaces = deferred<CollaborationWorkspace[]>();
+      vi.mocked(api.resources!.list).mockReturnValueOnce(refresh.promise);
+      vi.mocked(api.projects.list).mockReturnValueOnce(projects.promise);
+      vi.mocked(api.workspaces!.list).mockReturnValueOnce(workspaces.promise);
+      await click(byTestId("collaboration-delete-agent-confirm"));
+      expect(
+        container.querySelector('[data-testid="agent-settings"]'),
+      ).toBeNull();
+
+      if (timing === "before") {
+        await act(async () =>
+          refresh.reject(new Error("Resource refresh failed")),
+        );
+      }
+      await act(async () => {
+        projects.resolve([project]);
+        workspaces.resolve([workspace]);
+      });
+      if (timing === "after") {
+        await act(async () =>
+          refresh.reject(new Error("Resource refresh failed")),
+        );
+      }
+      expect(container.textContent).toContain("部分资源加载失败");
+      expect(
+        container.querySelector('[data-testid="collaboration-agents-page"]'),
+      ).not.toBeNull();
+      expect(
+        container.querySelector('[data-testid="agent-settings"]'),
+      ).toBeNull();
+      expect(
+        container.querySelector(
+          '[data-testid="collaboration-delete-agent-confirm"]',
+        ),
+      ).toBeNull();
+      expect(api.resources!.removeAgent).toHaveBeenCalledExactlyOnceWith(agent);
+      await click(byTestId("collaboration-primary-home"));
+      await click(byTestId("collaboration-primary-agents"));
+      expect(container.querySelector('[role="alert"]')).toBeNull();
+      expect(
+        container.querySelector(
+          `[data-testid="collaboration-agents-row-${agent.id}"]`,
+        ),
+      ).toBeNull();
+    },
+  );
+
   it("does not expose deletion for a protected agent resource", async () => {
     const protectedAgent = {
       ...agent,

@@ -49,13 +49,22 @@ export function createWeworkProjectAgentConfigurationHost(
               />
             )
           },
-          renderAgentEditor({ projectId, agent, namespace, onClose, onSaved, workspaceName }) {
+          renderAgentEditor({
+            projectId,
+            agent,
+            deletion,
+            namespace,
+            onClose,
+            onSaved,
+            workspaceName,
+          }) {
             return (
               <WeworkAgentResourceForm
                 api={agentResourceApi}
                 deviceApi={deviceApi}
                 projectId={projectId}
                 editingTeamId={agent.teamId}
+                deletion={deletion}
                 key={agent.teamId}
                 namespace={namespace}
                 onClose={onClose}
@@ -83,12 +92,13 @@ export function createWeworkProjectAgentConfigurationHost(
               />
             )
           },
-          renderLocalAgentEditor({ projectId, resourceId, onClose, onSaved }) {
+          renderLocalAgentEditor({ projectId, resourceId, deletion, onClose, onSaved }) {
             return (
               <ProjectChatAgentEditor
                 api={localAgentApi}
                 deviceApi={deviceApi}
                 editingAgentId={resourceId}
+                deletion={deletion}
                 key={resourceId}
                 modelApi={localModelApi}
                 pluginApi={pluginApi}
