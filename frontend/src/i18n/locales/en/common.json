@@ -701,7 +701,9 @@
       "status": {
         "disconnected": "Not authorized",
         "connected": "Authorized",
-        "expired": "Expired"
+        "expired": "Expired",
+        "pending": "Authorizing",
+        "error": "Error"
       }
     }
   },

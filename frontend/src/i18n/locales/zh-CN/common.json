@@ -701,7 +701,9 @@
       "status": {
         "disconnected": "未授权",
         "connected": "已授权",
-        "expired": "已过期"
+        "expired": "已过期",
+        "pending": "授权中",
+        "error": "异常"
       }
     }
   },

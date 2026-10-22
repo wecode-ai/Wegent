@@ -87,8 +87,8 @@ async def discover_connector_oauth(resource_url: str) -> dict[str, Any]:
         issuer = _require_secure_url(
             str(authorization_servers[0]), field="authorization server"
         )
-        # RFC 8414 puts the well-known segment between the host and the issuer
-        # path: https://as.example.com/tenant1 ->
+        # RFC 8414 places the well-known segment between host and issuer path:
+        # https://as.example.com/tenant1 ->
         # https://as.example.com/.well-known/oauth-authorization-server/tenant1
         issuer_parts = urlsplit(issuer)
         issuer_path = issuer_parts.path.rstrip("/")
