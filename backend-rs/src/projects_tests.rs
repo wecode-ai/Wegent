@@ -196,6 +196,7 @@ fn stored_project_config_decodes_and_serializes() {
     .unwrap();
     let json = serde_json::to_string(&config).unwrap();
     assert!(json.contains("\"mode\":\"workspace\""));
+    assert!(json.contains("\"taskSource\":null"));
     assert!(json.contains("\"device_id\":\"d1\""));
     assert!(json.contains("\"execution\""));
     assert!(json.contains("\"targetType\":\"local\""));
@@ -213,10 +214,20 @@ fn stored_project_config_rejects_unknown_fields() {
 }
 
 #[test]
+fn stored_project_config_preserves_task_source() {
+    let config: StoredProjectConfig = serde_json::from_str(r#"{"taskSource":"dingtalk"}"#).unwrap();
+    let json = serde_json::to_value(config).unwrap();
+    assert_eq!(json["taskSource"], "dingtalk");
+    let invalid: Result<StoredProjectConfig, _> = serde_json::from_str(r#"{"taskSource":"other"}"#);
+    assert!(invalid.is_err());
+}
+
+#[test]
 fn stored_project_config_empty_object_serializes_all_nulls() {
     let config: StoredProjectConfig = serde_json::from_str("{}").unwrap();
     let json = serde_json::to_string(&config).unwrap();
     assert!(json.contains("\"mode\":null"));
+    assert!(json.contains("\"taskSource\":null"));
     assert!(json.contains("\"device_id\":null"));
     assert!(json.contains("\"execution\":null"));
     assert!(json.contains("\"team\":null"));
