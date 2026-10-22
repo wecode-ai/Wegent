@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { withTimeout, WORKBENCH_READY_TIMEOUT_MS } from '../modules/shared.mjs'
 
 const MENU_ITEM_IDS = [
   'application',
@@ -16,6 +17,7 @@ const MENU_ITEM_IDS = [
   'work.applications',
   'edit',
   'view',
+  'view.refresh',
   'view.search',
   'view.sidebar',
   'view.sidePanel',
@@ -505,6 +507,11 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) 
       // dead action is presented to the user. `file.closeTab` stays visible
       // because it is gated on a closable tab, which still exists.
       const settingsItems = await menuSnapshot(control)
+      assert.equal(
+        settingsItems.find(candidate => candidate.id === 'view.refresh')?.visible,
+        true,
+        'view.refresh must remain available while settings is open'
+      )
       for (const id of TASK_SURFACE_GATED_IDS) {
         const item = settingsItems.find(candidate => candidate.id === id)
         assert.equal(item?.visible, false, `${id} stayed visible while settings is open`)
@@ -516,6 +523,19 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) 
       )
 
       await captureScreenshot(control, 'application-menu-settings.png', 'body')
+
+      // Refresh must reload the window and restore an interactive workbench.
+      const readyCountBeforeRefresh = control.readyCount
+      assert.equal(await activateMenuItem(control, 'view.refresh'), true)
+      await withTimeout(
+        control.awaitReadyAfter(readyCountBeforeRefresh),
+        WORKBENCH_READY_TIMEOUT_MS,
+        'The workbench did not reconnect after View > Refresh'
+      )
+      await waitForRoute(control, '/settings', uiTimeoutMs)
+      assert.equal(await activateMenuItem(control, 'work.tasks'), true)
+      await waitForRoute(control, '/', uiTimeoutMs)
+      await waitForVisible(control, 'view.search', true, uiTimeoutMs)
     },
 
     diagnostics() {
