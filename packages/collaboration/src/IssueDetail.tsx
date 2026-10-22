@@ -63,6 +63,7 @@ interface IssueDetailProps {
     | "assignments"
     | "members"
     | "agents"
+    | "workspaces"
     | "collaborators"
     | "taskBindings"
     | "deliveries"

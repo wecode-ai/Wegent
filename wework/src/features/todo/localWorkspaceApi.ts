@@ -323,9 +323,16 @@ export function createLocalWorkspaceApi(
       name: agent.displayName || agent.name,
     })) ?? []
   const projectChatClient = detailServices?.projectChatClient
-  const localAgentResources = async () => {
+  const localAgentResources = async (
+    _workspaceId?: string,
+    options?: { forceRefresh?: boolean }
+  ) => {
     const listedAgents = projectAgentApi
-      ? await projectAgentApi.list(DEFAULT_WORK_ITEM_PROJECT_ID).catch(error => {
+      ? await (
+          options?.forceRefresh
+            ? projectAgentApi.list(DEFAULT_WORK_ITEM_PROJECT_ID, { forceRefresh: true })
+            : projectAgentApi.list(DEFAULT_WORK_ITEM_PROJECT_ID)
+        ).catch(error => {
           console.warn('[Wework] Failed to list local Agents', error)
           return []
         })

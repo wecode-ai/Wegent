@@ -1915,6 +1915,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           ACTIVE_COMPOSER_SELECTOR,
           `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${turnNumber}`
         )
+        await control.awaitScenarioRequestCount(
+          'turn_navigation',
+          turnNumber,
+          Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
+        )
         await control.command(
           'waitFor',
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
@@ -3672,6 +3677,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           control,
           ACTIVE_COMPOSER_SELECTOR,
           `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${turnNumber}`
+        )
+        await control.awaitScenarioRequestCount(
+          'turn_navigation',
+          turnNumber,
+          Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
         )
         await control.command(
           'waitFor',

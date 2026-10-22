@@ -140,6 +140,7 @@ export const HOST_CAPABILITIES = [
   'rendererHealth.getState',
   'renderer.startupFailed',
   'renderer.startupReady',
+  'runtime.changeWorkbenchMode',
   'runtime.installCoreDshPlugin',
   'runtime.listCoreDshPlugins',
   'runtime.restartCoreDsh',

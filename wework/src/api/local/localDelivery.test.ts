@@ -477,6 +477,28 @@ describe('local delivery API', () => {
     expect(request.mock.calls.filter(([method]) => method === 'chat_agents.list')).toHaveLength(4)
   })
 
+  test('forced local Agent reads replace an older pending catalog read', async () => {
+    let resolveOld!: (records: never[]) => void
+    const oldRecords = new Promise<never[]>(resolve => {
+      resolveOld = resolve
+    })
+    const request = vi
+      .fn()
+      .mockImplementationOnce(() => oldRecords)
+      .mockResolvedValue([{ id: 'LA-fresh' }])
+    const api = createLocalProjectChatAgentApi(request, 7)
+    const oldRead = api.list('project-1')
+    const freshRead = api.list('project-1', { forceRefresh: true })
+    await Promise.resolve()
+    expect(request).toHaveBeenCalledTimes(2)
+    const fresh = await freshRead
+    expect(fresh).toMatchObject([{ id: 'LA-fresh' }])
+    resolveOld([])
+    await oldRead
+    expect(await api.list('project-1')).toEqual(fresh)
+    expect(request).toHaveBeenCalledTimes(2)
+  })
+
   test('local robot create sends the creator id', async () => {
     const request = vi.fn(async () => ({ id: 'LA-1', created_by_user_id: 7 }))
     const api = createLocalProjectChatAgentApi(request, 7)

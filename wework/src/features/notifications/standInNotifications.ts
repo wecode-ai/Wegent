@@ -2,7 +2,8 @@ import type { WeworkNotification } from '@/api/notifications'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
 import {
   normalizeRuntimeTaskSummary,
-  runtimeTaskBoardState,
+  runtimeTaskTrackingExecutionStatus,
+  runtimeTaskSummaryTrackingExecutionStatus,
 } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import { weworkTaskScheme } from './scheme'
 
@@ -39,13 +40,18 @@ export function standInOrigin(item: RuntimeTaskReminderItem) {
 
 export function standInState(item: RuntimeTaskReminderItem): StandInNotificationState {
   const task = normalizeRuntimeTaskSummary(item.task)
-  const status = task.interactionStatus
+  const lifecycle = item.lifecycle
+  const executionStatus =
+    (lifecycle && runtimeTaskTrackingExecutionStatus(lifecycle)) ??
+    runtimeTaskSummaryTrackingExecutionStatus(task)
+  const interactionStatus = lifecycle ? lifecycle.interactionStatus : task.interactionStatus
+  const status = interactionStatus
     ? 'waiting'
-    : task.status === 'cancelled' || task.status === 'canceled' || task.turnStatus === 'interrupted'
+    : executionStatus === 'cancelled'
       ? 'cancelled'
-      : task.status === 'failed' || task.status === 'error' || task.turnStatus === 'failed'
+      : executionStatus === 'failed'
         ? 'failed'
-        : runtimeTaskBoardState(task) === 'completed'
+        : executionStatus === 'succeeded' || executionStatus === 'archived'
           ? 'completed'
           : 'running'
   const timestamp = status === 'waiting' ? task.updatedAt : (task.completedAt ?? task.updatedAt)
