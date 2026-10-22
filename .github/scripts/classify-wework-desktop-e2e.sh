@@ -85,6 +85,7 @@ core_segments=(
   conversation-state
   send-key-preference
   reply-predictions
+  archived-worktree-cleanup
   reply-prediction-auth
   model-settings
   codex-native-catalog
@@ -205,7 +206,7 @@ cloud_shards=(
 core_shards=(
   harness-app-development,harness-app-lifecycle,browser-annotation-design
   supervisor-lifecycle,remote-device-onboarding,core-task-flow
-  temporary-chat,local-file-preview,conversation-state,reply-predictions,reply-prediction-auth,model-settings,codex-native-catalog
+  temporary-chat,local-file-preview,conversation-state,reply-predictions,archived-worktree-cleanup,reply-prediction-auth,model-settings,codex-native-catalog
   goal-lifecycle,goal-state-sync,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,application-menu,dsh-owner-capture
   send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
   claude-runtime,workspace-tabs,task-attachments

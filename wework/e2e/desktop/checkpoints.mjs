@@ -39,6 +39,7 @@ export const DESKTOP_CHECKPOINTS = [
   'external-content-import',
   'send-key-preference',
   'reply-predictions',
+  'archived-worktree-cleanup',
   'reply-prediction-auth',
   'model-settings',
   'codex-native-catalog',
