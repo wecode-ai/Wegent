@@ -4,7 +4,7 @@ sidebar_position: 34
 
 # E2E Automation
 
-Desktop E2E fixtures use `GPT-5.6 Luna`. Real runtime catalogs advertise both `GPT-5.6 Luna` and `GPT 5.6 Luna`, so default-model selection assertions accept these two display names while retaining model ID and provider checks.
+Desktop E2E fixtures use `GPT 5.6 Luna`. Real runtime catalogs advertise both `GPT-5.6 Luna` and `GPT 5.6 Luna`, so default-model selection assertions accept these two display names while retaining model ID and provider checks. Task restoration assertions retain the fixture's original display name.
 
 Desktop checkpoint cleanup retains `backend-rs-logs/` so CI can upload Rust gateway startup logs. Settings follows the current global route while retaining the original tab's application route, allowing Back to restore the application.
 
