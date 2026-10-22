@@ -460,6 +460,13 @@ Electron reads the actual DSH address before probing the host, Executor, Termina
 and application endpoints. It does not discover a port by opening and closing a
 temporary listener, avoiding collisions during concurrent startup.
 
+Linux cloud-test services, including backends and databases, publish ports before
+startup. The shared allocator reads `/proc/sys/net/ipv4/ip_local_port_range` and
+selects bindable, unprivileged ports outside that kernel dynamic range. The port
+registry keeps parallel checkpoints separate, while excluding the dynamic range
+prevents Core DSH and other port `0` listeners from claiming ports during service
+initialization.
+
 Before upload, GitHub Actions repeats the cleanup and excludes
 `managed-components` at any depth from the Artifact path so a teardown failure
 cannot upload the complete Web and WASM component payload from either the main

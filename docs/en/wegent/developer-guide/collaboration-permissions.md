@@ -25,6 +25,8 @@ flowchart TD
 
 The three administrative roles are administrator (`Maintainer`), member (`Developer`) and read-only member (`Viewer`). Ownership is a separate space relation. The read-only `Owner` response label is derived from that relation and cannot be assigned through membership APIs. Creating a project explicitly adds its creator as a project administrator; creator identity is audit information.
 
+The new project, parent-space grant and creator's administrator grant are written in one transaction. Insert the new project's parent grant directly instead of locking an absent grant, avoiding MySQL gap-lock deadlocks when independent spaces create projects concurrently. Existing-resource authorization restoration keeps its locking rules. The MySQL permission regression suite covers concurrent creation, the unique parent and use permission after creation.
+
 | Space identity | Inherited project | Restricted project |
 | --- | --- | --- |
 | Owner | Administrator | Administrator |
