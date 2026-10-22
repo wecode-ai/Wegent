@@ -378,5 +378,24 @@ async fn default_personal_task_needs_no_project_environment() {
     assert_eq!(payload["taskId"], "stand-in-human");
     assert_eq!(payload["executionRequest"]["bot"][0]["shell_type"], "Codex");
     assert!(payload.get("workspacePath").is_none());
-    assert_eq!(payload["standaloneChatWorkspace"], true);
+    let request = execution_request(&payload).unwrap();
+    assert!(is_standalone_chat_workspace(&request));
+}
+
+#[test]
+fn cloud_assignments_created_in_the_enable_second_are_not_lost() {
+    let settings =
+        json!({"projectStore":"cloud","enabledAfter":"2026-10-22T06:54:17.591610+00:00"});
+    assert!(assignment_after_enable(
+        &json!({"created_at":"2026-10-22T06:54:17Z"}),
+        &settings
+    ));
+    assert!(!assignment_after_enable(
+        &json!({"created_at":"2026-10-22T06:54:16Z"}),
+        &settings
+    ));
+    assert!(!assignment_after_enable(
+        &json!({"created_at":"2026-10-22T06:54:17Z"}),
+        &json!({"projectStore":"local","enabledAfter":settings["enabledAfter"]})
+    ));
 }

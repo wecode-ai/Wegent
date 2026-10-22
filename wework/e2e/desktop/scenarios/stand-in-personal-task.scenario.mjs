@@ -27,6 +27,8 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
   let manualIssue
   let currentDevice
   const completed = []
+  let savedSettings
+  let assignmentDiagnostics
 
   async function request(path, body, token = cloud.authToken, method = body ? 'POST' : 'GET') {
     const response = await fetch(`${cloud.backendUrl}/api${path}`, {
@@ -64,7 +66,10 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       }
       await new Promise(resolve => setTimeout(resolve, 200))
     }
-    assert.fail(`Personal task did not complete: ${JSON.stringify(bindings)}`)
+    assignmentDiagnostics = await request(`/v1/loop-items/${issue.id}/assignments`)
+    assert.fail(
+      `Personal task did not complete: ${JSON.stringify({ bindings, assignments: assignmentDiagnostics, enabledAfter: savedSettings?.enabledAfter })}`
+    )
   }
 
   return {
@@ -162,6 +167,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
       const params = { projectId: String(project.id), userId: user.id, projectStore: 'cloud' }
       const settings = await requestExecutor(control, 'runtime.stand_in.get', params, uiTimeoutMs)
+      savedSettings = settings
       assert.equal(settings.enabled, true)
       const issue = await request(`/v1/cloud-projects/${project.id}/loop-items`, {
         title: 'Stand-in personal task without project preparation',
@@ -183,7 +189,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       )
     },
     diagnostics() {
-      return { projectId: project?.id, completed }
+      return { projectId: project?.id, completed, savedSettings, assignmentDiagnostics }
     },
   }
 }

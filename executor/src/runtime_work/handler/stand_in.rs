@@ -774,7 +774,7 @@ impl RuntimeWorkRpcHandler {
             apply_stand_in_workspace(&mut payload, config)?;
             return Ok(payload);
         }
-        payload["standaloneChatWorkspace"] = json!(true);
+        payload["executionRequest"]["standaloneChatWorkspace"] = json!(true);
         Ok(payload)
     }
 }
@@ -854,6 +854,10 @@ fn assignment_after_enable(assignment: &Value, config: &Value) -> bool {
         parse(&assignment["created_at"]),
         parse(&config["enabledAfter"]),
     ) {
+        (Some(assigned), Some(enabled)) if config["projectStore"] == "cloud" => {
+            // MySQL assignment records have second precision; compare the same precision.
+            assigned.timestamp() >= enabled.timestamp()
+        }
         (Some(assigned), Some(enabled)) => assigned >= enabled,
         _ => false,
     }
