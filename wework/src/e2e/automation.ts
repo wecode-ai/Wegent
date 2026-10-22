@@ -1885,6 +1885,21 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           label: command.value,
         })
       )
+    case 'getEmbeddedBrowserDocumentState':
+      return JSON.stringify(
+        await evalEmbeddedBrowserJson<{
+          href: string
+          readyState: DocumentReadyState
+          bodyText: string
+        }>(
+          `({
+            href: window.location.href,
+            readyState: document.readyState,
+            bodyText: (document.body?.innerText ?? '').trim().slice(0, 4096)
+          })`,
+          command.value
+        )
+      )
     case 'setEmbeddedBrowserAgentControlPaused': {
       const input = JSON.parse(command.value ?? '{}') as {
         label?: string

@@ -503,6 +503,15 @@ export async function createDesktopScenario({
         await proxy.replay(testCase.terminal, overrides)
         await assertUnchangedContinuation(testCase, baseline, name)
       }
+      // Verify the durable continuation state from a fresh renderer instead of
+      // racing asynchronous invalidations while the model stream remains held.
+      await reloadMainWindow(
+        control,
+        'Electron did not reconnect after checking stale terminal delivery'
+      )
+      await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
       await openIssue(control, testCase)
       const nextCard = `${CONTENT} [data-testid="cloud-task-activity-card-${testCase.nextActivityId}"]`
       await control.command('waitFor', nextCard, { text: testCase.continuePrefix })

@@ -348,8 +348,9 @@ function BrowserIssueDetail({
               openAttachment: async (attachmentId, filename) => {
                 setAttachmentPreview({ issueId: issue.id, attachmentId, filename });
               },
-              renderActivity: ({ tasks }) => (
+              renderActivity: ({ tasks, commentAssignment }) => (
                 <IssueActivityPanel
+                  commentAssignment={commentAssignment}
                   api={api}
                   issue={issue}
                   project={project}

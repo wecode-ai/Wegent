@@ -50,6 +50,7 @@ describe("Web adapter for the desktop main composer", () => {
   async function render(
     upload: SharedWorkspaceAttachmentsApi["upload"],
     send = vi.fn().mockResolvedValue(undefined),
+    assignment?: Parameters<typeof IssueWebCommentComposer>[0]["assignment"],
   ) {
     const api = {
       upload,
@@ -58,6 +59,7 @@ describe("Web adapter for the desktop main composer", () => {
     await act(async () =>
       root.render(
         <IssueWebCommentComposer
+          assignment={assignment}
           issueId="issue"
           canComment
           canAttach
@@ -100,6 +102,37 @@ describe("Web adapter for the desktop main composer", () => {
       picker.dispatchEvent(new Event("change", { bubbles: true }));
     });
   }
+
+  it("does not assign when a pending comment fails after leaving the Issue", async () => {
+    let rejectSend!: (error: Error) => void;
+    const send = vi.fn(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectSend = reject;
+        }),
+    );
+    const assign = vi.fn().mockResolvedValue(undefined);
+    await render(vi.fn(), send, {
+      members: [
+        { user_id: 8, user_name: "bob", role: "Developer" },
+      ] as import("../types").CollaborationMember[],
+      assign,
+    });
+    write("[$@bob](wework-member://8) Please review");
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="collaboration-issue-comment-submit"]',
+        )!
+        .click(),
+    );
+    expect(send).toHaveBeenCalledOnce();
+    act(() => root.unmount());
+    await act(async () => {
+      rejectSend(new Error("offline"));
+    });
+    expect(assign).not.toHaveBeenCalled();
+  });
 
   it("uses the desktop controls and keeps a selected document and draft on send failure", async () => {
     const attachment = {
