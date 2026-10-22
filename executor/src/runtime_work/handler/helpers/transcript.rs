@@ -387,6 +387,11 @@ fn transcript_canonical_turns(
                 .map_or(message_index, |current| current.min(message_index));
             turn.insert("messageIndex".to_owned(), json!(earliest_index));
         }
+        // Status fields describe one message projection. Do not retain a user's
+        // live runtimeStatus after an authoritative assistant completion.
+        if message.get("status").is_some() && message.get("runtimeStatus").is_none() {
+            turn.remove("runtimeStatus");
+        }
         for key in [
             "status",
             "runtimeStatus",
