@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { createServer, request as httpRequest } from 'node:http'
 
-/** Loopback transport faults only: never fabricate a plugin API response. */
-export class PluginFaultProxy {
+/** Loopback transport faults only: never fabricate an API response. */
+export class TransportFaultProxy {
   constructor(target) {
     this.target = new URL(target)
     assert.equal(this.target.protocol, 'http:')
@@ -50,20 +50,31 @@ export class PluginFaultProxy {
     }
     const upstream = httpRequest(this.options(request), incoming => {
       entry.status = incoming.statusCode
-      if (fault === 'drop-response') {
-        incoming.resume()
-        response.destroy()
-        return
-      }
-      if (fault === 'hold-response') {
-        incoming.resume()
+      if (fault === 'hold-response' || fault === 'drop-response') {
+        const chunks = []
+        incoming.on('data', chunk => chunks.push(chunk))
         incoming.once('end', () => {
+          if (fault === 'drop-response') {
+            response.destroy()
+            entry.dropped = true
+            return
+          }
+          entry.release = () =>
+            new Promise(resolve => {
+              response.once('finish', resolve)
+              response.writeHead(incoming.statusCode, incoming.headers)
+              response.end(Buffer.concat(chunks))
+              entry.released = true
+            })
           entry.committedResponseHeld = true
         })
         return
       }
       response.writeHead(incoming.statusCode, incoming.headers)
       incoming.pipe(response)
+      response.once('finish', () => {
+        entry.delivered = true
+      })
     })
     this.upstreams.add(upstream)
     upstream.once('close', () => this.upstreams.delete(upstream))

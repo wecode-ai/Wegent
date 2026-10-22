@@ -93,6 +93,34 @@ describe('Stand-in configuration composer', () => {
       }
     )
   })
+  it('waits for the model catalog before allowing settings to be saved', async () => {
+    const save = vi.fn(async () => true)
+    const model = {
+      runtime: 'codex' as const,
+      provider: 'local',
+      model_id: 'default-model',
+      label: 'Default model',
+      is_default: true,
+    }
+    let finishCatalog!: (catalog: { models: (typeof model)[] }) => void
+    const catalog = new Promise<{ models: (typeof model)[] }>(resolve => {
+      finishCatalog = resolve
+    })
+    const services = {
+      standInApi: { catalog: vi.fn(() => catalog) },
+      modelApi: { listModels: vi.fn(async () => ({ data: [] })) },
+    } as unknown as WorkbenchServices
+    render(<Fixture save={save} services={services} />)
+    expect(screen.getByTestId('stand-in-save')).toBeDisabled()
+    expect(screen.getByTestId('model-selector-button')).toBeInTheDocument()
+    await act(async () => finishCatalog({ models: [model] }))
+    await waitFor(() => expect(screen.getByTestId('stand-in-save')).toBeEnabled())
+    await userEvent.click(screen.getByTestId('stand-in-save'))
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({ model: expect.objectContaining({ model_id: 'default-model' }) })
+    )
+  })
+
   it('selects and saves the device default model without requiring an extra choice', async () => {
     const save = vi.fn(async () => true)
     const model = {

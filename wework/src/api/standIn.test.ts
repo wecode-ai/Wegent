@@ -4,6 +4,7 @@ import { bindProjectStandInApi, createStandInExecutorApi, type StandInExecutorAp
 const settings = { enabled: false, prompt: '', executionDeviceId: '', version: 0 }
 function fixture() {
   const transport = {
+    readTask: vi.fn<StandInExecutorApi['readTask']>(),
     catalog: vi.fn<StandInExecutorApi['catalog']>().mockResolvedValue({ models: [] }),
     run: vi.fn<StandInExecutorApi['run']>().mockResolvedValue({ deviceId: 'mac', taskId: 'task' }),
     list: vi.fn<StandInExecutorApi['list']>().mockResolvedValue([]),

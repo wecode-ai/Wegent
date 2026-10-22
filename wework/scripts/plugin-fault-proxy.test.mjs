@@ -3,7 +3,7 @@ import { once } from 'node:events'
 import { createServer } from 'node:http'
 import { connect } from 'node:net'
 import { test } from 'vitest'
-import { PluginFaultProxy } from '../e2e/desktop/modules/plugin-fault-proxy.mjs'
+import { TransportFaultProxy } from '../e2e/desktop/modules/transport-fault-proxy.mjs'
 import { until } from '../e2e/desktop/modules/plugin-regression-fixture.mjs'
 
 async function fixture(t) {
@@ -21,7 +21,7 @@ async function fixture(t) {
     socket.once('close', () => sockets.delete(socket))
   })
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
-  const proxy = await new PluginFaultProxy(`http://127.0.0.1:${server.address().port}`).start()
+  const proxy = await new TransportFaultProxy(`http://127.0.0.1:${server.address().port}`).start()
   t.onTestFinished(async () => {
     await proxy.stop()
     for (const socket of sockets) socket.destroy()
@@ -97,6 +97,40 @@ test(
     assert.equal(received.filter(request => request.method === 'DELETE').length, 1)
   }
 )
+
+test(
+  'releases the first real response after a later response without changing either body',
+  { timeout: 5000 },
+  async t => {
+    const { proxy, received } = await fixture(t)
+    proxy.rule = entry => (entry.path === '/first' ? 'hold-response' : null)
+    let completed = false
+    const first = fetch(`${proxy.url}/first`).then(async response => {
+      completed = true
+      return response.text()
+    })
+    await until(
+      () => proxy.requests[0]?.committedResponseHeld,
+      Boolean,
+      'First response was not held',
+      2000
+    )
+    assert.equal(await (await fetch(`${proxy.url}/second`)).text(), 'real-upstream-body')
+    assert.equal(completed, false)
+    await proxy.requests[0].release()
+    assert.equal(await first, 'real-upstream-body')
+    assert.equal(received.length, 2)
+  }
+)
+
+test('drops a real response after upstream completion', { timeout: 5000 }, async t => {
+  const { proxy, received } = await fixture(t)
+  proxy.rule = () => 'drop-response'
+  await assert.rejects(fetch(`${proxy.url}/snapshot`))
+  assert.equal(proxy.requests[0].status, 200)
+  assert.equal(proxy.requests[0].dropped, true)
+  assert.equal(received.length, 1)
+})
 
 test(
   'device transport pause holds real upstream bytes and resumes them unchanged',

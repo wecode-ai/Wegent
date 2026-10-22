@@ -20,6 +20,22 @@ function createClient() {
 }
 
 describe('createWebSharedWorkspaceApi', () => {
+  it('bypasses browser caching so newer board snapshots can overtake pending reads', async () => {
+    const client = createClient()
+    client.get.mockResolvedValue({ items: [], members: [], agents: [], task_bindings: [] })
+    const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
+
+    await expect(api.issues.getBoardSnapshot('project/1')).resolves.toEqual({
+      items: [],
+      members: [],
+      agents: [],
+      taskBindings: [],
+    })
+    expect(client.get).toHaveBeenCalledWith('/v1/cloud-projects/project%2F1/board-snapshot', {
+      cache: 'no-store',
+    })
+  })
+
   it.each(['public', 'user', 'group'] as const)(
     'preserves %s model identity when creating and updating runtime profiles',
     async modelType => {
@@ -201,11 +217,13 @@ describe('createWebSharedWorkspaceApi', () => {
       assigneeType: 'team',
       assigneeId: '9',
       notifyAssignee: false,
+      position: { beforeItemId: null },
     })
     expect(client.patch).toHaveBeenCalledWith('/v1/loop-items/issue-1', {
       version: 1,
       assignee_team_id: 9,
       notify_assignee: false,
+      position: { beforeItemId: null },
     })
     expect(() =>
       api.issues.assign('11', 'issue-1', {

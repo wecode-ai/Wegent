@@ -1682,6 +1682,9 @@ export function createHybridWorkbenchServices(
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
     standInApi: {
+      async readTask(deviceId, taskId) {
+        return (await standInApiForDevice(deviceId)).readTask(deviceId, taskId)
+      },
       async catalog(deviceId) {
         return (await standInApiForDevice(deviceId)).catalog(deviceId)
       },

@@ -28,6 +28,7 @@ const issue = {
   can_edit: true,
 } as CollaborationIssue
 let taskBindings: WorkspaceTaskBinding[] = []
+let boardColumnKeys = ['pending']
 let chatMountCount = 0
 let latestExecutionEnvironment: ComponentProps<
   typeof WeworkSharedProject
@@ -44,6 +45,7 @@ beforeAll(() => {
 beforeEach(() => {
   getAnimations.mockReset().mockReturnValue([])
   taskBindings = []
+  boardColumnKeys = ['pending']
   chatMountCount = 0
   latestExecutionEnvironment = undefined
   issue.human_task_binding = undefined
@@ -112,15 +114,21 @@ vi.mock('@wegent/collaboration', async importOriginal => ({
       >
         Create Issue without environment
       </button>
-      {props.renderBoardIssueCard?.({
-        issue,
-        taskBindings,
-        display: {} as never,
-        focused: false,
-        onOpen: () => props.host.navigate({ ...props.host.location, issueId: issue.id }),
-        onMarkRead: vi.fn(),
-        previewDisabled: Boolean(props.host.location.issueId),
-      })}
+      {boardColumnKeys.map(key => (
+        <div key={key}>
+          {props.renderBoardIssueCard?.({
+            column: { key, groupValue: key, label: key, status: '', dotClass: '' },
+            defaultCard: null,
+            issue,
+            taskBindings,
+            display: {} as never,
+            focused: false,
+            onOpen: () => props.host.navigate({ ...props.host.location, issueId: issue.id }),
+            onMarkRead: vi.fn(),
+            previewDisabled: Boolean(props.host.location.issueId),
+          })}
+        </div>
+      ))}
       {props.host.location.issueId &&
         props.renderIssueDetail?.({
           api: props.api,
@@ -152,7 +160,9 @@ vi.mock('./CloudTodoBoardCard', () => ({
     const previewPinned = props.previewPinned ?? localPreviewPinned
     return (
       <>
-        <button onClick={props.onClick}>Open project card</button>
+        <button data-column-key={props.columnKey} onClick={props.onClick}>
+          Open project card
+        </button>
         <button onClick={props.issueDetailOnly ? props.onClick : undefined}>Open task area</button>
         <button
           disabled={props.previewDisabled || props.issueDetailOnly}
@@ -322,6 +332,17 @@ function Project({
 }
 
 describe('Wework Issue conversation drawers', () => {
+  it('keeps lane identities distinct for the same Issue in multiple tag columns', () => {
+    boardColumnKeys = ['tag-backend', 'tag-shared']
+    render(<Project />)
+
+    expect(
+      screen
+        .getAllByRole('button', { name: 'Open project card' })
+        .map(card => card.getAttribute('data-column-key'))
+    ).toEqual(['tag-backend', 'tag-shared'])
+  })
+
   it('keeps the missing environment explanation visible after opening environment settings', async () => {
     render(<Project />)
 

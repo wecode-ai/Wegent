@@ -92,6 +92,7 @@ export interface HttpRequestOptions {
   redirectOnUnauthorized?: boolean
   signal?: AbortSignal
   headers?: HeadersInit
+  cache?: RequestCache
 }
 
 export interface HttpClient {
@@ -261,10 +262,17 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
     requestOptions: HttpRequestOptions = {},
     selectionAttempted = false
   ): Promise<T> {
-    const diagnostics = await fetchWithDiagnostics(endpoint, init, {
-      token: getToken(),
-      signal: requestOptions.signal,
-    })
+    const diagnostics = await fetchWithDiagnostics(
+      endpoint,
+      {
+        ...init,
+        ...(requestOptions.cache ? { cache: requestOptions.cache } : {}),
+      },
+      {
+        token: getToken(),
+        signal: requestOptions.signal,
+      }
+    )
     const { response } = diagnostics
 
     if (!response.ok) {

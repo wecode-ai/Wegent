@@ -965,7 +965,7 @@ describe('local delivery API', () => {
 
     await api.listLoopItems('project-1')
     await expect(
-      api.updateLoopItem('LOCAL-1', { version: 1, tags: ['bug'] })
+      api.updateLoopItem('LOCAL-1', { version: 1, tags: ['bug'], position: { beforeItemId: null } })
     ).resolves.toMatchObject({
       local_project_id: 91,
       local_project_name: 'Wegent',
@@ -977,6 +977,7 @@ describe('local delivery API', () => {
       todo: {
         version: 1,
         tags: ['bug', 'wegent:local-project:91:Wegent'],
+        position: { before_item_id: null },
       },
     })
   })
@@ -1003,48 +1004,51 @@ describe('local delivery API', () => {
     })
   })
 
-  test('remembers task ownership for updates and persists board order', async () => {
-    const updatedRecord = { ...taskRecord, title: 'Updated', version: 2 }
-    const request = vi.fn(async (method: string) => {
-      if (method === 'todos.list') return [taskRecord]
-      if (method === 'todos.update') return updatedRecord
-      if (method === 'todos.reorder') return [updatedRecord]
-      if (method === 'todos.archive') return {}
-      throw new Error(`Unexpected method: ${method}`)
-    })
-    const api = createLocalDeliveryApi(request)
-
-    await api.listLoopItems('project-1')
-    await expect(
-      api.updateLoopItem('LOCAL-1', { version: 1, title: 'Updated' })
-    ).resolves.toMatchObject({ title: 'Updated', version: 2 })
-    await expect(
-      api.reorderLoopItems('project-1', {
-        parent_id: null,
-        status: 'inbox',
-        item_ids: ['LOCAL-1'],
+  test.each(['inbox', null])(
+    'remembers task ownership and persists order (status=%s)',
+    async status => {
+      const updatedRecord = { ...taskRecord, title: 'Updated', version: 2 }
+      const request = vi.fn(async (method: string) => {
+        if (method === 'todos.list') return [taskRecord]
+        if (method === 'todos.update') return updatedRecord
+        if (method === 'todos.reorder') return [updatedRecord]
+        if (method === 'todos.archive') return {}
+        throw new Error(`Unexpected method: ${method}`)
       })
-    ).resolves.toMatchObject({ items: [{ id: 'LOCAL-1' }] })
-    await api.archiveLoopItem('LOCAL-1')
+      const api = createLocalDeliveryApi(request)
 
-    expect(request).toHaveBeenCalledWith('todos.update', {
-      project_id: 'project-1',
-      task_id: 'LOCAL-1',
-      todo: { version: 1, title: 'Updated' },
-    })
-    expect(request).toHaveBeenCalledWith('todos.reorder', {
-      project_id: 'project-1',
-      reorder: {
-        parent_id: null,
-        status: 'inbox',
-        item_ids: ['LOCAL-1'],
-      },
-    })
-    expect(request).toHaveBeenCalledWith('todos.archive', {
-      project_id: 'project-1',
-      task_id: 'LOCAL-1',
-    })
-  })
+      await api.listLoopItems('project-1')
+      await expect(
+        api.updateLoopItem('LOCAL-1', { version: 1, title: 'Updated' })
+      ).resolves.toMatchObject({ title: 'Updated', version: 2 })
+      await expect(
+        api.reorderLoopItems('project-1', {
+          parent_id: null,
+          status,
+          item_ids: ['LOCAL-1'],
+        })
+      ).resolves.toMatchObject({ items: [{ id: 'LOCAL-1' }] })
+      await api.archiveLoopItem('LOCAL-1')
+
+      expect(request).toHaveBeenCalledWith('todos.update', {
+        project_id: 'project-1',
+        task_id: 'LOCAL-1',
+        todo: { version: 1, title: 'Updated' },
+      })
+      expect(request).toHaveBeenCalledWith('todos.reorder', {
+        project_id: 'project-1',
+        reorder: {
+          parent_id: null,
+          status,
+          item_ids: ['LOCAL-1'],
+        },
+      })
+      expect(request).toHaveBeenCalledWith('todos.archive', {
+        project_id: 'project-1',
+        task_id: 'LOCAL-1',
+      })
+    }
+  )
 
   test('binds a runtime task through executor storage', async () => {
     const request = vi.fn(async (method: string) => {

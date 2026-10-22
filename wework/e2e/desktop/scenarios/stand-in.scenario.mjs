@@ -279,7 +279,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       }
       await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
       await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="true"]')
-      await control.command('click', '[data-testid="stand-in-auto"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
       await control.command(
         'waitFor',

@@ -147,6 +147,7 @@ export function StandInComposer({
     : t('standIn.inherit_environment')
   const valid =
     !submitDisabled &&
+    !models.loading &&
     !models.unavailable &&
     !(draft.workspace && !selected) &&
     !(draft.workspace?.executionMode === 'git_worktree' && !availability.available)
@@ -201,12 +202,7 @@ export function StandInComposer({
           onDraftEdit={prompt => onChange(current => ({ ...current, prompt }))}
           onSubmit={prompt => onSave(prompt ?? draft.prompt)}
           disabled={disabled}
-          submitDisabled={
-            submitDisabled ||
-            models.unavailable ||
-            Boolean(draft.workspace && !selected) ||
-            (draft.workspace?.executionMode === 'git_worktree' && !availability.available)
-          }
+          submitDisabled={!valid}
           clearOnSubmit={false}
           allowEmptySubmit
           placeholder={t(

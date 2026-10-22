@@ -153,6 +153,14 @@ Each completed step is marked automatically, and the guide hides after all three
 
 Empty columns also explain what belongs in each stage and name the creation action that is currently available. During a drag, the destination column describes the resulting status. The default **My tasks** board uses task terminology, while other project spaces continue to use issue terminology.
 
+## Lane sorting
+
+Each lane on a native project-space board has its own **Sort by** control and defaults to highest priority first. Add ascending or descending rules for priority, creation time, and update time, then move rules up or down or remove them. Rules apply from top to bottom: each subsequent rule breaks ties, and manual order breaks any remaining ties. Choose **Manual order** to reorder cards within status, priority, assignee, or tag lanes, or insert a card into another lane at a specific position. Non-status lanes can mix Issues with different statuses; reordering within a lane preserves status, assignee, and tags. Manual positions use the project’s shared order across groupings. Preferences are saved on the current device by user, project space, grouping, and lane, are restored when reopening the board, and do not affect other members. Drop onto the blank space at the end of a lane to append a card. Group fields and position are saved together; a failed save commits neither. Changes to different lane preferences in multiple windows are retained independently and synchronized to open boards.
+
+Desktop sorting regression: `pnpm --filter wework e2e:desktop --segment collaboration-board-sorting`. This independent checkpoint runs in Core CI against the real cloud backend and local SQLite, covering default priority, independent compound lane rules, restoration after window reloads, rejected within-lane reordering under automatic sorting, and persistence of manual drags and cross-lane moves.
+
+Post-save refresh recovery regression: `pnpm --filter wework e2e:desktop --segment collaboration-board-move-recovery`. This independent Core CI checkpoint uses a real Developer member with three visible Issues interleaved with hidden siblings. It verifies backward moves, visible order after interrupted snapshot delivery, recovery on reload, and fields and ordering across concurrent moves and out-of-order snapshots. The test faults only transport of real backend responses and verifies that hidden Issues remain invisible.
+
 ## Calendar, Gantt, and table views
 
 Use the project-space header to switch among **Board**, **Calendar**, **Gantt**, and **Table**. Issue details use one date-range control for the start and end dates. If only one date is set, Calendar and Gantt treat the issue as a one-day task.

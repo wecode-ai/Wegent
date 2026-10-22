@@ -55,6 +55,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
   }
 
   async function openProject(control) {
+    await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]')
     await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
     await expandCollaborationWorkspace(
       control,

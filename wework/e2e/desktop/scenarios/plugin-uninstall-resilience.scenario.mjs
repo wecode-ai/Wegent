@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { CLOUD_DEVICE_ID } from '../modules/shared.mjs'
-import { PluginFaultProxy } from '../modules/plugin-fault-proxy.mjs'
+import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 import { verifyPluginWriteCoordination } from '../modules/plugin-write-coordination.mjs'
 import {
   accountPlugin,
@@ -270,8 +270,8 @@ export async function createDesktopScenario({
     requiresCloudEnvironment: true,
     appEnvironment,
     async prepareCloud({ backendUrl }) {
-      apiProxy = await new PluginFaultProxy(backendUrl).start()
-      deviceProxy = await new PluginFaultProxy(backendUrl).start()
+      apiProxy = await new TransportFaultProxy(backendUrl).start()
+      deviceProxy = await new TransportFaultProxy(backendUrl).start()
       appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL = apiProxy.url
     },
     setCloudEnvironment(value) {
