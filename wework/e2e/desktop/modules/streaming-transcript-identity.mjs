@@ -19,8 +19,8 @@ const PROMPT = 'WEWORK_STREAMING_TRANSCRIPT_IDENTITY'
 const WARMUP = 'STREAM_IDENTITY_WARMUP'
 const READY = 'STREAM_IDENTITY_READY'
 const PROGRESS = 'STREAM_IDENTITY_PROGRESS: inspecting the implementation.'
-const PREFIX = 'STREAM_IDENTITY_PREFIX: first part of the reply.'
-const SUFFIX = ' STREAM_IDENTITY_SUFFIX: second part of the same reply.'
+const PREFIX = 'STREAM_IDENTITY_PREFIX: first part of the reply.\n\n'
+const SUFFIX = 'STREAM_IDENTITY_SUFFIX: second part of the same reply.'
 const COMPLETE = PREFIX + SUFFIX
 
 export function createStreamingTranscriptIdentityChecks({ uiTimeoutMs }) {
@@ -35,9 +35,14 @@ export function createStreamingTranscriptIdentityChecks({ uiTimeoutMs }) {
 
   async function assertReply(control, row, expected) {
     const content = `${row} [data-testid="assistant-message-content"]`
-    await control.command('waitFor', content, { text: expected.trim() })
+    const paragraphs = expected.trim().split('\n\n')
+    await control.command('waitFor', content, { text: paragraphs.at(-1) })
     assert.equal(Number(await control.command('getElementCount', content)), 1)
-    assert.equal((await control.command('getText', content)).trim(), expected.trim())
+    assert.equal(
+      Number(await control.command('getElementCount', `${content} p`)),
+      paragraphs.length
+    )
+    assert.equal(await control.command('getText', `${content} p`), paragraphs.join('\n'))
     const narrative = `${row} [data-testid="process-text-block"]`
     await control.command('waitFor', narrative, { text: PROGRESS })
     const [process] = JSON.parse(await control.command('getElementMetrics', narrative))
@@ -123,6 +128,7 @@ export function createStreamingTranscriptIdentityChecks({ uiTimeoutMs }) {
           nativeMessage.runtimeItems,
           'The running cache changed native identities or order'
         )
+        assert.equal(turn.items.findLast(item => item.type === 'assistant_text').content, PREFIX)
 
         const readyCount = control.readyCount
         await control.command('reloadMainWindow', 'body')
@@ -142,7 +148,7 @@ export function createStreamingTranscriptIdentityChecks({ uiTimeoutMs }) {
         releaseCompletion()
         await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
         await control.command('waitFor', `${row} [data-testid="assistant-message-content"]`, {
-          text: COMPLETE,
+          text: SUFFIX,
         })
       } finally {
         releaseSuffix()

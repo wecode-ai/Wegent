@@ -1,5 +1,21 @@
 use super::*;
 
+#[test]
+fn native_text_extraction_preserves_streaming_whitespace() {
+    use crate::runtime_work::util::extract_text;
+
+    for text in ["  Indented paragraph.\n\n", "\n\n", "中文🙂 "] {
+        for key in ["text", "content", "message"] {
+            assert_eq!(extract_text(&json!({(key): text})).as_deref(), Some(text));
+        }
+        assert_eq!(
+            extract_text(&json!({"content": [{"text": text}]})).as_deref(),
+            Some(text)
+        );
+    }
+    assert_eq!(extract_text(&json!({"text": ""})), None);
+}
+
 #[tokio::test]
 async fn running_cached_transcript_preserves_native_text_identity_and_order() {
     let (handler, root) = isolated_runtime_work_handler("streaming-transcript-identity");
@@ -31,7 +47,7 @@ async fn running_cached_transcript_preserves_native_text_identity_and_order() {
         "params": {"item": {"id": "final-1", "type": "agentMessage", "phase": "final_answer", "text": ""}}
     }));
     let mut expected_content = String::new();
-    for delta in ["First paragraph.", "\n\nSecond paragraph."] {
+    for delta in ["First paragraph.\n\n", "Second paragraph."] {
         expected_content.push_str(delta);
         handler.record_active_codex_transcript_item(
             "task-1",
