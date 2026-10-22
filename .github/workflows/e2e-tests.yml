@@ -609,8 +609,6 @@ jobs:
           PLATFORM_E2E_IMAGE: ${{ needs.prepare-platform-e2e-image.outputs.image }}
           DOCKER_BUILDKIT: "0"
         run: |
-          apt-get update
-          apt-get install --yes --no-install-recommends docker.io
           uv sync --project executor_manager --frozen
           docker build --pull=false \
             --build-arg BASE_IMAGE="$PLATFORM_E2E_IMAGE" \
