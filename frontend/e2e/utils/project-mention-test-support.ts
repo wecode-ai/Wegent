@@ -72,6 +72,7 @@ interface MentionFixture {
 }
 
 type MentionChat = Pick<ProjectChatClient, 'send' | 'dispose'> & {
+  executeTaskComment: NonNullable<ProjectChatClient['executeTaskComment']>
   subscribe: (
     projectId: string,
     taskId: string | undefined,
@@ -104,6 +105,7 @@ function connectChat(token: string): MentionChat {
     })
   }
   return {
+    executeTaskComment: input => emit('wework:project_chat:comment:execute', input),
     send: input =>
       emit('wework:project_chat:message:send', {
         projectId: input.projectId,
@@ -130,6 +132,7 @@ interface MentionOptions {
   issueSecurity: 'open' | 'related'
   taskProvider: 'local' | ExternalIssueProvider
   localIssueIndex: boolean
+  assignedUnavailableAgent: boolean
 }
 
 export async function apiData<T>(response: Promise<ApiResponse<T>>): Promise<T> {
@@ -144,8 +147,17 @@ export const test = base.extend<MentionOptions & { mentions: MentionFixture }>({
   issueSecurity: ['open', { option: true }],
   taskProvider: ['local', { option: true }],
   localIssueIndex: [false, { option: true }],
+  assignedUnavailableAgent: [false, { option: true }],
   mentions: async (
-    { page, request, membershipMode, issueSecurity, taskProvider, localIssueIndex },
+    {
+      page,
+      request,
+      membershipMode,
+      issueSecurity,
+      taskProvider,
+      localIssueIndex,
+      assignedUnavailableAgent,
+    },
     use
   ) => {
     const token = (await page.context().cookies()).find(
@@ -170,6 +182,28 @@ export const test = base.extend<MentionOptions & { mentions: MentionFixture }>({
     const archive = async (path: string) => {
       const resource = await apiData(api.get<Resource>(path))
       expect((await api.delete(`${path}?version=${resource.version}`)).status).toBe(204)
+    }
+    let assignedIssueId: string | undefined
+    let runnerSeeded = false
+    const manageRunner = async (action: 'seed' | 'check' | 'cleanup') => {
+      if (!process.env.DATABASE_URL || !assignedIssueId)
+        throw new Error('Assigned mention E2E requires an Issue and DATABASE_URL')
+      await execFileAsync(
+        'uv',
+        [
+          'run',
+          '--no-sync',
+          'python',
+          'tests/e2e/project_mention_runner.py',
+          action,
+          assignedIssueId,
+        ],
+        {
+          cwd: resolve(__dirname, '../../../backend'),
+          env: { ...process.env, PYTHONPATH: '.:..' },
+          timeout: 15_000,
+        }
+      )
     }
     const manageIndex = async (projectId: string, action: 'seed' | 'check' | 'cleanup') => {
       if (!process.env.DATABASE_URL)
@@ -238,6 +272,12 @@ export const test = base.extend<MentionOptions & { mentions: MentionFixture }>({
         return { project, issue }
       }
       const { project, issue } = await createProject()
+      if (assignedUnavailableAgent) {
+        if (taskProvider !== 'local') throw new Error('Assigned mention E2E requires a local Issue')
+        assignedIssueId = issue.id
+        await manageRunner('seed')
+        runnerSeeded = true
+      }
       const projectId = project.id
       await use({
         api,
@@ -282,6 +322,7 @@ export const test = base.extend<MentionOptions & { mentions: MentionFixture }>({
           await apiData(api.put(`/api/admin/users/${recipientId}`, { is_active: active }))
         },
       })
+      if (assignedUnavailableAgent) await manageRunner('check')
       if (provider) {
         for (const project of projects) await manageIndex(project.id, 'check')
         expect(
@@ -293,9 +334,13 @@ export const test = base.extend<MentionOptions & { mentions: MentionFixture }>({
     } finally {
       clients.forEach(client => client.dispose())
       try {
-        for (const project of projects) {
-          if (provider) await manageIndex(project.id, 'cleanup')
-          await archive(`/api/v1/cloud-projects/${project.id}`)
+        try {
+          if (runnerSeeded) await manageRunner('cleanup')
+        } finally {
+          for (const project of projects) {
+            if (provider) await manageIndex(project.id, 'cleanup')
+            await archive(`/api/v1/cloud-projects/${project.id}`)
+          }
         }
       } finally {
         try {

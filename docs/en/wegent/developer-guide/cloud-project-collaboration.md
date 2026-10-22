@@ -320,7 +320,8 @@ Agent configuration visibility controls whether members can select an Agent. Col
 A human assignment in a collaboration round exposes **Reply and create a new task** to its assignee. The acknowledgement is saved as a comment; the new personal task uses the round assignment instructions and retains its assignment binding.
 
 - A reply to an AI thread saves a reference to the original activity but does not require Backend to continue the old Runtime session. When execution is requested, it creates a new root-Issue Run for an Executor to claim.
-- A new top-level comment uses an explicitly mentioned available Agent, or the Issue's assigned Agent. The root-Issue queue creates an independent Run and preserves approval and configuration-waiting states.
+- Comments and replies mentioning only members, without an Agent mention, save the comment and notify authorized readers without starting or continuing the assigned Agent. Runner availability is irrelevant; the comment persists this intent so retries behave consistently.
+- Other new top-level comments use an explicitly mentioned available Agent, or the Issue's assigned Agent. The root-Issue queue creates an independent Run and preserves approval and configuration-waiting states.
 - Without an assigned or mentioned agent, the comment is saved without execution. Retrying that request after reassignment does not start AI unexpectedly.
 - Mentioning another agent still requires picker visibility. Comments do not change the Issue assignee.
 
@@ -329,9 +330,11 @@ flowchart TD
     UI[Web or desktop client] --> Save[Save member comment]
     Save --> Execute[Project comment execution service]
     Execute --> Auth[Check project role and comment author]
-    Auth --> Agent{Mentioned or assigned Agent?}
+    Auth --> Human{Only member mentions?}
+    Human -->|Yes| Comment[Save comment only]
+    Human -->|No| Agent{Mentioned or assigned Agent?}
     Agent -->|Yes| Queue[Queue an independent session]
-    Agent -->|No| Comment[Save comment only]
+    Agent -->|No| Comment
     Queue --> Claim[Executor pull + claim]
     Claim --> Activity[Project status and results into the thread]
     Activity --> UI

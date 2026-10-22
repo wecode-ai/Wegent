@@ -164,32 +164,47 @@ for (const scope of ['project', 'issue'] as const) {
   })
 }
 
-test('selects an inherited member in the Issue composer and preserves the comment after refresh', async ({
-  page,
-  mentions,
-}) => {
-  await mentions.grant('workspace', 'Developer')
-  await page.goto(`${mentions.projectPath}/issues/${mentions.issue.id}`)
-  const composer = page.getByTestId('collaboration-issue-comment')
-  await writeSharedComposer(composer, '@')
-  await page.getByTestId(`collaboration-issue-mention-member-${mentions.recipient.id}`).click()
-  const text = `Inherited member browser mention ${crypto.randomUUID()}`
-  await composer.pressSequentially(` ${text}`)
-  await page.getByTestId('collaboration-issue-comment-submit').click()
-  await expect(page.getByTestId('collaboration-comments')).toContainText(text)
+test.describe('member-only comments with an unavailable assigned robot', () => {
+  test.use({ assignedUnavailableAgent: true })
 
-  await page.reload()
-  const card = page.locator('.task-detail-comment-card').filter({ hasText: text })
-  await expect(card).toHaveCount(1)
-  await expect(card).toContainText(mentions.recipient.user_name)
-  const messages = await mentions.messages(mentions.issue.id)
-  expect(messages).toHaveLength(1)
-  expect(messages[0].content).toContain(text)
-  expect(await mentions.inbox()).toEqual([
-    expect.objectContaining({
-      payload: expect.objectContaining({ commentId: messages[0].messageId }),
-    }),
-  ])
+  test('selects an inherited member without executing the assigned robot and preserves the comment after refresh', async ({
+    page,
+    mentions,
+  }) => {
+    await mentions.grant('workspace', 'Developer')
+    await page.goto(`${mentions.projectPath}/issues/${mentions.issue.id}`)
+    const composer = page.getByTestId('collaboration-issue-comment')
+    await writeSharedComposer(composer, '@')
+    await page.getByTestId(`collaboration-issue-mention-member-${mentions.recipient.id}`).click()
+    const text = `Inherited member browser mention ${crypto.randomUUID()}`
+    await composer.pressSequentially(` ${text}`)
+    await page.getByTestId('collaboration-issue-comment-submit').click()
+    await expect(page.getByTestId('collaboration-comments')).toContainText(text)
+
+    await page.reload()
+    const card = page.locator('.task-detail-comment-card').filter({ hasText: text })
+    await expect(card).toHaveCount(1)
+    await expect(card).toContainText(mentions.recipient.user_name)
+    const messages = await mentions.messages(mentions.issue.id)
+    expect(messages).toHaveLength(1)
+    expect(messages[0].content).toContain(text)
+    expect(messages[0].metadata.execution_dispatch).toBe('comment_only')
+    const client = mentions.chat()
+    const executionRequest = {
+      projectId: mentions.project.id,
+      taskId: mentions.issue.id,
+      triggerMessageId: messages[0].messageId,
+      attachmentIds: [],
+    }
+    expect(await client.executeTaskComment(executionRequest)).toEqual([])
+    expect(await client.executeTaskComment(executionRequest)).toEqual([])
+    await expect(page.locator('.task-detail-comment-inline-error')).toHaveCount(0)
+    expect(await mentions.inbox()).toEqual([
+      expect.objectContaining({
+        payload: expect.objectContaining({ commentId: messages[0].messageId }),
+      }),
+    ])
+  })
 })
 
 test.describe('Issue recipient visibility (CP14)', () => {

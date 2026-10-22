@@ -969,6 +969,10 @@ class ProjectChatService:
                 mention.model_dump(by_alias=True) for mention in request.mentions
             ]
         }
+        if request.mentions and all(
+            mention.type == "user" for mention in request.mentions
+        ):
+            metadata["execution_dispatch"] = "comment_only"
         if request.model is not None:
             metadata["model"] = request.model
         reply = self._resolve_reply_context(

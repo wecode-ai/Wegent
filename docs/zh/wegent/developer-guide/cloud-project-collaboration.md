@@ -320,7 +320,8 @@ Wework Composer 把云项目、目录、文件、TODO 和交付编码为 `cloud:
 协作小组分配给本人的人工动态支持「回复并创建新任务」：确认评论照常保存，新个人任务使用本轮分配指令并保留分配关联，不把确认回复作为任务指令。
 
 - 回复已有 AI 评论线程：保存回复并引用原活动，但不要求 Backend 续跑原 Runtime 会话。需要执行时，创建新的根 Issue Run，由 Executor 领取。
-- 新增顶层评论：明确 @ 的可用智能体优先，否则使用 Issue 当前负责的智能体；通过根 Issue 队列创建独立 Run，保留审批与等待配置状态。
+- 仅 @ 成员、不含 @ 智能体的评论和回复：只保存评论并通知有权查看 Issue 的成员，不启动或继续负责智能体，不依赖执行环境是否可用；该意图随评论保存，重试保持一致。
+- 其他新增顶层评论：明确 @ 的可用智能体优先，否则使用 Issue 当前负责的智能体；通过根 Issue 队列创建独立 Run，保留审批与等待配置状态。
 - 没有负责智能体且没有 @ 智能体：仅保存评论。评论重试不会因随后更换负责人而意外触发执行。
 - 明确 @ 其他智能体仍须检查配置可见性；评论不会修改 Issue 的负责人。
 
@@ -329,9 +330,11 @@ flowchart TD
     UI[网页或桌面客户端] --> Save[保存成员评论]
     Save --> Execute[项目评论执行服务]
     Execute --> Auth[校验项目权限与评论作者]
-    Auth --> Agent{明确提及或 Issue 负责人?}
+    Auth --> Human{仅提及成员?}
+    Human -->|是| Comment[仅保存评论]
+    Human -->|否| Agent{明确提及或 Issue 负责人?}
     Agent -->|有| Queue[执行队列创建独立会话]
-    Agent -->|无| Comment[仅保存评论]
+    Agent -->|无| Comment
     Queue --> Claim[Executor pull + claim]
     Claim --> Activity[状态与结果回写评论线程]
     Activity --> UI

@@ -9,17 +9,34 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.ws import wework_runtime_namespace
-from app.models.delivery import CloudProject, LoopItem, LoopItemCollaborator
+from app.models.delivery import (
+    CloudProject,
+    LoopItem,
+    LoopItemCollaborator,
+    ProjectChatAgent,
+)
 from app.models.kind import Kind
+from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import ResourceMember
 from app.models.user import User
 from app.models.wework_notification import WeworkNotification
-from app.schemas.project_chat import ProjectChatSend, ProjectChatSubscribe
+from app.schemas.project_chat import (
+    ProjectChatCommentExecution,
+    ProjectChatMention,
+    ProjectChatSend,
+    ProjectChatSubscribe,
+)
 from app.services.cloud_projects.service import cloud_project_service
 from app.services.loop_items.external_provider import external_loop_item_provider
+from app.services.project_chat.comment_execution import execute_comment
 from app.services.project_chat.service import project_chat_service
-from tests.utils.collaboration import authorize_project
+from tests.e2e.project_mention_runner import manage_runner
+from tests.utils.collaboration import (
+    authorize_project,
+    authorize_project_agent,
+    authorize_resource,
+)
 
 
 @pytest.fixture
@@ -87,6 +104,123 @@ def mention_request(
             {"type": "user", "id": str(recipient.id), "label": recipient.user_name}
         ],
     )
+
+
+@pytest.fixture
+def assigned_mention_scope(test_db, test_user, mention_scope):
+    project, workspace, recipient, item, schedule = mention_scope
+    grant_member(test_db, "Workspace", workspace.id, recipient.id, "Developer")
+    device = Kind(
+        kind="Device",
+        name="mention-runner",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={"spec": {"deviceType": "cloud"}},
+    )
+    test_db.add(device)
+    test_db.flush()
+    authorize_resource(test_db, project, device)
+    manage_runner(test_db, item.id, "seed")
+    agent = test_db.get(ProjectChatAgent, item.assignee_agent_id)
+    authorize_project_agent(test_db, agent)
+    item.metadata_json = {"runner_binding": {"environment_id": "999999999"}}
+    test_db.commit()
+    return project, recipient, item, agent, schedule
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reply", [False, True])
+async def test_user_mentions_do_not_execute_assigned_agent(
+    test_db, test_user, assigned_mention_scope, reply
+):
+    project, recipient, item, agent, schedule = assigned_mention_scope
+    request = mention_request(project, recipient, item.id)
+    if reply:
+        root = ProjectChatMessage(
+            message_id=str(uuid.uuid4()),
+            client_message_id=str(uuid.uuid4()),
+            project_id=project.id,
+            task_id=item.id,
+            sender_type="agent",
+            sender_id=agent.id,
+            sender_name=agent.name,
+            agent_id=agent.id,
+            content="Please review",
+            status="completed",
+        )
+        test_db.add(root)
+        test_db.commit()
+        request.reply_to_message_id = root.message_id
+    result = project_chat_service.send(
+        test_db, user_id=test_user.id, user_name=test_user.user_name, request=request
+    )
+    execution_request = ProjectChatCommentExecution(
+        project_id=project.id,
+        task_id=item.id,
+        trigger_message_id=result.message.message_id,
+    )
+
+    assert (
+        await execute_comment(test_db, user_id=test_user.id, request=execution_request)
+        == []
+    )
+    assert (
+        await execute_comment(test_db, user_id=test_user.id, request=execution_request)
+        == []
+    )
+
+    test_db.expire_all()
+    saved = (
+        test_db.query(ProjectChatMessage)
+        .filter_by(message_id=result.message.message_id)
+        .one()
+    )
+    assert saved.metadata_json["execution_dispatch"] == "comment_only"
+    assert test_db.query(LoopItemExecution).count() == 0
+    notification = test_db.query(WeworkNotification).one()
+    assert notification.user_id == recipient.id
+    assert notification.payload["commentId"] == saved.message_id
+    assert item.assignee_agent_id == agent.id
+    assert test_db.query(ProjectChatMessage).filter_by(
+        sender_type="agent"
+    ).count() == int(reply)
+    schedule.assert_called_once()
+    if not reply:
+        manage_runner(test_db, item.id, "check")
+    manage_runner(test_db, item.id, "cleanup")
+    assert test_db.get(ProjectChatAgent, agent.id) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("include_member", [False, True])
+async def test_agent_mentions_still_enforce_issue_runner_binding(
+    test_db, test_user, assigned_mention_scope, include_member
+):
+    project, recipient, item, agent, _ = assigned_mention_scope
+    request = mention_request(project, recipient, item.id)
+    request.mentions = [
+        *(request.mentions if include_member else []),
+        ProjectChatMention(type="agent", id=agent.id, label=agent.name),
+    ]
+    result = project_chat_service.send(
+        test_db, user_id=test_user.id, user_name=test_user.user_name, request=request
+    )
+
+    with pytest.raises(HTTPException) as error:
+        await execute_comment(
+            test_db,
+            user_id=test_user.id,
+            request=ProjectChatCommentExecution(
+                project_id=project.id,
+                task_id=item.id,
+                trigger_message_id=result.message.message_id,
+            ),
+        )
+
+    assert error.value.detail["error_code"] == "ISSUE_RUNNER_CONFLICT"
+    assert "execution_dispatch" not in result.message.metadata
+    assert test_db.query(LoopItemExecution).count() == 0
 
 
 @pytest.mark.parametrize("provider", ["github", "gitlab"])
