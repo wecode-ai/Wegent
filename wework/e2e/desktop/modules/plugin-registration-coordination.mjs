@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
+import { delimiter, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { CLOUD_DEVICE_ID } from './shared.mjs'
@@ -34,6 +34,9 @@ export async function verifyPluginRegistrationCoordination({
         cwd: resolve(repoDir, 'backend'),
         env: {
           ...process.env,
+          PYTHONPATH: [resolve(repoDir, 'backend'), repoDir, process.env.PYTHONPATH]
+            .filter(Boolean)
+            .join(delimiter),
           WEWORK_E2E_DATABASE_URL: cloud.databaseUrl,
           WEWORK_E2E_CAPABILITY_GENERATION: generation,
         },
