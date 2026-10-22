@@ -128,7 +128,7 @@ export function createStreamingTranscriptIdentityChecks({ uiTimeoutMs }) {
         await control.command('reloadMainWindow', 'body')
         await control.awaitReadyAfter(readyCount)
         await assertReply(control, row, PREFIX)
-        const snapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+        const snapshot = JSON.parse(await control.command('snapshot', row))
         assert.equal(
           snapshot.text.split(PREFIX.trim()).length - 1,
           1,
@@ -136,7 +136,7 @@ export function createStreamingTranscriptIdentityChecks({ uiTimeoutMs }) {
         )
         releaseSuffix()
         await assertReply(control, row, COMPLETE)
-        const growing = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+        const growing = JSON.parse(await control.command('snapshot', row))
         assert.equal(growing.text.split(PREFIX.trim()).length - 1, 1)
         assert.equal(growing.text.split(PROGRESS).length - 1, 1)
         releaseCompletion()
