@@ -725,6 +725,47 @@ fn transcript_unwraps_codex_response_item_and_event_msg_items() {
 }
 
 #[test]
+fn transcript_keeps_unphased_text_in_processing_until_turn_completes() {
+    let mut thread = json!({
+        "id": "thread-1",
+        "cwd": "/tmp/project",
+        "turns": [{
+            "id": "turn-1",
+            "status": "inProgress",
+            "items": [
+                {"id": "user-1", "type": "userMessage", "content": []},
+                {"id": "text-1", "type": "agentMessage", "text": "Inspecting the failure."}
+            ]
+        }]
+    });
+
+    let messages = transcript_messages(&thread, "device-1");
+    let assistant = messages.last().unwrap();
+    assert_eq!(assistant["status"], "streaming");
+    assert_eq!(assistant["content"], "");
+    assert_eq!(assistant["blocks"][0]["type"], "text");
+    assert_eq!(assistant["blocks"][0]["content"], "Inspecting the failure.");
+
+    thread["turns"][0]["items"][1]["phase"] = json!("final_answer");
+    let messages = transcript_messages(&thread, "device-1");
+    assert_eq!(
+        messages.last().unwrap()["content"],
+        "Inspecting the failure."
+    );
+
+    thread["turns"][0]["items"][1]
+        .as_object_mut()
+        .unwrap()
+        .remove("phase");
+    thread["turns"][0]["status"] = json!("completed");
+    let messages = transcript_messages(&thread, "device-1");
+    assert_eq!(
+        messages.last().unwrap()["content"],
+        "Inspecting the failure."
+    );
+}
+
+#[test]
 fn transcript_keeps_unphased_text_before_tools_in_processing() {
     let thread = json!({
         "id": "thread-1",

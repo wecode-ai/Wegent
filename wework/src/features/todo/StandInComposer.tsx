@@ -145,12 +145,7 @@ export function StandInComposer({
   const environment = draft.workspace
     ? `${project?.name ?? draft.workspace.projectKey} · ${t(draft.workspace.executionMode === 'git_worktree' ? 'standIn.new_worktree' : 'standIn.current_workspace')}`
     : t('standIn.inherit_environment')
-  const valid =
-    !submitDisabled &&
-    !models.loading &&
-    !models.unavailable &&
-    !(draft.workspace && !selected) &&
-    !(draft.workspace?.executionMode === 'git_worktree' && !availability.available)
+  const valid = !submitDisabled
   useEffect(() => {
     onValidityChange?.(valid)
   }, [valid, onValidityChange])
