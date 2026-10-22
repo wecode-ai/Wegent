@@ -232,6 +232,7 @@ describe('shared IssueDetail', () => {
         messages={collaborationMessages['zh-CN']}
         onClose={jest.fn()}
         onChange={jest.fn()}
+        onRead={jest.fn()}
         onCommentsChange={jest.fn()}
         onConflict={jest.fn()}
         onError={jest.fn()}

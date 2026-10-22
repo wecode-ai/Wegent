@@ -129,11 +129,11 @@ class RedisSubscriptionServer:
             if heartbeat is not None:
                 heartbeat.cancel()
                 await asyncio.gather(heartbeat, return_exceptions=True)
-            writer.close()
             try:
+                writer.close()
                 await writer.wait_closed()
-            except ConnectionResetError:
-                # The client can reset a stalled connection while reconnecting.
+            except ConnectionError:
+                # The client can reset or break a stalled connection while reconnecting.
                 pass
             finally:
                 self.handlers.discard(task)
@@ -148,16 +148,35 @@ class RedisSubscriptionServer:
 
 
 @pytest.mark.asyncio
-async def test_subscription_cleanup_after_client_resets_connection() -> None:
-    stub = RedisSubscriptionServer(partial_response=True)
+@pytest.mark.parametrize("close_error", [None, ConnectionResetError, BrokenPipeError])
+async def test_connection_cleanup_handles_peer_disconnect(
+    close_error: type[ConnectionError] | None,
+) -> None:
+    stub = RedisSubscriptionServer(partial_response=False)
     reader = asyncio.StreamReader()
     reader.feed_eof()
     writer = MagicMock(spec=asyncio.StreamWriter)
-    writer.wait_closed = AsyncMock(side_effect=ConnectionResetError)
+    writer.wait_closed = AsyncMock(side_effect=close_error)
 
     await stub.handle(reader, writer)
 
-    writer.close.assert_called_once()
+    writer.close.assert_called_once_with()
+    writer.wait_closed.assert_awaited_once_with()
+    assert not stub.handlers
+    assert stub.connections_closed.is_set()
+
+
+@pytest.mark.asyncio
+async def test_connection_cleanup_preserves_unexpected_close_errors() -> None:
+    stub = RedisSubscriptionServer(partial_response=False)
+    reader = asyncio.StreamReader()
+    reader.feed_eof()
+    writer = MagicMock(spec=asyncio.StreamWriter)
+    writer.wait_closed = AsyncMock(side_effect=RuntimeError("unexpected close failure"))
+
+    with pytest.raises(RuntimeError, match="unexpected close failure"):
+        await stub.handle(reader, writer)
+
     assert not stub.handlers
     assert stub.connections_closed.is_set()
 
