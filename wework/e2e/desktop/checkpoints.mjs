@@ -49,6 +49,7 @@ export const DESKTOP_CHECKPOINTS = [
   'automation-lifecycle',
   'project-automation',
   'project-assignment-notification',
+  'project-member-overrides',
   'offline-local-project-space',
   'cloud-context-resilience',
   'cloud-login-proxy',

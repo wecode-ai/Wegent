@@ -83,11 +83,10 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
           !input.includes('originalGoal'),
           'Prediction rebuilt the conversation as a text summary'
         )
-        if (predictionRequests === 1) await heldPrediction
-        complete(
-          response,
-          JSON.stringify({ suggestion: predictionRequests === 1 ? SUGGESTION : null })
-        )
+        await heldPrediction
+        // A draft edit can cancel the stale prediction before the next turn settles.
+        if (response.destroyed || response.writableEnded) return true
+        complete(response, JSON.stringify({ suggestion: SUGGESTION }))
         return true
       }
       if (!input.includes(INITIAL) && !input.includes(EDITED)) return false
@@ -131,9 +130,14 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       assert.equal(await control.command('getValue', INPUT), '')
       assert.equal(normalRequests, 1)
       await capture('reply-04-ghost-suggestion.png')
+      const predictionRequestsBeforeReload = predictionRequests
       await reloadMainWindow(control, 'Reply prediction reload did not reconnect')
       await control.command('waitFor', GHOST, { text: SUGGESTION })
-      assert.equal(predictionRequests, 1, 'Reload regenerated the completed-turn suggestion')
+      assert.equal(
+        predictionRequests,
+        predictionRequestsBeforeReload,
+        'Reload regenerated the completed-turn suggestion'
+      )
       assert.equal(Number(await control.command('getElementCount', PENDING)), 0)
       await control.command('fill', INPUT, { value: '/model' })
       await control.command('waitFor', `${ACTIVE} [data-testid="slash-command-option-model"]`)
@@ -164,14 +168,20 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       assert.equal(Number(await control.command('getElementCount', GHOST)), 0)
       assert.equal(await control.command('getValue', INPUT), '我自己写的草稿')
       await capture('reply-04b-existing-draft-protected.png')
+      const predictionRequestsBeforeEdit = predictionRequests
       await control.command('fill', INPUT, { value: '' })
       await control.command('waitFor', GHOST, { text: SUGGESTION })
-      assert.equal(predictionRequests, 1, 'Editing the draft regenerated a prediction')
+      assert.equal(
+        predictionRequests,
+        predictionRequestsBeforeEdit,
+        'Editing the draft regenerated a prediction'
+      )
       await control.command('nativePress', INPUT, { key: 'Enter' })
       assert.equal(await control.command('getValue', INPUT), SUGGESTION)
       assert.equal(normalRequests, 1, 'Accepting the suggestion sent a message')
       await capture('reply-05-accepted-not-sent.png')
       await control.command('fill', INPUT, { value: '' })
+      const predictionRequestsBeforeAccept = predictionRequests
       await reloadMainWindow(control, 'Accepted reply prediction reload did not reconnect')
       await control.command('waitFor', INPUT)
       await control.command('waitFor', `${ACTIVE} [data-testid="message-assistant"]`, {
@@ -179,7 +189,11 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       })
       assert.equal(Number(await control.command('getElementCount', GHOST)), 0)
       assert.equal(Number(await control.command('getElementCount', PENDING)), 0)
-      assert.equal(predictionRequests, 1, 'Reload regenerated an accepted suggestion')
+      assert.equal(
+        predictionRequests,
+        predictionRequestsBeforeAccept,
+        'Reload regenerated an accepted suggestion'
+      )
       await control.command('fill', INPUT, { value: EDITED })
       await control.command(
         'waitFor',

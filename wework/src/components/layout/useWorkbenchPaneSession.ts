@@ -1790,7 +1790,7 @@ export function useWorkbenchPaneSession({
           markRuntimeTerminalAdditionalContextDelivered(additionalContext)
         }
         if (!operation.isCurrent()) return false
-        lifecycleStore.userInputResponded(currentRuntimeTask)
+        if (answerIsUserMessage) lifecycleStore.userInputResponded(currentRuntimeTask)
         if (requestUserInputKey) {
           setAnsweredRequestUserInputIds(current => {
             if (current.has(requestUserInputKey)) return current

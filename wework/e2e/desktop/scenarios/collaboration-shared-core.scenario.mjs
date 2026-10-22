@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { createBoardReplyModelRegression } from '../modules/board-reply-model.mjs'
 import { createProjectOnlyNavigationRegression } from '../modules/project-only-navigation.mjs'
+import { createProjectSpacePickerRegression } from '../modules/project-space-picker.mjs'
 import { verifyIssueConversationDrawers } from '../modules/issue-conversation-drawers.mjs'
 import { verifyCollaborationIssueHome } from '../modules/collaboration-issue-home.mjs'
 import { verifyCollaborationMemberSettings } from '../modules/collaboration-member-settings.mjs'
@@ -95,6 +96,11 @@ export function createDesktopScenario({
   let fixtureArchived = false
 
   const request = (pathname, options) => requestJson(backendUrl, authToken, pathname, options)
+  const projectSpacePicker = createProjectSpacePickerRegression({
+    request,
+    uiTimeoutMs,
+    workbenchReadyTimeoutMs,
+  })
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
 
   async function archiveFixture() {
@@ -147,6 +153,7 @@ export function createDesktopScenario({
       owner = await request('/api/users/me')
       await request('/api/admin/setup-complete', { method: 'POST' })
       await projectOnlyNavigation.prepare(cloud, owner)
+      await projectSpacePicker.prepare()
     },
 
     setCloudEnvironment(environment) {
@@ -760,11 +767,19 @@ export function createDesktopScenario({
           scoped,
           workbenchReadyTimeoutMs,
         })
+        await projectSpacePicker.verify(control, {
+          deviceId: binding.deviceId ?? binding.device_id,
+          taskId: binding.taskId ?? binding.task_id,
+        })
       } finally {
         try {
           await archiveFixture()
         } finally {
-          await projectOnlyNavigation.cleanup()
+          try {
+            await projectOnlyNavigation.cleanup()
+          } finally {
+            await projectSpacePicker.cleanup()
+          }
         }
       }
     },
@@ -773,7 +788,11 @@ export function createDesktopScenario({
       try {
         await archiveFixture()
       } finally {
-        await projectOnlyNavigation.cleanup()
+        try {
+          await projectOnlyNavigation.cleanup()
+        } finally {
+          await projectSpacePicker.cleanup()
+        }
       }
     },
 
